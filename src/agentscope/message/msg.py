@@ -172,7 +172,7 @@ class Msg(BaseModel):
         )
 
         if echo:
-            logger.chat(self)
+            logger.info(self)
 
     def to_dict(self) -> dict:
         """Serialize the message into a dictionary, which can be
