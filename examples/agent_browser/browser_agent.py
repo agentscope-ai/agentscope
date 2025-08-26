@@ -252,7 +252,6 @@ class BrowserAgent(ReActAgent):
             prompt,
             tools=self.toolkit.get_json_schemas(),
         )
-
         # handle output from the model
         interrupted_by_user = False
         msg = None
@@ -449,7 +448,13 @@ class BrowserAgent(ReActAgent):
         finally:
             # Record the tool result message in the memory
             tool_res_msg = self._clean_tool_excution_content(tool_res_msg)
-            await self.memory.add(tool_res_msg)
+            if tool_call["name"] == "browser_subtask_manager":
+                # remove the last tool call
+                mem_len = await self.memory.size()
+                if mem_len >= 1:
+                    await self.memory.delete(mem_len - 1)
+            else:
+                await self.memory.add(tool_res_msg)
 
     def _clean_tool_excution_content(
         self,
@@ -843,7 +848,7 @@ class BrowserAgent(ReActAgent):
                     TextBlock(
                         type="text",
                         text=(
-                            f"Error. Cannot be executed. "
+                            f"Tool call Error. Cannot be executed. "
                             f"Current subtask remains: {self.current_subtask}"
                         ),
                     ),
@@ -852,11 +857,7 @@ class BrowserAgent(ReActAgent):
 
         # take memory as context
         memory_content = await self.memory.get_memory()
-        snapshot_text = await self._get_snapshot_in_text()
 
-        snapshot_chunks = self._split_snapshot_by_chunk(
-            snapshot_text,
-        )
         # LLM prompt for subtask validation
         sys_prompt = (
             "You are an expert in subtask validation. \n"
@@ -866,12 +867,17 @@ class BrowserAgent(ReActAgent):
             "If yes, reply ONLY 'SUBTASK_COMPLETED'. "
             "If not, reply ONLY 'SUBTASK_NOT_COMPLETED'."
         )
-        user_prompt = (
-            f"Subtask: {self.current_subtask}\n"
-            f"Recent memory:\n{[str(m) for m in memory_content[-10:]]}\n"
-            f"Current page:\n{snapshot_chunks[0]}"
-        )
-
+        if len(self.snapshot_in_chunk) > 0:
+            user_prompt = (
+                f"Subtask: {self.current_subtask}\n"
+                f"Recent memory:\n{[str(m) for m in memory_content[-10:]]}\n"
+                f"Current page:\n{self.snapshot_in_chunk[0]}"
+            )
+        else:
+            user_prompt = (
+                f"Subtask: {self.current_subtask}\n"
+                f"Recent memory:\n{[str(m) for m in memory_content[-10:]]}\n"
+            )
         prompt = await self.formatter.format(
             msgs=[
                 Msg("system", sys_prompt, role="system"),
@@ -888,10 +894,13 @@ class BrowserAgent(ReActAgent):
         else:
             # If not streaming, get the full response at once
             response_text = response.content[0]["text"]
+
         if "SUBTASK_COMPLETED" in response_text.strip().upper():
             self.current_subtask_idx += 1
             if self.current_subtask_idx < len(self.subtasks):
-                self.current_subtask = self.subtasks[self.current_subtask_idx]
+                self.current_subtask = str(
+                    self.subtasks[self.current_subtask_idx],
+                )
             else:
                 self.current_subtask = None
             return ToolResponse(
@@ -899,9 +908,9 @@ class BrowserAgent(ReActAgent):
                     TextBlock(
                         type="text",
                         text=(
-                            "SUCCESS."
+                            "Tool call SUCCESS."
                             " Current subtask updates to: "
-                            f"{self.current_subtask}",
+                            f"{self.current_subtask}"
                         ),
                     ),
                 ],
@@ -911,7 +920,10 @@ class BrowserAgent(ReActAgent):
             content=[
                 TextBlock(
                     type="text",
-                    text=f"SUCCESS. Current subtask remains: {self.current_subtask}",  # noqa: E501
+                    text=(
+                        "Tool call SUCCESS."
+                        f" Current subtask remains: {self.current_subtask}"
+                    ),
                 ),
             ],
         )
