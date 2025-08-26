@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Browser Agent"""
 # pylint: disable=W0212
-
+# pylint: disable=too-many-lines
 import re
 import uuid
 import os
@@ -952,40 +952,51 @@ class BrowserAgent(ReActAgent):
                 hint_msg,
             ],
         )
+        try:
+            res = await self.model(prompt)
+            res_msg = Msg(
+                "assistant",
+                [],
+                "assistant",
+            )
+            if self.model.stream:
+                async for content_chunk in res:
+                    summary_text = content_chunk.content[0]["text"]
+            else:
+                summary_text = res.content[0]["text"]
 
-        res = await self.model(prompt)
-        res_msg = Msg(
-            "assistant",
-            [],
-            "assistant",
-        )
-        if self.model.stream:
-            async for content_chunk in res:
-                summary_text = content_chunk.content[0]["text"]
-        else:
-            summary_text = res.content[0]["text"]
+            res_msg.content = summary_text
+            await self.print(res_msg, True)
+            if self.model.stream:
+                async for content_chunk in res:
+                    summary_text = content_chunk.content[0]["text"]
+            else:
+                summary_text = res.content[0]["text"]
 
-        res_msg.content = summary_text
-        await self.print(res_msg, True)
-        if self.model.stream:
-            async for content_chunk in res:
-                summary_text = content_chunk.content[0]["text"]
-        else:
-            summary_text = res.content[0]["text"]
+            res_msg.content = summary_text
+            await self.print(res_msg, True)
 
-        res_msg.content = summary_text
-        await self.print(res_msg, True)
-
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text="Successfully generated response.",
-                ),
-            ],
-            metadata={
-                "success": True,
-                "response_msg": res_msg,
-            },
-            is_last=True,
-        )
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="Successfully generated response.",
+                    ),
+                ],
+                metadata={
+                    "success": True,
+                    "response_msg": res_msg,
+                },
+                is_last=True,
+            )
+        except Exception as e:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Tool call Error. Cannot be executed. {e}",
+                    ),
+                ],
+                metadata={"success": False},
+                is_last=True,
+            )

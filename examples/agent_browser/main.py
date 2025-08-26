@@ -2,6 +2,7 @@
 """The main entry point of the browser agent example."""
 import asyncio
 import os
+import traceback
 from browser_agent import BrowserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
@@ -32,7 +33,7 @@ async def main() -> None:
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
                 model_name="qwen-max",
-                stream=True,
+                stream=False,
             ),
             formatter=DashScopeChatFormatter(),
             memory=InMemoryMemory(),
@@ -50,6 +51,7 @@ async def main() -> None:
             msg = await agent(msg)
 
     except Exception as e:
+        traceback.print_exc()
         print(f"An error occurred: {e}")
         print("Cleaning up browser client...")
     finally:
