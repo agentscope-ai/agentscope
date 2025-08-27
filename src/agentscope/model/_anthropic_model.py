@@ -9,13 +9,20 @@ from typing import (
     TYPE_CHECKING,
     List,
     Literal,
+    Type,
 )
 from collections import OrderedDict
+
+from pydantic import BaseModel
 
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
-from .._utils._common import _json_loads_with_repair
+from .._logging import logger
+from .._utils._common import (
+    _json_loads_with_repair,
+    _create_tool_from_base_model,
+)
 from ..message import TextBlock, ToolUseBlock, ThinkingBlock
 from ..tracing import trace_llm
 from ..types._json import JSONSerializableObject
@@ -97,6 +104,7 @@ class AnthropicChatModel(ChatModelBase):
         tool_choice: Literal["auto", "none", "any", "required"]
         | str
         | None = None,
+        structured_model: Type[BaseModel] | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
@@ -132,12 +140,26 @@ class AnthropicChatModel(ChatModelBase):
                         },
                         # More schemas here
                     ]
+
             tool_choice (`Literal["auto", "none", "any", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
                  Can be "auto", "none", "any", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output. When provided, the model will be forced
+                to return data that conforms to this schema by automatically
+                converting the BaseModel to a tool function and setting
+                `tool_choice` to enforce its usage. This enables structured
+                output generation.
+
+                .. note:: When `structured_model` is specified,
+                    both `tools` and `tool_choice` parameters are ignored,
+                    and the model will only perform structured output
+                    generation without calling any other tools.
+
             **generate_kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API,
                 e.g. `temperature`, `top_p`, etc. Please
@@ -164,6 +186,22 @@ class AnthropicChatModel(ChatModelBase):
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
+        if structured_model:
+            if tools or tool_choice:
+                logger.warning(
+                    "structured_model is provided. Both 'tools' and "
+                    "'tool_choice' parameters will be overridden and "
+                    "ignored. The model will only perform structured output "
+                    "generation without calling any other tools.",
+                )
+            format_tool = _create_tool_from_base_model(structured_model)
+            kwargs["tools"] = self._format_tools_json_schemas(
+                [format_tool],
+            )
+            kwargs["tool_choice"] = self._format_tool_choice(
+                format_tool["function"]["name"],
+            )
+
         # Extract the system message
         if messages[0]["role"] == "system":
             kwargs["system"] = messages[0]["content"]
@@ -179,12 +217,14 @@ class AnthropicChatModel(ChatModelBase):
             return self._parse_anthropic_stream_completion_response(
                 start_datetime,
                 response,
+                structured_model,
             )
 
         # Non-streaming response
         parsed_response = await self._parse_anthropic_completion_response(
             start_datetime,
             response,
+            structured_model,
         )
 
         return parsed_response
@@ -193,10 +233,30 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: Message,
+        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
-        """Parse the Anthropic chat completion response into a `ChatResponse`
-        object."""
+        """Given an Anthropic Message object, extract the content blocks and
+        usages from it.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`Message`):
+                Anthropic Message object to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+        Returns:
+            ChatResponse (`ChatResponse`):
+                A ChatResponse object containing the content blocks and usage.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
+        """
         content_blocks: List[ThinkingBlock | TextBlock | ToolUseBlock] = []
+        metadata = None
 
         if hasattr(response, "content") and response.content:
             for content_block in response.content:
@@ -231,6 +291,8 @@ class AnthropicChatModel(ChatModelBase):
                             input=content_block.input,
                         ),
                     )
+                    if structured_model:
+                        metadata = content_block.input
 
         usage = None
         if response.usage:
@@ -243,6 +305,7 @@ class AnthropicChatModel(ChatModelBase):
         parsed_response = ChatResponse(
             content=content_blocks,
             usage=usage,
+            metadata=metadata,
         )
 
         return parsed_response
@@ -251,9 +314,30 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncStream,
+        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the Anthropic chat completion response stream into an async
-        generator of `ChatResponse` objects."""
+        """Given an Anthropic streaming response, extract the content blocks
+        and usages from it and yield ChatResponse objects.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`AsyncStream`):
+                Anthropic AsyncStream object to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+        Returns:
+            `AsyncGenerator[ChatResponse, None]`:
+                An async generator that yields ChatResponse objects containing
+                the content blocks and usage information for each chunk in
+                the streaming response.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
+        """
 
         usage = None
         text_buffer = ""
@@ -262,6 +346,7 @@ class AnthropicChatModel(ChatModelBase):
         tool_calls = OrderedDict()
         tool_call_buffers = {}
         res = None
+        metadata = None
 
         async for event in response:
             content_changed = False
@@ -352,10 +437,13 @@ class AnthropicChatModel(ChatModelBase):
                             input=input_obj,
                         ),
                     )
+                    if structured_model:
+                        metadata = input_obj
                 if contents:
                     res = ChatResponse(
                         content=contents,
                         usage=usage,
+                        metadata=metadata,
                     )
                     yield res
 

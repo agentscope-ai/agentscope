@@ -8,12 +8,16 @@ from typing import (
     List,
     AsyncGenerator,
     Literal,
+    Type,
 )
 from collections import OrderedDict
+
+from pydantic import BaseModel
 
 from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
+from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import ToolUseBlock, TextBlock, ThinkingBlock
 from ..tracing import trace_llm
@@ -88,6 +92,7 @@ class OpenAIChatModel(ChatModelBase):
         tool_choice: Literal["auto", "none", "any", "required"]
         | str
         | None = None,
+        structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from OpenAI chat completions API by the given
@@ -105,6 +110,22 @@ class OpenAIChatModel(ChatModelBase):
                  Can be "auto", "none", "any", "required", or specific tool
                  name. For more details, please refer to
                  https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output. When provided, the model will be forced
+                to return data that conforms to this schema by automatically
+                converting the BaseModel to a tool function and setting
+                `tool_choice` to enforce its usage. This enables structured
+                output generation.
+
+                .. note:: When `structured_model` is specified,
+                    both `tools` and `tool_choice` parameters are ignored,
+                    and the model will only perform structured output
+                    generation without calling any other tools.
+
+                For more details, please refer to the `official document
+                <https://platform.openai.com/docs/guides/structured-outputs>`_
+
             **kwargs (`Any`):
                 The keyword arguments for OpenAI chat completions API,
                 e.g. `temperature`, `max_tokens`, `top_p`, etc. Please
@@ -148,54 +169,106 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["stream_options"] = {"include_usage": True}
 
         start_datetime = datetime.now()
-        response = await self.client.chat.completions.create(**kwargs)
+
+        if structured_model:
+            if tools or tool_choice:
+                logger.warning(
+                    "structured_model is provided. Both 'tools' and "
+                    "'tool_choice' parameters will be overridden and "
+                    "ignored. The model will only perform structured output "
+                    "generation without calling any other tools.",
+                )
+            kwargs.pop("stream", None)
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
+            kwargs["response_format"] = structured_model
+            if not self.stream:
+                response = await self.client.chat.completions.parse(**kwargs)
+            else:
+                response = self.client.chat.completions.stream(**kwargs)
+                return self._parse_openai_stream_response(
+                    start_datetime,
+                    response,
+                    structured_model,
+                )
+        else:
+            response = await self.client.chat.completions.create(**kwargs)
 
         if self.stream:
-            return self._parse_openai_stream_completion_response(
+            return self._parse_openai_stream_response(
                 start_datetime,
                 response,
+                structured_model,
             )
 
         # Non-streaming response
         parsed_response = self._parse_openai_completion_response(
             start_datetime,
             response,
+            structured_model,
         )
 
         return parsed_response
 
-    async def _parse_openai_stream_completion_response(
+    async def _parse_openai_stream_response(
         self,
         start_datetime: datetime,
         response: AsyncStream,
+        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the OpenAI chat completion response stream into an async
-        generator of `ChatResponse` objects."""
+        """Given an OpenAI streaming completion response, extract the content
+         blocks and usages from it and yield ChatResponse objects.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`AsyncStream`):
+                OpenAI AsyncStream object to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+        Returns:
+            `AsyncGenerator[ChatResponse, None]`:
+                An async generator that yields ChatResponse objects containing
+                the content blocks and usage information for each chunk in
+                the streaming response.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
+        """
         usage, res = None, None
         text = ""
         thinking = ""
         tool_calls = OrderedDict()
-        async for chunk in response:
-            if chunk.usage:
-                usage = ChatUsage(
-                    input_tokens=chunk.usage.prompt_tokens,
-                    output_tokens=chunk.usage.completion_tokens,
-                    time=(datetime.now() - start_datetime).total_seconds(),
-                )
+        metadata = None
 
-            if chunk.choices:
-                choice = chunk.choices[0]
-                if (
-                    hasattr(choice.delta, "reasoning_content")
-                    and choice.delta.reasoning_content is not None
-                ):
-                    thinking += choice.delta.reasoning_content
+        async with response as stream:
+            async for item in stream:
+                if structured_model:
+                    if item.type != "chunk":
+                        continue
+                    chunk = item.chunk
+                else:
+                    chunk = item
 
-                if choice.delta.content:
-                    text += choice.delta.content
+                if chunk.usage:
+                    usage = ChatUsage(
+                        input_tokens=chunk.usage.prompt_tokens,
+                        output_tokens=chunk.usage.completion_tokens,
+                        time=(datetime.now() - start_datetime).total_seconds(),
+                    )
 
-                if choice.delta.tool_calls:
-                    for tool_call in choice.delta.tool_calls:
+                if chunk.choices:
+                    choice = chunk.choices[0]
+
+                    thinking += (
+                        getattr(choice.delta, "reasoning_content", None) or ""
+                    )
+                    text += choice.delta.content or ""
+
+                    for tool_call in choice.delta.tool_calls or []:
                         if tool_call.index in tool_calls:
                             if tool_call.function.arguments is not None:
                                 tool_calls[tool_call.index][
@@ -210,25 +283,29 @@ class OpenAIChatModel(ChatModelBase):
                                 "input": tool_call.function.arguments or "",
                             }
 
-                contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+                    contents: List[
+                        TextBlock | ToolUseBlock | ThinkingBlock
+                    ] = []
 
-                if thinking:
-                    contents.append(
-                        ThinkingBlock(
-                            type="thinking",
-                            thinking=thinking,
-                        ),
-                    )
+                    if thinking:
+                        contents.append(
+                            ThinkingBlock(
+                                type="thinking",
+                                thinking=thinking,
+                            ),
+                        )
 
-                if text:
-                    contents.append(
-                        TextBlock(
-                            type="text",
-                            text=text,
-                        ),
-                    )
+                    if text:
+                        contents.append(
+                            TextBlock(
+                                type="text",
+                                text=text,
+                            ),
+                        )
 
-                if tool_calls:
+                        if structured_model:
+                            metadata = _json_loads_with_repair(text)
+
                     for tool_call in tool_calls.values():
                         contents.append(
                             ToolUseBlock(
@@ -241,33 +318,42 @@ class OpenAIChatModel(ChatModelBase):
                             ),
                         )
 
-                if contents:
-                    res = ChatResponse(
-                        content=contents,
-                        usage=usage,
-                    )
-                    yield res
+                    if contents:
+                        res = ChatResponse(
+                            content=contents,
+                            usage=usage,
+                            metadata=metadata,
+                        )
+                        yield res
 
     def _parse_openai_completion_response(
         self,
         start_datetime: datetime,
         response: ChatCompletion,
+        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
-        """Parse the OpenAI chat completion response into a `ChatResponse`
-        object.
+        """Given an OpenAI chat completion response object, extract the content
+            blocks and usages from it.
 
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (`ChatCompletion`):
-                The OpenAI chat completion response object to parse.
+                OpenAI ChatCompletion object to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
 
         Returns:
-            `Tuple[List[TextBlock | ToolUseBlock] | None, ChatUsage | None]`:
-                The content blocks and usage information extracted from the
-                response.
+            ChatResponse (`ChatResponse`):
+                A ChatResponse object containing the content blocks and usage.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
         """
         content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        metadata = None
 
         if response.choices:
             choice = response.choices[0]
@@ -290,18 +376,20 @@ class OpenAIChatModel(ChatModelBase):
                     ),
                 )
 
-            if choice.message.tool_calls:
-                for tool_call in choice.message.tool_calls:
-                    content_blocks.append(
-                        ToolUseBlock(
-                            type="tool_use",
-                            id=tool_call.id,
-                            name=tool_call.function.name,
-                            input=_json_loads_with_repair(
-                                tool_call.function.arguments,
-                            ),
+            for tool_call in choice.message.tool_calls or []:
+                content_blocks.append(
+                    ToolUseBlock(
+                        type="tool_use",
+                        id=tool_call.id,
+                        name=tool_call.function.name,
+                        input=_json_loads_with_repair(
+                            tool_call.function.arguments,
                         ),
-                    )
+                    ),
+                )
+
+            if structured_model:
+                metadata = choice.message.parsed.model_dump()
 
         usage = None
         if response.usage:
@@ -314,6 +402,7 @@ class OpenAIChatModel(ChatModelBase):
         parsed_response = ChatResponse(
             content=content_blocks,
             usage=usage,
+            metadata=metadata,
         )
 
         return parsed_response

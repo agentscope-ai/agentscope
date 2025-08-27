@@ -21,9 +21,9 @@ jobs:
     - name: Update setuptools
       run: |
         pip install setuptools==78.1.1 wheel==0.45.1
-    - name: Install Full Dependencies
+    - name: Install Dev Dependencies
       run: |
-        pip install -q -e .[full]
+        pip install -q -e .[dev]
         pip install coverage pytest
     - name: Run tests with coverage
       run: |

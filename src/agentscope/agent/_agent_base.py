@@ -4,11 +4,12 @@ import asyncio
 import json
 from asyncio import Task
 from collections import OrderedDict
-from typing import Callable, Any, Sequence
+from typing import Callable, Any
 
 import shortuuid
 
 from ._agent_meta import _AgentMeta
+from .._logging import logger
 from ..module import StateModule
 from ..message import Msg
 from ..types import AgentHookTypes
@@ -148,8 +149,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         self._stream_prefix = {}
 
         # The subscribers that will receive the reply message by their
-        # `observe` method.
-        self._subscribers: list[AgentBase] = []
+        # `observe` method. The key is the MsgHub id, and the value is the
+        # list of agents.
+        self._subscribers: dict[str, list[AgentBase]] = {}
 
         # We add this variable in case developers want to disable the console
         # output of the agent, e.g., in a production environment.
@@ -232,6 +234,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             self._reply_task = asyncio.current_task()
             reply_msg = await self.reply(*args, **kwargs)
 
+        # The interruption is triggered by calling the interrupt method
         except asyncio.CancelledError:
             reply_msg = await self.handle_interrupt(*args, **kwargs)
 
@@ -248,8 +251,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         msg: Msg | list[Msg] | None,
     ) -> None:
         """Broadcast the message to all subscribers."""
-        for subscriber in self._subscribers:
-            await subscriber.observe(msg)
+        for subscribers in self._subscribers.values():
+            for subscriber in subscribers:
+                await subscriber.observe(msg)
 
     async def handle_interrupt(
         self,
@@ -436,15 +440,36 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             hooks = getattr(self, f"_instance_{hook_type}_hooks")
             hooks.clear()
 
-    def reset_subscribers(self, subscribers: Sequence["AgentBase"]) -> None:
+    def reset_subscribers(
+        self,
+        msghub_name: str,
+        subscribers: list["AgentBase"],
+    ) -> None:
         """Reset the subscribers of the agent.
 
         Args:
+            msghub_name (`str`):
+                The name of the MsgHub that manages the subscribers.
             subscribers (`list[AgentBase]`):
                 A list of agents that will receive the reply message from
                 this agent via their `observe` method.
         """
-        self._subscribers = [_ for _ in subscribers if _ != self]
+        self._subscribers[msghub_name] = [_ for _ in subscribers if _ != self]
+
+    def remove_subscribers(self, msghub_name: str) -> None:
+        """Remove the msghub subscribers by the given msg hub name.
+
+        Args:
+            msghub_name (`str`):
+                The name of the MsgHub that manages the subscribers.
+        """
+        if msghub_name not in self._subscribers:
+            logger.warning(
+                "MsgHub named '%s' not found",
+                msghub_name,
+            )
+        else:
+            self._subscribers.pop(msghub_name)
 
     def disable_console_output(self) -> None:
         """This function will disable the console output of the agent, e.g.
