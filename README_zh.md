@@ -157,7 +157,9 @@ pip install -e .
 pip install agentscope
 ```
 
-## 👋 Hello AgentScope！
+## 样例
+
+### 👋 Hello AgentScope！
 
 使用 AgentScope 显式地创建一个名为“Friday”的助手🤖，并与之对话。
 
@@ -200,7 +202,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## 🎯 实时介入
+### 🎯 实时介入
 
 在 ``ReActAgent`` 中原生支持**实时介入**功能，提供面向打断的记忆处理机制，将中断转换为智能体的**可观察事件**，让智能体能够无缝恢复对话。
 
@@ -209,7 +211,7 @@ asyncio.run(main())
   <img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="49%"/>
 </p>
 
-## 🛠️ 细粒度 MCP 控制
+### 🛠️ 细粒度 MCP 控制
 
 开发者能够以**本地可调用函数**的方式获得 MCP 工具，并以任意方式使用（例如直接调用、装备给智能体，或将其包装为更复杂的工具等）
 
@@ -241,7 +243,7 @@ async def fine_grained_mcp_control():
     # ...
 ```
 
-## 🧑‍🤝‍🧑 多智能体对话
+### 🧑‍🤝‍🧑 多智能体对话
 
 AgentScope 提供 ``MsgHub`` 和多种 pipeline 来简化多智能体对话的构建，提供高效的消息路由和无缝信息共享
 
@@ -273,7 +275,7 @@ asyncio.run(multi_agent_conversation())
 ```
 
 
-## 💻 AgentScope Studio
+### 💻 AgentScope Studio
 
 使用以下命令安装并启动 AgentScope Studio，以追踪和可视化基于 AgentScope 构建的智能体应用。
 

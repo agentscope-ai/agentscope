@@ -89,12 +89,11 @@ async def create_player(role: str) -> ReActAgent:
 async def main() -> None:
     """The main entry of the werewolf game"""
     # Enable studio if you want
-    import agentscope
-
-    agentscope.init(
-        studio_url="http://localhost:3000",
-        project="Werewolf Game",
-    )
+    # import agentscope
+    # agentscope.init(
+    #     studio_url="http://localhost:3000",
+    #     project="Werewolf Game",
+    # )
     global healing, poison, villagers, werewolves, seer, witch, hunter
     global current_alive
     # Create players

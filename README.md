@@ -156,7 +156,9 @@ pip install -e .
 pip install agentscope
 ```
 
-## 👋 Hello AgentScope!
+## Example
+
+### 👋 Hello AgentScope!
 
 Start with a conversation between user and a ReAct agent 🤖 named "Friday"!
 
@@ -199,7 +201,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## 🎯 Realtime Steering
+### 🎯 Realtime Steering
 
 Natively support **realtime interruption** in ``ReActAgent`` with robust memory preservation, and convert interruption into an **observable event** for agent to seamlessly resume conversations.
 
@@ -240,7 +242,7 @@ async def fine_grained_mcp_control():
     # ...
 ```
 
-## 🧑‍🤝‍🧑 Multi-Agent Conversation
+### 🧑‍🤝‍🧑 Multi-Agent Conversation
 
 AgentScope provides ``MsgHub`` and pipelines to streamline multi-agent conversations, offering efficient message routing and seamless information sharing
 
@@ -271,7 +273,7 @@ async def multi_agent_conversation():
 asyncio.run(multi_agent_conversation())
 ```
 
-## 💻 AgentScope Studio
+### 💻 AgentScope Studio
 
 Use the following command to install and start AgentScope Studio, to trace and visualize your agent application.
 
