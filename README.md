@@ -115,6 +115,22 @@ Welcome to join our community on
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## 📑 Table of Contents
+
+- [🚀 Quickstart](#-quickstart)
+  - [💻 Installation](#-installation)
+    - [🛠️ From source](#-from-source)
+    - [📦 From PyPi](#-from-pypi)
+- [👋 Hello AgentScope!](#-hello-agentscope)
+- [🎯 Realtime Steering](#-realtime-steering)
+- [🛠️ Fine-Grained MCP Control](#-fine-grained-mcp-control)
+- [🧑‍🤝‍🧑 Multi-Agent Conversation](#-multi-agent-conversation)
+- [💻 AgentScope Studio](#-agentscope-studio)
+- [📖 Documentation](#-documentation)
+- [⚖️ License](#-license)
+- [📚 Publications](#-publications)
+- [✨ Contributors](#-contributors)
+
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## 🚀 Quickstart

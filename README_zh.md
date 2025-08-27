@@ -116,6 +116,22 @@ AgentScope v1.0 新功能概览:
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## 📑 Table of Contents
+
+- [🚀 快速开始](#-%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B)
+  - [💻 安装](#-%E5%AE%89%E8%A3%85)
+    - [🛠️ 从源码安装](#-%E4%BB%8E%E6%BA%90%E7%A0%81%E5%AE%89%E8%A3%85)
+    - [📦 从PyPi安装](#-%E4%BB%8Epypi%E5%AE%89%E8%A3%85)
+- [👋 Hello AgentScope！](#-hello-agentscope)
+- [🎯 实时介入](#-%E5%AE%9E%E6%97%B6%E4%BB%8B%E5%85%A5)
+- [🛠️ 细粒度 MCP 控制](#-%E7%BB%86%E7%B2%92%E5%BA%A6-mcp-%E6%8E%A7%E5%88%B6)
+- [🧑‍🤝‍🧑 多智能体对话](#-%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E5%AF%B9%E8%AF%9D)
+- [💻 AgentScope Studio](#-agentscope-studio)
+- [📖 文档](#-%E6%96%87%E6%A1%A3)
+- [⚖️ 许可](#-%E8%AE%B8%E5%8F%AF)
+- [📚 论文](#-%E8%AE%BA%E6%96%87)
+- [✨ 贡献者](#-%E8%B4%A1%E7%8C%AE%E8%80%85)
+
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## 🚀 快速开始
