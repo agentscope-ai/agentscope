@@ -158,7 +158,7 @@ pip install -e .
 pip install agentscope
 ```
 
-## 样例
+## 📝 样例
 
 ### 👋 Hello AgentScope！
 
