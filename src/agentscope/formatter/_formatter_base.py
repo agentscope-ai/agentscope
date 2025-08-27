@@ -35,13 +35,13 @@ class FormatterBase:
 
     @staticmethod
     def convert_tool_result_to_string(
-        output: List[TextBlock | ImageBlock | AudioBlock],
+        output: str | List[TextBlock | ImageBlock | AudioBlock],
     ) -> str:
         """Turn the tool result list into a textual output to be compatible
         with the LLM API that doesn't support multimodal data.
 
         Args:
-            output (`List[TextBlock | ImageBlock | AudioBlock]`):
+            output (`str | List[TextBlock | ImageBlock | AudioBlock]`):
                 The output of the tool response, including text and multimodal
                 data like images and audio.
 
@@ -51,6 +51,9 @@ class FormatterBase:
                 concatenated and multimodal data represented by file paths
                 or URLs.
         """
+
+        if isinstance(output, str):
+            return output
 
         textual_output = []
         for block in output:

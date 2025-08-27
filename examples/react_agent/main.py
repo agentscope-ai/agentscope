@@ -35,7 +35,7 @@ async def main() -> None:
         toolkit=toolkit,
         memory=InMemoryMemory(),
     )
-    user = UserAgent("Bob")
+    user = UserAgent("User")
 
     msg = None
     while True:

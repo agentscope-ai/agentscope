@@ -482,7 +482,6 @@ class ReActAgent(ReActAgentBase):
 
         await self.print(response_msg, True)
         await self.memory.add(response_msg)
-        await self.memory.clear()
         return response_msg
 
     def generate_response(

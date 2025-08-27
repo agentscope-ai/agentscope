@@ -1,8 +1,14 @@
-# 🐺⚔️👨‍🌾 Werewolf Game Powered by AgentScope
+# 🐺⚔️👨‍🌾 Nine-Player Werewolves Game
 
-This is a 9-players werewolf game example built using AgentScope, showcasing **multi-agent interactions**,
+This is a nine-players werewolves game example built using AgentScope, showcasing **multi-agent interactions**,
 **role-based gameplay**, and **structured output handling**.
-Specifically, this game is consisted of three villagers, three werewolves, one seer, one witch and one hunter.
+Specifically, this game is consisted of
+
+- three villagers 👨‍🌾,
+- three werewolves 🐺,
+- one seer 🔮,
+- one witch 🧙‍♀️ and
+- one hunter 🏹.
 
 ## QuickStart
 
@@ -18,11 +24,11 @@ python main.py
 
 Running the example with AgentScope Studio provides a more interactive experience.
 
-- Demo Video in Chinese:
+- Demo Video in Chinese (click to play):
 
 [![Werewolf Game in Chinese](https://img.alicdn.com/imgextra/i3/6000000007235/O1CN011pK6Be23JgcdLWmLX_!!6000000007235-0-tbvideo.jpg)](https://cloud.video.taobao.com/vod/KxyR66_CWaWwu76OPTvOV2Ye1Gas3i5p4molJtzhn_s.mp4)
 
-- Demo Video in English:
+- Demo Video in English (click to play):
 
 [![Werewolf Game in English](https://img.alicdn.com/imgextra/i3/6000000007389/O1CN011alyGK24SDcFBzHea_!!6000000007389-0-tbvideo.jpg)](https://cloud.video.taobao.com/vod/bMiRTfxPg2vm76wEoaIP2eJfkCi8CUExHRas-1LyK1I.mp4)
 
