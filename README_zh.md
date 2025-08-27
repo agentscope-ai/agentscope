@@ -122,7 +122,7 @@ AgentScope v1.0 新功能概览:
   - [💻 安装](#-%E5%AE%89%E8%A3%85)
     - [🛠️ 从源码安装](#-%E4%BB%8E%E6%BA%90%E7%A0%81%E5%AE%89%E8%A3%85)
     - [📦 从PyPi安装](#-%E4%BB%8Epypi%E5%AE%89%E8%A3%85)
-- [样例](#%E6%A0%B7%E4%BE%8B)
+- [📝 样例](#-%E6%A0%B7%E4%BE%8B)
   - [👋 Hello AgentScope！](#-hello-agentscope)
   - [🎯 实时介入](#-%E5%AE%9E%E6%97%B6%E4%BB%8B%E5%85%A5)
   - [🛠️ 细粒度 MCP 控制](#-%E7%BB%86%E7%B2%92%E5%BA%A6-mcp-%E6%8E%A7%E5%88%B6)
