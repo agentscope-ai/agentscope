@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Deep Research Agent"""
-# pylint: disable=too-many-lines
+# pylint: disable=too-many-lines, no-name-in-module
 import os
 import json
 import asyncio
