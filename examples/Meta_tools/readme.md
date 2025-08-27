@@ -13,7 +13,7 @@ In the native AgentScope framework, the `Toolkit` exposes all active tools direc
 ## Our Solution: Three-Layer Meta Tools Architecture
 
 Meta Tools organizes tools into functional categories and applies intelligent selection within each category.
-From the main agent’s perspective, only high-level categories are visible — the actual tools are selected internally.
+From the main agent's perspective, only high-level categories are visible — the actual tools are selected internally.
 
 ```
 ┌─────────────────────────┐
@@ -34,7 +34,7 @@ From the main agent’s perspective, only high-level categories are visible — 
 - **Reduced Context Length**: Main agent only sees category-level abstractions, not individual tools
 - **Improved Selection Accuracy**: Specialized prompts and focused tool sets enhance selection precision
 - **Scalable Architecture**: System performance remains stable as tool count increases
-- **Agent-Level Decoupling**: Separates detailed tool selection from the agent, enabling focus on task decomposition and state monitoring  
+- **Agent-Level Decoupling**: Separates detailed tool selection from the agent, enabling focus on task decomposition and state monitoring
 
 ## How to Run This Example
 
@@ -61,9 +61,9 @@ Update your sse API keys in your environment variable.
    python example.py
    ```
 
-The system automatically constructs the Meta Tool System based on the categories and tool descriptions defined in `Meta_tool_config.json`, and launches an interactive agent named Friday to assist you with various tasks across three main categories: Information Retrieval, Programming & Tech Support, and Location & Navigation. 
-For example, you can try a prompt like:  
-`I'm going to drive from West Lake in Hangzhou to Zhoushan. Please give me the driving route and a travel guide for Zhoushan.`  
+The system automatically constructs the Meta Tool System based on the categories and tool descriptions defined in `Meta_tool_config.json`, and launches an interactive agent named Friday to assist you with various tasks across three main categories: Information Retrieval, Programming & Tech Support, and Location & Navigation.
+For example, you can try a prompt like:
+`I'm going to drive from West Lake in Hangzhou to Zhoushan. Please give me the driving route and a travel guide for Zhoushan.`
 
 
 ## Key Features
@@ -78,7 +78,7 @@ From the external agent's perspective, each `CategoryManager` appears as a stand
         "name": "<category_name>",
         "description": "<category_description> This category automatically selects and operates the most appropriate tool based on your objective and input.",
         "parameters": {
-            "type": "object", 
+            "type": "object",
             "properties": {
                 "objective": {
                     "type": "string",
@@ -95,13 +95,13 @@ From the external agent's perspective, each `CategoryManager` appears as a stand
 }
 ```
 
-From the main agent’s perspective, it only needs to call the corresponding high-level category tool and provide the `objective` and `exact_input` parameters to receive a complete and detailed execution flow along with a summary—without having to worry about which specific Level 1 tools were executed behind the scenes.
+From the main agent's perspective, it only needs to call the corresponding high-level category tool and provide the `objective` and `exact_input` parameters to receive a complete and detailed execution flow along with a summary—without having to worry about which specific Level 1 tools were executed behind the scenes.
 
 ### 2. Intelligent Multi-Round Execution
 
-* **Select → Execute → Evaluate → Continue/Summarize**: Each category starts by selecting the most suitable tool, executes it, evaluates the result, and decides whether to proceed with further actions or produce a final summary  
-* **Isolated in-category memory context**: Maintains a dedicated memory space for each category, preserving execution history and reasoning steps without polluting the main agent’s context  
-* **Automatic recovery on failure with fallback tools**: If a selected tool fails, the system automatically retries with alternative tools and adjusted parameters to ensure task completion  
+* **Select → Execute → Evaluate → Continue/Summarize**: Each category starts by selecting the most suitable tool, executes it, evaluates the result, and decides whether to proceed with further actions or produce a final summary
+* **Isolated in-category memory context**: Maintains a dedicated memory space for each category, preserving execution history and reasoning steps without polluting the main agent's context
+* **Automatic recovery on failure with fallback tools**: If a selected tool fails, the system automatically retries with alternative tools and adjusted parameters to ensure task completion
 
 ### 3. Configuration-Driven Setup
 Once tools are added to the global toolkit, they are grouped into meta categories via `Meta_tool_config.json`:
@@ -127,8 +127,8 @@ The Meta Tool system includes robust countermeasures for all potential issues it
 
 ## Advanced Customization
 
-* **Custom Categories**: Edit `Meta_tool_config.json` to create new functional domains or reorganize existing tools into different categories  
-* **Custom Prompts**: Modify the selection, evaluation, and summary templates in `meta_tool_prompts/` to adapt reasoning behavior for specific domains or workflows  
-* **New Tools**: Integrate additional MCP services, built-in AgentScope tools, or custom local functions, and assign them to the most relevant categories for seamless integration  
+* **Custom Categories**: Edit `Meta_tool_config.json` to create new functional domains or reorganize existing tools into different categories
+* **Custom Prompts**: Modify the selection, evaluation, and summary templates in `meta_tool_prompts/` to adapt reasoning behavior for specific domains or workflows
+* **New Tools**: Integrate additional MCP services, built-in AgentScope tools, or custom local functions, and assign them to the most relevant categories for seamless integration
 
-You can freely integrate multiple custom tools into the system, organize them into your own Meta Tool categories, and tailor the workflow to your needs—give it a try and explore the possibilities!  
+You can freely integrate multiple custom tools into the system, organize them into your own Meta Tool categories, and tailor the workflow to your needs—give it a try and explore the possibilities!

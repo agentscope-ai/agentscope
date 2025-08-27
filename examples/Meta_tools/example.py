@@ -1,40 +1,51 @@
+# -*- coding: utf-8 -*-
+"""
+Example script demonstrating the use of Meta tools with AgentScope.
+
+This module shows how to initialize and use a MetaManager to organize tools
+into categories and use them with ReActAgent for conversational interactions.
+"""
+
 import asyncio
 import contextlib
 import json
 import os
 
+from Meta_toolkit import CategoryManager, MetaManager
+
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
-from agentscope.mcp import StdIOStatefulClient, HttpStatefulClient
+from agentscope.mcp import HttpStatefulClient
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit, execute_python_code, execute_shell_command
-
-from Meta_toolkit import CategoryManager, MetaManager
 
 gaode_api_key = os.environ["GAODE_API_KEY"]
 bing_api_key = os.environ["BING_API_KEY"]
 train_api_key = os.environ["TRAIN_API_KEY"]
 dashscope_api_key = os.environ["DASHSCOPE_API_KEY"]
 
+
 def init_meta_tool_from_intact_file(
     model_config_name: str,
     file_path: str = "Meta_tool_config.json",
     global_toolkit: Toolkit = None,
-):
+) -> MetaManager:
     """
     Initialize a meta manager from a complete tool configuration file.
 
     All tools from the global toolkit are added to their respective category
     managers, inheriting group information from the global toolkit. Within each
-    category manager, only tools whose groups are marked as active in the global
-    toolkit are visible, following the same visibility mechanism as in
+    category manager, only tools whose groups are marked as active in the
+    global
+    toolkit are visible, following the same visibility mechanism as
+    in
     AgentScope.
     """
 
     current_dir = os.path.dirname(os.path.realpath(__file__))
     meta_tool_config_path = os.path.join(current_dir, file_path)
-    with open(meta_tool_config_path, "r") as f:
+    with open(meta_tool_config_path, "r", encoding="utf-8") as f:
         meta_tool_config = json.load(f)
 
     meta_manager = MetaManager()
@@ -78,14 +89,17 @@ def init_meta_tool_from_intact_file(
     return meta_manager
 
 
-async def main():
+async def main() -> None:
+    """Main function to demonstrate Meta tools usage."""
     # Create global toolkit with your tools
     toolkit = Toolkit()
     toolkit.register_tool_function(execute_python_code)
     toolkit.register_tool_function(execute_shell_command)
 
     toolkit.create_tool_group(
-        "map_tools", "Tools related to Gaode map", active=True
+        "map_tools",
+        "Tools related to Gaode map",
+        active=True,
     )
     # If a group's 'active' flag is set to False, its tools will be registered
     # to toolkit but remain hidden
@@ -111,7 +125,8 @@ async def main():
     try:
         await gaode_client.connect()
         await toolkit.register_mcp_client(
-            gaode_client, group_name="map_tools"
+            gaode_client,
+            group_name="map_tools",
         )
         print("Gaode MCP client connected successfully")
 
@@ -122,7 +137,6 @@ async def main():
         await train_client.connect()
         await toolkit.register_mcp_client(train_client)
         print("12306 MCP client connected successfully")
-
 
         # Initialize meta manager from configuration
         meta_manager = init_meta_tool_from_intact_file(
