@@ -6,9 +6,10 @@ import re
 import uuid
 import os
 import json
-from typing import Optional
+from typing import Type, Optional, Any
 import asyncio
 import base64
+from pydantic import BaseModel, ValidationError
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import FormatterBase
@@ -152,6 +153,7 @@ class BrowserAgent(ReActAgent):
         self.iter_n = 0
         self.finish_function_name = "browser_generate_final_response"
         self.init_query = ""
+        self._required_structured_model: Type[BaseModel] | None = None
 
         self.toolkit.register_tool_function(self.browser_subtask_manager)
         self.toolkit.register_tool_function(
@@ -173,13 +175,18 @@ class BrowserAgent(ReActAgent):
     async def reply(
         self,
         msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """
         Process a message and return a response.
 
         Args:
-            msg (Msg | list[Msg] | None): The input message(s) to process.
-            **kwargs (Any): Additional keyword arguments.
+            msg (`Msg | list[Msg] | None`, optional):
+                The input message(s) to the agent.
+            structured_model (`Type[BaseModel] | None`, optional):
+                The required structured output model. If provided, the agent
+                is expected to generate structured output in the `metadata`
+                field of the output message.
 
         Returns:
             Msg: The response message.
@@ -197,7 +204,13 @@ class BrowserAgent(ReActAgent):
         msg = await self._task_decomposition_and_reformat(msg)
         # original reply function
         await self.memory.add(msg)
-
+        self._required_structured_model = structured_model
+        # Record structured output model if provided
+        if structured_model:
+            self.toolkit.set_extended_model(
+                self.finish_function_name,
+                structured_model,
+            )
         # The reasoning-acting loop
         reply_msg = None
         for iter_n in range(self.max_iters):
@@ -930,6 +943,7 @@ class BrowserAgent(ReActAgent):
 
     async def browser_generate_final_response(
         self,
+        **kwargs: Any,
     ) -> ToolResponse:
         """Generate a response when the agent has completed all subtasks."""
         hint_msg = Msg(
@@ -975,6 +989,29 @@ class BrowserAgent(ReActAgent):
 
             res_msg.content = summary_text
             await self.print(res_msg, True)
+            if self._required_structured_model:
+                try:
+                    # Use the metadata field of the message to store the
+                    # structured output
+                    res_msg.metadata = (
+                        self._required_structured_model.model_validate(
+                            kwargs,
+                        ).model_dump()
+                    )
+
+                except ValidationError as e:
+                    return ToolResponse(
+                        content=[
+                            TextBlock(
+                                type="text",
+                                text=f"Arguments Validation Error: {e}",
+                            ),
+                        ],
+                        metadata={
+                            "success": False,
+                            "response_msg": None,
+                        },
+                    )
 
             return ToolResponse(
                 content=[

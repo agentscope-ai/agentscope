@@ -3,6 +3,7 @@
 import asyncio
 import os
 import traceback
+from pydantic import BaseModel, Field
 from browser_agent import BrowserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
@@ -10,6 +11,14 @@ from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 from agentscope.mcp import StdIOStatefulClient
 from agentscope.agent import UserAgent
+
+
+class FinalResult(BaseModel):
+    """A simple number result model for structured output."""
+
+    result: str = Field(
+        description="The final result to the initial user query",
+    )
 
 
 async def main() -> None:
@@ -48,7 +57,7 @@ async def main() -> None:
             msg = await user(msg)
             if msg.get_text_content() == "exit":
                 break
-            msg = await agent(msg)
+            msg = await agent(msg, structured_model=FinalResult)
 
     except Exception as e:
         traceback.print_exc()
