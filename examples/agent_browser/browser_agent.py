@@ -981,14 +981,6 @@ class BrowserAgent(ReActAgent):
 
             res_msg.content = summary_text
             await self.print(res_msg, True)
-            if self.model.stream:
-                async for content_chunk in res:
-                    summary_text = content_chunk.content[0]["text"]
-            else:
-                summary_text = res.content[0]["text"]
-
-            res_msg.content = summary_text
-            await self.print(res_msg, True)
             if self._required_structured_model:
                 try:
                     # Use the metadata field of the message to store the

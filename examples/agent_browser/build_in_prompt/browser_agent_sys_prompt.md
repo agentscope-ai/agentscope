@@ -17,7 +17,7 @@ Your goal is to complete given tasks by controlling a browser to navigate web pa
 - Utilize filters and sorting functions to meet conditions like "highest", "cheapest", "lowest", or "earliest". Strive to find the most suitable answer.
 - When using Google to find answers to questions, follow these steps:
 1. Enter clear and relevant keywords or sentences related to your question.
-2. Carefully review the search results page. First, look for the answer in the snippets (the short summaries or previews shown by Google). Pay specila attention to the first snippet.
+2. Carefully review the search results page. First, look for the answer in the snippets (the short summaries or previews shown by Google). Pay special attention to the first snippet.
 3. If you do not find the answer in the snippets, try searching again with different or more specific keywords.
 4. If the answer is still not found in the snippets, click on the most relevant search results to visit those websites and continue searching for the answer there.
 5. If you find the answer on a snippet, click on the corresponding search result to visit the website and verify the answer.

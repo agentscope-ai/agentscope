@@ -4,14 +4,13 @@ import asyncio
 import os
 import traceback
 from pydantic import BaseModel, Field
-from browser_agent import BrowserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 from agentscope.mcp import StdIOStatefulClient
 from agentscope.agent import UserAgent
-
+from browser_agent import BrowserAgent
 
 class FinalResult(BaseModel):
     """A simple number result model for structured output."""
