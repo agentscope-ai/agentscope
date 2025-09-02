@@ -126,15 +126,6 @@ class BrowserAgent(ReActAgent):
         Returns:
             None
         """
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model=model,
-            formatter=formatter,
-            memory=memory,
-            toolkit=toolkit,
-            max_iters=max_iters,
-        )
 
         self.start_url = start_url
         self._has_initial_navigated = False
@@ -155,6 +146,15 @@ class BrowserAgent(ReActAgent):
         self.init_query = ""
         self._required_structured_model: Type[BaseModel] | None = None
 
+        super().__init__(
+            name=name,
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=formatter,
+            memory=memory,
+            toolkit=toolkit,
+            max_iters=max_iters,
+        )
         self.toolkit.register_tool_function(self.browser_subtask_manager)
         self.toolkit.register_tool_function(
             self.browser_generate_final_response,
