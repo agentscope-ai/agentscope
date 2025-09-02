@@ -332,7 +332,7 @@ class DeepResearchAgent(ReActAgent):
                 # Summarize intermediate results into a draft report
                 elif tool_call["name"] == self.summarize_function:
                     self.intermediate_memory = []
-                    self.memory.add(
+                    await self.memory.add(
                         Msg(
                             "assistant",
                             [
@@ -1054,10 +1054,10 @@ class DeepResearchAgent(ReActAgent):
             ],
         )
 
-    # pylint: disable=invalid-overridden-method
+    # pylint: disable=invalid-overridden-method, unused-argument
     async def generate_response(  #
         self,
-        _response: str,
+        response: str,
         **_kwargs: Any,
     ) -> ToolResponse:
         """Generate a detailed report as a response.
