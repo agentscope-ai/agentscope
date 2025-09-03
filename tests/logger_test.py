@@ -8,12 +8,13 @@ import unittest
 import datetime
 import uuid
 
+from unittest.mock import patch
 from loguru import logger
 
 from agentscope.logging import setup_logger
 from agentscope.manager import ASManager
 from agentscope.message import Msg
-from unittest.mock import patch
+
 
 
 class LoggerTest(unittest.TestCase):
