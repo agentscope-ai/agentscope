@@ -28,7 +28,6 @@ def _to_zhipu_image_url(url: str) -> str:
         url (`str`):
             The local or public url of the image.
     """
-    # 智谱AI支持的图像格式
     support_image_extensions = (
         ".png",
         ".jpg",
@@ -41,12 +40,10 @@ def _to_zhipu_image_url(url: str) -> str:
     parsed_url = urlparse(url)
     lower_url = url.lower()
 
-    # Web url
     if not os.path.exists(url) and parsed_url.scheme != "":
         if any(lower_url.endswith(_) for _ in support_image_extensions):
             return url
 
-    # Check if it is a local file
     elif os.path.exists(url) and os.path.isfile(url):
         if any(lower_url.endswith(_) for _ in support_image_extensions):
             with open(url, "rb") as image_file:
@@ -110,10 +107,9 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                     content_blocks.append({**block})
 
                 elif typ == "thinking":
-                    # 智谱AI的推理内容处理
                     content_blocks.append({
                         "type": "text",
-                        "text": f"[思考] {block.get('thinking', '')}"
+                        "text": f"[Thinking] {block.get('thinking', '')}"
                     })
 
                 elif typ == "tool_use":
@@ -132,7 +128,6 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
-                    # 智谱AI将tool result作为普通文本内容处理
                     content_blocks.append({
                         "type": "text",
                         "text": self.convert_tool_result_to_string(
@@ -167,24 +162,18 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                         f"ZhipuChatFormatter. Skipping this block.",
                     )
 
-            # 构建消息
             message = {
                 "role": msg.role,
             }
 
-            # 添加内容
             if len(content_blocks) == 1 and content_blocks[0]["type"] == "text":
-                # 纯文本消息
                 message["content"] = content_blocks[0]["text"]
             elif content_blocks:
-                # 多模态消息
                 message["content"] = content_blocks
 
-            # 添加工具调用
             if tool_calls:
                 message["tool_calls"] = tool_calls
 
-            # 只有在有内容或工具调用时才添加消息
             if "content" in message or tool_calls:
                 messages.append(message)
 
@@ -213,7 +202,6 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
         """
         messages = await super()._format(msgs)
 
-        # 为多智能体对话添加name字段
         for i, (msg, message) in enumerate(zip(msgs, messages)):
             if msg.name and msg.name != msg.role:
                 message["name"] = msg.name

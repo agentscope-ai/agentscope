@@ -28,7 +28,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.msgs_system = [
             Msg(
                 "system",
-                "你是一个有用的助手。",
+                "You are a helpful assistant.",
                 "system",
             ),
         ]
@@ -39,7 +39,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 [
                     TextBlock(
                         type="text",
-                        text="法国的首都是什么？",
+                        text="What is the capital of France?",
                     ),
                     ImageBlock(
                         type="image",
@@ -53,7 +53,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             ),
             Msg(
                 "assistant",
-                "法国的首都是巴黎。",
+                "The capital of France is Paris.",
                 "assistant",
             ),
             Msg(
@@ -61,19 +61,19 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 [
                     TextBlock(
                         type="text",
-                        text="德国的首都是什么？",
+                        text="What is the capital of Germany?",
                     ),
                 ],
                 "user",
             ),
             Msg(
                 "assistant",
-                "德国的首都是柏林。",
+                "The capital of Germany is Berlin.",
                 "assistant",
             ),
             Msg(
                 "user",
-                "日本的首都是什么？",
+                "What is the capital of Japan?",
                 "user",
             ),
         ]
@@ -86,7 +86,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                         type="tool_use",
                         id="1",
                         name="get_capital",
-                        input={"country": "日本"},
+                        input={"country": "Japan"},
                     ),
                 ],
                 "assistant",
@@ -101,7 +101,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                         output=[
                             TextBlock(
                                 type="text",
-                                text="日本的首都是东京。",
+                                text="The capital of Japan is Tokyo.",
                             ),
                             ImageBlock(
                                 type="image",
@@ -117,7 +117,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             ),
             Msg(
                 "assistant",
-                "日本的首都是东京。",
+                "The capital of Japan is Tokyo.",
                 "assistant",
             ),
         ]
@@ -128,11 +128,11 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 [
                     ThinkingBlock(
                         type="thinking",
-                        thinking="让我思考一下这个问题...",
+                        thinking="Let me think about this question...",
                     ),
                     TextBlock(
                         type="text",
-                        text="经过思考，我认为答案是...",
+                        text="After thinking, I believe the answer is...",
                     ),
                 ],
                 "assistant",
@@ -142,14 +142,14 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.ground_truth_chat = [
             {
                 "role": "system",
-                "content": "你是一个有用的助手。",
+                "content": "You are a helpful assistant.",
             },
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
-                        "text": "法国的首都是什么？",
+                        "text": "What is the capital of France?",
                     },
                     {
                         "type": "image_url",
@@ -161,19 +161,19 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "assistant",
-                "content": "法国的首都是巴黎。",
+                "content": "The capital of France is Paris.",
             },
             {
                 "role": "user",
-                "content": "德国的首都是什么？",
+                "content": "What is the capital of Germany?",
             },
             {
                 "role": "assistant",
-                "content": "德国的首都是柏林。",
+                "content": "The capital of Germany is Berlin.",
             },
             {
                 "role": "user",
-                "content": "日本的首都是什么？",
+                "content": "What is the capital of Japan?",
             },
         ]
 
@@ -186,18 +186,18 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                         "type": "function",
                         "function": {
                             "name": "get_capital",
-                            "arguments": '{"country": "日本"}',
+                            "arguments": '{"country": "Japan"}',
                         },
                     },
                 ],
             },
             {
                 "role": "user",
-                "content": "- 日本的首都是东京。\n- The returned image can be found at: /Users/feizekai/sourcecode/agentscope/image.png",
+                "content": "- The capital of Japan is Tokyo.\n- The returned image can be found at: " + self.image_path,
             },
             {
                 "role": "assistant",
-                "content": "日本的首都是东京。",
+                "content": "The capital of Japan is Tokyo.",
             },
         ]
 
@@ -207,11 +207,11 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
-                        "text": "[思考] 让我思考一下这个问题...",
+                        "text": "[Thinking] Let me think about this question...",
                     },
                     {
                         "type": "text",
-                        "text": "经过思考，我认为答案是...",
+                        "text": "After thinking, I believe the answer is...",
                     },
                 ],
             },
@@ -256,7 +256,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 [
                     TextBlock(
                         type="text",
-                        text="请分析这张图片",
+                        text="Please analyze this image",
                     ),
                     ImageBlock(
                         type="image",
@@ -277,7 +277,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
-                        "text": "请分析这张图片",
+                        "text": "Please analyze this image",
                     },
                     {
                         "type": "image_url",
@@ -298,12 +298,12 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         msgs = [
             Msg(
                 "Alice",
-                "你好",
+                "Hello",
                 "user",
             ),
             Msg(
                 "Bob",
-                "你好，Alice！",
+                "Hello, Alice!",
                 "assistant",
             ),
         ]
@@ -311,12 +311,12 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         expected = [
             {
                 "role": "user",
-                "content": "你好",
+                "content": "Hello",
                 "name": "Alice",
             },
             {
                 "role": "assistant",
-                "content": "你好，Alice！",
+                "content": "Hello, Alice!",
                 "name": "Bob",
             },
         ]
@@ -330,12 +330,12 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         msgs = [
             Msg(
                 "user",  # name same as role
-                "你好",
+                "Hello",
                 "user",
             ),
             Msg(
                 "assistant",  # name same as role
-                "你好！",
+                "Hi!",
                 "assistant",
             ),
         ]
@@ -343,11 +343,11 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         expected = [
             {
                 "role": "user",
-                "content": "你好",
+                "content": "Hello",
             },
             {
                 "role": "assistant",
-                "content": "你好！",
+                "content": "Hi!",
             },
         ]
 
@@ -361,12 +361,12 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             Msg(
                 "user",
                 [
-                    TextBlock(type="text", text="请看这张图片"),
+                    TextBlock(type="text", text="Please look at this image"),
                     ImageBlock(
                         type="image",
                         source=URLSource(type="url", url=self.image_path),
                     ),
-                    ThinkingBlock(type="thinking", thinking="用户想要我分析图片"),
+                    ThinkingBlock(type="thinking", thinking="User wants me to analyze the image"),
                 ],
                 "user",
             ),
@@ -375,7 +375,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         formatter = ZhipuChatFormatter()
         formatted = await formatter.format(msgs)
 
-        # 验证格式化结果包含所有内容类型
+        # Verify the formatted result contains all content types
         self.assertEqual(len(formatted), 1)
         self.assertEqual(formatted[0]["role"], "user")
         self.assertIsInstance(formatted[0]["content"], list)

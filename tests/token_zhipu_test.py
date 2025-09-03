@@ -13,27 +13,27 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
         self.messages = [
             {
                 "role": "system",
-                "content": "你是一个有用的助手。",
+                "content": "You are a helpful assistant.",
             },
             {
                 "role": "user",
-                "content": "法国的首都是什么？",
+                "content": "What is the capital of France?",
             },
             {
                 "role": "assistant",
-                "content": "法国的首都是巴黎。",
+                "content": "The capital of France is Paris.",
             },
             {
                 "role": "user",
-                "content": "德国的首都是什么？",
+                "content": "What is the capital of Germany?",
             },
             {
                 "role": "assistant",
-                "content": "德国的首都是柏林。",
+                "content": "The capital of Germany is Berlin.",
             },
             {
                 "role": "user",
-                "content": "日本的首都是什么？",
+                "content": "What is the capital of Japan?",
             },
             {
                 "role": "assistant",
@@ -44,7 +44,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
                         "type": "function",
                         "function": {
                             "name": "get_capital",
-                            "arguments": '{"country": "日本"}',
+                            "arguments": '{"country": "Japan"}',
                         },
                     },
                 ],
@@ -52,11 +52,11 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
             {
                 "role": "tool",
                 "tool_call_id": "1",
-                "content": "日本的首都是东京。",
+                "content": "The capital of Japan is Tokyo.",
             },
             {
                 "role": "assistant",
-                "content": "日本的首都是东京。",
+                "content": "The capital of Japan is Tokyo.",
             },
         ]
 
@@ -66,7 +66,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "text",
-                        "text": "这张图片里有什么？",
+                        "text": "What is in this image?",
                     },
                     {
                         "type": "image_url",
@@ -78,7 +78,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
             },
             {
                 "role": "assistant",
-                "content": "这是一个1x1像素的透明图片。",
+                "content": "This is a 1x1 pixel transparent image.",
             },
         ]
 
@@ -87,13 +87,13 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
                 "type": "function",
                 "function": {
                     "name": "get_location",
-                    "description": "获取用户的位置信息",
+                    "description": "Get user's location information",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "city": {
                                 "type": "string",
-                                "description": "要获取位置信息的城市",
+                                "description": "The city to get location information for",
                             },
                         },
                         "required": ["city"],
@@ -105,7 +105,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
     async def test_zhipu_token_counter_basic(self) -> None:
         """Test the basic Zhipu AI token counter."""
         counter = ZhipuTokenCounter(
-            model_name="glm-4",
+            model_name="glm-4.5",
         )
         n_tokens = await counter.count(self.messages)
         self.assertIsInstance(n_tokens, int)
@@ -114,13 +114,13 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
     async def test_zhipu_token_counter_with_tools(self) -> None:
         """Test the Zhipu AI token counter with tools."""
         counter = ZhipuTokenCounter(
-            model_name="glm-4",
+            model_name="glm-4.5",
         )
         n_tokens = await counter.count(self.messages, self.tools)
         self.assertIsInstance(n_tokens, int)
         self.assertGreater(n_tokens, 0)
 
-        # 有工具的token数应该比没有工具的多
+        # Token count with tools should be greater than without tools
         n_tokens_without_tools = await counter.count(self.messages)
         self.assertGreater(n_tokens, n_tokens_without_tools)
 
@@ -146,7 +146,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
         counter = ZhipuTokenCounter(
             model_name="glm-4",
         )
-        # 强制使用简单计数方法
+        # Force using simple counting method
         counter.encoding = None
         n_tokens = await counter.count(self.messages)
         self.assertIsInstance(n_tokens, int)
@@ -169,7 +169,7 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
             model_name="glm-4",
         )
 
-        # 只计算包含工具调用的消息
+        # Only count messages containing tool calls
         tool_call_messages = [msg for msg in self.messages if msg.get("tool_calls")]
         n_tokens = await counter.count(tool_call_messages)
         self.assertIsInstance(n_tokens, int)
@@ -181,20 +181,20 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "请分析这张图片"},
+                    {"type": "text", "text": "Please analyze this image"},
                     {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}},
                 ],
             },
             {
                 "role": "assistant",
-                "content": "这是一张测试图片。",
+                "content": "This is a test image.",
                 "tool_calls": [
                     {
                         "id": "test_call",
                         "type": "function",
                         "function": {
                             "name": "analyze_image",
-                            "arguments": '{"description": "测试图片"}',
+                            "arguments": '{"description": "test image"}',
                         },
                     },
                 ],
