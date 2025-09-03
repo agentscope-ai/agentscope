@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for Zhipu AI models."""
+"""Zhipu Chat model class."""
 from collections import OrderedDict
 from datetime import datetime
 from typing import (
     Any,
-    TYPE_CHECKING,
     List,
     AsyncGenerator,
     Literal,
@@ -22,15 +21,9 @@ from ..message import ToolUseBlock, TextBlock, ThinkingBlock
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
-if TYPE_CHECKING:
-    from zai.types.chat.chat_completion import ChatCompletion
-else:
-    ChatCompletion = "zai.types.chat.chat_completion.ChatCompletion"
-    ChatCompletionChunk = "zai.types.chat.chat_completion_chunk.ChatCompletionChunk"
-
 
 class ZhipuChatModel(ChatModelBase):
-    """The Zhipu AI chat model class in agentscope."""
+    """The Zhipu chat model class."""
 
     def __init__(
         self,
@@ -41,7 +34,7 @@ class ZhipuChatModel(ChatModelBase):
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize the Zhipu AI chat model.
+        """Initialize the Zhipu chat model.
 
         Args:
             model_name (`str`):
@@ -152,15 +145,10 @@ class ZhipuChatModel(ChatModelBase):
                     "generation without calling any other tools.",
                 )
             # Convert BaseModel to JSON schema for response format
-            kwargs["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": structured_model.__name__,
-                    "schema": structured_model.model_json_schema(),
-                },
-            }
+            kwargs.pop("stream", None)
             kwargs.pop("tools", None)
             kwargs.pop("tool_choice", None)
+            kwargs["response_format"] = structured_model
 
         start_datetime = datetime.now()
         response = self.client.chat.completions.create(**kwargs)
@@ -306,8 +294,6 @@ class ZhipuChatModel(ChatModelBase):
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (`Any`):
-                Zhipu AI ChatCompletion object to parse.
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
