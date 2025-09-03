@@ -205,4 +205,3 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
         n_tokens = await counter.count(mixed_messages, self.tools)
         self.assertIsInstance(n_tokens, int)
         self.assertGreater(n_tokens, 0)
-

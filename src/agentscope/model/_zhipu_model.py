@@ -26,13 +26,13 @@ class ZhipuChatModel(ChatModelBase):
     """The Zhipu chat model class."""
 
     def __init__(
-        self,
-        model_name: str,
-        api_key: str | None = None,
-        stream: bool = True,
-        base_url: str | None = None,
-        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        **kwargs: Any,
+            self,
+            model_name: str,
+            api_key: str | None = None,
+            stream: bool = True,
+            base_url: str | None = None,
+            generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+            **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu chat model.
 
@@ -74,14 +74,14 @@ class ZhipuChatModel(ChatModelBase):
 
     @trace_llm
     async def __call__(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
-        structured_model: Type[BaseModel] | None = None,
-        **kwargs: Any,
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict] | None = None,
+            tool_choice: Literal["auto", "none", "any", "required"]
+                         | str
+                         | None = None,
+            structured_model: Type[BaseModel] | None = None,
+            **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Zhipu AI chat completions API by the given
         arguments.
@@ -169,10 +169,10 @@ class ZhipuChatModel(ChatModelBase):
         return parsed_response
 
     async def _parse_zhipu_stream_completion_response(
-        self,
-        start_datetime: datetime,
-        response: Any,
-        structured_model: Type[BaseModel] | None = None,
+            self,
+            start_datetime: datetime,
+            response: Any,
+            structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given a Zhipu AI streaming completion response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -283,10 +283,10 @@ class ZhipuChatModel(ChatModelBase):
                 yield res
 
     def _parse_zhipu_completion_response(
-        self,
-        start_datetime: datetime,
-        response: Any,
-        structured_model: Type[BaseModel] | None = None,
+            self,
+            start_datetime: datetime,
+            response: Any,
+            structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a Zhipu AI chat completion response object, extract the content
         blocks and usages from it.
@@ -359,15 +359,15 @@ class ZhipuChatModel(ChatModelBase):
         return parsed_response
 
     def _format_tools_json_schemas(
-        self,
-        schemas: list[dict[str, Any]],
+            self,
+            schemas: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Format the tools JSON schemas to the Zhipu AI format."""
         return schemas
 
     def _format_tool_choice(
-        self,
-        tool_choice: str,
+            self,
+            tool_choice: str,
     ) -> str | dict[str, Any]:
         """Format tool choice to Zhipu AI format."""
         if tool_choice in ["auto", "none"]:
@@ -390,4 +390,3 @@ class ZhipuChatModel(ChatModelBase):
                 "type": "function",
                 "function": {"name": tool_choice}
             }
-

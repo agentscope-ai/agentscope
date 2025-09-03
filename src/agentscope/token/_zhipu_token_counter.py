@@ -7,8 +7,8 @@ from ._token_base import TokenCounterBase
 
 
 def _calculate_tokens_for_tools(
-    tools: list[dict],
-    encoding: Any,
+        tools: list[dict],
+        encoding: Any,
 ) -> int:
     """Calculate the tokens for the given tools JSON schema."""
     if not tools:
@@ -19,8 +19,8 @@ def _calculate_tokens_for_tools(
 
 
 def _count_content_tokens_for_zhipu_vision_model(
-    content: list[dict],
-    encoding: Any,
+        content: list[dict],
+        encoding: Any,
 ) -> int:
     """Count the number of tokens for the content of a Zhipu vision model.
 
@@ -51,9 +51,9 @@ class ZhipuTokenCounter(TokenCounterBase):
     """The Zhipu AI token counter."""
 
     def __init__(
-        self,
-        model_name: str,
-        **kwargs: Any,
+            self,
+            model_name: str,
+            **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu AI token counter.
 
@@ -72,10 +72,10 @@ class ZhipuTokenCounter(TokenCounterBase):
             self.encoding = None
 
     async def count(
-        self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
-        **kwargs: Any,
+            self,
+            messages: list[dict],
+            tools: list[dict] | None = None,
+            **kwargs: Any,
     ) -> int:
         """Count the number of tokens in the given messages and tools.
 
@@ -128,9 +128,9 @@ class ZhipuTokenCounter(TokenCounterBase):
         return token_count
 
     def _simple_count(
-        self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
+            self,
+            messages: list[dict],
+            tools: list[dict] | None = None,
     ) -> int:
         """Simple character-based token counting fallback."""
         total_chars = 0
@@ -158,4 +158,3 @@ class ZhipuTokenCounter(TokenCounterBase):
         """Check if the model is a vision model."""
         vision_models = ["glm-4v", "glm-4v-plus"]
         return any(self.model_name.startswith(model) for model in vision_models)
-

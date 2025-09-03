@@ -327,9 +327,9 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
         return mock_response
 
     def _create_mock_response_with_tools(
-        self,
-        content: str,
-        tool_calls: list[dict],
+            self,
+            content: str,
+            tool_calls: list[dict],
     ) -> Mock:
         """Create a mock response with tool calls for testing."""
         mock_tool_calls = []
@@ -355,9 +355,9 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
         return mock_response
 
     def _create_mock_chunk(
-        self,
-        content: str = "",
-        finish_reason: str | None = None,
+            self,
+            content: str = "",
+            finish_reason: str | None = None,
     ) -> Mock:
         """Create a mock streaming chunk for testing."""
         mock_delta = Mock()

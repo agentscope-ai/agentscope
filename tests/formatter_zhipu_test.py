@@ -436,4 +436,3 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.assertTrue(formatter.support_tools_api)
         self.assertTrue(formatter.support_multiagent)
         self.assertTrue(formatter.support_vision)
-

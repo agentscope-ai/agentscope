@@ -80,8 +80,8 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
     """Supported message blocks for Zhipu AI API"""
 
     async def _format(
-        self,
-        msgs: list[Msg],
+            self,
+            msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format message objects into Zhipu AI API required format.
 
@@ -185,8 +185,8 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
     format for multi-agent conversation."""
 
     async def _format(
-        self,
-        msgs: list[Msg],
+            self,
+            msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format message objects into Zhipu AI API required format for
         multi-agent conversation.
@@ -207,4 +207,3 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                 message["name"] = msg.name
 
         return messages
-
