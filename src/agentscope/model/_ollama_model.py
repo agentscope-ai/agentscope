@@ -391,7 +391,10 @@ class OllamaChatModel(ChatModelBase):
                             ),
                         )
                     except Exception as e:
-                        print(f"Error parsing tool call input: {e}")
+                        logger.warning(
+                            "Error parsing tool call input: %s",
+                            e,
+                        )
 
                 # Generate response when there's new content or at final chunk
                 if chunk.done and contents:
