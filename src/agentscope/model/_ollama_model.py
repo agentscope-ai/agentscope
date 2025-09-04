@@ -17,16 +17,131 @@ from pydantic import BaseModel
 from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
+from ..tracing import trace_llm
+from ..message import ToolUseBlock, TextBlock, ThinkingBlock
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
-from ..message import ToolUseBlock, TextBlock, ThinkingBlock
-from ..tracing import trace_llm
 
 
 if TYPE_CHECKING:
     from ollama._types import ChatResponse as OllamaChatResponse
 else:
     OllamaChatResponse = "ollama._types.ChatResponse"
+
+
+import re
+
+
+class _HarmonyParser:
+    """A parser for OpenAI Harmony response format."""
+
+    # Special tokens
+    START_TOKEN = "<|start|>"
+    END_TOKEN = "<|end|>"
+    MESSAGE_TOKEN = "<|message|>"
+    CHANNEL_TOKEN = "<|channel|>"
+    CONSTRAIN_TOKEN = "<|constrain|>"
+    RETURN_TOKEN = "<|return|>"
+    CALL_TOKEN = "<|call|>"
+
+    # Regular expressions
+    MESSAGE_PATTERN = re.compile(
+        r"<\|start\|>(.*?)<\|message\|>(.*?)<\|end\|>",
+        re.DOTALL,
+    )
+    CHANNEL_PATTERN = re.compile(r"<\|channel\|>(\w+)")
+    TOOL_CALL_PATTERN = re.compile(r"to=([\w\.]+)")
+
+    def parse(
+        self,
+        response_text: str,
+    ) -> list:
+        """
+        Parses the full response text in Harmony format and extracts
+        content blocks.
+
+        Args:
+            response_text (`str`):
+                The full response text from the model.
+
+        Returns:
+            `list`:
+                A list of content blocks (TextBlock, ThinkingBlock,
+                ToolUseBlock).
+        """
+        content_blocks = []
+        # In harmony format, the response is a sequence of messages
+        # starting with <|start|> and ending with <|end|>.
+        # Sometimes the response may start with a channel token immediately.
+        if not response_text.strip().startswith(self.START_TOKEN):
+            response_text = f"{self.START_TOKEN}assistant{response_text}"
+        if response_text.strip().endswith(self.RETURN_TOKEN):
+            response_text = response_text.replace(
+                self.RETURN_TOKEN,
+                self.END_TOKEN,
+            )
+        for match in self.MESSAGE_PATTERN.finditer(response_text):
+            header = match.group(1)
+            content = match.group(2)
+
+            channel_match = self.CHANNEL_PATTERN.search(header)
+            channel = channel_match.group(1) if channel_match else "final"
+
+            if channel == "analysis":
+                content_blocks.append(
+                    ThinkingBlock(type="thinking", thinking=content.strip()),
+                )
+            elif channel == "final":
+                content_blocks.append(
+                    TextBlock(type="text", text=content.strip()),
+                )
+            elif channel == "commentary":
+                tool_call_match = self.TOOL_CALL_PATTERN.search(header)
+                if tool_call_match:
+                    tool_name = tool_call_match.group(1)
+                    # The tool name is in the format of "functions.xxx"
+                    tool_name = tool_name.split(".")[-1]
+                    try:
+                        tool_input = _json_loads_with_repair(content)
+                        content_blocks.append(
+                            ToolUseBlock(
+                                type="tool_use",
+                                id=f"tool_call_{tool_name}",
+                                name=tool_name,
+                                input=tool_input,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to parse tool call input: %s",
+                            e,
+                        )
+        return content_blocks
+
+    async def parse_stream(
+        self,
+        response: AsyncIterator[OllamaChatResponse],
+    ) -> AsyncGenerator[list, None]:
+        """
+        Parses a streaming response in Harmony format and yields content
+        blocks.
+
+        Args:
+            response (`AsyncIterator[OllamaChatResponse]`):
+                The streaming response from the model.
+
+        Yields:
+            `AsyncGenerator[list, None]`:
+                A list of content blocks for each chunk.
+        """
+        # For simplicity, we accumulate the text and parse it as a whole.
+        # A more sophisticated implementation would parse the stream
+        # chunk by chunk.
+        full_text = ""
+        async for chunk in response:
+            full_text += chunk.message.content
+            if chunk.done:
+                yield self.parse(full_text)
 
 
 class OllamaChatModel(ChatModelBase):
@@ -40,6 +155,7 @@ class OllamaChatModel(ChatModelBase):
         keep_alive: str = "5m",
         enable_thinking: bool | None = None,
         host: str | None = None,
+        support_harmony_response: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama chat model.
@@ -63,6 +179,11 @@ class OllamaChatModel(ChatModelBase):
            host (`str | None`, default `None`):
                The host address of the Ollama server. If None, uses the
                default address (typically http://localhost:11434).
+           support_harmony_response (`bool`, default `False`):
+                Whether to support OpenAI Harmony response format.
+                This is necessary for models such as gpt-oss.
+                For more details, please refer to
+                https://cookbook.openai.com/articles/openai-harmony
            **kwargs (`Any`):
                Additional keyword arguments to pass to the base chat model
                class.
@@ -85,6 +206,9 @@ class OllamaChatModel(ChatModelBase):
         self.options = options
         self.keep_alive = keep_alive
         self.think = enable_thinking
+        self.support_harmony_response = support_harmony_response
+        if self.support_harmony_response:
+            self._harmony_parser = _HarmonyParser()
 
     @trace_llm
     async def __call__(
@@ -192,75 +316,91 @@ class OllamaChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
 
         """
-        accumulated_text = ""
-        acc_thinking_content = ""
-        tool_calls = OrderedDict()  # Store tool calls
-        metadata = None
-
-        async for chunk in response:
-            # Handle text content
-            msg = chunk.message
-            acc_thinking_content += msg.thinking or ""
-            accumulated_text += msg.content or ""
-
-            # Handle tool calls
-            for idx, tool_call in enumerate(msg.tool_calls or []):
-                function = tool_call.function
-                tool_id = f"{idx}_{function.name}"
-                tool_calls[tool_id] = {
-                    "type": "tool_use",
-                    "id": tool_id,
-                    "name": function.name,
-                    "input": function.arguments,
-                }
-            # Calculate usage statistics
-            current_time = (datetime.now() - start_datetime).total_seconds()
-            usage = ChatUsage(
-                input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
-                output_tokens=getattr(chunk, "eval_count", 0) or 0,
-                time=current_time,
-            )
-            # Create content blocks
-            contents: list = []
-
-            if acc_thinking_content:
-                contents.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        thinking=acc_thinking_content,
-                    ),
+        if self.support_harmony_response:
+            async for content_blocks in self._harmony_parser.parse_stream(
+                response,
+            ):
+                # In harmony format, we don't have separated usage info
+                # from the response, so we just create a dummy one.
+                yield ChatResponse(
+                    content=content_blocks,
+                    usage=ChatUsage(),
+                    metadata=None,
                 )
+        else:
+            accumulated_text = ""
+            acc_thinking_content = ""
+            tool_calls = OrderedDict()  # Store tool calls
+            metadata = None
 
-            if accumulated_text:
-                contents.append(TextBlock(type="text", text=accumulated_text))
-                if structured_model:
-                    metadata = _json_loads_with_repair(accumulated_text)
+            async for chunk in response:
+                # Handle text content
+                msg = chunk.message
+                acc_thinking_content += msg.thinking or ""
+                accumulated_text += msg.content or ""
 
-            # Add tool call blocks
-            for tool_call in tool_calls.values():
-                try:
-                    input_data = tool_call["input"]
-                    if isinstance(input_data, str):
-                        input_data = _json_loads_with_repair(input_data)
+                # Handle tool calls
+                for idx, tool_call in enumerate(msg.tool_calls or []):
+                    function = tool_call.function
+                    tool_id = f"{idx}_{function.name}"
+                    tool_calls[tool_id] = {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": function.name,
+                        "input": function.arguments,
+                    }
+                # Calculate usage statistics
+                current_time = (
+                    datetime.now() - start_datetime
+                ).total_seconds()
+                usage = ChatUsage(
+                    input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
+                    output_tokens=getattr(chunk, "eval_count", 0) or 0,
+                    time=current_time,
+                )
+                # Create content blocks
+                contents: list = []
+
+                if acc_thinking_content:
                     contents.append(
-                        ToolUseBlock(
-                            type=tool_call["type"],
-                            id=tool_call["id"],
-                            name=tool_call["name"],
-                            input=input_data,
+                        ThinkingBlock(
+                            type="thinking",
+                            thinking=acc_thinking_content,
                         ),
                     )
-                except Exception as e:
-                    print(f"Error parsing tool call input: {e}")
 
-            # Generate response when there's new content or at final chunk
-            if chunk.done and contents:
-                res = ChatResponse(
-                    content=contents,
-                    usage=usage,
-                    metadata=metadata,
-                )
-                yield res
+                if accumulated_text:
+                    contents.append(
+                        TextBlock(type="text", text=accumulated_text),
+                    )
+                    if structured_model:
+                        metadata = _json_loads_with_repair(accumulated_text)
+
+                # Add tool call blocks
+                for tool_call in tool_calls.values():
+                    try:
+                        input_data = tool_call["input"]
+                        if isinstance(input_data, str):
+                            input_data = _json_loads_with_repair(input_data)
+                        contents.append(
+                            ToolUseBlock(
+                                type=tool_call["type"],
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                input=input_data,
+                            ),
+                        )
+                    except Exception as e:
+                        print(f"Error parsing tool call input: {e}")
+
+                # Generate response when there's new content or at final chunk
+                if chunk.done and contents:
+                    res = ChatResponse(
+                        content=contents,
+                        usage=usage,
+                        metadata=metadata,
+                    )
+                    yield res
 
     async def _parse_ollama_completion_response(
         self,
@@ -288,36 +428,46 @@ class OllamaChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
-        metadata = None
-
-        if response.message.thinking:
-            content_blocks.append(
-                ThinkingBlock(
-                    type="thinking",
-                    thinking=response.message.thinking,
-                ),
+        if self.support_harmony_response:
+            content_blocks = self._harmony_parser.parse(
+                response.message.content,
             )
+            metadata = None
+        else:
+            content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+            metadata = None
 
-        if response.message.content:
-            content_blocks.append(
-                TextBlock(
-                    type="text",
-                    text=response.message.content,
-                ),
-            )
-            if structured_model:
-                metadata = _json_loads_with_repair(response.message.content)
+            if response.message.thinking:
+                content_blocks.append(
+                    ThinkingBlock(
+                        type="thinking",
+                        thinking=response.message.thinking,
+                    ),
+                )
 
-        for idx, tool_call in enumerate(response.message.tool_calls or []):
-            content_blocks.append(
-                ToolUseBlock(
-                    type="tool_use",
-                    id=f"{idx}_{tool_call.function.name}",
-                    name=tool_call.function.name,
-                    input=tool_call.function.arguments,
-                ),
-            )
+            if response.message.content:
+                content_blocks.append(
+                    TextBlock(
+                        type="text",
+                        text=response.message.content,
+                    ),
+                )
+                if structured_model:
+                    metadata = _json_loads_with_repair(
+                        response.message.content,
+                    )
+
+            for idx, tool_call in enumerate(
+                response.message.tool_calls or [],
+            ):
+                content_blocks.append(
+                    ToolUseBlock(
+                        type="tool_use",
+                        id=f"{idx}_{tool_call.function.name}",
+                        name=tool_call.function.name,
+                        input=tool_call.function.arguments,
+                    ),
+                )
 
         usage = None
         if "prompt_eval_count" in response and "eval_count" in response:
