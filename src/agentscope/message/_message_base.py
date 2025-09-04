@@ -120,6 +120,8 @@ class Msg:
             return self.content
 
         gathered_text = None
+        if self.content is None:
+            return None
         for block in self.content:
             if block.get("type") == "text":
                 if gathered_text is None:
@@ -217,10 +219,13 @@ class Msg:
             blocks.append(
                 TextBlock(type="text", text=self.content),
             )
+        elif self.content is None:
+            # Return empty list if content is None
+            blocks = []
         else:
             blocks = self.content
 
-        if block_type is not None:
+        if block_type is not None and blocks:
             blocks = [_ for _ in blocks if _["type"] == block_type]
 
         return blocks

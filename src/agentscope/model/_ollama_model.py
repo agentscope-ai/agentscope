@@ -428,32 +428,37 @@ class OllamaChatModel(ChatModelBase):
         parsed_blocks = self._harmony_parser.parse(response_text)
         content_blocks = []
         
-        # Convert parsed blocks to proper objects
+        # The parser already returns proper Block objects, just use them directly
         for block in parsed_blocks:
-            if block.get("type") == "thinking":
-                content_blocks.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        signature="ollama_harmony",
-                        thinking=block.get("thinking", ""),
-                    ),
-                )
-            elif block.get("type") == "text":
-                content_blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=block.get("text", ""),
-                    ),
-                )
-            elif block.get("type") == "tool_use":
-                content_blocks.append(
-                    ToolUseBlock(
-                        type="tool_use",
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
-                        input=block.get("input", {}),
-                    ),
-                )
+            # Check if it's already a proper Block object
+            if isinstance(block, (TextBlock, ThinkingBlock, ToolUseBlock)):
+                content_blocks.append(block)
+            # If it's a dict (legacy behavior), convert it
+            elif isinstance(block, dict):
+                if block.get("type") == "thinking":
+                    content_blocks.append(
+                        ThinkingBlock(
+                            type="thinking",
+                            signature="ollama_harmony",
+                            thinking=block.get("thinking", ""),
+                        ),
+                    )
+                elif block.get("type") == "text":
+                    content_blocks.append(
+                        TextBlock(
+                            type="text",
+                            text=block.get("text", ""),
+                        ),
+                    )
+                elif block.get("type") == "tool_use":
+                    content_blocks.append(
+                        ToolUseBlock(
+                            type="tool_use",
+                            id=block.get("id", ""),
+                            name=block.get("name", ""),
+                            input=block.get("input", {}),
+                        ),
+                    )
         
         # Fallback if no parsed blocks (add as single text block)
         if not content_blocks and response_text:
@@ -780,32 +785,36 @@ class OllamaChatModel(ChatModelBase):
                     parsed_blocks = self._harmony_parser.parse(accumulated_text)
                     content_blocks = []
                     
-                    # Convert parsed blocks to proper objects
+                    # The parser already returns proper Block objects
                     for block in parsed_blocks:
-                        if block.get("type") == "thinking":
-                            content_blocks.append(
-                                ThinkingBlock(
-                                    type="thinking",
-                                    signature="ollama_harmony",
-                                    thinking=block.get("thinking", ""),
-                                ),
-                            )
-                        elif block.get("type") == "text":
-                            content_blocks.append(
-                                TextBlock(
-                                    type="text",
-                                    text=block.get("text", ""),
-                                ),
-                            )
-                        elif block.get("type") == "tool_use":
-                            content_blocks.append(
-                                ToolUseBlock(
-                                    type="tool_use",
-                                    id=block.get("id", ""),
-                                    name=block.get("name", ""),
-                                    input=block.get("input", {}),
-                                ),
-                            )
+                        if isinstance(block, (TextBlock, ThinkingBlock, ToolUseBlock)):
+                            content_blocks.append(block)
+                        elif isinstance(block, dict):
+                            # Fallback for dict format
+                            if block.get("type") == "thinking":
+                                content_blocks.append(
+                                    ThinkingBlock(
+                                        type="thinking",
+                                        signature="ollama_harmony",
+                                        thinking=block.get("thinking", ""),
+                                    ),
+                                )
+                            elif block.get("type") == "text":
+                                content_blocks.append(
+                                    TextBlock(
+                                        type="text",
+                                        text=block.get("text", ""),
+                                    ),
+                                )
+                            elif block.get("type") == "tool_use":
+                                content_blocks.append(
+                                    ToolUseBlock(
+                                        type="tool_use",
+                                        id=block.get("id", ""),
+                                        name=block.get("name", ""),
+                                        input=block.get("input", {}),
+                                    ),
+                                )
                     
                     # Fallback if no parsed blocks
                     if not content_blocks and accumulated_text:
