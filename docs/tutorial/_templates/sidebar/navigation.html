@@ -1,0 +1,16 @@
+<div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    {{ furo_navigation_tree }}
+</div>

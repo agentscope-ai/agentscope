@@ -1,0 +1,10 @@
+{%- macro automodule(modname, options) -%}
+.. automodule:: {{ modname }}
+{%- for option in options %}
+   :{{ option }}:
+{%- endfor %}
+{%- endmacro %}
+
+{{- pkgname | heading }}
+
+{{ automodule(pkgname, automodule_options) }}

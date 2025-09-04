@@ -1,0 +1,95 @@
+name: Deploy Sphinx documentation to Pages
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_en:
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ['3.10']
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: '3.10'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Update setuptools
+        run: |
+          pip install setuptools==78.1.1 wheel==0.45.1
+      - name: Install Dependencies
+        run: |
+          pip install -q -e .[dev]
+      - name: Add execute permission to build.sh
+        run: |
+          chmod +x docs/tutorial/en/build.sh
+      - name: Build English Documentation
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          GAODE_API_KEY: ${{ secrets.GAODE_API_KEY }}
+        run: |
+          cd docs/tutorial/en/
+          ./build.sh
+      - name: Deploy English Documentation
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/tutorial/en/build/html
+          cname: doc.agentscope.io
+          keep_files: true
+
+  build_zh:
+    needs: build_en
+    timeout-minutes: 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest ]
+        python-version: [ '3.10' ]
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: '3.10'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - name: Verify npm installation
+        run: npm --version
+      - name: Update setuptools
+        run: |
+          pip install setuptools==78.1.1 wheel==0.45.1
+      - name: Install Dependencies
+        run: |
+          pip install -q -e .[dev]
+      - name: Add execute permission to build.sh
+        run: |
+          chmod +x docs/tutorial/zh_CN/build.sh
+      - name: Build Chinese Documentation
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          GAODE_API_KEY: ${{ secrets.GAODE_API_KEY }}
+        run: |
+          cd docs/tutorial/zh_CN/
+          ./build.sh
+      - name: Deploy Chinese Documentation
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/tutorial/zh_CN/build/html
+          destination_dir: zh_CN
+          cname: doc.agentscope.io
+          keep_files: true

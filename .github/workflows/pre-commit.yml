@@ -1,0 +1,38 @@
+name: Pre-commit
+
+on: [push, pull_request]
+
+jobs:
+  run:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: True
+      matrix:
+        os: [ubuntu-latest]
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: '3.10'
+    steps:
+    - uses: actions/checkout@master
+    - name: Setup Python
+      uses: actions/setup-python@master
+      with:
+        python-version: '3.10'
+    - name: Update setuptools
+      run: |
+        pip install setuptools==68.2.2 wheel==0.41.2
+    - name: Install AgentScope
+      run: |
+        pip install -q -e .[dev]
+    - name: Install pre-commit
+      run: |
+        pre-commit install
+    - name: Pre-commit starts
+      run: |
+        pre-commit run --all-files > pre-commit.log 2>&1 || true
+        cat pre-commit.log
+        if grep -q Failed pre-commit.log; then
+          echo -e "\e[41m  [**FAIL**] Please install pre-commit and format your code first. \e[0m"
+          exit 1
+        fi
+        echo -e "\e[46m  ********************************Passed******************************** \e[0m"
