@@ -102,6 +102,7 @@ AgentScope v1.0 新功能概览:
 | ...        |                                        |                                                                               |
 
 ## 📢 新闻
+- **[2025-09]** **AgentScope Runtime** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-runtime)。
 - **[2025-09]** **AgentScope Studio** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-studio)。
 - **[2025-08]** v1 版本 Tutorial 已上线！查看[tutorial](https://doc.agentscope.io/zh_CN/)了解更多详情。
 - **[2025-08]** 🎉🎉 AgentScope v1现已发布！在完全拥抱异步执行的基础上提供许多新功能和改进。查看[changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md)了解详细变更。
