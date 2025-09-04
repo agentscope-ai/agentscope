@@ -193,7 +193,8 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "user",
-                "content": "- The capital of Japan is Tokyo.\n- The returned image can be found at: " + self.image_path,
+                "content": "- The capital of Japan is Tokyo.\n- The returned image can be found at: "
+                + self.image_path,
             },
             {
                 "role": "assistant",
@@ -366,7 +367,10 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
                         type="image",
                         source=URLSource(type="url", url=self.image_path),
                     ),
-                    ThinkingBlock(type="thinking", thinking="User wants me to analyze the image"),
+                    ThinkingBlock(
+                        type="thinking",
+                        thinking="User wants me to analyze the image",
+                    ),
                 ],
                 "user",
             ),
@@ -379,7 +383,9 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(len(formatted), 1)
         self.assertEqual(formatted[0]["role"], "user")
         self.assertIsInstance(formatted[0]["content"], list)
-        self.assertEqual(len(formatted[0]["content"]), 3)  # text + image + thinking
+        self.assertEqual(
+            len(formatted[0]["content"]), 3
+        )  # text + image + thinking
 
     async def test_zhipu_formatter_tool_only_message(self) -> None:
         """Test ZhipuChatFormatter with tool-only messages."""

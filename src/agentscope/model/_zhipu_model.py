@@ -26,13 +26,13 @@ class ZhipuChatModel(ChatModelBase):
     """The Zhipu chat model class."""
 
     def __init__(
-            self,
-            model_name: str,
-            api_key: str | None = None,
-            stream: bool = True,
-            base_url: str | None = None,
-            generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-            **kwargs: Any,
+        self,
+        model_name: str,
+        api_key: str | None = None,
+        stream: bool = True,
+        base_url: str | None = None,
+        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu chat model.
 
@@ -60,7 +60,7 @@ class ZhipuChatModel(ChatModelBase):
         except ImportError as e:
             raise ImportError(
                 "The package zai-sdk is not found. Please install it by "
-                'running command `pip install zai-sdk`',
+                "running command `pip install zai-sdk`",
             ) from e
 
         super().__init__(model_name, stream)
@@ -74,14 +74,14 @@ class ZhipuChatModel(ChatModelBase):
 
     @trace_llm
     async def __call__(
-            self,
-            messages: list[dict[str, Any]],
-            tools: list[dict] | None = None,
-            tool_choice: Literal["auto", "none", "any", "required"]
-                         | str
-                         | None = None,
-            structured_model: Type[BaseModel] | None = None,
-            **kwargs: Any,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Zhipu AI chat completions API by the given
         arguments.
@@ -169,10 +169,10 @@ class ZhipuChatModel(ChatModelBase):
         return parsed_response
 
     async def _parse_zhipu_stream_completion_response(
-            self,
-            start_datetime: datetime,
-            response: Any,
-            structured_model: Type[BaseModel] | None = None,
+        self,
+        start_datetime: datetime,
+        response: Any,
+        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given a Zhipu AI streaming completion response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -209,7 +209,7 @@ class ZhipuChatModel(ChatModelBase):
                 accumulated_text += delta.content
 
             # Handle thinking/reasoning content
-            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 accumulated_thinking += str(delta.reasoning_content)
 
             # Handle tool calls
@@ -227,12 +227,14 @@ class ZhipuChatModel(ChatModelBase):
                     if tool_call.function.name:
                         tool_calls[tool_id]["name"] = tool_call.function.name
                     if tool_call.function.arguments:
-                        tool_calls[tool_id]["input"] += tool_call.function.arguments
+                        tool_calls[tool_id][
+                            "input"
+                        ] += tool_call.function.arguments
 
             # Calculate usage statistics
             current_time = (datetime.now() - start_datetime).total_seconds()
             usage = None
-            if hasattr(chunk, 'usage') and chunk.usage:
+            if hasattr(chunk, "usage") and chunk.usage:
                 usage = ChatUsage(
                     input_tokens=chunk.usage.prompt_tokens or 0,
                     output_tokens=chunk.usage.completion_tokens or 0,
@@ -283,10 +285,10 @@ class ZhipuChatModel(ChatModelBase):
                 yield res
 
     def _parse_zhipu_completion_response(
-            self,
-            start_datetime: datetime,
-            response: Any,
-            structured_model: Type[BaseModel] | None = None,
+        self,
+        start_datetime: datetime,
+        response: Any,
+        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a Zhipu AI chat completion response object, extract the content
         blocks and usages from it.
@@ -343,7 +345,7 @@ class ZhipuChatModel(ChatModelBase):
 
         # Calculate usage
         usage = None
-        if hasattr(response, 'usage') and response.usage:
+        if hasattr(response, "usage") and response.usage:
             usage = ChatUsage(
                 input_tokens=response.usage.prompt_tokens or 0,
                 output_tokens=response.usage.completion_tokens or 0,
@@ -359,15 +361,15 @@ class ZhipuChatModel(ChatModelBase):
         return parsed_response
 
     def _format_tools_json_schemas(
-            self,
-            schemas: list[dict[str, Any]],
+        self,
+        schemas: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Format the tools JSON schemas to the Zhipu AI format."""
         return schemas
 
     def _format_tool_choice(
-            self,
-            tool_choice: str,
+        self,
+        tool_choice: str,
     ) -> str | dict[str, Any]:
         """Format tool choice to Zhipu AI format."""
         if tool_choice in ["auto", "none"]:
@@ -375,18 +377,18 @@ class ZhipuChatModel(ChatModelBase):
         elif tool_choice == "any":
             # Zhipu AI doesn't support "any", use "auto" instead
             logger.warning(
-                "Zhipu AI doesn't support tool_choice='any', using 'auto' instead."
+                "Zhipu AI doesn't support tool_choice='any', using 'auto' instead.",
             )
             return "auto"
         elif tool_choice == "required":
             # Zhipu AI doesn't support "required", use "auto" instead
             logger.warning(
-                "Zhipu AI doesn't support tool_choice='required', using 'auto' instead."
+                "Zhipu AI doesn't support tool_choice='required', using 'auto' instead.",
             )
             return "auto"
         else:
             # Specific tool name
             return {
                 "type": "function",
-                "function": {"name": tool_choice}
+                "function": {"name": tool_choice},
             }

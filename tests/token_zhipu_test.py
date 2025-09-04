@@ -170,7 +170,9 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
         )
 
         # Only count messages containing tool calls
-        tool_call_messages = [msg for msg in self.messages if msg.get("tool_calls")]
+        tool_call_messages = [
+            msg for msg in self.messages if msg.get("tool_calls")
+        ]
         n_tokens = await counter.count(tool_call_messages)
         self.assertIsInstance(n_tokens, int)
         self.assertGreater(n_tokens, 0)
@@ -182,7 +184,10 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Please analyze this image"},
-                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,test"},
+                    },
                 ],
             },
             {

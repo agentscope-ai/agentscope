@@ -7,8 +7,8 @@ from ._token_base import TokenCounterBase
 
 
 def _calculate_tokens_for_tools(
-        tools: list[dict],
-        encoding: Any,
+    tools: list[dict],
+    encoding: Any,
 ) -> int:
     """Calculate the tokens for the given tools JSON schema."""
     if not tools:
@@ -19,8 +19,8 @@ def _calculate_tokens_for_tools(
 
 
 def _count_content_tokens_for_zhipu_vision_model(
-        content: list[dict],
-        encoding: Any,
+    content: list[dict],
+    encoding: Any,
 ) -> int:
     """Count the number of tokens for the content of a Zhipu vision model.
 
@@ -51,9 +51,9 @@ class ZhipuTokenCounter(TokenCounterBase):
     """The Zhipu AI token counter."""
 
     def __init__(
-            self,
-            model_name: str,
-            **kwargs: Any,
+        self,
+        model_name: str,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu AI token counter.
 
@@ -67,15 +67,16 @@ class ZhipuTokenCounter(TokenCounterBase):
 
         try:
             import tiktoken
+
             self.encoding = tiktoken.encoding_for_model("glm-4.5")
         except Exception:
             self.encoding = None
 
     async def count(
-            self,
-            messages: list[dict],
-            tools: list[dict] | None = None,
-            **kwargs: Any,
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        **kwargs: Any,
     ) -> int:
         """Count the number of tokens in the given messages and tools.
 
@@ -108,16 +109,23 @@ class ZhipuTokenCounter(TokenCounterBase):
                 token_count += len(self.encoding.encode(content))
             elif isinstance(content, list):
                 if self._is_vision_model():
-                    token_count += _count_content_tokens_for_zhipu_vision_model(
-                        content, self.encoding
+                    token_count += (
+                        _count_content_tokens_for_zhipu_vision_model(
+                            content,
+                            self.encoding,
+                        )
                     )
                 else:
                     for item in content:
                         if item.get("type") == "text":
-                            token_count += len(self.encoding.encode(item["text"]))
+                            token_count += len(
+                                self.encoding.encode(item["text"])
+                            )
 
             if "tool_calls" in message:
-                tool_calls_str = json.dumps(message["tool_calls"], ensure_ascii=False)
+                tool_calls_str = json.dumps(
+                    message["tool_calls"], ensure_ascii=False
+                )
                 token_count += len(self.encoding.encode(tool_calls_str))
 
         if tools:
@@ -128,9 +136,9 @@ class ZhipuTokenCounter(TokenCounterBase):
         return token_count
 
     def _simple_count(
-            self,
-            messages: list[dict],
-            tools: list[dict] | None = None,
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
     ) -> int:
         """Simple character-based token counting fallback."""
         total_chars = 0
@@ -145,7 +153,9 @@ class ZhipuTokenCounter(TokenCounterBase):
                         total_chars += len(item.get("text", ""))
 
             if "tool_calls" in message:
-                tool_calls_str = json.dumps(message["tool_calls"], ensure_ascii=False)
+                tool_calls_str = json.dumps(
+                    message["tool_calls"], ensure_ascii=False
+                )
                 total_chars += len(tool_calls_str)
 
         if tools:
@@ -157,4 +167,6 @@ class ZhipuTokenCounter(TokenCounterBase):
     def _is_vision_model(self) -> bool:
         """Check if the model is a vision model."""
         vision_models = ["glm-4v", "glm-4v-plus"]
-        return any(self.model_name.startswith(model) for model in vision_models)
+        return any(
+            self.model_name.startswith(model) for model in vision_models
+        )

@@ -80,8 +80,8 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
     """Supported message blocks for Zhipu AI API"""
 
     async def _format(
-            self,
-            msgs: list[Msg],
+        self,
+        msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format message objects into Zhipu AI API required format.
 
@@ -107,10 +107,12 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                     content_blocks.append({**block})
 
                 elif typ == "thinking":
-                    content_blocks.append({
-                        "type": "text",
-                        "text": f"[Thinking] {block.get('thinking', '')}"
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "text",
+                            "text": f"[Thinking] {block.get('thinking', '')}",
+                        }
+                    )
 
                 elif typ == "tool_use":
                     tool_calls.append(
@@ -128,12 +130,14 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
-                    content_blocks.append({
-                        "type": "text",
-                        "text": self.convert_tool_result_to_string(
-                            block.get("output"),  # type: ignore[arg-type]
-                        ),
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "text",
+                            "text": self.convert_tool_result_to_string(
+                                block.get("output"),  # type: ignore[arg-type]
+                            ),
+                        }
+                    )
 
                 elif typ == "image":
                     source_type = block["source"]["type"]
@@ -166,7 +170,10 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                 "role": msg.role,
             }
 
-            if len(content_blocks) == 1 and content_blocks[0]["type"] == "text":
+            if (
+                len(content_blocks) == 1
+                and content_blocks[0]["type"] == "text"
+            ):
                 message["content"] = content_blocks[0]["text"]
             elif content_blocks:
                 message["content"] = content_blocks
@@ -185,8 +192,8 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
     format for multi-agent conversation."""
 
     async def _format(
-            self,
-            msgs: list[Msg],
+        self,
+        msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format message objects into Zhipu AI API required format for
         multi-agent conversation.
