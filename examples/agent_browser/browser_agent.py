@@ -26,6 +26,7 @@ from agentscope.tool import (
     ToolResponse,
 )
 from agentscope.token import TokenCounterBase, OpenAITokenCounter
+from browser_search import BrowserSearchMixin
 
 with open(
     "examples/agent_browser/build_in_prompt/browser_agent_sys_prompt.md",
@@ -53,7 +54,7 @@ with open(
     _BROWSER_AGENT_SUMMARIZE_TASK_PROMPT = f.read()
 
 
-class BrowserAgent(ReActAgent):
+class BrowserAgent(ReActAgent, BrowserSearchMixin):
     """
     Browser Agent that extends ReActAgent with browser-specific capabilities.
 
@@ -91,6 +92,7 @@ class BrowserAgent(ReActAgent):
         ),
         token_counter: TokenCounterBase = OpenAITokenCounter("gpt-4o"),
         max_mem_length: int = 20,
+        use_dfs_reply: bool = False,
     ) -> None:
         """Initialize the Browser Agent.
 
@@ -122,10 +124,22 @@ class BrowserAgent(ReActAgent):
                 The prompt used during the reasoning phase to guide
                 decision-making.
                 Defaults to _BROWSER_AGENT_REASONING_PROMPT.
+            use_dfs_reply (bool, optional):
+                Whether to use the DFS replay method instead of the default
+                reply method. Defaults to False.
 
         Returns:
             None
         """
+        super().__init__(
+            name=name,
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=formatter,
+            memory=memory,
+            toolkit=toolkit,
+            max_iters=max_iters,
+        )
 
         self.start_url = start_url
         self._has_initial_navigated = False
@@ -145,16 +159,8 @@ class BrowserAgent(ReActAgent):
         self.finish_function_name = "browser_generate_final_response"
         self.init_query = ""
         self._required_structured_model: Type[BaseModel] | None = None
+        self.use_dfs_reply = use_dfs_reply
 
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model=model,
-            formatter=formatter,
-            memory=memory,
-            toolkit=toolkit,
-            max_iters=max_iters,
-        )
         self.toolkit.register_tool_function(self.browser_subtask_manager)
         self.toolkit.register_tool_function(
             self.browser_generate_final_response,
@@ -194,13 +200,24 @@ class BrowserAgent(ReActAgent):
         self.init_query = (
             msg.content
             if isinstance(msg, Msg)
-            else msg[0].content
-            if isinstance(msg, list)
-            else ""
+            else msg[0].content if isinstance(msg, list) else ""
         )
         if self.start_url and not self._has_initial_navigated:
             await self._navigate_to_start_url()
             self._has_initial_navigated = True
+
+        # Choose between default reply and DFS reply based on the parameter
+        if self.use_dfs_reply:
+            return await self._reply_with_dfs(msg, structured_model)
+        else:
+            return await self._default_reply(msg, structured_model)
+
+    async def _default_reply(
+        self,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
+    ) -> Msg:
+        """Default reply method using the original reasoning-acting loop."""
         msg = await self._task_decomposition_and_reformat(msg)
         # original reply function
         await self.memory.add(msg)
@@ -247,6 +264,26 @@ class BrowserAgent(ReActAgent):
 
         await self.memory.add(reply_msg)
         return reply_msg
+
+    async def _reply_with_dfs(
+        self,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
+    ) -> Msg:
+        """DFS reply method using the search-based approach."""
+        msg = await self._task_decomposition_and_reformat(msg)
+        await self.memory.add(msg)
+        self._required_structured_model = structured_model
+
+        # Record structured output model if provided
+        if structured_model:
+            self.toolkit.set_extended_model(
+                self.finish_function_name,
+                structured_model,
+            )
+
+        # Use the DFS method from BrowserSearchMixin
+        return await super()._reply_with_dfs(msg)
 
     async def _reasoning(
         self,
@@ -482,19 +519,19 @@ class BrowserAgent(ReActAgent):
             if b["type"] == "tool_result":
                 for j, return_json in enumerate(b.get("output", [])):
                     if isinstance(return_json, dict) and "text" in return_json:
-                        output_msg.content[i]["output"][j][
-                            "output"
-                        ] = self._filter_execution_text(return_json["text"])
-                        output_msg.content[i]["output"][j][
-                            "text"
-                        ] = self._filter_execution_text(return_json["text"])
+                        output_msg.content[i]["output"][j]["output"] = (
+                            self._filter_execution_text(return_json["text"])
+                        )
+                        output_msg.content[i]["output"][j]["text"] = (
+                            self._filter_execution_text(return_json["text"])
+                        )
         return output_msg
 
     async def _task_decomposition_and_reformat(
         self,
-        original_task: Msg
-        | list[Msg]
-        | None,  # Added type annotation for the argument
+        original_task: (
+            Msg | list[Msg] | None
+        ),  # Added type annotation for the argument
     ) -> Msg:  # Added return type annotation
         """Decompose the original task into smaller tasks and reformat it.
 
@@ -571,7 +608,7 @@ class BrowserAgent(ReActAgent):
         )
         return formatted_task
 
-    async def _navigate_to_start_url(self) -> None:
+    async def _navigate_to_start_url(self, url: str = None) -> None:
         """
         Navigate to the specified start URL using the browser_navigate tool.
 
@@ -583,11 +620,15 @@ class BrowserAgent(ReActAgent):
         Returns:
             None
         """
+
+        if url is None:
+            url = self.start_url
+
         tool_call = ToolUseBlock(
             id=str(uuid.uuid4()),
             type="tool_use",
             name="browser_navigate",
-            input={"url": self.start_url},
+            input={"url": url},
         )
 
         # Execute the navigation tool
@@ -786,7 +827,7 @@ class BrowserAgent(ReActAgent):
     def _split_snapshot_by_chunk(
         self,
         snapshot_str: str,
-        max_length: int = 80000,
+        max_length: int = 10000,
     ) -> list[str]:
         self.snapshot_chunk_id = 0
         return [
