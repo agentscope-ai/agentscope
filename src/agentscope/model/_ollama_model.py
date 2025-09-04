@@ -134,9 +134,10 @@ class _HarmonyParser:
             `AsyncGenerator[list, None]`:
                 A list of content blocks for each chunk.
         """
-        # For simplicity, we accumulate the text and parse it as a whole.
-        # A more sophisticated implementation would parse the stream
-        # chunk by chunk.
+        # Note: This implementation accumulates the entire stream into a single
+        # string before parsing. This is simpler but less memory-efficient
+        # for very long streams. A potential future improvement is to implement
+        # a true streaming parser that can process chunks as they arrive.
         full_text = ""
         async for chunk in response:
             full_text += chunk.message.content
@@ -164,7 +165,7 @@ class OllamaChatModel(ChatModelBase):
            model_name (`str`):
                The name of the model.
            stream (`bool`, default `True`):
-               Streaming mode or not.
+               Whether to stream the response from the model.
            options (`dict`, default `None`):
                Additional parameters to pass to the Ollama API. These can
                include temperature etc.
@@ -270,6 +271,20 @@ class OllamaChatModel(ChatModelBase):
             kwargs["format"] = structured_model.model_json_schema()
 
         start_datetime = datetime.now()
+        
+        # Use Harmony format input when support_harmony_response is enabled
+        if self.support_harmony_response:
+            try:
+                # Remove messages from kwargs to avoid duplication
+                kwargs_harmony = kwargs.copy()
+                kwargs_harmony.pop('messages', None)
+                harmony_response = await self._call_with_harmony_format(
+                    messages, tools, structured_model, **kwargs_harmony
+                )
+                return harmony_response
+            except Exception as e:
+                logger.warning(f"Failed to use Harmony format, falling back to standard: {e}")
+        
         response = await self.client.chat(**kwargs)
 
         if self.stream:
@@ -286,6 +301,182 @@ class OllamaChatModel(ChatModelBase):
         )
 
         return parsed_response
+
+    def _convert_to_harmony_format(
+        self, 
+        messages: list,
+        tools: list = None,
+    ) -> str:
+        """Convert standard messages to Harmony format string.
+        
+        Args:
+            messages: List of message dicts in OpenAI format
+            tools: Optional tool definitions
+            
+        Returns:
+            Harmony format string ready for direct model input
+        """
+        harmony_parts = []
+        
+        # Add system message with tool definitions if present
+        system_added = False
+        for msg in messages:
+            if msg['role'] == 'system':
+                harmony_parts.append(f"<|start|>system<|message|>{msg['content']}")
+                
+                # Add tool definitions to system message if present
+                if tools:
+                    harmony_parts.append("\n\n# Available Tools\n")
+                    for tool in tools:
+                        func = tool['function']
+                        harmony_parts.append(f"## {func['name']}\n")
+                        if func.get('description'):
+                            harmony_parts.append(f"// {func['description']}\n")
+                        
+                        # Add parameter info
+                        if func.get('parameters', {}).get('properties'):
+                            props = func['parameters']['properties']
+                            params_info = []
+                            for param, info in props.items():
+                                param_type = info.get('type', 'any')
+                                params_info.append(f"{param}: {param_type}")
+                            harmony_parts.append(f"type {func['name']} = (_: {{{', '.join(params_info)}}}) => any;\n")
+                        else:
+                            harmony_parts.append(f"type {func['name']} = () => any;\n")
+                
+                harmony_parts.append("<|end|>")
+                system_added = True
+                break
+        
+        # Add default system if none provided but tools exist
+        if not system_added and tools:
+            harmony_parts.append("<|start|>system<|message|>You are a helpful assistant.")
+            harmony_parts.append("\n\n# Available Tools\n")
+            for tool in tools:
+                func = tool['function']
+                harmony_parts.append(f"## {func['name']}\n")
+                if func.get('description'):
+                    harmony_parts.append(f"// {func['description']}\n")
+            harmony_parts.append("\n# Valid channels: analysis, commentary, final. Use commentary for tool calls.<|end|>")
+        
+        # Add conversation messages
+        for msg in messages:
+            role = msg['role']
+            content = msg['content']
+            
+            if role == 'user':
+                harmony_parts.append(f"<|start|>user<|message|>{content}<|end|>")
+            elif role == 'assistant':
+                # For assistant messages, use final channel by default
+                harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+            elif role == 'tool':
+                # Tool results
+                tool_name = msg.get('tool_name', 'unknown')
+                harmony_parts.append(f"<|start|>{tool_name} to=assistant<|message|>{content}<|end|>")
+        
+        # Add assistant start for response generation
+        harmony_parts.append("<|start|>assistant")
+        
+        return "".join(harmony_parts)
+
+    async def _call_with_harmony_format(
+        self,
+        messages: list,
+        tools: list = None,
+        structured_model = None,
+        **kwargs
+    ) -> "ChatResponse":
+        """Call Ollama with Harmony format input using generate API.
+        
+        Args:
+            messages: Standard message format
+            tools: Tool definitions
+            structured_model: Structured output model
+            **kwargs: Additional parameters
+            
+        Returns:
+            ChatResponse with proper content blocks
+        """
+        # Convert to Harmony format
+        harmony_prompt = self._convert_to_harmony_format(messages, tools)
+        
+        # Prepare generate API call
+        generate_kwargs = {
+            "model": self.model_name,
+            "prompt": harmony_prompt,
+            "stream": self.stream,
+            "options": self.options,
+            "keep_alive": self.keep_alive,
+        }
+        
+        if structured_model:
+            generate_kwargs["format"] = structured_model.model_json_schema()
+        
+        # Use generate API instead of chat API
+        start_time = datetime.now()
+        response = await self.client.generate(**generate_kwargs)
+        
+        if self.stream:
+            # Return streaming generator for Harmony format
+            return self._parse_harmony_stream_response(start_time, response)
+        
+        # Parse the Harmony format response (non-streaming)
+        response_text = response.get('response', '')
+        
+        # Parse with Harmony parser
+        parsed_blocks = self._harmony_parser.parse(response_text)
+        content_blocks = []
+        
+        # Convert parsed blocks to proper objects
+        for block in parsed_blocks:
+            if block.get("type") == "thinking":
+                content_blocks.append(
+                    ThinkingBlock(
+                        type="thinking",
+                        signature="ollama_harmony",
+                        thinking=block.get("thinking", ""),
+                    ),
+                )
+            elif block.get("type") == "text":
+                content_blocks.append(
+                    TextBlock(
+                        type="text",
+                        text=block.get("text", ""),
+                    ),
+                )
+            elif block.get("type") == "tool_use":
+                content_blocks.append(
+                    ToolUseBlock(
+                        type="tool_use",
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        input=block.get("input", {}),
+                    ),
+                )
+        
+        # Fallback if no parsed blocks (add as single text block)
+        if not content_blocks and response_text:
+            content_blocks.append(
+                TextBlock(
+                    type="text",
+                    text=response_text,
+                )
+            )
+        
+        # Create usage info
+        usage = None
+        if "prompt_eval_count" in response and "eval_count" in response:
+            usage = ChatUsage(
+                input_tokens=response.get("prompt_eval_count", 0),
+                output_tokens=response.get("eval_count", 0),
+                time=(datetime.now() - start_time).total_seconds(),
+            )
+        
+        return ChatResponse(
+            content=content_blocks,
+            usage=usage,
+            metadata=None,
+        )
 
     async def _parse_ollama_stream_completion_response(
         self,
@@ -320,11 +511,17 @@ class OllamaChatModel(ChatModelBase):
             async for content_blocks in self._harmony_parser.parse_stream(
                 response,
             ):
-                # In harmony format, we don't have separated usage info
-                # from the response, so we just create a dummy one.
+                # The Harmony format via the /api/generate endpoint does not
+                # provide token usage details per chunk. A dummy usage object
+                # is created here. The final usage is calculated and
+                # returned in the last chunk in _parse_harmony_stream_response.
                 yield ChatResponse(
                     content=content_blocks,
-                    usage=ChatUsage(),
+                    usage=ChatUsage(
+                        input_tokens=0,
+                        output_tokens=0, 
+                        time=0.0
+                    ),
                     metadata=None,
                 )
         else:
@@ -365,6 +562,7 @@ class OllamaChatModel(ChatModelBase):
                     contents.append(
                         ThinkingBlock(
                             type="thinking",
+                            signature="ollama_thinking",
                             thinking=acc_thinking_content,
                         ),
                     )
@@ -432,10 +630,74 @@ class OllamaChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
         """
         if self.support_harmony_response:
-            content_blocks = self._harmony_parser.parse(
+            parsed_blocks = self._harmony_parser.parse(
                 response.message.content,
             )
+            content_blocks = []
             metadata = None
+            
+            # If harmony parsing produced blocks, use them
+            if parsed_blocks:
+                # Convert dict blocks to proper objects
+                for block in parsed_blocks:
+                    if block.get("type") == "thinking":
+                        content_blocks.append(
+                            ThinkingBlock(
+                                type="thinking", 
+                                signature="ollama_thinking",
+                                thinking=block.get("thinking", ""),
+                            ),
+                        )
+                    elif block.get("type") == "text":
+                        content_blocks.append(
+                            TextBlock(
+                                type="text",
+                                text=block.get("text", ""),
+                            ),
+                        )
+                    elif block.get("type") == "tool_use":
+                        content_blocks.append(
+                            ToolUseBlock(
+                                type="tool_use",
+                                id=block.get("id", ""),
+                                name=block.get("name", ""),
+                                input=block.get("input", {}),
+                            ),
+                        )
+            else:
+                # Fallback to standard parsing if no harmony blocks found
+                if response.message.thinking:
+                    content_blocks.append(
+                        ThinkingBlock(
+                            type="thinking",
+                            signature="ollama_thinking", 
+                            thinking=response.message.thinking,
+                        ),
+                    )
+
+                if response.message.content:
+                    content_blocks.append(
+                        TextBlock(
+                            type="text",
+                            text=response.message.content,
+                        ),
+                    )
+                    if structured_model:
+                        metadata = _json_loads_with_repair(
+                            response.message.content,
+                        )
+
+                for idx, tool_call in enumerate(
+                    response.message.tool_calls or [],
+                ):
+                    content_blocks.append(
+                        ToolUseBlock(
+                            type="tool_use",
+                            id=f"{idx}_{tool_call.function.name}",
+                            name=tool_call.function.name,
+                            input=tool_call.function.arguments,
+                        ),
+                    )
         else:
             content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
             metadata = None
@@ -444,6 +706,7 @@ class OllamaChatModel(ChatModelBase):
                 content_blocks.append(
                     ThinkingBlock(
                         type="thinking",
+                        signature="ollama_thinking",
                         thinking=response.message.thinking,
                     ),
                 )
@@ -487,6 +750,102 @@ class OllamaChatModel(ChatModelBase):
         )
 
         return parsed_response
+
+    async def _parse_harmony_stream_response(
+        self,
+        start_datetime: datetime,
+        response: AsyncIterator,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse Harmony format streaming response from generate API.
+        
+        Args:
+            start_datetime: Start time of the request
+            response: Streaming response from generate API
+            
+        Yields:
+            ChatResponse objects with Harmony-parsed content
+        """
+        accumulated_text = ""
+        
+        try:
+            async for chunk in response:
+                response_text = chunk.get('response', '')
+                done = chunk.get('done', False)
+                
+                accumulated_text += response_text
+                
+                if done:
+                    # Parse final accumulated text with Harmony parser
+                    parsed_blocks = self._harmony_parser.parse(accumulated_text)
+                    content_blocks = []
+                    
+                    # Convert parsed blocks to proper objects
+                    for block in parsed_blocks:
+                        if block.get("type") == "thinking":
+                            content_blocks.append(
+                                ThinkingBlock(
+                                    type="thinking",
+                                    signature="ollama_harmony",
+                                    thinking=block.get("thinking", ""),
+                                ),
+                            )
+                        elif block.get("type") == "text":
+                            content_blocks.append(
+                                TextBlock(
+                                    type="text",
+                                    text=block.get("text", ""),
+                                ),
+                            )
+                        elif block.get("type") == "tool_use":
+                            content_blocks.append(
+                                ToolUseBlock(
+                                    type="tool_use",
+                                    id=block.get("id", ""),
+                                    name=block.get("name", ""),
+                                    input=block.get("input", {}),
+                                ),
+                            )
+                    
+                    # Fallback if no parsed blocks
+                    if not content_blocks and accumulated_text:
+                        content_blocks.append(
+                            TextBlock(
+                                type="text",
+                                text=accumulated_text,
+                            )
+                        )
+                    
+                    # Calculate usage
+                    usage = None
+                    if "prompt_eval_count" in chunk and "eval_count" in chunk:
+                        usage = ChatUsage(
+                            input_tokens=chunk.get("prompt_eval_count", 0),
+                            output_tokens=chunk.get("eval_count", 0),
+                            time=(datetime.now() - start_datetime).total_seconds(),
+                        )
+                    
+                    yield ChatResponse(
+                        content=content_blocks,
+                        usage=usage,
+                        metadata=None,
+                    )
+                    break
+                else:
+                    # Yield intermediate response if needed
+                    if response_text:
+                        yield ChatResponse(
+                            content=[TextBlock(type="text", text=response_text)],
+                            usage=ChatUsage(input_tokens=0, output_tokens=0, time=0.0),
+                            metadata=None,
+                        )
+        except Exception as e:
+            logger.error(f"Error in Harmony streaming: {e}")
+            # Fallback to simple text response
+            yield ChatResponse(
+                content=[TextBlock(type="text", text=accumulated_text)],
+                usage=ChatUsage(input_tokens=0, output_tokens=0, time=0.0),
+                metadata=None,
+            )
 
     def _format_tools_json_schemas(
         self,
