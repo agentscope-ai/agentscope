@@ -275,9 +275,10 @@ class OllamaChatModel(ChatModelBase):
         # Use Harmony format input when support_harmony_response is enabled
         if self.support_harmony_response:
             try:
-                # Remove messages from kwargs to avoid duplication
+                # Remove messages and tools from kwargs to avoid duplication
                 kwargs_harmony = kwargs.copy()
                 kwargs_harmony.pop('messages', None)
+                kwargs_harmony.pop('tools', None)
                 harmony_response = await self._call_with_harmony_format(
                     messages, tools, structured_model, **kwargs_harmony
                 )
