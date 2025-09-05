@@ -1,16 +1,25 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=wrong-import-order
 """The main entry point of the browser agent example."""
 import asyncio
 import os
-
+import traceback
+from pydantic import BaseModel, Field
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 from agentscope.mcp import StdIOStatefulClient
 from agentscope.agent import UserAgent
+from browser_agent import BrowserAgent
 
-from browser_agent import BrowserAgent  # pylint: disable=C0411
+
+class FinalResult(BaseModel):
+    """A structured result model for structured output."""
+
+    result: str = Field(
+        description="The final result to the initial user query",
+    )
 
 
 async def main() -> None:
@@ -30,11 +39,11 @@ async def main() -> None:
 
         # Create browser agent
         agent = BrowserAgent(
-            name="BrowserBot",
+            name="Browser-useAgent",
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
                 model_name="qwen-max",
-                stream=True,
+                stream=False,
             ),
             formatter=DashScopeChatFormatter(),
             memory=InMemoryMemory(),
@@ -49,9 +58,10 @@ async def main() -> None:
             msg = await user(msg)
             if msg.get_text_content() == "exit":
                 break
-            msg = await agent(msg)
+            msg = await agent(msg, structured_model=FinalResult)
 
     except Exception as e:
+        traceback.print_exc()
         print(f"An error occurred: {e}")
         print("Cleaning up browser client...")
     finally:
@@ -69,7 +79,7 @@ if __name__ == "__main__":
     print(
         "The browser agent will use "
         "playwright-mcp (https://github.com/microsoft/playwright-mcp)."
-        "Make sure the MCP server is can be install "
+        "Make sure the MCP server is installed "
         "by `npx @playwright/mcp@latest`",
     )
 
