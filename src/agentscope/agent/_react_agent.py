@@ -415,7 +415,14 @@ class ReActAgent(ReActAgentBase):
                     response_msg = chunk.metadata.get("response_msg")
 
             return response_msg
-
+        except Exception as e:
+            # Record the error message
+            err_msg = f"Error in calling tool {tool_call['name']}: {e}"
+            tool_res_msg.content[0][  # type: ignore[index]
+                "output"
+            ] = err_msg
+            await self.print(tool_res_msg, True)
+            return None
         finally:
             # Record the tool result message in the memory
             await self.memory.add(tool_res_msg)
