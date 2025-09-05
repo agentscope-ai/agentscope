@@ -435,3 +435,4 @@ All thanks to our contributors:
 <a href="https://github.com/agentscope-ai/agentscope/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=agentscope-ai/agentscope&max=999&columns=12&anon=1" />
 </a>
+"Contributed to open source ??" 
