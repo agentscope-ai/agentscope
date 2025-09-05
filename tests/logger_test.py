@@ -16,7 +16,6 @@ from agentscope.manager import ASManager
 from agentscope.message import Msg
 
 
-
 class LoggerTest(unittest.TestCase):
     """
     Unit test for logger.
@@ -60,17 +59,32 @@ class LoggerTest(unittest.TestCase):
         fix_uuid_obj = uuid.UUID(fix_uuid_str)
         fix_uuid_hex = fix_uuid_obj.hex
         fixed_time = datetime.datetime(2025, 9, 1)  # 固定时间
-        with patch('datetime.datetime') as mock_datetime, \
-             patch('uuid.uuid4') as mock_uuid:
+        with patch("datetime.datetime") as mock_datetime, patch(
+            "uuid.uuid4"
+        ) as mock_uuid:
             mock_datetime.now.return_value = fixed_time
             mock_uuid.return_value = fix_uuid_obj
-            msg5 = Msg("Villege", "test for msg init echo logger.chat", "system", echo=True)
-            msg6 = Msg("Villege", "test for msg init echo logger.chat", "system", echo=False)
+            msg5 = Msg(
+                "Villege",
+                "test for msg init echo logger.chat",
+                "system",
+                echo=True,
+            )
+            msg6 = Msg(
+                "Villege",
+                "test for msg init echo logger.chat",
+                "system",
+                echo=False,
+            )
 
         self.assertEqual(msg5.id, fix_uuid_hex)
-        self.assertEqual(msg5.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S"))
+        self.assertEqual(
+            msg5.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S")
+        )
         self.assertEqual(msg6.id, fix_uuid_hex)
-        self.assertEqual(msg6.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S"))
+        self.assertEqual(
+            msg6.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S")
+        )
 
         logger.chat(msg1)
         logger.chat(msg2)
@@ -129,7 +143,7 @@ class LoggerTest(unittest.TestCase):
                 '"__name__": "Msg", "id": "4ebf0fd267904f9998e45438bf9ca4ae", '
                 '"name": "Villege", "role": "system", '
                 '"content": "test for msg init echo logger.chat", '
-                '"metadata": null, "timestamp": "2025-09-01 00:00:00"}\n'
+                '"metadata": null, "timestamp": "2025-09-01 00:00:00"}\n',
             ],
         ):
             self.assertDictEqual(json.loads(line), json.loads(ground_truth))
