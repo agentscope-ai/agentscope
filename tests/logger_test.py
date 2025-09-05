@@ -60,7 +60,7 @@ class LoggerTest(unittest.TestCase):
         fix_uuid_hex = fix_uuid_obj.hex
         fixed_time = datetime.datetime(2025, 9, 1)  # 固定时间
         with patch("datetime.datetime") as mock_datetime, patch(
-            "uuid.uuid4"
+            "uuid.uuid4",
         ) as mock_uuid:
             mock_datetime.now.return_value = fixed_time
             mock_uuid.return_value = fix_uuid_obj
@@ -79,11 +79,13 @@ class LoggerTest(unittest.TestCase):
 
         self.assertEqual(msg5.id, fix_uuid_hex)
         self.assertEqual(
-            msg5.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S")
+            msg5.timestamp,
+            fixed_time.strftime("%Y-%m-%d %H:%M:%S"),
         )
         self.assertEqual(msg6.id, fix_uuid_hex)
         self.assertEqual(
-            msg6.timestamp, fixed_time.strftime("%Y-%m-%d %H:%M:%S")
+            msg6.timestamp,
+            fixed_time.strftime("%Y-%m-%d %H:%M:%S"),
         )
 
         logger.chat(msg1)
