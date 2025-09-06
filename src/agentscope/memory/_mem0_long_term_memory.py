@@ -8,7 +8,6 @@ capabilities for AgentScope agents.
 import json
 from typing import Any, TYPE_CHECKING
 from importlib import metadata
-from packaging import version
 
 
 from pydantic import field_validator
@@ -138,6 +137,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             import mem0
             from mem0.configs.llms.base import BaseLlmConfig
             from mem0.utils.factory import LlmFactory, EmbedderFactory
+            from packaging import version
 
             # Check mem0 version
             current_version = metadata.version("mem0ai")
