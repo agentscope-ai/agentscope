@@ -76,6 +76,42 @@ class SessionTest(IsolatedAsyncioTestCase):
 
         await session.save_session_state(agent1=agent1, agent2=agent2)
 
+    async def test_session_with_compression(self) -> None:
+        """Test the JSONSession class with compression enabled."""
+        session = JSONSession(
+            "user_1_compressed",
+            save_dir="./",
+            compress=True,  # Enable compression
+        )
+
+        agent1 = ReActAgent(
+            name="Friday",
+            sys_prompt="A helpful assistant.",
+            model=DashScopeChatModel(api_key="xxx", model_name="qwen_max"),
+            formatter=DashScopeChatFormatter(),
+            toolkit=Toolkit(),
+            memory=InMemoryMemory(),
+        )
+        agent2 = MyAgent()
+
+        await agent2.memory.add(
+            Msg(
+                "Alice",
+                "Hi!",
+                "user",
+            ),
+        )
+
+        # Save session state with compression
+        await session.save_session_state(agent1=agent1, agent2=agent2)
+
+        # Load session state with compression
+        await session.load_session_state(agent1=agent1, agent2=agent2)
+
+        # Verify that the state was loaded correctly
+        memory_content = await agent2.memory.get_memory()
+        self.assertEqual(memory_content[0].content, "Hi!")
+
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""
         # Remove the session file if it exists

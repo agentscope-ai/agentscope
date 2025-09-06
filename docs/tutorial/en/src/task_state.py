@@ -213,3 +213,22 @@ asyncio.run(example_load_session())
 # %%
 # Now we can see the agent state is restored to the saved state.
 #
+
+# %%
+# Using JSONSession with compression
+# -----------------------------------------
+# The `JSONSession` class also supports optional compression for session data to save storage space.
+session = JSONSession(
+    session_id="session_2025-08-08",
+    save_dir="./user-bob/",
+    compress=True  # Enable compression for session data
+)
+
+async def example_compressed_session() -> None:
+    """Example of saving and loading session state with compression."""
+    await session.save_session_state(agent=agent)
+    print("Compressed session state saved.")
+    await session.load_session_state(agent=agent)
+    print("Compressed session state loaded.")
+
+asyncio.run(example_compressed_session())
