@@ -11,7 +11,9 @@ from ..module import StateModule
 class JSONSession(SessionBase):
     """The JSON session class."""
 
-    def __init__(self, session_id: str, save_dir: str, compress: bool = False) -> None:
+    def __init__(
+        self, session_id: str, save_dir: str, compress: bool = False
+    ) -> None:
         """Initialize the JSON session class with optional compression.
 
         Args:
@@ -54,7 +56,10 @@ class JSONSession(SessionBase):
             "wb" if self.compress else "w",
             encoding=None if self.compress else "utf-8",
         ) as file:
-            file.write(data)
+            if self.compress:
+                file.write(data)  # Write bytes directly for compressed data
+            else:
+                file.write(data.decode("utf-8"))  # Decode bytes to string for uncompressed data
 
     async def load_session_state(
         self,
