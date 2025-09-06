@@ -79,10 +79,10 @@ class StatefulClientBase(MCPClientBase, ABC):
             )
 
         try:
-            if self.stack:
-                await self.stack.aclose()
-
+            await self.stack.aclose()
             logger.info("MCP client closed.")
+        except Exception as e:
+            logger.warning("Error during MCP client cleanup: %s", e)
         finally:
             self.stack = None
             self.session = None
