@@ -77,7 +77,10 @@ class OllamaChatFormatter(TruncatedFormatterBase):
             tool_calls = []
             images = []
 
-            for block in msg.get_content_blocks():
+            content_blocks_data = msg.get_content_blocks()
+            if content_blocks_data is None:
+                content_blocks_data = []
+            for block in content_blocks_data:
                 typ = block.get("type")
                 if typ == "text":
                     content_blocks.append({**block})
@@ -251,7 +254,10 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
         accumulated_text = []
         images = []
         for msg in msgs:
-            for block in msg.get_content_blocks():
+            content_blocks_data = msg.get_content_blocks()
+            if content_blocks_data is None:
+                content_blocks_data = []
+            for block in content_blocks_data:
                 if block["type"] == "text":
                     accumulated_text.append(f"{msg.name}: {block['text']}")
 
