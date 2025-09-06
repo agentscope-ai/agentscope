@@ -14,7 +14,7 @@ AgentScope 提供了一个内置的评测框架，用于评测智能体在不同
 .. note:: 我们正在持续集成新的基准测试到 AgentScope 中：
 
  - ✅ `ACEBench <https://github.com/ACEBench/ACEBench>`_
- - 🚧 `GAIA <https://huggingface.co/datasets/gaia-benchmark/GAIA/tree/main>`_ 基准测试
+ - ✅ `GAIA <https://huggingface.co/datasets/gaia-benchmark/GAIA/tree/main>`_ 基准测试
 
 
 概述
@@ -42,6 +42,7 @@ AgentScope 当前的实现包括：
     - ``GeneralEvaluator``: 通用评估器，按顺序运行任务，便于调试。
 - 基准测试：
     - ``ACEBench``: 用于评估智能体能力的基准测试。
+    - ``GAIABench``: 用于评估智能体在通用任务和复杂场景中的能力的基准测试。
 
 我们在 `GitHub 仓库 <https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench>`_ 中提供了一个使用 ``RayEvaluator`` 和 ACEBench 中智能体多步骤任务的玩具示例。
 
