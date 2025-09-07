@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-lines
+# flake8: noqa: E501
 """The main entry point of the browser agent example."""
 import asyncio
 import os
@@ -82,7 +84,7 @@ async def main(
             print(f"Error while closing browser client: {cleanup_error}")
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Browser Agent Example with configurable reply method"

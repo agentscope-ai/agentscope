@@ -42,7 +42,9 @@ class BrowserSearchMixin:
 
         return ""
 
-    async def _deduplicate_actions_and_memories(self, actions, memories=None):
+    async def _deduplicate_actions_and_memories(
+        self, actions: list, memories: Optional[list] = None
+    ) -> tuple[list, list]:
         seen = set()
         unique_actions = []
         unique_memories = []
@@ -65,7 +67,7 @@ class BrowserSearchMixin:
 
     async def _replay(
         self,
-        page_history,
+        page_history: list,
         memory_history: dict,
     ) -> Msg:
         """Replay memory history to the same status.
@@ -126,7 +128,7 @@ class BrowserSearchMixin:
         )
 
         # Load the DFS-specific prompt template
-        self.reasoning_prompt = (
+        self.reasoning_prompt: str = (
             self.reasoning_prompt
             + _BROWSER_AGENT_DFS_PROMPT.format(branch_factor=branch_factor)
         )
@@ -199,9 +201,9 @@ class BrowserSearchMixin:
             tmp_page_history.append(
                 {
                     "tool_calls": curr_actions,
-                    "info": snapshot_text,
+                    "info": str(snapshot_text),
                     "url": current_url,
-                },
+                }
             )
 
             tmp_memory_history = copy.deepcopy(self.memory.state_dict())
