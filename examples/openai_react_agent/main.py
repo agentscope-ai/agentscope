@@ -10,8 +10,12 @@ This example demonstrates:
 
 import os
 import asyncio
+from dotenv import load_dotenv
 
 from agentscope.agent import ReActAgent, UserAgent
+
+# Load environment variables from .env file
+load_dotenv()
 from agentscope.model import OpenAIChatModel
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
