@@ -9,26 +9,15 @@ import uuid
 import re
 from agentscope.message import Msg, ToolUseBlock
 
+with open(
+    "examples/agent_browser/build_in_prompt/browser_agent_dfs_prompt.md",
+    "r",
+    encoding="utf-8",
+) as f:
+    _BROWSER_AGENT_DFS_PROMPT = f.read()
+
 
 class BrowserSearchMixin:
-
-    # async def _navigate_to_url(self, url: str) -> None:
-    #     """
-    #     Navigate to the specified URL using the browser_navigate tool.
-
-    #     Returns:
-    #         None
-    #     """
-    #     tool_call = ToolUseBlock(
-    #         id=str(uuid.uuid4()),
-    #         type="tool_use",
-    #         name="browser_navigate",
-    #         input={"url": url},
-    #     )
-
-    #     # Execute the navigation tool
-    #     await self.toolkit.call_tool_function(tool_call)
-
     async def _extract_current_url(self) -> str:
         """Navigate to the specified URL using the browser_navigate tool."""
         tool_call = ToolUseBlock(
@@ -136,13 +125,10 @@ class BrowserSearchMixin:
             )
         )
 
+        # Load the DFS-specific prompt template
         self.reasoning_prompt = (
             self.reasoning_prompt
-            + f"""
-                If you find the answer, generate response.
-                Otherwise, generate at most {branch_factor} distinct tool calls on current website (with different refs and elements for websites) that may contain relevant information for the task.
-                Rank all generated tool calls by the likelihood of success. Please avoid repeating the same actions/tool calls (with 'ref') that are explored in the past or have failed.
-            """
+            + _BROWSER_AGENT_DFS_PROMPT.format(branch_factor=branch_factor)
         )
 
         reply_msg = None
