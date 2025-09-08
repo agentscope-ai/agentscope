@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-lines
-# flake8: noqa: E501
 """The main entry point of the browser agent example."""
 import asyncio
 import os
@@ -8,13 +7,13 @@ import sys
 import argparse
 import traceback
 from pydantic import BaseModel, Field
+from browser_agent import BrowserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 from agentscope.mcp import StdIOStatefulClient
 from agentscope.agent import UserAgent
-from browser_agent import BrowserAgent
 
 
 class FinalResult(BaseModel):
@@ -26,9 +25,9 @@ class FinalResult(BaseModel):
 
 
 async def main(
-    use_dfs_reply: bool = False,
-    start_url: str = "https://www.google.com",
-    max_iters: int = 50,
+    use_dfs_reply_param: bool = False,
+    start_url_param: str = "https://www.google.com",
+    max_iters_param: int = 50,
 ) -> None:
     """The main entry point for the browser agent example."""
     # Setup toolkit with browser tools from MCP server
@@ -46,7 +45,7 @@ async def main(
 
         # Create browser agent
         # Set use_dfs_reply=True to use the DFS search-based reply method
-        # Set use_dfs_reply=False to use the default reasoning-acting loop method
+        # Set use_dfs_reply=False to use the default loop method
         agent = BrowserAgent(
             name="BrowserBot",
             model=DashScopeChatModel(
@@ -57,9 +56,9 @@ async def main(
             formatter=DashScopeChatFormatter(),
             memory=InMemoryMemory(),
             toolkit=toolkit,
-            max_iters=max_iters,
-            start_url=start_url,
-            use_dfs_reply=use_dfs_reply,  # Use the parameter passed to main
+            max_iters=max_iters_param,
+            start_url=start_url_param,
+            use_dfs_reply=use_dfs_reply_param,
         )
         user = UserAgent("Bob")
 
@@ -87,7 +86,7 @@ async def main(
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Browser Agent Example with configurable reply method"
+        description="Browser Agent Example with configurable reply method",
     )
     parser.add_argument(
         "--use-dfs-reply",
@@ -142,7 +141,7 @@ if __name__ == "__main__":
         use_dfs_reply = False
         print(
             "Using default reasoning-acting loop method "
-            "(use --use-dfs-reply to enable DFS method)"
+            "(use --use-dfs-reply to enable DFS method)",
         )
 
     # Get other parameters

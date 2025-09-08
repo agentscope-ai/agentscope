@@ -2,7 +2,7 @@
 # pylint: disable=too-many-branches line-too-long unused-argument too-many-statements
 # flake8: noqa: E501
 """Browser search mixin for DFS-based search strategy."""
-from typing import Union, Optional
+from typing import Union, Optional, Any, Dict
 import json
 import copy
 from collections import defaultdict
@@ -46,7 +46,9 @@ class BrowserSearchMixin:
         return ""
 
     async def _deduplicate_actions_and_memories(
-        self, actions: list, memories: Optional[list] = None
+        self,
+        actions: list,
+        memories: Optional[list] = None,
     ) -> tuple[list, list]:
         seen = set()
         unique_actions = []
@@ -88,14 +90,14 @@ class BrowserSearchMixin:
 
     async def _reply_with_dfs(
         self,
-        x: Optional[Union[Msg, list[Msg]]] = None,
+        msg: Optional[Union[Msg, list[Msg]]] = None,
     ) -> Msg:
         """The dfs search reply method of the agent."""
 
         branch_factor = 5
         await self.print(Msg("system", "DFS Search Enabled", "system"), True)
         await self._navigate_to_start_url()
-        await self.memory.add(x)
+        await self.memory.add(msg)
 
         page_history = [
             {
@@ -122,7 +124,7 @@ class BrowserSearchMixin:
                 tmp_page_history,
                 tmp_memory_history,  # memory history
                 0,
-            )
+            ),
         )
 
         # Load the DFS-specific prompt template
@@ -196,13 +198,12 @@ class BrowserSearchMixin:
             current_url = await self._extract_current_url()
             snapshot_text = await self._get_snapshot_in_text()
 
-            tmp_page_history.append(
-                {
-                    "tool_calls": curr_actions,
-                    "info": str(snapshot_text),
-                    "url": current_url,
-                }
-            )
+            page_entry: Dict[str, Any] = {
+                "tool_calls": curr_actions,
+                "info": str(snapshot_text),
+                "url": current_url,
+            }
+            tmp_page_history.append(page_entry)
 
             tmp_memory_history = copy.deepcopy(self.memory.state_dict())
 
@@ -213,7 +214,7 @@ class BrowserSearchMixin:
                     msg_reasoning = await self._reasoning(observe_msg)
 
                     next_actions = list(
-                        msg_reasoning.get_content_blocks("tool_use")
+                        msg_reasoning.get_content_blocks("tool_use"),
                     )
 
                     if next_actions:
@@ -232,7 +233,7 @@ class BrowserSearchMixin:
 
             # need to determine when to generate responses when there are multiple actions
             next_actions, _ = await self._deduplicate_actions_and_memories(
-                next_actions
+                next_actions,
             )
 
             # Add next actions to the queue

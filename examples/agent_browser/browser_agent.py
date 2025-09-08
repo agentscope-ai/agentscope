@@ -10,7 +10,7 @@ from typing import Type, Optional, Any
 import asyncio
 import base64
 from pydantic import BaseModel, ValidationError
-
+from browser_search import BrowserSearchMixin
 from agentscope.agent import ReActAgent
 from agentscope.formatter import FormatterBase
 from agentscope.memory import MemoryBase
@@ -26,7 +26,6 @@ from agentscope.tool import (
     ToolResponse,
 )
 from agentscope.token import TokenCounterBase, OpenAITokenCounter
-from browser_search import BrowserSearchMixin
 
 with open(
     "examples/agent_browser/build_in_prompt/browser_agent_sys_prompt.md",
@@ -200,7 +199,9 @@ class BrowserAgent(ReActAgent, BrowserSearchMixin):
         self.init_query = (
             msg.content
             if isinstance(msg, Msg)
-            else msg[0].content if isinstance(msg, list) else ""
+            else msg[0].content
+            if isinstance(msg, list)
+            else ""
         )
         if self.start_url and not self._has_initial_navigated:
             await self._navigate_to_start_url()
@@ -519,12 +520,12 @@ class BrowserAgent(ReActAgent, BrowserSearchMixin):
             if b["type"] == "tool_result":
                 for j, return_json in enumerate(b.get("output", [])):
                     if isinstance(return_json, dict) and "text" in return_json:
-                        output_msg.content[i]["output"][j]["output"] = (
-                            self._filter_execution_text(return_json["text"])
-                        )
-                        output_msg.content[i]["output"][j]["text"] = (
-                            self._filter_execution_text(return_json["text"])
-                        )
+                        output_msg.content[i]["output"][j][
+                            "output"
+                        ] = self._filter_execution_text(return_json["text"])
+                        output_msg.content[i]["output"][j][
+                            "text"
+                        ] = self._filter_execution_text(return_json["text"])
         return output_msg
 
     async def _task_decomposition_and_reformat(
