@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches line-too-long unused-argument too-many-statements
 # flake8: noqa: E501
+"""Browser search mixin for DFS-based search strategy."""
 from typing import Union, Optional
 import json
 import copy
@@ -18,6 +19,8 @@ with open(
 
 
 class BrowserSearchMixin:
+    """Mixin class providing DFS-based search capabilities for browser agents."""
+
     async def _extract_current_url(self) -> str:
         """Navigate to the specified URL using the browser_navigate tool."""
         tool_call = ToolUseBlock(
@@ -115,12 +118,7 @@ class BrowserSearchMixin:
         action_queue.append(
             (
                 step_idx,
-                [
-                    tool_call
-                    for tool_call in msg_reasoning.get_content_blocks(
-                        "tool_use",
-                    )
-                ],
+                list(msg_reasoning.get_content_blocks("tool_use")),
                 tmp_page_history,
                 tmp_memory_history,  # memory history
                 0,
@@ -214,12 +212,9 @@ class BrowserSearchMixin:
                     observe_msg = await self._build_observation()
                     msg_reasoning = await self._reasoning(observe_msg)
 
-                    next_actions = [
-                        tool_call
-                        for tool_call in msg_reasoning.get_content_blocks(
-                            "tool_use",
-                        )
-                    ]
+                    next_actions = list(
+                        msg_reasoning.get_content_blocks("tool_use")
+                    )
 
                     if next_actions:
                         next_actions.reverse()

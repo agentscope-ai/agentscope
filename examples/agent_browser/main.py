@@ -59,7 +59,7 @@ async def main(
             toolkit=toolkit,
             max_iters=max_iters,
             start_url=start_url,
-            use_dfs_reply=use_dfs_reply,  # Use the parameter passed to main function
+            use_dfs_reply=use_dfs_reply,  # Use the parameter passed to main
         )
         user = UserAgent("Bob")
 
@@ -92,13 +92,19 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--use-dfs-reply",
         action="store_true",
-        help="Use DFS search-based reply method instead of default reasoning-acting loop",
+        help=(
+            "Use DFS search-based reply method instead of "
+            "default reasoning-acting loop"
+        ),
     )
     parser.add_argument(
         "--start-url",
         type=str,
         default="https://www.google.com",
-        help="Starting URL for the browser agent (default: https://www.google.com)",
+        help=(
+            "Starting URL for the browser agent "
+            "(default: https://www.google.com)"
+        ),
     )
     parser.add_argument(
         "--max-iters",
@@ -135,7 +141,8 @@ if __name__ == "__main__":
         # Default behavior - use default reasoning-acting loop method
         use_dfs_reply = False
         print(
-            "Using default reasoning-acting loop method (use --use-dfs-reply to enable DFS method)"
+            "Using default reasoning-acting loop method "
+            "(use --use-dfs-reply to enable DFS method)"
         )
 
     # Get other parameters
