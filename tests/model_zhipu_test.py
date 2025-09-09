@@ -132,13 +132,15 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
             self.assertEqual(len(result.content), 2)
             self.assertEqual(result.content[0]["type"], "text")
             self.assertEqual(
-                result.content[0]["text"], "I'll check the weather for you."
+                result.content[0]["text"],
+                "I'll check the weather for you.",
             )
             self.assertEqual(result.content[1]["type"], "tool_use")
             self.assertEqual(result.content[1]["id"], "call_123")
             self.assertEqual(result.content[1]["name"], "get_weather")
             self.assertEqual(
-                result.content[1]["input"], {"location": "Beijing"}
+                result.content[1]["input"],
+                {"location": "Beijing"},
             )
 
     async def test_call_with_structured_model_integration(self) -> None:
@@ -188,7 +190,8 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
             chunks = [
                 self._create_mock_chunk(content="Hello", finish_reason=None),
                 self._create_mock_chunk(
-                    content=" there!", finish_reason="stop"
+                    content=" there!",
+                    finish_reason="stop",
                 ),
             ]
 
@@ -241,7 +244,7 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
 
             messages = [{"role": "user", "content": "Hello"}]
             mock_response = self._create_mock_response(
-                "Hello! Nice to meet you."
+                "Hello! Nice to meet you.",
             )
             mock_client.chat.completions.create = Mock(
                 return_value=mock_response,
@@ -254,7 +257,8 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
             self.assertFalse(call_args["stream"])
             self.assertIsInstance(result, ChatResponse)
             self.assertEqual(
-                result.content[0]["text"], "Hello! Nice to meet you."
+                result.content[0]["text"],
+                "Hello! Nice to meet you.",
             )
 
     async def test_tool_call_response_processing(self) -> None:
@@ -271,7 +275,7 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
             model.client = mock_client
 
             messages = [
-                {"role": "user", "content": "What's the weather in NY?"}
+                {"role": "user", "content": "What's the weather in NY?"},
             ]
             mock_response = self._create_mock_response_with_tools(
                 "I'll check the weather for you.",
@@ -317,7 +321,7 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
 
             messages = [{"role": "user", "content": "Generate a person"}]
             mock_response = self._create_mock_response(
-                '{"name": "Alice", "age": 25}'
+                '{"name": "Alice", "age": 25}',
             )
             mock_client.chat.completions.create = Mock(
                 return_value=mock_response,

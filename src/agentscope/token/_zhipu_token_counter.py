@@ -119,12 +119,13 @@ class ZhipuTokenCounter(TokenCounterBase):
                     for item in content:
                         if item.get("type") == "text":
                             token_count += len(
-                                self.encoding.encode(item["text"])
+                                self.encoding.encode(item["text"]),
                             )
 
             if "tool_calls" in message:
                 tool_calls_str = json.dumps(
-                    message["tool_calls"], ensure_ascii=False
+                    message["tool_calls"],
+                    ensure_ascii=False,
                 )
                 token_count += len(self.encoding.encode(tool_calls_str))
 
@@ -154,7 +155,8 @@ class ZhipuTokenCounter(TokenCounterBase):
 
             if "tool_calls" in message:
                 tool_calls_str = json.dumps(
-                    message["tool_calls"], ensure_ascii=False
+                    message["tool_calls"],
+                    ensure_ascii=False,
                 )
                 total_chars += len(tool_calls_str)
 

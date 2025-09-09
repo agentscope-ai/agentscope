@@ -74,7 +74,7 @@ class ZhipuChatModel(ChatModelBase):
         except ImportError as e:
             raise ImportError(
                 "The package zai-sdk is not found. Please install it by "
-                'running command `pip install zai-sdk`',
+                "running command `pip install zai-sdk`",
             ) from e
 
         super().__init__(model_name, stream)
@@ -145,14 +145,14 @@ class ZhipuChatModel(ChatModelBase):
             **self.generate_kwargs,
             **kwargs,
         }
-        
+
         # Add thinking parameter if supported and not already in kwargs
         if self.thinking and "thinking" not in kwargs:
             # Note: Zhipu AI may support thinking parameters in future versions
             logger.warning(
                 "Thinking parameter is provided but may not be supported by "
                 "Zhipu AI API in current version. This parameter is reserved "
-                "for future use."
+                "for future use.",
             )
             kwargs["thinking"] = self.thinking
 
@@ -178,7 +178,7 @@ class ZhipuChatModel(ChatModelBase):
             # Zhipu API cannot guarantee structured output, a warning or error should be issued
             logger.warning(
                 "Zhipu AI does not guarantee structured output. "
-                "The response may not conform to the specified schema."
+                "The response may not conform to the specified schema.",
             )
             kwargs["response_format"] = structured_model
 
@@ -241,7 +241,7 @@ class ZhipuChatModel(ChatModelBase):
                 accumulated_text += delta.content
 
             # Handle thinking/reasoning content
-            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
                 accumulated_thinking += str(delta.reasoning_content)
 
             # Handle tool calls
@@ -259,12 +259,14 @@ class ZhipuChatModel(ChatModelBase):
                     if tool_call.function.name:
                         tool_calls[tool_id]["name"] = tool_call.function.name
                     if tool_call.function.arguments:
-                        tool_calls[tool_id]["input"] += tool_call.function.arguments
+                        tool_calls[tool_id][
+                            "input"
+                        ] += tool_call.function.arguments
 
             # Calculate usage statistics
             current_time = (datetime.now() - start_datetime).total_seconds()
             usage = None
-            if hasattr(chunk, 'usage') and chunk.usage:
+            if hasattr(chunk, "usage") and chunk.usage:
                 usage = ChatUsage(
                     input_tokens=chunk.usage.prompt_tokens or 0,
                     output_tokens=chunk.usage.completion_tokens or 0,
@@ -375,7 +377,7 @@ class ZhipuChatModel(ChatModelBase):
 
         # Calculate usage
         usage = None
-        if hasattr(response, 'usage') and response.usage:
+        if hasattr(response, "usage") and response.usage:
             usage = ChatUsage(
                 input_tokens=response.usage.prompt_tokens or 0,
                 output_tokens=response.usage.completion_tokens or 0,
@@ -407,12 +409,12 @@ class ZhipuChatModel(ChatModelBase):
         elif tool_choice in ["any", "required"]:
             # Zhipu AI doesn't support "any" or "required", use "auto" instead
             logger.warning(
-                f"Zhipu AI doesn't support tool_choice='{tool_choice}', using 'auto' instead."
+                f"Zhipu AI doesn't support tool_choice='{tool_choice}', using 'auto' instead.",
             )
             return "auto"
         else:
             # Specific tool name - Zhipu AI doesn't support this, use "auto" instead
             logger.warning(
-                f"Zhipu AI doesn't support calling specific tool '{tool_choice}', using 'auto' instead."
+                f"Zhipu AI doesn't support calling specific tool '{tool_choice}', using 'auto' instead.",
             )
             return "auto"

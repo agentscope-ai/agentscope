@@ -114,7 +114,7 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                     # Zhipu API不应在发送给模型的消息中包含thinking内容
                     logger.warning(
                         "Thinking content is not recommended for Zhipu AI API. "
-                        "Skipping thinking block."
+                        "Skipping thinking block.",
                     )
                     # 不添加thinking内容到消息中
                     continue
@@ -141,7 +141,7 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                             "text": self.convert_tool_result_to_string(
                                 block.get("output"),  # type: ignore[arg-type]
                             ),
-                        }
+                        },
                     )
 
                 elif typ == "image":
@@ -261,30 +261,32 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                 if block["type"] in ["tool_use", "tool_result"]:
                     has_tool_calls = True
                     break
-        
+
         # For simple cases (no tool calls), use the parent formatting and add name fields
         if not has_tool_calls:
             formatted = await super()._format(msgs)
             # Add name fields to the formatted messages
             for i, msg in enumerate(msgs):
-                if msg.name != msg.role:  # Only add name if different from role
+                if (
+                    msg.name != msg.role
+                ):  # Only add name if different from role
                     formatted[i]["name"] = msg.name
             return formatted
-        
+
         # For complex multi-agent conversations, use the original logic
         formatted_msgs: list[dict] = []
-        
+
         # Collect messages without tool calls/results
         conversation_blocks: list = []
         accumulated_text = []
-        
+
         for msg in msgs:
             has_tool_content = False
             for block in msg.get_content_blocks():
                 if block["type"] in ["tool_use", "tool_result"]:
                     has_tool_content = True
                     break
-            
+
             if has_tool_content:
                 # Process accumulated conversation text
                 if accumulated_text:
@@ -295,21 +297,23 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                             + "<history>\n"
                             + conversation_text
                         )
-                    
+
                     conversation_blocks.append({"text": conversation_text})
                     accumulated_text.clear()
-                
+
                 # Process tool messages separately
                 tool_messages = await super()._format([msg])
                 if conversation_blocks:
                     # Close the conversation history tag
                     conversation_blocks[-1]["text"] += "\n</history>"
-                    formatted_msgs.append({
-                        "role": "user",
-                        "content": conversation_blocks,
-                    })
+                    formatted_msgs.append(
+                        {
+                            "role": "user",
+                            "content": conversation_blocks,
+                        }
+                    )
                     conversation_blocks = []
-                
+
                 formatted_msgs.extend(tool_messages)
             else:
                 # Accumulate conversation messages
@@ -326,15 +330,17 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                     + "<history>\n"
                     + conversation_text
                 )
-            
+
             conversation_blocks.append({"text": conversation_text})
-        
+
         if conversation_blocks:
             # Close the conversation history tag
             conversation_blocks[-1]["text"] += "\n</history>"
-            formatted_msgs.append({
-                "role": "user",
-                "content": conversation_blocks,
-            })
+            formatted_msgs.append(
+                {
+                    "role": "user",
+                    "content": conversation_blocks,
+                }
+            )
 
         return formatted_msgs

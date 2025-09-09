@@ -375,7 +375,8 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(formatted[0]["role"], "user")
         self.assertIsInstance(formatted[0]["content"], list)
         self.assertEqual(
-            len(formatted[0]["content"]), 2
+            len(formatted[0]["content"]),
+            2,
         )  # text + image (thinking is skipped)
 
     async def test_zhipu_formatter_tool_only_message(self) -> None:
