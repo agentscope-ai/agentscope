@@ -171,10 +171,6 @@ class ZhipuChatModel(ChatModelBase):
                     "ignored. The model will only perform structured output "
                     "generation without calling any other tools.",
                 )
-            # Convert BaseModel to JSON schema for response format
-            kwargs.pop("stream", None)
-            kwargs.pop("tools", None)
-            kwargs.pop("tool_choice", None)
             # Zhipu API cannot guarantee structured output, a warning or error should be issued
             logger.warning(
                 "Zhipu AI does not guarantee structured output. "
@@ -285,7 +281,7 @@ class ZhipuChatModel(ChatModelBase):
                     ),
                 )
 
-            if accumulated_text:
+            if accumulated_text.strip():
                 contents.append(TextBlock(type="text", text=accumulated_text))
                 if structured_model:
                     metadata = _json_loads_with_repair(accumulated_text)
