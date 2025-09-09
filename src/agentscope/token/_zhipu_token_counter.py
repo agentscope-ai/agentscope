@@ -68,7 +68,7 @@ class ZhipuTokenCounter(TokenCounterBase):
         try:
             import tiktoken
 
-            self.encoding = tiktoken.encoding_for_model("glm-4.5")
+            self.encoding = tiktoken.encoding_for_model(self.model_name)
         except Exception:
             self.encoding = None
 

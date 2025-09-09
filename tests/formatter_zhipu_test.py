@@ -205,16 +205,7 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.ground_truth_thinking = [
             {
                 "role": "assistant",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "[Thinking] Let me think about this question...",
-                    },
-                    {
-                        "type": "text",
-                        "text": "After thinking, I believe the answer is...",
-                    },
-                ],
+                "content": "After thinking, I believe the answer is...",
             },
         ]
 
@@ -384,8 +375,8 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         self.assertEqual(formatted[0]["role"], "user")
         self.assertIsInstance(formatted[0]["content"], list)
         self.assertEqual(
-            len(formatted[0]["content"]), 3
-        )  # text + image + thinking
+            len(formatted[0]["content"]), 2
+        )  # text + image (thinking is skipped)
 
     async def test_zhipu_formatter_tool_only_message(self) -> None:
         """Test ZhipuChatFormatter with tool-only messages."""

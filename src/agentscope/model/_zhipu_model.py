@@ -31,6 +31,7 @@ class ZhipuChatModel(ChatModelBase):
         api_key: str | None = None,
         stream: bool = True,
         base_url: str | None = None,
+        thinking: dict | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -47,6 +48,19 @@ class ZhipuChatModel(ChatModelBase):
             base_url (`str | None`, default `None`):
                 The base URL for Zhipu AI API. If not specified, uses the
                 default URL.
+            thinking (`dict | None`, default `None`):
+                Configuration for the model's internal reasoning process.
+                Note: Zhipu AI models may support this feature in future versions.
+                Currently, this parameter is reserved for future use.
+
+                .. code-block:: python
+                    :caption: Example of thinking configuration
+
+                    {
+                        "type": "enabled" | "disabled",
+                        "budget_tokens": 1024
+                    }
+
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
             optional):
                 The extra keyword arguments used in Zhipu AI API generation,
@@ -60,7 +74,7 @@ class ZhipuChatModel(ChatModelBase):
         except ImportError as e:
             raise ImportError(
                 "The package zai-sdk is not found. Please install it by "
-                "running command `pip install zai-sdk`",
+                'running command `pip install zai-sdk`',
             ) from e
 
         super().__init__(model_name, stream)
@@ -70,6 +84,7 @@ class ZhipuChatModel(ChatModelBase):
             base_url=base_url,
             **kwargs,
         )
+        self.thinking = thinking
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
@@ -115,10 +130,12 @@ class ZhipuChatModel(ChatModelBase):
                 "Zhipu AI `messages` field expected type `list`, "
                 f"got `{type(messages)}` instead.",
             )
-        if not all("role" in msg and "content" in msg for msg in messages):
+        # Allow messages with only tool_calls and no content.
+        # Only validate that messages contain the role field.
+        if not all("role" in msg for msg in messages):
             raise ValueError(
                 "Each message in the 'messages' list must contain a 'role' "
-                "and 'content' key for Zhipu AI API.",
+                "key for Zhipu AI API.",
             )
 
         kwargs = {
@@ -128,6 +145,16 @@ class ZhipuChatModel(ChatModelBase):
             **self.generate_kwargs,
             **kwargs,
         }
+        
+        # Add thinking parameter if supported and not already in kwargs
+        if self.thinking and "thinking" not in kwargs:
+            # Note: Zhipu AI may support thinking parameters in future versions
+            logger.warning(
+                "Thinking parameter is provided but may not be supported by "
+                "Zhipu AI API in current version. This parameter is reserved "
+                "for future use."
+            )
+            kwargs["thinking"] = self.thinking
 
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)
@@ -148,6 +175,11 @@ class ZhipuChatModel(ChatModelBase):
             kwargs.pop("stream", None)
             kwargs.pop("tools", None)
             kwargs.pop("tool_choice", None)
+            # Zhipu API cannot guarantee structured output, a warning or error should be issued
+            logger.warning(
+                "Zhipu AI does not guarantee structured output. "
+                "The response may not conform to the specified schema."
+            )
             kwargs["response_format"] = structured_model
 
         start_datetime = datetime.now()
@@ -209,7 +241,7 @@ class ZhipuChatModel(ChatModelBase):
                 accumulated_text += delta.content
 
             # Handle thinking/reasoning content
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                 accumulated_thinking += str(delta.reasoning_content)
 
             # Handle tool calls
@@ -227,14 +259,12 @@ class ZhipuChatModel(ChatModelBase):
                     if tool_call.function.name:
                         tool_calls[tool_id]["name"] = tool_call.function.name
                     if tool_call.function.arguments:
-                        tool_calls[tool_id][
-                            "input"
-                        ] += tool_call.function.arguments
+                        tool_calls[tool_id]["input"] += tool_call.function.arguments
 
             # Calculate usage statistics
             current_time = (datetime.now() - start_datetime).total_seconds()
             usage = None
-            if hasattr(chunk, "usage") and chunk.usage:
+            if hasattr(chunk, 'usage') and chunk.usage:
                 usage = ChatUsage(
                     input_tokens=chunk.usage.prompt_tokens or 0,
                     output_tokens=chunk.usage.completion_tokens or 0,
@@ -345,7 +375,7 @@ class ZhipuChatModel(ChatModelBase):
 
         # Calculate usage
         usage = None
-        if hasattr(response, "usage") and response.usage:
+        if hasattr(response, 'usage') and response.usage:
             usage = ChatUsage(
                 input_tokens=response.usage.prompt_tokens or 0,
                 output_tokens=response.usage.completion_tokens or 0,
@@ -374,21 +404,15 @@ class ZhipuChatModel(ChatModelBase):
         """Format tool choice to Zhipu AI format."""
         if tool_choice in ["auto", "none"]:
             return tool_choice
-        elif tool_choice == "any":
-            # Zhipu AI doesn't support "any", use "auto" instead
+        elif tool_choice in ["any", "required"]:
+            # Zhipu AI doesn't support "any" or "required", use "auto" instead
             logger.warning(
-                "Zhipu AI doesn't support tool_choice='any', using 'auto' instead.",
-            )
-            return "auto"
-        elif tool_choice == "required":
-            # Zhipu AI doesn't support "required", use "auto" instead
-            logger.warning(
-                "Zhipu AI doesn't support tool_choice='required', using 'auto' instead.",
+                f"Zhipu AI doesn't support tool_choice='{tool_choice}', using 'auto' instead."
             )
             return "auto"
         else:
-            # Specific tool name
-            return {
-                "type": "function",
-                "function": {"name": tool_choice},
-            }
+            # Specific tool name - Zhipu AI doesn't support this, use "auto" instead
+            logger.warning(
+                f"Zhipu AI doesn't support calling specific tool '{tool_choice}', using 'auto' instead."
+            )
+            return "auto"
