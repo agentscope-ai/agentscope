@@ -45,8 +45,8 @@ def dashscope_text_to_image(
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
     """
     try:
         import dashscope
@@ -135,8 +135,8 @@ def dashscope_image_to_text(
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
     """
 
     if isinstance(image_urls, str):
@@ -240,16 +240,17 @@ def dashscope_text_to_audio(
         api_key (`str`):
             The api key for the dashscope API.
         model (`str`, defaults to 'sambert-zhichu-v1'):
-            The model to use. Full model list can be found in
-            https://help.aliyun.com/zh/dashscope/model-list
+            The model to use. Full model list can be found in the
+            `official document
+            <https://help.aliyun.com/zh/model-studio/sambert-python-sdk>`_.
         sample_rate (`int`, defaults to 48000):
             Sample rate of the audio.
 
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
 
     """
     try:

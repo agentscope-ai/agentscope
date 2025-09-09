@@ -54,6 +54,8 @@ AgentScope 目前支持的模型 API 和模型提供商包括：
       - ✅
       - ✅
 
+.. note:: 当使用 vLLM 时，您需要在部署时为不同模型配置相应的工具调用参数，例如 ``--enable-auto-tool-choice``、``--tool-call-parser`` 等参数。更多详情请参考 `vLLM 官方文档 <https://docs.vllm.ai/en/latest/features/tool_calling.html>`_。
+
 为了提供统一的模型接口，上述所有类均被统一为：
 
 - ``__call__`` 函数的前三个参数是 ``messages``，``tools`` 和 ``tool_choice``，分别是输入消息，工具函数的 JSON schema，以及工具选择的模式。

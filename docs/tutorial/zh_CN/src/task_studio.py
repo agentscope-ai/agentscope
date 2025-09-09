@@ -28,7 +28,7 @@ AgentScope Studio 通过 ``npm`` 安装：
 
 .. code-block:: bash
 
-    npm install -g agentscope-studio
+    npm install -g @agentscope/studio
 
 
 使用以下命令启动 Studio：

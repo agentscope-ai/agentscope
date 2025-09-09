@@ -25,6 +25,11 @@ def setup_logger(
         filepath (`str | None`, optional):
             The filepath to save the logging output.
     """
+    if level not in ["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"]:
+        raise ValueError(
+            f"Invalid logging level: {level}. Must be one of "
+            f"'INFO', 'DEBUG', 'WARNING', 'ERROR', 'CRITICAL'.",
+        )
     logger.handlers.clear()
     logger.setLevel(level)
     handler = logging.StreamHandler()
