@@ -16,6 +16,7 @@ from ..message import (
     ToolUseBlock,
     ToolResultBlock,
     ThinkingBlock,
+    VideoBlock,
 )
 from ..token import TokenCounterBase
 
@@ -79,6 +80,7 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
         ToolUseBlock,
         ToolResultBlock,
         ThinkingBlock,
+        VideoBlock,
     ]
     """Supported message blocks for Zhipu AI API"""
 
@@ -310,7 +312,7 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                         {
                             "role": "user",
                             "content": conversation_blocks,
-                        }
+                        },
                     )
                     conversation_blocks = []
 
@@ -340,7 +342,7 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                 {
                     "role": "user",
                     "content": conversation_blocks,
-                }
+                },
             )
 
         return formatted_msgs
