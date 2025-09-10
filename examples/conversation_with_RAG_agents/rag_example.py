@@ -36,7 +36,7 @@ def prepare_docstring_html() -> None:
     """Prepare docstring in html for API assistant"""
     if not os.path.exists("../../docs/docstring_html/"):
         os.system(
-            "sphinx-apidoc -f -o ../../docs/sphinx_doc/en/source "
+            "sphinx-apidoc -F -a -f -o ../../docs/sphinx_doc/en/source "
             "../../src/agentscope -t template",
         )
         os.system(
