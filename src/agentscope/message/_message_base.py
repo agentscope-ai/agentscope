@@ -146,7 +146,7 @@ class Msg:
     def get_content_blocks(
         self,
         block_type: Literal["tool_result"],
-    ) -> List[ToolUseBlock]:
+    ) -> List[ToolResultBlock]:
         ...
 
     @overload

@@ -21,7 +21,7 @@ minimal_requires = [
     "docstring_parser",
     "json5",
     "json_repair",
-    "mcp",
+    "mcp>=1.13",
     "numpy",
     "openai",
     "python-datauri",
@@ -44,6 +44,7 @@ extra_requires = [
     "ray",
     "mem0ai",
     "zai-sdk",
+    "packaging",
 ]
 
 dev_requires = [

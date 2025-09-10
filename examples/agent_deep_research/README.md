@@ -41,34 +41,6 @@ tavily_search_client= StdIOStatefulClient(
 await tavily_search_client.connect()
 ```
 
-## Replace the Model and Formatter
-AgentScope provides several built-in model implementations that you can easily switch between. You can also implement your own custom model if needed.
-
-For example, to use the OpenAI model, you can replace the model and formatter as follows:
-```
-from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIChatFormatter
-
-# Replace the model and formatter with:
-agent = DeepResearchAgent(
-    name="Friday",
-    sys_prompt="You are a helpful assistant named Friday.",
-    model=OpenAIChatModel(
-        api_key=os.environ.get("OPENAI_API_KEY"),
-        model_name="gpt-4",
-        stream=True,
-    ),
-    formatter=OpenAIChatFormatter(),  # Use matching formatter
-    memory=InMemoryMemory(),
-    search_mcp_client=tavily_search_client,
-    tmp_file_storage_dir=agent_working_dir,
-)
-```
-
-## Notes
-
-⚠️ Formatter Compatibility: Always use the formatter that matches your model. Mismatched formatters can cause communication errors between the agent and the model.
-
-🔧 Tool Usage: Ensure your chosen model supports function calling capabilities to maintain full ReAct functionality with tool usage.
-
-🏠 Local Models: For local models, ensure the model service (like Ollama) is running before starting the agent.
+> Note: The example is built with DashScope chat model. If you want to change the model in this example, don't forget
+> to change the formatter at the same time! The corresponding relationship between built-in models and formatters are
+> list in [our tutorial](https://doc.agentscope.io/tutorial/task_prompt.html#id1)
