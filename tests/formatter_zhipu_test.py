@@ -193,8 +193,8 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "user",
-                "content": "- The capital of Japan is Tokyo.\n- The returned image can be found at: "
-                + self.image_path,
+                "content": "- The capital of Japan is Tokyo.\n- "
+                "The returned image can be found at: " + self.image_path,
             },
             {
                 "role": "assistant",
@@ -303,13 +303,17 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         expected = [
             {
                 "role": "user",
-                "content": "Hello",
-                "name": "Alice",
-            },
-            {
-                "role": "assistant",
-                "content": "Hello, Alice!",
-                "name": "Bob",
+                "content": [
+                    {
+                        "text": "# Conversation History\n"
+                        "The content between <history></history> tags contains "
+                        "your conversation history\n"
+                        "<history>\n"
+                        "Alice: Hello\n"
+                        "Bob: Hello, Alice!\n"
+                        "</history>",
+                    },
+                ],
             },
         ]
 
@@ -335,11 +339,17 @@ class TestZhipuFormatter(IsolatedAsyncioTestCase):
         expected = [
             {
                 "role": "user",
-                "content": "Hello",
-            },
-            {
-                "role": "assistant",
-                "content": "Hi!",
+                "content": [
+                    {
+                        "text": "# Conversation History\n"
+                        "The content between <history></history> tags contains "
+                        "your conversation history\n"
+                        "<history>\n"
+                        "user: Hello\n"
+                        "assistant: Hi!\n"
+                        "</history>",
+                    },
+                ],
             },
         ]
 

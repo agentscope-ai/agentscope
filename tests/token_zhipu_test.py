@@ -71,7 +71,9 @@ class ZhipuTokenCounterTest(IsolatedAsyncioTestCase):
                     {
                         "type": "image_url",
                         "image_url": {
-                            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+                            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUh"
+                            "EUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+"
+                            "M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
                         },
                     },
                 ],

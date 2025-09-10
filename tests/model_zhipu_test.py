@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 from pydantic import BaseModel
 
-from agentscope.message import TextBlock, ToolUseBlock
+from agentscope.message import TextBlock
 from agentscope.model import ZhipuChatModel, ChatResponse
 
 
@@ -336,6 +336,7 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
         mock_choice = Mock()
         mock_choice.message.content = content
         mock_choice.message.tool_calls = None
+        mock_choice.message.reasoning_content = None
         mock_choice.finish_reason = "stop"
 
         mock_response = Mock()
@@ -364,6 +365,7 @@ class TestZhipuChatModel(IsolatedAsyncioTestCase):
         mock_choice = Mock()
         mock_choice.message.content = content
         mock_choice.message.tool_calls = mock_tool_calls
+        mock_choice.message.reasoning_content = None
         mock_choice.finish_reason = "tool_calls"
 
         mock_response = Mock()

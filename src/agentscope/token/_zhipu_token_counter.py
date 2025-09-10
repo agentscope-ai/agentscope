@@ -53,15 +53,12 @@ class ZhipuTokenCounter(TokenCounterBase):
     def __init__(
         self,
         model_name: str,
-        **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu AI token counter.
 
         Args:
             model_name (`str`):
                 The name of the model to count tokens for.
-            **kwargs (`Any`):
-                Additional keyword arguments.
         """
         self.model_name = model_name
 
@@ -105,7 +102,7 @@ class ZhipuTokenCounter(TokenCounterBase):
             content = message.get("content")
             if content is None:
                 continue
-            elif isinstance(content, str):
+            if isinstance(content, str):
                 token_count += len(self.encoding.encode(content))
             elif isinstance(content, list):
                 if self._is_vision_model():
@@ -119,12 +116,13 @@ class ZhipuTokenCounter(TokenCounterBase):
                     for item in content:
                         if item.get("type") == "text":
                             token_count += len(
-                                self.encoding.encode(item["text"])
+                                self.encoding.encode(item["text"]),
                             )
 
             if "tool_calls" in message:
                 tool_calls_str = json.dumps(
-                    message["tool_calls"], ensure_ascii=False
+                    message["tool_calls"],
+                    ensure_ascii=False,
                 )
                 token_count += len(self.encoding.encode(tool_calls_str))
 
@@ -154,7 +152,8 @@ class ZhipuTokenCounter(TokenCounterBase):
 
             if "tool_calls" in message:
                 tool_calls_str = json.dumps(
-                    message["tool_calls"], ensure_ascii=False
+                    message["tool_calls"],
+                    ensure_ascii=False,
                 )
                 total_chars += len(tool_calls_str)
 

@@ -26,13 +26,13 @@ class ZhipuChatModel(ChatModelBase):
     """The Zhipu chat model class."""
 
     def __init__(
-            self,
-            model_name: str,
-            api_key: str | None = None,
-            stream: bool = True,
-            base_url: str | None = None,
-            generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-            **kwargs: Any,
+        self,
+        model_name: str,
+        api_key: str | None = None,
+        stream: bool = True,
+        base_url: str | None = None,
+        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Zhipu chat model.
 
@@ -60,7 +60,7 @@ class ZhipuChatModel(ChatModelBase):
         except ImportError as e:
             raise ImportError(
                 "The package zai-sdk is not found. Please install it by "
-                'running command `pip install zai-sdk`',
+                "running command `pip install zai-sdk`",
             ) from e
 
         super().__init__(model_name, stream)
@@ -74,14 +74,14 @@ class ZhipuChatModel(ChatModelBase):
 
     @trace_llm
     async def __call__(
-            self,
-            messages: list[dict[str, Any]],
-            tools: list[dict] | None = None,
-            tool_choice: Literal["auto", "none", "any", "required"]
-                         | str
-                         | None = None,
-            structured_model: Type[BaseModel] | None = None,
-            **kwargs: Any,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Zhipu AI chat completions API by the given
         arguments.
@@ -150,7 +150,7 @@ class ZhipuChatModel(ChatModelBase):
             kwargs.pop("tool_choice", None)
             logger.warning(
                 "Zhipu AI does not guarantee structured output. "
-                "The response may not conform to the specified schema."
+                "The response may not conform to the specified schema.",
             )
             kwargs["response_format"] = structured_model
 
@@ -172,11 +172,104 @@ class ZhipuChatModel(ChatModelBase):
 
         return parsed_response
 
+    def _update_text_content(self, delta: Any, accumulated_text: str) -> str:
+        """Update text content from delta."""
+        if delta.content:
+            accumulated_text += delta.content
+        return accumulated_text
+
+    def _update_thinking_content(
+        self, delta: Any, accumulated_thinking: str
+    ) -> str:
+        """Update thinking content from delta."""
+        if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+            accumulated_thinking += str(delta.reasoning_content)
+        return accumulated_thinking
+
+    def _update_tool_calls(self, delta: Any, tool_calls: dict) -> None:
+        """Update tool calls from delta."""
+        if not delta.tool_calls:
+            return
+
+        for tool_call in delta.tool_calls:
+            tool_id = tool_call.id or f"call_{tool_call.index}"
+            if tool_id not in tool_calls:
+                tool_calls[tool_id] = {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": tool_call.function.name or "",
+                    "input": "",
+                }
+
+            if tool_call.function.name:
+                tool_calls[tool_id]["name"] = tool_call.function.name
+            if tool_call.function.arguments:
+                tool_calls[tool_id]["input"] += tool_call.function.arguments
+
+    def _calculate_usage(
+        self, chunk: Any, start_datetime: datetime
+    ) -> ChatUsage | None:
+        """Calculate usage statistics from chunk."""
+        if not hasattr(chunk, "usage") or not chunk.usage:
+            return None
+
+        current_time = (datetime.now() - start_datetime).total_seconds()
+        return ChatUsage(
+            input_tokens=chunk.usage.prompt_tokens or 0,
+            output_tokens=chunk.usage.completion_tokens or 0,
+            time=current_time,
+        )
+
+    def _add_thinking_block(
+        self, contents: list, accumulated_thinking: str
+    ) -> None:
+        """Add thinking block if present."""
+        if accumulated_thinking:
+            contents.append(
+                ThinkingBlock(
+                    type="thinking",
+                    thinking=accumulated_thinking,
+                ),
+            )
+
+    def _add_text_block(
+        self,
+        contents: list,
+        accumulated_text: str,
+        structured_model: Type[BaseModel] | None,
+    ) -> dict | None:
+        """Add text block and return metadata if structured_model is provided."""
+        if not accumulated_text:
+            return None
+
+        contents.append(TextBlock(type="text", text=accumulated_text))
+        if structured_model:
+            return _json_loads_with_repair(accumulated_text)
+        return None
+
+    def _add_tool_call_blocks(self, contents: list, tool_calls: dict) -> None:
+        """Add tool call blocks to contents."""
+        for tool_call in tool_calls.values():
+            try:
+                input_data = tool_call["input"]
+                if isinstance(input_data, str) and input_data:
+                    input_data = _json_loads_with_repair(input_data)
+                contents.append(
+                    ToolUseBlock(
+                        type=tool_call["type"],
+                        id=tool_call["id"],
+                        name=tool_call["name"],
+                        input=input_data,
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Error parsing tool call input: %s", e)
+
     async def _parse_zhipu_stream_completion_response(
-            self,
-            start_datetime: datetime,
-            response: Any,
-            structured_model: Type[BaseModel] | None = None,
+        self,
+        start_datetime: datetime,
+        response: Any,
+        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given a Zhipu AI streaming completion response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -198,7 +291,7 @@ class ZhipuChatModel(ChatModelBase):
         """
         accumulated_text = ""
         accumulated_thinking = ""
-        tool_calls = OrderedDict()  # Store tool calls
+        tool_calls = OrderedDict()
         metadata = None
 
         for chunk in response:
@@ -208,76 +301,27 @@ class ZhipuChatModel(ChatModelBase):
             choice = chunk.choices[0]
             delta = choice.delta
 
-            # Handle text content
-            if delta.content:
-                accumulated_text += delta.content
+            accumulated_text = self._update_text_content(
+                delta, accumulated_text
+            )
+            accumulated_thinking = self._update_thinking_content(
+                delta, accumulated_thinking
+            )
+            self._update_tool_calls(delta, tool_calls)
 
-            # Handle thinking/reasoning content
-            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                accumulated_thinking += str(delta.reasoning_content)
+            usage = self._calculate_usage(chunk, start_datetime)
 
-            # Handle tool calls
-            if delta.tool_calls:
-                for tool_call in delta.tool_calls:
-                    tool_id = tool_call.id or f"call_{tool_call.index}"
-                    if tool_id not in tool_calls:
-                        tool_calls[tool_id] = {
-                            "type": "tool_use",
-                            "id": tool_id,
-                            "name": tool_call.function.name or "",
-                            "input": "",
-                        }
+            contents = []
+            self._add_thinking_block(contents, accumulated_thinking)
 
-                    if tool_call.function.name:
-                        tool_calls[tool_id]["name"] = tool_call.function.name
-                    if tool_call.function.arguments:
-                        tool_calls[tool_id]["input"] += tool_call.function.arguments
+            text_metadata = self._add_text_block(
+                contents, accumulated_text, structured_model
+            )
+            if text_metadata:
+                metadata = text_metadata
 
-            # Calculate usage statistics
-            current_time = (datetime.now() - start_datetime).total_seconds()
-            usage = None
-            if hasattr(chunk, 'usage') and chunk.usage:
-                usage = ChatUsage(
-                    input_tokens=chunk.usage.prompt_tokens or 0,
-                    output_tokens=chunk.usage.completion_tokens or 0,
-                    time=current_time,
-                )
+            self._add_tool_call_blocks(contents, tool_calls)
 
-            # Create content blocks
-            contents: list = []
-
-            # Add thinking block if present
-            if accumulated_thinking:
-                contents.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        thinking=accumulated_thinking,
-                    ),
-                )
-
-            if accumulated_text:
-                contents.append(TextBlock(type="text", text=accumulated_text))
-                if structured_model:
-                    metadata = _json_loads_with_repair(accumulated_text)
-
-            # Add tool call blocks
-            for tool_call in tool_calls.values():
-                try:
-                    input_data = tool_call["input"]
-                    if isinstance(input_data, str) and input_data:
-                        input_data = _json_loads_with_repair(input_data)
-                    contents.append(
-                        ToolUseBlock(
-                            type=tool_call["type"],
-                            id=tool_call["id"],
-                            name=tool_call["name"],
-                            input=input_data,
-                        ),
-                    )
-                except Exception as e:
-                    logger.warning(f"Error parsing tool call input: {e}")
-
-            # Generate response when there's content or at final chunk
             if choice.finish_reason or contents:
                 res = ChatResponse(
                     content=contents,
@@ -287,10 +331,10 @@ class ZhipuChatModel(ChatModelBase):
                 yield res
 
     def _parse_zhipu_completion_response(
-            self,
-            start_datetime: datetime,
-            response: Any,
-            structured_model: Type[BaseModel] | None = None,
+        self,
+        start_datetime: datetime,
+        response: Any,
+        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a Zhipu AI chat completion response object, extract the content
         blocks and usages from it.
@@ -343,7 +387,7 @@ class ZhipuChatModel(ChatModelBase):
                         ),
                     )
                 except Exception as e:
-                    logger.warning(f"Error parsing tool call: {e}")
+                    logger.warning("Error parsing tool call: %s", e)
 
         if message.reasoning_content:
             content_blocks.append(
@@ -371,15 +415,15 @@ class ZhipuChatModel(ChatModelBase):
         return parsed_response
 
     def _format_tools_json_schemas(
-            self,
-            schemas: list[dict[str, Any]],
+        self,
+        schemas: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Format the tools JSON schemas to the Zhipu AI format."""
         return schemas
 
     def _format_tool_choice(
-            self,
-            tool_choice: str,
+        self,
+        tool_choice: str,
     ) -> str | dict[str, Any]:
         """Format tool choice to Zhipu AI format."""
         # 根据评审意见，Zhipu AI只支持"auto"模式的工具选择
@@ -388,12 +432,14 @@ class ZhipuChatModel(ChatModelBase):
         elif tool_choice in ["any", "required"]:
             # Zhipu AI doesn't support "any" or "required", use "auto" instead
             logger.warning(
-                f"Zhipu AI doesn't support tool_choice='{tool_choice}', using 'auto' instead."
+                "Zhipu AI doesn't support tool_choice='%s', using 'auto' instead.",
+                tool_choice,
             )
             return "auto"
         else:
             # Specific tool name - Zhipu AI doesn't support this, use "auto" instead
             logger.warning(
-                f"Zhipu AI doesn't support calling specific tool '{tool_choice}', using 'auto' instead."
+                "Zhipu AI doesn't support calling specific tool '%s', using 'auto' instead.",
+                tool_choice,
             )
             return "auto"

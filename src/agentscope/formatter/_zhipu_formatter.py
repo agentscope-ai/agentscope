@@ -129,7 +129,7 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                             "text": self.convert_tool_result_to_string(
                                 block.get("output"),  # type: ignore[arg-type]
                             ),
-                        }
+                        },
                     )
 
                 elif typ == "image":
@@ -140,8 +140,8 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": url
-                                }
+                                    "url": url,
+                                },
                             },
                         )
                     elif source_type == "base64":
@@ -151,15 +151,16 @@ class ZhipuChatFormatter(TruncatedFormatterBase):
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:{media_type};base64,{data}"
-                                }
+                                    "url": f"data:{media_type};base64,{data}",
+                                },
                             },
                         )
 
                 else:
                     logger.warning(
-                        f"Unsupported message block type: {typ} in "
-                        f"ZhipuChatFormatter. Skipping this block.",
+                        "Unsupported message block type: %s in "
+                        "ZhipuChatFormatter. Skipping this block.",
+                        typ,
                     )
 
             message = {
@@ -228,18 +229,18 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
         # For multi-agent conversations, we group messages and format them
         # with speaker names included in the content
         formatted_msgs: list[dict] = []
-        
+
         # Collect messages without tool calls/results
         conversation_blocks: list = []
         accumulated_text = []
-        
+
         for msg in msgs:
             has_tool_content = False
             for block in msg.get_content_blocks():
                 if block["type"] in ["tool_use", "tool_result"]:
                     has_tool_content = True
                     break
-            
+
             if has_tool_content:
                 # Process accumulated conversation text
                 if accumulated_text:
@@ -250,21 +251,23 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                             + "<history>\n"
                             + conversation_text
                         )
-                    
+
                     conversation_blocks.append({"text": conversation_text})
                     accumulated_text.clear()
-                
+
                 # Process tool messages separately
                 tool_messages = await super()._format([msg])
                 if conversation_blocks:
                     # Close the conversation history tag
                     conversation_blocks[-1]["text"] += "\n</history>"
-                    formatted_msgs.append({
-                        "role": "user",
-                        "content": conversation_blocks,
-                    })
+                    formatted_msgs.append(
+                        {
+                            "role": "user",
+                            "content": conversation_blocks,
+                        },
+                    )
                     conversation_blocks = []
-                
+
                 formatted_msgs.extend(tool_messages)
             else:
                 # Accumulate conversation messages
@@ -281,15 +284,17 @@ class ZhipuMultiAgentFormatter(ZhipuChatFormatter):
                     + "<history>\n"
                     + conversation_text
                 )
-            
+
             conversation_blocks.append({"text": conversation_text})
-        
+
         if conversation_blocks:
             # Close the conversation history tag
             conversation_blocks[-1]["text"] += "\n</history>"
-            formatted_msgs.append({
-                "role": "user",
-                "content": conversation_blocks,
-            })
+            formatted_msgs.append(
+                {
+                    "role": "user",
+                    "content": conversation_blocks,
+                },
+            )
 
         return formatted_msgs
