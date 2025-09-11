@@ -15,15 +15,86 @@ from .._task import Task
 from .._evaluator_storage import EvaluatorStorageBase
 
 
-def _lazy_ray_remote(func: Callable) -> Callable:
-    """Decorator to lazily initialize ray.remote."""
-    try:
-        import ray as lazy_ray
+@ray.remote
+class RayEvaluationActor:
 
-        return lazy_ray.remote(func)
+    @staticmethod
+    async def run(
+        storage: EvaluatorStorageBase,
+        task: Task,
+        repeat_id: str,
+        solution_output: SolutionOutput,
+    ) -> None:
+        """Run the evaluation for a task and solution result."""
+        evaluation_results = await task.evaluate(solution_output)
+        # store the evaluation result
+        for result in evaluation_results:
+            storage.save_evaluation_result(
+                task_id=task.id,
+                repeat_id=repeat_id,
+                evaluation=result,
+            )
 
-    except ImportError:
-        return func
+
+@ray.remote
+class RaySolutionActor:
+    def __init__(self, n_workers: int = 1):
+        self.eval_actor = RayEvaluationActor.options(
+            max_concurrency=n_workers
+        ).remote()
+
+    async def run(
+        self,
+        storage: EvaluatorStorageBase,
+        repeat_id: str,
+        task: Task,
+        solution: Callable[
+            [Task, Callable],
+            Coroutine[Any, Any, SolutionOutput],
+        ],
+    ) -> None:
+        """Generate a solution to a task and evaluate."""
+        if storage.solution_result_exists(task.id, repeat_id):
+            # Obtain from storage
+            solution_result = storage.get_solution_result(
+                task.id,
+                repeat_id,
+            )
+
+        else:
+            # Run the solution
+            solution_result = await solution(
+                task,
+                storage.get_agent_pre_print_hook(
+                    task.id,
+                    repeat_id,
+                ),
+            )
+
+            storage.save_solution_result(
+                task.id,
+                repeat_id,
+                solution_result,
+            )
+
+        # Evaluate the solution with the
+        futures = []
+        for metric in task.metrics:
+            if not storage.evaluation_result_exists(
+                task.id,
+                repeat_id,
+                metric.name,
+            ):
+                futures.append(
+                    self.eval_actor.run.remote(
+                        storage,
+                        task,
+                        repeat_id,
+                        solution_result,
+                    ),
+                )
+        if futures:
+            await asyncio.gather(*futures)
 
 
 class RayEvaluator(EvaluatorBase):
@@ -56,78 +127,6 @@ class RayEvaluator(EvaluatorBase):
         self.n_repeat = n_repeat
         self.n_workers = n_workers
 
-    @staticmethod
-    @_lazy_ray_remote
-    def run_evaluation(
-        storage: EvaluatorStorageBase,
-        task: Task,
-        repeat_id: str,
-        solution_output: SolutionOutput,
-    ) -> None:
-        """Run the evaluation for a task and solution result."""
-        evaluation_results = task.evaluate(solution_output)
-        # store the evaluation result
-        for result in evaluation_results:
-            storage.save_evaluation_result(
-                task_id=task.id,
-                repeat_id=repeat_id,
-                evaluation=result,
-            )
-
-    @staticmethod
-    @_lazy_ray_remote
-    def run_solution(
-        storage: EvaluatorStorageBase,
-        repeat_id: str,
-        task: Task,
-        solution: Callable[
-            [Task, Callable],
-            Coroutine[Any, Any, SolutionOutput],
-        ],
-    ) -> None:
-        """Generate a solution to a task and evaluate."""
-        if storage.solution_result_exists(task.id, repeat_id):
-            # Obtain from storage
-            solution_result = storage.get_solution_result(
-                task.id,
-                repeat_id,
-            )
-
-        else:
-            # Run the solution
-            solution_result = asyncio.run(
-                solution(
-                    task,
-                    storage.get_agent_pre_print_hook(
-                        task.id,
-                        repeat_id,
-                    ),
-                ),
-            )
-            storage.save_solution_result(
-                task.id,
-                repeat_id,
-                solution_result,
-            )
-
-        # Evaluate the solution with the
-        futures = []
-        for metric in task.metrics:
-            if not storage.evaluation_result_exists(
-                task.id,
-                repeat_id,
-                metric.name,
-            ):
-                futures.append(
-                    RayEvaluator.run_evaluation.remote(
-                        storage,
-                        task,
-                        repeat_id,
-                        solution_result,
-                    ),
-                )
-        ray.get(futures)
-
     async def run(
         self,
         solution: Callable[
@@ -147,16 +146,20 @@ class RayEvaluator(EvaluatorBase):
         await self._save_evaluation_meta()
 
         futures = []
+        solution_actor = RaySolutionActor.options(
+            max_concurrency=self.n_workers
+        ).remote(n_workers=self.n_workers)
         for repeat_id in range(self.n_repeat):
             for task in self.benchmark:
                 futures.append(
-                    RayEvaluator.run_solution.remote(
+                    solution_actor.run.remote(
                         self.storage,
                         str(repeat_id),
                         task,
                         solution,
                     ),
                 )
-        ray.get(futures)
+        if futures:
+            await asyncio.gather(*futures)
 
         await self.aggregate()
