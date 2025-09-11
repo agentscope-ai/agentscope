@@ -83,6 +83,7 @@ class ReActAgent(ReActAgentBase):
         parallel_tool_calls: bool = False,
         max_iters: int = 10,
         plan_notebook: PlanNotebook | None = None,
+        print_hint_msg: bool = False,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -125,6 +126,9 @@ class ReActAgent(ReActAgentBase):
                 them in parallel.
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
+            print_hint_msg (`bool`, defaults to `False`):
+                Whether to print the reasoning hint messages before each
+                reasoning step.
         """
         super().__init__()
 
@@ -189,6 +193,8 @@ class ReActAgent(ReActAgentBase):
                     tool,
                     group_name="plan_related",
                 )
+
+        self.print_hint_msg = print_hint_msg
 
         # The hint messages that will be attached to the prompt to guide the
         # agent's behavior before each reasoning step, and cleared after
@@ -311,9 +317,10 @@ class ReActAgent(ReActAgentBase):
         """Perform the reasoning process."""
         if self.plan_notebook:
             # Insert the reasoning hint from the plan notebook
-            await self._reasoning_hint_msgs.add(
-                self.plan_notebook.get_current_hint(),
-            )
+            hint_msg = self.plan_notebook.get_current_hint()
+            if self.print_hint_msg and hint_msg:
+                await self.print(hint_msg)
+            await self._reasoning_hint_msgs.add(hint_msg)
 
         # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(

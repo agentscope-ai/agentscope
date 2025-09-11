@@ -4,77 +4,169 @@ tool functions to the agent."""
 from collections import OrderedDict
 from typing import Callable, Literal, Coroutine, Any
 
-from pydantic import BaseModel
-
+from . import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan
 from ._storage_base import PlanStorageBase
+from .._utils._common import _execute_async_or_sync_func
 from ..message import TextBlock, Msg
 from ..module import StateModule
 from ..tool import ToolResponse
 
 
-class ReasoningHints(BaseModel):
-    """The hints to be inserted before the agent's reasoning process to
-    guide the agent on next steps."""
+class DefaultPlanToHint:
+    """The default function to generate the hint message based on the current
+    plan to guide the agent on next steps."""
 
     hint_prefix: str = "<system-hint>"
     hint_suffix: str = "</system-hint>"
 
+    no_plan: str = (
+        "If the user's query is complex (e.g. programming a website, game or "
+        "app), or requires a long chain of steps to complete (e.g. conduct "
+        "research on a certain topic from different sources), you NEED to "
+        "create a plan first by calling 'create_plan'. Otherwise, you can "
+        "directly execute the user's query without planning."
+    )
+
     at_the_beginning: str = (
-        "Currently, you have a plan as follows:\n"
+        "The current plan:\n"
         "```\n"
         "{plan}\n"
         "```\n"
-        "Your options include\n"
-        "- mark the first subtask as 'in_progress' by calling "
-        "update_subtask_state with subtask_idx=0 and state='in_progress', "
+        "Your options include:\n"
+        "- Mark the first subtask as 'in_progress' by calling "
+        "'update_subtask_state' with subtask_idx=0 and state='in_progress', "
         "and start executing it.\n"
-        "- If the first subtask cannot be executed directly, you can ask the "
-        "user for more information or revise the plan by calling "
-        "'revise_current_plan'.\n"
+        "- If the first subtask is not executable, analyze why and what you "
+        "can do to advance the plan, e.g. ask user for more information, "
+        "revise the plan by calling 'revise_current_plan'.\n"
+        "- If the user asks you to do something unrelated to the plan, "
+        "prioritize the completion of user's query first, and then return "
+        "to the plan afterward.\n"
+        "- If the user no longer wants to perform the current plan, confirm "
+        "with the user and call the 'finish_plan' function.\n"
     )
 
     when_a_subtask_in_progress: str = (
-        "Currently, you have a plan as follows:\n"
+        "The current plan:\n"
         "```\n"
         "{plan}\n"
         "```\n"
-        "Now the subtask at index {subtask_idx}, named {subtask_name}, is "
+        "Now the subtask at index {subtask_idx}, named '{subtask_name}', is "
         "'in_progress'. Its details are as follows:\n"
         "```\n"
         "{subtask}\n"
         "```\n"
         "Your options include:\n"
-        "- execute the subtask and get the outcome.\n"
-        "- if you finish it, call 'finish_subtask' with the specific "
-        "outcome.\n"
-        "- ask the user for more information if you need.\n"
-        "- revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- Go on execute the subtask and get the outcome.\n"
+        "- Call 'finish_subtask' with the specific outcome if the subtask is "
+        "finished.\n"
+        "- Ask the user for more information if you need.\n"
+        "- Revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- If the user asks you to do something unrelated to the plan, "
+        "prioritize the completion of user's query first, and then return to "
+        "the plan afterward."
     )
 
     when_no_subtask_in_progress: str = (
-        "Currently, you have a plan as follows:\n"
+        "The current plan:\n"
         "```\n"
         "{plan}\n"
         "```\n"
         "The first {index} subtasks are done, and there is no subtask "
-        "'in_progress'. Now Your options are:\n"
-        "- update the next subtask as 'in_progress' by calling "
+        "'in_progress'. Now Your options include:\n"
+        "- Mark the next subtask as 'in_progress' by calling "
         "'update_subtask_state', and start executing it.\n"
-        "- ask the user for more information if you need.\n"
-        "- revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- Ask the user for more information if you need.\n"
+        "- Revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- If the user asks you to do something unrelated to the plan, "
+        "prioritize the completion of user's query first, and then return to "
+        "the plan afterward."
     )
 
     at_the_end: str = (
-        "Currently, you have a plan as follows:\n"
+        "The current plan:\n"
         "```\n"
         "{plan}\n"
         "```\n"
         "All the subtasks are done. Now your options are:\n"
-        "- finish the plan by calling 'finish_plan' with the specific "
+        "- Finish the plan by calling 'finish_plan' with the specific "
         "outcome, and summarize the whole process and outcome to the user.\n"
-        "- revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- Revise the plan by calling 'revise_current_plan' if necessary.\n"
+        "- If the user asks you to do something unrelated to the plan, "
+        "prioritize the completion of user's query first, and then return to "
+        "the plan afterward."
     )
+
+    def __call__(self, plan: Plan | None) -> str | None:
+        """Generate the hint message based on the input plan to guide the
+        agent on next steps.
+
+        Args:
+            plan (`Plan | None`):
+                The current plan, used to generate the hint message.
+
+        Returns:
+            `str | None`:
+                The generated hint message, or None if the plan is None or
+                there is no relevant hint.
+        """
+        if plan is None:
+            hint = self.no_plan
+
+        else:
+            # Count the number of subtasks in each state
+            n_todo, n_in_progress, n_done, n_abandoned = 0, 0, 0, 0
+            in_progress_subtask_idx = None
+            for idx, subtask in enumerate(plan.subtasks):
+                if subtask.state == "todo":
+                    n_todo += 1
+
+                elif subtask.state == "in_progress":
+                    n_in_progress += 1
+                    in_progress_subtask_idx = idx
+
+                elif subtask.state == "done":
+                    n_done += 1
+
+                elif subtask.state == "abandoned":
+                    n_abandoned += 1
+
+            hint = None
+            if n_in_progress == 0 and n_done == 0:
+                # All subtasks are todo
+                hint = self.at_the_beginning.format(
+                    plan=plan.to_markdown(),
+                )
+
+            elif n_in_progress > 0 and in_progress_subtask_idx is not None:
+                # One subtask is in_progress
+                hint = self.when_a_subtask_in_progress.format(
+                    plan=plan.to_markdown(),
+                    subtask_idx=in_progress_subtask_idx,
+                    subtask_name=plan.subtasks[in_progress_subtask_idx].name,
+                    subtask=plan.subtasks[in_progress_subtask_idx].to_markdown(
+                        detailed=True,
+                    ),
+                )
+
+            elif n_in_progress == 0 and n_done > 0:
+                # No subtask is in_progress, and some subtasks are done
+                hint = self.when_no_subtask_in_progress.format(
+                    plan=plan.to_markdown(),
+                    index=n_done,
+                )
+
+            elif n_done + n_abandoned == len(plan.subtasks):
+                # All subtasks are done or abandoned
+                hint = self.at_the_end.format(
+                    plan=plan.to_markdown(),
+                )
+
+        if hint:
+            return f"{self.hint_prefix}{hint}{self.hint_suffix}"
+
+        return hint
 
 
 class PlanNotebook(StateModule):
@@ -93,14 +185,13 @@ class PlanNotebook(StateModule):
         "wrapped by <system-hint></system-hint> will guide you to complete "
         "the task. If you think the user no longer wants to perform the "
         "current task, you need to confirm with the user and call the "
-        "`finish_plan` function."
+        "'finish_plan' function."
     )
 
     def __init__(
         self,
         max_tasks: int | None = None,
-        max_iters_per_task: int = 50,
-        hints: ReasoningHints | None = None,
+        plan_to_hint: Callable[[Plan | None], str | None] | None = None,
         storage: PlanStorageBase | None = None,
     ) -> None:
         """Initialize the plan notebook.
@@ -108,12 +199,11 @@ class PlanNotebook(StateModule):
         Args:
             max_tasks (`int | None`, optional):
                 The maximum number of subtasks in a plan.
-            max_iters_per_task (`int`, defaults to 50):
-                The maximum number of iterations for each subtask. If
-                exceeded, the sub-task will be marked as failed.
-            hints (`ReasoningHints | None`, optional):
-                The hints to guide the agent before reasoning. If not provided,
-                a default hint will be used.
+            plan_to_hint (`Callable[[Plan | None], str | None] | None`, \
+             optional):
+                The function to generate the hint message based on the
+                current plan. If not provided, a default `DefaultPlanToHint`
+                object will be used.
             storage (`PlanStorageBase | None`, optional):
                 The plan storage. If not provided, an in-memory storage will
                 be used.
@@ -121,13 +211,19 @@ class PlanNotebook(StateModule):
         super().__init__()
 
         self.max_tasks = max_tasks
-        self.max_iters_per_task = max_iters_per_task
-        self.hints = hints or ReasoningHints()
-        self.storage = storage or PlanStorageBase()
+        self.plan_to_hint = plan_to_hint or DefaultPlanToHint()
+        self.storage = storage or InMemoryPlanStorage()
 
         self.current_plan: Plan | None = None
 
         self._plan_change_hooks = OrderedDict()
+
+        # Register the current_plan state for state management
+        self.register_state(
+            "current_plan",
+            custom_to_json=lambda _: _.model_dump_json() if _ else None,
+            custom_from_json=lambda _: Plan.model_validate(_) if _ else None,
+        )
 
     async def create_plan(
         self,
@@ -163,11 +259,9 @@ class PlanNotebook(StateModule):
             expected_outcome=expected_outcome,
             subtasks=subtasks,
         )
-        await self.storage.add_plan(plan)
 
         if self.current_plan is None:
-            self.current_plan = plan
-            return ToolResponse(
+            res = ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
@@ -175,9 +269,9 @@ class PlanNotebook(StateModule):
                     ),
                 ],
             )
+
         else:
-            self.current_plan = plan
-            return ToolResponse(
+            res = ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
@@ -189,6 +283,10 @@ class PlanNotebook(StateModule):
                     ),
                 ],
             )
+
+        self.current_plan = plan
+        await self._trigger_plan_change_hooks()
+        return res
 
     def _validate_current_plan(self) -> None:
         """Validate the current plan."""
@@ -265,11 +363,12 @@ class PlanNotebook(StateModule):
 
         if action == "delete":
             subtask = self.current_plan.subtasks.pop(subtask_idx)
+            await self._trigger_plan_change_hooks()
             return ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
-                        text=f"Subtask (named {subtask.name}) at index "
+                        text=f"Subtask (named '{subtask.name}') at index "
                         f"{subtask_idx} is deleted successfully.",
                     ),
                 ],
@@ -277,6 +376,7 @@ class PlanNotebook(StateModule):
 
         if action == "add" and subtask:
             self.current_plan.subtasks.insert(subtask_idx, subtask)
+            await self._trigger_plan_change_hooks()
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -288,6 +388,7 @@ class PlanNotebook(StateModule):
             )
 
         self.current_plan.subtasks[subtask_idx] = subtask
+        await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
                 TextBlock(
@@ -310,7 +411,7 @@ class PlanNotebook(StateModule):
         Args:
             subtask_idx (`int`):
                 The index of the subtask to be updated, starting from 0.
-            state (`Literal["todo", "in_progress", "deprecated"]`):
+            state (`Literal["todo", "in_progress", "abandoned"]`):
                 The new state of the subtask. If you want to mark a subtask
                 as done, you SHOULD call `finish_subtask` instead with the
                 specific outcome.
@@ -329,13 +430,13 @@ class PlanNotebook(StateModule):
                 ],
             )
 
-        if state not in ["todo", "in_progress", "deprecated"]:
+        if state not in ["todo", "in_progress", "abandoned"]:
             return ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
                         text=f"Invalid state '{state}'. Must be one of "
-                        "'todo', 'in_progress', 'deprecated'.",
+                        "'todo', 'in_progress', 'abandoned'.",
                     ),
                 ],
             )
@@ -355,7 +456,7 @@ class PlanNotebook(StateModule):
                                 type="text",
                                 text=(
                                     f"Subtask (at index {idx}) named "
-                                    f"{subtask.name} is not done yet. You "
+                                    f"'{subtask.name}' is not done yet. You "
                                     "should finish the previous subtasks "
                                     "first."
                                 ),
@@ -371,7 +472,7 @@ class PlanNotebook(StateModule):
                                 type="text",
                                 text=(
                                     f"Subtask (at index {idx}) named "
-                                    f"{subtask.name} is already "
+                                    f"'{subtask.name}' is already "
                                     "'in_progress'. You should finish it "
                                     "first before starting another subtask."
                                 ),
@@ -380,6 +481,7 @@ class PlanNotebook(StateModule):
                     )
 
         self.current_plan.subtasks[subtask_idx].state = state
+        await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
                 TextBlock(
@@ -404,7 +506,11 @@ class PlanNotebook(StateModule):
                 from 0.
             subtask_outcome (`str`):
                 The specific outcome of the sub-task, should exactly match the
-                expected outcome in the sub-task description.
+                expected outcome in the sub-task description. SHOULDN't be
+                what you did or general description, e.g. "I have searched
+                xxx", "I have written the code for xxx", etc. It SHOULD be
+                the specific data, information, or path to the file, e.g.
+                "There are 5 articles about xxx, they are\n- xxx\n- xxx\n..."
         """
         self._validate_current_plan()
 
@@ -432,7 +538,7 @@ class PlanNotebook(StateModule):
                                 "Cannot finish subtask at index "
                                 f"{subtask_idx} because the previous "
                                 f"subtask (at index {idx}) named "
-                                f"{subtask.name} is not done yet. You "
+                                f"'{subtask.name}' is not done yet. You "
                                 "should finish the previous subtasks first."
                             ),
                         ),
@@ -445,6 +551,7 @@ class PlanNotebook(StateModule):
         if subtask_idx + 1 < len(self.current_plan.subtasks):
             self.current_plan.subtasks[subtask_idx + 1].state = "in_progress"
             next_subtask = self.current_plan.subtasks[subtask_idx + 1]
+            await self._trigger_plan_change_hooks()
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -453,12 +560,14 @@ class PlanNotebook(StateModule):
                             f"Subtask (at index {subtask_idx}) named "
                             f"'{self.current_plan.subtasks[subtask_idx].name}'"
                             " is marked as done successfully. The next "
-                            f"subtask named {next_subtask.name} is activated."
+                            f"subtask named '{next_subtask.name}' is "
+                            f"activated."
                         ),
                     ),
                 ],
             )
 
+        await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
                 TextBlock(
@@ -513,6 +622,48 @@ class PlanNotebook(StateModule):
             ],
         )
 
+    async def finish_plan(
+        self,
+        state: Literal["done", "abandoned"],
+        outcome: str,
+    ) -> ToolResponse:
+        """Finish the current plan by given outcome, or abandon it with the
+        given reason if the user no longer wants to perform it. Note that you
+        SHOULD confirm with the user before abandoning the plan.
+
+        Args:
+            state (`Literal["done", "abandoned"]`):
+                The state to finish the plan. If "done", the plan will be
+                marked as done with the given outcome. If "abandoned", the
+                plan will be abandoned with the given reason.
+            outcome (`str`):
+                The specific outcome of the plan if state is "done", or the
+                reason for abandoning the plan if state is "abandoned".
+        """
+        if self.current_plan is None:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="There is no plan to finish.",
+                    ),
+                ],
+            )
+
+        self.current_plan.finish(state, outcome)
+        # TODO: store the finished plan to storage
+        self.current_plan = None
+        await self._trigger_plan_change_hooks()
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=f"The current plan is finished successfully as "
+                    f"'{state}'.",
+                ),
+            ],
+        )
+
     def list_tools(
         self,
     ) -> list[Callable[..., Coroutine[Any, Any, ToolResponse]]]:
@@ -532,72 +683,24 @@ class PlanNotebook(StateModule):
         ]
 
     def get_current_hint(self) -> Msg | None:
-        """Get the hint message based on the current plan and subtasks
-        states.
+        """Get the hint message based on the current plan and subtasks states.
+        This function will call the `plan_to_hint` function to generate the
+        hint message.
 
-        - If all subtasks are "todo", return the 'at_the_beginning' hint of
-        the ReasoningHints.
-        - If one subtask is "in_progress", return the
-        'when_a_subtask_in_progress' hint of the ReasoningHints.
-        - If no subtask is "in_progress", and some subtasks are "done",
-        return the 'when_no_subtask_in_progress' hint of the ReasoningHints.
-        - If all subtasks are "done", return the 'at_the_end' hint of the
-        ReasoningHints.
+        Returns:
+            `Msg | None`:
+                The hint message wrapped by <system-hint></system-hint>, or
+                None if there is no relevant hint.
         """
-        if self.current_plan is None:
-            return None
-
-        n_todo, n_in_progress, n_done, n_deprecated = 0, 0, 0, 0
-
-        in_progress_subtask_idx = None
-        for idx, subtask in enumerate(self.current_plan.subtasks):
-            match subtask.state:
-                case "todo":
-                    n_todo += 1
-                case "in_progress":
-                    n_in_progress += 1
-                    in_progress_subtask_idx = idx
-                case "done":
-                    n_done += 1
-                case "deprecated":
-                    n_deprecated += 1
-                case _:
-                    raise ValueError(
-                        f"Invalid subtask state '{subtask.state}'.",
-                    )
-
-        content = None
-        if n_todo == len(self.current_plan.subtasks):
-            content = self.hints.at_the_beginning.format(
-                plan=self.current_plan.to_markdown(),
-            )
-
-        elif in_progress_subtask_idx:
-            subtask = self.current_plan.subtasks[in_progress_subtask_idx]
-            content = self.hints.when_a_subtask_in_progress.format(
-                plan=self.current_plan.to_markdown(),
-                subtask_idx=in_progress_subtask_idx,
-                subtask_name=subtask.name,
-                subtask=subtask.to_markdown(detailed=True),
-            )
-
-        elif n_in_progress == 0:
-            content = self.hints.when_no_subtask_in_progress.format(
-                plan=self.current_plan.to_markdown(),
-                index=n_done,
-            )
-
-        elif n_done == len(self.current_plan.subtasks):
-            content = self.hints.at_the_end.format(
-                plan=self.current_plan.to_markdown(),
-            )
-
-        if content:
-            return Msg(
+        hint_content = self.plan_to_hint(self.current_plan)
+        if hint_content:
+            msg = Msg(
                 "user",
-                content,
+                hint_content,
                 "user",
             )
+            return msg
+
         return None
 
     def register_plan_change_hook(
@@ -628,3 +731,12 @@ class PlanNotebook(StateModule):
             self._plan_change_hooks.pop(hook_name)
         else:
             raise ValueError(f"Hook '{hook_name}' not found.")
+
+    async def _trigger_plan_change_hooks(self) -> None:
+        """Trigger all the plan change hooks."""
+        for hook in self._plan_change_hooks.values():
+            await _execute_async_or_sync_func(
+                hook,
+                self,
+                self.current_plan,
+            )

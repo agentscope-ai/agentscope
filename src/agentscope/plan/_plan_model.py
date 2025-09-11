@@ -36,7 +36,7 @@ class SubTask(BaseModel):
         exclude=True,
         default=None,
     )
-    state: Literal["todo", "in_progress", "done", "deprecated"] = Field(
+    state: Literal["todo", "in_progress", "done", "abandoned"] = Field(
         description="The state of the subtask.",
         default="todo",
         exclude=True,
@@ -64,7 +64,7 @@ class SubTask(BaseModel):
             "todo": "- []",
             "in_progress": "- [][WIP]",
             "done": "- [x]",
-            "deprecated": "- [][Deprecated]",
+            "abandoned": "- [][Abandoned]",
         }
         return f"{status_map[self.state]} {self.name}"
 
@@ -79,7 +79,7 @@ class SubTask(BaseModel):
             "todo": "- [ ] ",
             "in_progress": "- [ ] [WIP]",
             "done": "- [x] ",
-            "deprecated": "- [ ] [Deprecated]",
+            "abandoned": "- [ ] [Abandoned]",
         }
 
         if detailed:
@@ -136,7 +136,7 @@ class Plan(BaseModel):
         default_factory=_get_timestamp,
         exclude=True,
     )
-    state: Literal["todo", "in_progress", "done", "deprecated"] = Field(
+    state: Literal["todo", "in_progress", "done", "abandoned"] = Field(
         description="The state of the plan.",
         default="todo",
         exclude=True,
@@ -152,9 +152,13 @@ class Plan(BaseModel):
         exclude=True,
     )
 
-    def finish(self, outcome: str) -> None:
+    def finish(
+        self,
+        state: Literal["done", "abandoned"],
+        outcome: str,
+    ) -> None:
         """Finish the plan."""
-        self.state = "done"
+        self.state = state
         self.outcome = outcome
         self.finished_at = _get_timestamp()
 

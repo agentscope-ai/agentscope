@@ -5,6 +5,7 @@ import os
 
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
+from agentscope.mcp import StdIOStatefulClient
 from agentscope.model import DashScopeChatModel
 from agentscope.plan import PlanNotebook
 from agentscope.tool import (
@@ -26,6 +27,23 @@ async def main() -> None:
     toolkit.register_tool_function(insert_text_file)
     toolkit.register_tool_function(view_text_file)
 
+    mcp = StdIOStatefulClient(
+        name="browser_use",
+        command="npx",
+        args=["@playwright/mcp@latest"],
+    )
+    await mcp.connect()
+
+    # Enable the meta tool
+    toolkit.create_tool_group(
+        group_name=mcp.name,
+        description="Tools for web browsing",
+    )
+    await toolkit.register_mcp_client(
+        mcp,
+        group_name=mcp.name,
+    )
+
     agent = ReActAgent(
         name="Friday",
         sys_prompt="""You're a helpful assistant named Friday.
@@ -35,20 +53,17 @@ Your target is to finish the given task with careful planning.
 
 # Note
 - You can equip yourself with plan related tools to help you plan and execute the given task.
-- For simple tasks you can directly execute them without planning.
-- For complex tasks, e.g. programming a website, game, or app, you MUST create a plan first.
-- Once a plan is created, try your best to follow the plan and finish the task step by step.
-- If the task requires further clarification, ask the user for more information. Otherwise, don't stop until the task is completed.
+- The resouces from search engines are not always correct, you should collect information from multiple sources and give the final answer after careful consideration.
 """,  # noqa
         model=DashScopeChatModel(
-            model_name="qwen-max",
+            model_name="qwen3-max-preview",
             api_key=os.environ["DASHSCOPE_API_KEY"],
         ),
         formatter=DashScopeChatFormatter(),
         toolkit=toolkit,
+        enable_meta_tool=True,
         plan_notebook=PlanNotebook(),
     )
-
     user = UserAgent(name="User")
 
     msg = None
@@ -57,6 +72,8 @@ Your target is to finish the given task with careful planning.
         if msg.get_text_content() == "exit":
             break
         msg = await agent(msg)
+
+    await mcp.close()
 
 
 asyncio.run(main())
