@@ -4,7 +4,7 @@ tool functions to the agent."""
 from collections import OrderedDict
 from typing import Callable, Literal, Coroutine, Any
 
-from . import InMemoryPlanStorage
+from ._in_memory_storage import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan
 from ._storage_base import PlanStorageBase
 from .._utils._common import _execute_async_or_sync_func
@@ -190,14 +190,14 @@ class PlanNotebook(StateModule):
 
     def __init__(
         self,
-        max_tasks: int | None = None,
+        max_subtasks: int | None = None,
         plan_to_hint: Callable[[Plan | None], str | None] | None = None,
         storage: PlanStorageBase | None = None,
     ) -> None:
         """Initialize the plan notebook.
 
         Args:
-            max_tasks (`int | None`, optional):
+            max_subtasks (`int | None`, optional):
                 The maximum number of subtasks in a plan.
             plan_to_hint (`Callable[[Plan | None], str | None] | None`, \
              optional):
@@ -210,7 +210,7 @@ class PlanNotebook(StateModule):
         """
         super().__init__()
 
-        self.max_tasks = max_tasks
+        self.max_tasks = max_subtasks
         self.plan_to_hint = plan_to_hint or DefaultPlanToHint()
         self.storage = storage or InMemoryPlanStorage()
 
@@ -680,6 +680,7 @@ class PlanNotebook(StateModule):
             self.revise_current_plan,
             self.update_subtask_state,
             self.finish_subtask,
+            self.finish_plan,
         ]
 
     def get_current_hint(self) -> Msg | None:
