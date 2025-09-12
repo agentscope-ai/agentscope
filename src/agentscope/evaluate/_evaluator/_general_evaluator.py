@@ -39,14 +39,14 @@ class GeneralEvaluator(EvaluatorBase):
         self.n_repeat = n_repeat
         self.n_workers = n_workers
 
-    def run_evaluation(
+    async def run_evaluation(
         self,
         task: Task,
         repeat_id: str,
         solution_output: SolutionOutput,
     ) -> None:
         """Run the evaluation for a task and solution result."""
-        evaluation_results = task.evaluate(solution_output)
+        evaluation_results = await task.evaluate(solution_output)
         # store the evaluation result
         for result in evaluation_results:
             self.storage.save_evaluation_result(
@@ -91,7 +91,7 @@ class GeneralEvaluator(EvaluatorBase):
                 repeat_id,
                 metric.name,
             ):
-                self.run_evaluation(
+                await self.run_evaluation(
                     task,
                     repeat_id,
                     solution_result,
