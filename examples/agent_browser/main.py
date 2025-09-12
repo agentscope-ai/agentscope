@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=wrong-import-order
+# pylint: disable=too-many-lines
 """The main entry point of the browser agent example."""
 import asyncio
 import os
+import sys
+import argparse
 import traceback
 from pydantic import BaseModel, Field
+from browser_agent import BrowserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
 from agentscope.mcp import StdIOStatefulClient
 from agentscope.agent import UserAgent
-from browser_agent import BrowserAgent
 
 
 class FinalResult(BaseModel):
@@ -22,7 +24,11 @@ class FinalResult(BaseModel):
     )
 
 
-async def main() -> None:
+async def main(
+    use_dfs_reply_param: bool = False,
+    start_url_param: str = "https://www.google.com",
+    max_iters_param: int = 50,
+) -> None:
     """The main entry point for the browser agent example."""
     # Setup toolkit with browser tools from MCP server
     toolkit = Toolkit()
@@ -38,8 +44,10 @@ async def main() -> None:
         await toolkit.register_mcp_client(browser_client)
 
         # Create browser agent
+        # Set use_dfs_reply=True to use the DFS search-based reply method
+        # Set use_dfs_reply=False to use the default loop method
         agent = BrowserAgent(
-            name="Browser-useAgent",
+            name="BrowserBot",
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
                 model_name="qwen-max",
@@ -48,8 +56,9 @@ async def main() -> None:
             formatter=DashScopeChatFormatter(),
             memory=InMemoryMemory(),
             toolkit=toolkit,
-            max_iters=50,
-            start_url="https://www.google.com",
+            max_iters=max_iters_param,
+            start_url=start_url_param,
+            use_dfs_reply=use_dfs_reply_param,
         )
         user = UserAgent("Bob")
 
@@ -74,6 +83,37 @@ async def main() -> None:
             print(f"Error while closing browser client: {cleanup_error}")
 
 
+def parse_arguments() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Browser Agent Example with configurable reply method",
+    )
+    parser.add_argument(
+        "--use-dfs-reply",
+        action="store_true",
+        help=(
+            "Use DFS search-based reply method instead of "
+            "default reasoning-acting loop"
+        ),
+    )
+    parser.add_argument(
+        "--start-url",
+        type=str,
+        default="https://www.google.com",
+        help=(
+            "Starting URL for the browser agent "
+            "(default: https://www.google.com)"
+        ),
+    )
+    parser.add_argument(
+        "--max-iters",
+        type=int,
+        default=50,
+        help="Maximum number of iterations (default: 50)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
     print("Starting Browser Agent Example...")
     print(
@@ -82,5 +122,42 @@ if __name__ == "__main__":
         "Make sure the MCP server is installed "
         "by `npx @playwright/mcp@latest`",
     )
+    print("\nUsage examples:")
+    print("  python main.py                           # Use default method")
+    print("  python main.py --use-dfs-reply          # Use DFS search method")
+    print("  python main.py --start-url https://example.com --max-iters 100")
+    print("  python main.py --help                   # Show all options")
+    print()
 
-    asyncio.run(main())
+    # Parse command line arguments
+    args = parse_arguments()
+
+    # Determine which reply method to use
+    if args.use_dfs_reply:
+        use_dfs_reply = True
+        print("Using DFS search-based reply method")
+    else:
+        # Default behavior - use default reasoning-acting loop method
+        use_dfs_reply = False
+        print(
+            "Using default reasoning-acting loop method "
+            "(use --use-dfs-reply to enable DFS method)",
+        )
+
+    # Get other parameters
+    start_url = args.start_url
+    max_iters = args.max_iters
+
+    # Validate parameters
+    if max_iters <= 0:
+        print("Error: max-iters must be positive")
+        sys.exit(1)
+
+    if not start_url.startswith(("http://", "https://")):
+        print("Error: start-url must be a valid HTTP/HTTPS URL")
+        sys.exit(1)
+
+    print(f"Starting URL: {start_url}")
+    print(f"Maximum iterations: {max_iters}")
+
+    asyncio.run(main(use_dfs_reply, start_url, max_iters))
