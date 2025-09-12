@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Evaluation module tests in agentscope."""
 import os
+import sys
 import shutil
-from typing import Generator, Callable
+from typing import Generator, Callable, Any, cast
 from unittest.async_case import IsolatedAsyncioTestCase
 import ray
 
@@ -48,7 +49,10 @@ TOY_BENCHMARK = [
 
 METRIC_NAME = "math_check_number_equal"
 
+
 class CheckEqual(MetricBase):
+    """Metric to check whether the provide answer is equal to ground truth."""
+
     def __init__(
         self,
         ground_truth: float,
@@ -80,10 +84,13 @@ class CheckEqual(MetricBase):
 
 
 class ToyBenchmark(BenchmarkBase):
-    def __init__(self):
+    """A toy benchmark for testing"""
+
+    def __init__(self) -> None:
         super().__init__(
             name="Toy bench",
-            description="A toy benchmark for demonstrating the evaluation module.",
+            description="A toy benchmark for testing "
+            "the evaluation module.",
         )
         self.dataset = self._load_data()
 
@@ -98,7 +105,7 @@ class ToyBenchmark(BenchmarkBase):
                     ground_truth=item["ground_truth"],
                     tags=item.get("tags", {}),
                     metrics=[
-                        CheckEqual(item["ground_truth"]),
+                        CheckEqual(cast(float, item["ground_truth"])),
                     ],
                     metadata={},
                 ),
@@ -119,7 +126,7 @@ class ToyBenchmark(BenchmarkBase):
         return len(self.dataset)
 
 
-class TestEvalAgent(AgentBase):
+class EvalTestAgent(AgentBase):
     """Test agent class for testing hooks."""
 
     def __init__(self) -> None:
@@ -132,16 +139,30 @@ class TestEvalAgent(AgentBase):
         """Reply to the message."""
         return Msg(
             name="test_eval_agent",
-            content=[],
+            content=msg.content,
             role="assistant",
-            metadata={"answer_as_number": 4.0}
+            metadata={"answer_as_number": 4.0},
         )
 
-async def test_solution_generation(
+    async def handle_interrupt(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Msg:
+        """Dummy handle interrupt."""
+        print(args, kwargs)
+
+    async def observe(self, msg: Msg | list[Msg] | None) -> None:
+        """Dummy observe function."""
+        print(msg.content)
+
+
+async def dummy_solution_generation(
     task: Task,
-    pre_hook: Callable,
+    pre_hook: Callable,  # pylint: disable=W0613
 ) -> SolutionOutput:
-    agent = TestEvalAgent()
+    """Solution generation function for test"""
+    agent = EvalTestAgent()
 
     msg_input = Msg("user", task.input, role="user")
     res = await agent(msg_input)
@@ -151,20 +172,43 @@ async def test_solution_generation(
         trajectory=[],
     )
 
+
 class EvaluatorTest(IsolatedAsyncioTestCase):
+    """Test for evaluators in AS"""
+
     async def asyncSetUp(self) -> None:
         """Set up the test environment."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
         self.file_storage_general = FileEvaluatorStorage(
-                save_dir="./general_results",
+            save_dir=os.path.join(
+                current_dir,
+                "general_results",
+            ),
         )
         self.file_storage_ray = FileEvaluatorStorage(
-            save_dir="./ray_results",
+            save_dir=os.path.join(
+                current_dir,
+                "ray_results",
+            ),
         )
-        # Initialize Ray
+        # Initialize Ray with proper serialization settings
         if not ray.is_initialized():
-            ray.init()
+            # Add the current directory to Python path for Ray workers
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            if current_dir not in sys.path:
+                sys.path.insert(0, current_dir)
+
+            ray.init(
+                _temp_dir=None,  # Use default temp directory
+                ignore_reinit_error=True,  # Allow re-initialization
+                runtime_env={
+                    "working_dir": current_dir,
+                    "py_modules": [__file__],  # Include this test file
+                },
+            )
 
     async def test_general_evaluator(self) -> None:
+        """Test general evaluator."""
         evaluator = GeneralEvaluator(
             name="Test evaluation",
             benchmark=ToyBenchmark(),
@@ -176,11 +220,11 @@ class EvaluatorTest(IsolatedAsyncioTestCase):
         )
 
         # Run the evaluation
-        await evaluator.run(test_solution_generation)
+        await evaluator.run(dummy_solution_generation)
         metric_result_1 = self.file_storage_general.get_evaluation_result(
             task_id=TASK_ID_1,
             repeat_id="0",
-            metric_name=METRIC_NAME
+            metric_name=METRIC_NAME,
         )
         self.assertEqual(
             metric_result_1.result,
@@ -189,7 +233,7 @@ class EvaluatorTest(IsolatedAsyncioTestCase):
         metric_result_2 = self.file_storage_general.get_evaluation_result(
             task_id=TASK_ID_2,
             repeat_id="0",
-            metric_name=METRIC_NAME
+            metric_name=METRIC_NAME,
         )
         self.assertEqual(
             metric_result_2.result,
@@ -197,6 +241,7 @@ class EvaluatorTest(IsolatedAsyncioTestCase):
         )
 
     async def test_ray_evaluator(self) -> None:
+        """Test ray evaluator."""
         evaluator = RayEvaluator(
             name="Test evaluation",
             benchmark=ToyBenchmark(),
@@ -208,11 +253,11 @@ class EvaluatorTest(IsolatedAsyncioTestCase):
         )
 
         # Run the evaluation
-        await evaluator.run(test_solution_generation)
+        await evaluator.run(dummy_solution_generation)
         metric_result_1 = self.file_storage_ray.get_evaluation_result(
             task_id=TASK_ID_1,
             repeat_id="0",
-            metric_name=METRIC_NAME
+            metric_name=METRIC_NAME,
         )
         self.assertEqual(
             metric_result_1.result,
@@ -221,7 +266,7 @@ class EvaluatorTest(IsolatedAsyncioTestCase):
         metric_result_2 = self.file_storage_ray.get_evaluation_result(
             task_id=TASK_ID_2,
             repeat_id="0",
-            metric_name=METRIC_NAME
+            metric_name=METRIC_NAME,
         )
         self.assertEqual(
             metric_result_2.result,

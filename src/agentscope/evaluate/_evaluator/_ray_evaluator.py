@@ -17,6 +17,9 @@ from .._evaluator_storage import EvaluatorStorageBase
 
 @ray.remote
 class RayEvaluationActor:
+    """
+    Actor class for running evaluation with ray remote.
+    """
 
     @staticmethod
     async def run(
@@ -25,7 +28,15 @@ class RayEvaluationActor:
         repeat_id: str,
         solution_output: SolutionOutput,
     ) -> None:
-        """Run the evaluation for a task and solution result."""
+        """
+        Run the evaluation for a task and solution result.
+
+        Args:
+            storage (EvaluatorStorageBase): Evaluator storage.
+            task (Task): Task to be evaluated.
+            repeat_id (str): Repeat ID
+            solution_output (SolutionOutput): output data after execute agents.
+        """
         evaluation_results = await task.evaluate(solution_output)
         # store the evaluation result
         for result in evaluation_results:
@@ -38,9 +49,13 @@ class RayEvaluationActor:
 
 @ray.remote
 class RaySolutionActor:
+    """
+    Actor class for running agent solutions with ray remote.
+    """
+
     def __init__(self, n_workers: int = 1):
         self.eval_actor = RayEvaluationActor.options(
-            max_concurrency=n_workers
+            max_concurrency=n_workers,
         ).remote()
 
     async def run(
@@ -53,7 +68,16 @@ class RaySolutionActor:
             Coroutine[Any, Any, SolutionOutput],
         ],
     ) -> None:
-        """Generate a solution to a task and evaluate."""
+        """Generate a solution to a task and evaluate.
+
+        Args:
+            storage (EvaluatorStorageBase): Evaluator storage.
+            repeat_id (str): Repeat ID.
+            task (Task): Task to be evaluated.
+            solution
+                (Callable[[Task, Callable], Awaitable[SolutionOutput, Any]]):
+                callable function to execute agents and generate results.
+        """
         if storage.solution_result_exists(task.id, repeat_id):
             # Obtain from storage
             solution_result = storage.get_solution_result(
@@ -147,7 +171,7 @@ class RayEvaluator(EvaluatorBase):
 
         futures = []
         solution_actor = RaySolutionActor.options(
-            max_concurrency=self.n_workers
+            max_concurrency=self.n_workers,
         ).remote(n_workers=self.n_workers)
         for repeat_id in range(self.n_repeat):
             for task in self.benchmark:
