@@ -151,7 +151,10 @@ class ReActAgent(ReActAgentBase):
             "static_control",
             "both",
         ]
-        self._agent_control = long_term_memory and not self._static_control
+        self._agent_control = long_term_memory and long_term_memory_mode in [
+            "agent_control",
+            "both",
+        ]
 
         # If None, a default Toolkit will be created
         self.toolkit = toolkit or Toolkit()
