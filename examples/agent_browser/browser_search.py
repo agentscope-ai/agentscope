@@ -24,7 +24,7 @@ class BrowserSearchMixin:
     async def _extract_current_url(self) -> str:
         """Navigate to the specified URL using the browser_navigate tool."""
         tool_call = ToolUseBlock(
-            id=str(uuid.uuid4()),  # 添加唯一的 ID
+            id=str(uuid.uuid4()),  # Get the unique ID
             name="browser_tabs",
             input={"action": "list"},
             type="tool_use",

@@ -17,7 +17,7 @@ from agentscope.agent import UserAgent
 
 
 class FinalResult(BaseModel):
-    """A simple number result model for structured output."""
+    """A structured result model for structured output."""
 
     result: str = Field(
         description="The final result to the initial user query",
