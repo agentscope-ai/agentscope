@@ -131,16 +131,6 @@ class BrowserAgent(ReActAgent, BrowserSearchMixin):
             None
         """
 
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model=model,
-            formatter=formatter,
-            memory=memory,
-            toolkit=toolkit,
-            max_iters=max_iters,
-        )
-
         self.start_url = start_url
         self._has_initial_navigated = False
         self.reasoning_prompt = reasoning_prompt
@@ -161,10 +151,18 @@ class BrowserAgent(ReActAgent, BrowserSearchMixin):
         self._required_structured_model: Type[BaseModel] | None = None
         self.use_dfs_reply = use_dfs_reply
 
-        self.toolkit.register_tool_function(self.browser_subtask_manager)
-        self.toolkit.register_tool_function(
-            self.browser_generate_final_response,
+        super().__init__(
+            name=name,
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=formatter,
+            memory=memory,
+            toolkit=toolkit,
+            max_iters=max_iters,
         )
+
+        self.toolkit.register_tool_function(self.browser_subtask_manager)
+
         if (
             self.model.model_name.startswith("qvq")
             or "-vl" in self.model.model_name
