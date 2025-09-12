@@ -348,13 +348,15 @@ as_studio
   - Workflow
     - [Multi-agent Debate](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_debate)
     - [Multi-agent Conversation](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_conversation)
+    - [Multi-agent Concurrent](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - Evaluation
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
   - Functional
     - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
-    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_with_mcp)
+    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
     - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [Long-Term Memory](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
+    - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
 
 ## ⚖️ License
 

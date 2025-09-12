@@ -40,13 +40,10 @@ td .highlight-python.notranslate {
     justify-content: center;
 }
 
-.sidebar-logo-container {
-    height: 100px;
-    width: 100%;
-    .sidebar-logo {
-        width: 100px;
-        height: 100%;
-    }
+.sidebar-logo-container .sidebar-logo {
+    max-height: 170px;
+    width: auto;
+    display: block;
 }
 
 .gallery-item {

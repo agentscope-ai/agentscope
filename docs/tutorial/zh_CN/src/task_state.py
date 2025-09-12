@@ -40,15 +40,15 @@ from agentscope.tool import Toolkit
 #       - 描述
 #     * - ``register_state``
 #       - | ``attr_name``,
-#         | ``custom_to_json``（可选）,
-#         | ``custom_from_json``（可选）
+#         | ``custom_to_json`` （可选）,
+#         | ``custom_from_json`` （可选）
 #       - 将属性注册为其状态，带有可选的序列化/反序列化函数。
 #     * - ``state_dict``
 #       -
 #       - 获取当前对象的状态字典
 #     * - ``load_state_dict``
 #       - | ``state_dict``,
-#         | ``strict``（可选）
+#         | ``strict`` （可选）
 #       - 将状态字典加载到当前对象
 #
 # 在 ``StateModule`` 的对象中，以下所有属性都将被视为其状态的一部分：
@@ -170,7 +170,7 @@ session = JSONSession(
 async def example_session() -> None:
     """会话管理示例。"""
 
-    # 可以保存多个状态，只需要输入的对象为 ``StateModule`` 的子类。
+    # 可以保存多个状态，只需要输入的对象为 `StateModule` 的子类。
     await session.save_session_state(
         agent=agent,
     )
@@ -200,7 +200,7 @@ async def example_load_session() -> None:
 
     # 从会话文件中加载状态
     await session.load_session_state(
-        # 这里使用的关键词参数必须与 ``save_session_state`` 中的参数一致
+        # 这里使用的关键词参数必须与 `save_session_state` 中的参数一致
         agent=agent,
     )
     print("加载会话状态后智能体的状态：")

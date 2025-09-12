@@ -350,13 +350,15 @@ as_studio
   - 工作流
     - [多智能体辩论](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_debate)
     - [多智能体对话](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_conversation)
+    - [多智能体并发](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - 评测
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
   - 功能演示
     - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
-    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_with_mcp)
+    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
     - [结构化输出](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [长期记忆](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
+    - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
 
 ## ⚖️ 许可
 

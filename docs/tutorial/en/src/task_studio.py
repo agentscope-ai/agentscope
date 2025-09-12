@@ -28,7 +28,7 @@ AgentScope Studio is installed via ``npm``:
 
 .. code-block:: bash
 
-    npm install -g agentscope-studio
+    npm install -g @agentscope/studio
 
 
 Start the Studio with the following command:
