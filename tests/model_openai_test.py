@@ -261,6 +261,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
         message.content = content
         message.reasoning_content = None
         message.tool_calls = []
+        message.audio = None
         message.parsed = None
 
         choice = Mock()
@@ -354,6 +355,12 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
                 delta = Mock()
                 delta.content = chunk_data.get("content")
                 delta.reasoning_content = chunk_data.get("reasoning_content")
+
+                audio_mock = Mock()
+                audio_mock.__contains__ = lambda self, key: False
+                delta.audio = audio_mock
+                if "audio" in chunk_data:
+                    delta.audio = chunk_data["audio"]
                 if "tool_calls" in chunk_data:
                     tool_call_mocks = []
                     for tc_data in chunk_data["tool_calls"]:

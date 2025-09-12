@@ -5,8 +5,9 @@ import json
 from asyncio import Task
 from collections import OrderedDict
 from typing import Callable, Any
-
+import base64
 import shortuuid
+import numpy as np
 
 from ._agent_meta import _AgentMeta
 from .._logging import logger
@@ -157,6 +158,10 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         # output of the agent, e.g., in a production environment.
         self._disable_console_output: bool = False
 
+        # Audio related
+        self.pyaudio = None
+        self.stream = None
+
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         """Receive the given message(s) without generating a reply.
 
@@ -177,6 +182,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             f"{self.__class__.__name__} class.",
         )
 
+    # pylint: disable=too-many-branches
     async def print(self, msg: Msg, last: bool = True) -> None:
         """The function to display the message.
 
@@ -191,7 +197,35 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             return
 
         thinking_and_text_to_print = []
+        audio_prefix_name = msg.id + "-audio"
         for block in msg.get_content_blocks():
+            audio_prefix = self._stream_prefix.get(audio_prefix_name, "")
+            if block["type"] == "audio":
+                if not audio_prefix:
+                    import pyaudio
+
+                    self.pyaudio = pyaudio.PyAudio()
+                    # TODO: make it configurable
+                    self.stream = self.pyaudio.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=24000,
+                        output=True,
+                    )
+
+                wav_bytes = base64.b64decode(
+                    block["source"]["data"][
+                        len(
+                            audio_prefix,
+                        ) :
+                    ],
+                )
+                audio_np = np.frombuffer(wav_bytes, dtype=np.int16)
+                self.stream.write(audio_np.tobytes())
+                self._stream_prefix[audio_prefix_name] = block["source"][
+                    "data"
+                ]
+
             prefix = self._stream_prefix.get(msg.id, "")
             if block["type"] in ["text", "thinking"]:
                 block_type = block["type"]
@@ -207,6 +241,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                     self._stream_prefix[msg.id] = to_print
 
             elif last:
+                if block["type"] == "audio":
+                    continue
+
                 if prefix:
                     if not prefix.endswith("\n"):
                         print(
@@ -220,10 +257,17 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                         f"{msg.name}: "
                         f"{json.dumps(block, indent=4, ensure_ascii=False)}",
                     )
-        if last and msg.id in self._stream_prefix:
-            last_prefix = self._stream_prefix.pop(msg.id)
-            if not last_prefix.endswith("\n"):
-                print()
+        if last:
+            if audio_prefix_name in self._stream_prefix:
+                self.stream.stop_stream()
+                self.stream.close()
+                self.pyaudio.terminate()
+                delattr(self, "stream")
+                delattr(self, "pyaudio")
+            if msg.id in self._stream_prefix:
+                last_prefix = self._stream_prefix.pop(msg.id)
+                if not last_prefix.endswith("\n"):
+                    print()
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
         """Call the reply function with the given arguments."""
