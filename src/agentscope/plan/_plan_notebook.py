@@ -651,7 +651,10 @@ class PlanNotebook(StateModule):
             )
 
         self.current_plan.finish(state, outcome)
-        # TODO: store the finished plan to storage
+
+        # Store the finished plan into history
+        await self.storage.add_plan(self.current_plan)
+
         self.current_plan = None
         await self._trigger_plan_change_hooks()
         return ToolResponse(
@@ -664,7 +667,88 @@ class PlanNotebook(StateModule):
             ],
         )
 
-    def list_tools(
+    async def view_historical_plans(self) -> ToolResponse:
+        """View the historical plans."""
+        historical_plans = await self.storage.get_plans()
+
+        plans_str = [
+            f"""Plan named '{_.name}':
+- ID: {_.id}
+- Created at: {_.created_at}
+- Description: {_.description}
+- State: {_.state}
+"""
+            for _ in historical_plans
+        ]
+
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text="\n".join(plans_str),
+                ),
+            ],
+        )
+
+    async def recover_historical_plan(self, plan_id: str) -> ToolResponse:
+        """Recover a historical plan by given plan ID, the plan ID can be
+        obtained by calling `view_historical_plans`. Note the recover
+        operation will override the current plan if exists.
+
+        Args:
+            plan_id (`str`):
+                The ID of the historical plan to be recovered.
+        """
+        historical_plan = await self.storage.get_plan(plan_id)
+        if historical_plan is None:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Cannot find the plan with ID '{plan_id}'.",
+                    ),
+                ],
+            )
+
+        # Store the current plan into history if exists
+        if self.current_plan:
+            if self.current_plan.state != "done":
+                self.current_plan.finish(
+                    "abandoned",
+                    f"The plan execution is interrupted by a new plan "
+                    f"with ID '{historical_plan.id}'.",
+                )
+            await self.storage.add_plan(self.current_plan)
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=(
+                            "The current plan named "
+                            f"'{self.current_plan.name}' is replaced by the "
+                            f"historical plan named '{historical_plan.name}' "
+                            f"with ID '{historical_plan.id}'."
+                        ),
+                    ),
+                ],
+            )
+        else:
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=(
+                            f"Historical plan named '{historical_plan.name}' "
+                            f"with ID '{historical_plan.id}' is recovered "
+                            "successfully."
+                        ),
+                    ),
+                ],
+            )
+        self.current_plan = historical_plan
+        return res
+
+    async def list_tools(
         self,
     ) -> list[Callable[..., Coroutine[Any, Any, ToolResponse]]]:
         """List all tool functions provided to agent
@@ -675,15 +759,17 @@ class PlanNotebook(StateModule):
                 the agent.
         """
         return [
-            self.create_plan,
             self.view_subtasks,
-            self.revise_current_plan,
             self.update_subtask_state,
             self.finish_subtask,
+            self.create_plan,
+            self.revise_current_plan,
             self.finish_plan,
+            self.view_historical_plans,
+            self.recover_historical_plan,
         ]
 
-    def get_current_hint(self) -> Msg | None:
+    async def get_current_hint(self) -> Msg | None:
         """Get the hint message based on the current plan and subtasks states.
         This function will call the `plan_to_hint` function to generate the
         hint message.

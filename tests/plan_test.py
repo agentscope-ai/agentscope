@@ -119,16 +119,27 @@ class PlanTest(IsolatedAsyncioTestCase):
         self.assertListEqual(
             [_.__name__ for _ in await plan_notebook.list_tools()],
             [
-                "create_plan",
                 "view_subtasks",
-                "revise_current_plan",
                 "update_subtask_state",
                 "finish_subtask",
+                "create_plan",
+                "revise_current_plan",
+                "finish_plan",
+                "view_historical_plans",
+                "recover_historical_plan",
             ],
         )
 
         plan_hint = await plan_notebook.get_current_hint()
-        self.assertIsNone(plan_hint)
+        self.assertEqual(
+            plan_hint.get_text_content(),
+            "<system-hint>If the user's query is complex (e.g. "
+            "programming a website, game or app), or requires a long chain of "
+            "steps to complete (e.g. conduct research on a certain topic from "
+            "different sources), you NEED to create a plan first by calling "
+            "'create_plan'. Otherwise, you can directly execute the user's "
+            "query without planning.</system-hint>"
+        )
 
         res = await plan_notebook.create_plan(
             name="Example Plan",
@@ -195,7 +206,7 @@ Subtask at index 2:
         )
         self.assertEqual(
             res.content[0]["text"],
-            "Subtask (named Task 11) at index 1 is deleted successfully.",
+            "Subtask (named 'Task 11') at index 1 is deleted successfully.",
         )
         self.assertEqual(
             len(plan_notebook.current_plan.subtasks),
@@ -230,7 +241,7 @@ Subtask at index 2:
         )
         self.assertEqual(
             res.content[0]["text"],
-            "Subtask (at index 1) named Task 22 is not done yet. "
+            "Subtask (at index 1) named 'Task 22' is not done yet. "
             "You should finish the previous subtasks first.",
         )
 
@@ -241,7 +252,7 @@ Subtask at index 2:
         )
         self.assertEqual(
             res.content[0]["text"],
-            "Subtask (at index 0) named Task 1 is not done yet. You "
+            "Subtask (at index 0) named 'Task 1' is not done yet. You "
             "should finish the previous subtasks first.",
         )
 
@@ -252,7 +263,7 @@ Subtask at index 2:
         self.assertEqual(
             res.content[0]["text"],
             "Subtask (at index 0) named 'Task 1' is marked as done "
-            "successfully. The next subtask named Task 22 is activated.",
+            "successfully. The next subtask named 'Task 22' is activated.",
         )
         self.assertEqual(
             plan_notebook.current_plan.subtasks[1].state,

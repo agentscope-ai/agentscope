@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The in-memory plan storage class."""
+from collections import OrderedDict
+
 from ._plan_model import Plan
-from .._logging import logger
 from ._storage_base import PlanStorageBase
 
 
@@ -11,34 +12,31 @@ class InMemoryPlanStorage(PlanStorageBase):
     def __init__(self) -> None:
         """Initialize the in-memory plan storage."""
         super().__init__()
-        self.plans = []
+        self.plans = OrderedDict()
 
-    async def add_plan(self, plan: Plan) -> None:
+    async def add_plan(self, plan: Plan, override: bool = True) -> None:
         """Add a plan to the storage.
 
         Args:
             plan (`Plan`):
                 The plan to be added.
+            override (`bool`, defaults to `True`):
+                Whether to override the existing plan with the same ID.
         """
-        self.plans.append(plan)
+        if plan.id in self.plans and not override:
+            raise ValueError(
+                "Plan with id {plan.id} already exists.",
+            )
+        self.plans[plan.id] = plan
 
-    async def delete_plan(self, plan_name: str) -> None:
+    async def delete_plan(self, plan_id: str) -> None:
         """Delete a plan from the storage.
 
         Args:
-            plan_name (`str`):
-                The name of the plan to be deleted.
+            plan_id (`str`):
+                The ID of the plan to be deleted.
         """
-        index = None
-        for i, plan in enumerate(self.plans):
-            if plan.name == plan_name:
-                index = i
-                break
-
-        if index is not None:
-            self.plans.pop(index)
-        else:
-            logger.warning("Plan with name '%s' not found", plan_name)
+        self.plans.pop(plan_id, None)
 
     async def get_plans(self) -> list[Plan]:
         """Get all plans from the storage.
@@ -47,4 +45,17 @@ class InMemoryPlanStorage(PlanStorageBase):
             `list[Plan]`:
                 A list of all plans in the storage.
         """
-        return self.plans
+        return list(self.plans.values())
+
+    async def get_plan(self, plan_id: str) -> Plan | None:
+        """Get a plan by its ID.
+
+        Args:
+            plan_id (`str`):
+                The ID of the plan to be retrieved.
+
+        Returns:
+            `Plan | None`:
+                The plan with the specified ID, or None if not found.
+        """
+        return self.plans.get(plan_id, None)
