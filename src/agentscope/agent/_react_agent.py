@@ -188,7 +188,7 @@ class ReActAgent(ReActAgentBase):
                 "plan_related",
                 description=self.plan_notebook.description,
             )
-            for tool in self.plan_notebook.list_tools():
+            for tool in asyncio.run(plan_notebook.list_tools()):
                 self.toolkit.register_tool_function(
                     tool,
                     group_name="plan_related",
@@ -317,7 +317,7 @@ class ReActAgent(ReActAgentBase):
         """Perform the reasoning process."""
         if self.plan_notebook:
             # Insert the reasoning hint from the plan notebook
-            hint_msg = self.plan_notebook.get_current_hint()
+            hint_msg = await self.plan_notebook.get_current_hint()
             if self.print_hint_msg and hint_msg:
                 await self.print(hint_msg)
             await self._reasoning_hint_msgs.add(hint_msg)

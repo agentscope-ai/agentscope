@@ -7,12 +7,12 @@
 
 AgentScope 中的计划（Plan）模块使智能体能够正式地将复杂任务分解为可管理的子任务并系统地执行它们。主要功能包括：
 
-- 支持**手动计划规范**
+- 支持 **手动计划规范**
 - 全面的计划管理功能：
-   - **创建、修改、放弃和恢复**计划
-   - 在多个计划之间**切换**
+   - **创建、修改、放弃和恢复** 计划
+   - 在多个计划之间 **切换**
    - 通过临时暂停计划来处理用户查询或紧急任务，**优雅地处理中断**
-- 计划执行的**实时可视化和监控**
+- 计划执行的 **实时可视化和监控**
 
 .. note:: 当前计划模块仅支持子任务按照顺序执行。
 
@@ -45,14 +45,14 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 # PlanNotebook
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
-# `PlanNotebook`类是计划模块的核心，负责提供
+# ``PlanNotebook`` 类是计划模块的核心，负责提供
 #
 # - 管理计划，子任务的工具函数
 # - 提供用于“引导智能体正确完成任务”的提示消息（Hint message）
 #
-# `PlanNotebook`类使用以下参数实例化：
+# ``PlanNotebook`` 类使用以下参数实例化：
 #
-# .. list-table:: `PlanNotebook`构造函数的参数
+# .. list-table:: ``PlanNotebook`` 构造函数的参数
 #   :header-rows: 1
 #
 #   * - 名称
@@ -60,26 +60,26 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 #     - 描述
 #   * - ``max_subtasks``
 #     - ``int | None``
-#     - 计划中允许的子任务最大数量，如果为``None``则无限制
+#     - 计划中允许的子任务最大数量，如果为 ``None`` 则无限制
 #   * - ``plan_to_hint``
 #     - ``Callable[[Plan | None], str | None] | None``
-#     - 基于当前计划的完成情况，生成对应提示消息的函数。如果未提供，将使用默认的``DefaultPlanToHint``对象。
+#     - 基于当前计划的完成情况，生成对应提示消息的函数。如果未提供，将使用默认的 ``DefaultPlanToHint`` 对象。
 #   * - ``storage``
 #     - ``PlanStorageBase | None``
 #     - 计划的存储模块，用于恢复，保存历史计划。如果未提供，将使用默认的内存（In-memory）存储。
 #
-# ``plan_to_hint``参数是``PlanNotebook``类的核心参数，也是开发者进行提示工程的接口。
+# ``plan_to_hint`` 参数是 ``PlanNotebook`` 类的核心参数，也是开发者进行提示工程的接口。
 # 作为可调用对象，接受当前计划作为输入，并返回一个字符串类型的提示消息。
-# AgentScope 构建了一个默认的``DefaultPlanToHint``类，可以直接使用，同时我们鼓励开发者提供自己的``plan_to_hint``函数以获得更好的性能。
+# AgentScope 构建了一个默认的 ``DefaultPlanToHint`` 类，可以直接使用，同时我们鼓励开发者提供自己的 ``plan_to_hint`` 函数以获得更好的性能。
 #
-# ``storage``用于存储历史计划，允许智能体检索和恢复历史计划。
-# 我们同样鼓励开发者通过继承``PlanStorageBase``类来实现自己的计划存储。如果未提供，将使用默认的内存存储。
+# ``storage`` 用于存储历史计划，允许智能体检索和恢复历史计划。
+# 我们同样鼓励开发者通过继承 ``PlanStorageBase`` 类来实现自己的计划存储。如果未提供，将使用默认的内存存储。
 #
-# .. tip:: ``PlanStorageBase``类继承自``StateModule``类，因此 storage也会通过会话管理进行保存和加载。
+# .. tip:: ``PlanStorageBase`` 类继承自 ``StateModule`` 类，因此 storage也会通过会话管理进行保存和加载。
 #
-# ``PlanNotebook``类的核心属性和方法总结如下：
+# ``PlanNotebook`` 类的核心属性和方法总结如下：
 #
-# .. list-table:: ``PlanNotebook``类的核心属性和方法
+# .. list-table:: ``PlanNotebook`` 类的核心属性和方法
 #    :header-rows: 1
 #
 #    * - 类型
@@ -96,10 +96,10 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 #      - 一个可调用对象，以当前计划为输入并生成提示消息来指导智能体完成计划
 #    * - 函数
 #      - ``list_tools``
-#      - 列出`PlanNotebook`类提供的所有工具函数
+#      - 列出 ``PlanNotebook`` 类提供的所有工具函数
 #    * -
 #      - ``get_current_hint``
-#      - 获取当前计划的提示消息，将调用``plan_to_hint``函数
+#      - 获取当前计划的提示消息，将调用 ``plan_to_hint`` 函数
 #    * -
 #      - | ``create_plan``,
 #        | ``view_subtasks``,
@@ -107,6 +107,8 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 #        | ``update_subtask_state``,
 #        | ``finish_subtask``,
 #        | ``finish_plan``,
+#        | ``view_historical_plans``,
+#        | ``recover_historical_plan``
 #      - 允许智能体管理计划和子任务的工具函数
 #    * -
 #      - ``register_plan_change_hook``
@@ -115,32 +117,38 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 #      - ``remove_plan_change_hook``
 #      - 移除已注册的钩子函数
 #
-# ``list_tools``方法是获取所有工具函数的快速方法，这样您就可以将它们注册到智能体的工具包中。
+# ``list_tools`` 方法是获取所有工具函数的快速方法，这样您就可以将它们注册到智能体的工具包中。
 
 plan_notebook = PlanNotebook()
 
-print("PlanNotebook提供的工具：")
-for tool in plan_notebook.list_tools():
-    print(tool.__name__)
+
+async def list_tools() -> None:
+    """列出PlanNotebook提供的工具函数。"""
+    print("PlanNotebook提供的工具：")
+    for tool in await plan_notebook.list_tools():
+        print(tool.__name__)
+
+
+asyncio.run(list_tools())
 
 
 # %%
 # 与ReActAgent协作
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# AgentScope中的``ReActAgent``已通过构造函数中的``plan_notebook``参数集成了计划模块。
+# AgentScope中的 ``ReActAgent`` 已通过构造函数中的 ``plan_notebook`` 参数集成了计划模块。
 # 一旦提供，智能体将
 #
 # - 配备计划管理工具函数，并且
 # - 在每个推理步骤开始时插入提示消息
 #
-# 有两种方式在``ReActAgent``中使用计划模块：
+# 有两种方式在 ``ReActAgent`` 中使用计划模块：
 #
-# - 开发者指定计划：开发者可以通过调用``create_plan``工具函数手动创建计划，并使用该计划来初始化`ReActAgent`。
+# - 开发者指定计划：开发者可以通过调用 ``create_plan`` 工具函数手动创建计划，并使用该计划来初始化 ``ReActAgent`` 。
 # - 智能体管理的计划执行：智能体将通过调用计划管理工具函数自己创建和管理计划。
 #
 # 手动计划规范
 # ---------------------------------
-# 通过调用``create_plan``工具函数手动创建计划非常简单。
+# 通过调用 ``create_plan`` 工具函数手动创建计划非常简单。
 # 以下是手动创建计划以对LLM赋能的智能体进行全面研究的示例。
 #
 async def manual_plan_specification() -> None:
@@ -185,14 +193,14 @@ async def manual_plan_specification() -> None:
     )
 
     print("当前提示消息：\n")
-    msg = plan_notebook.get_current_hint()
+    msg = await plan_notebook.get_current_hint()
     print(f"{msg.name}: {msg.content}")
 
 
 asyncio.run(manual_plan_specification())
 
 # %%
-# 创建计划后，可以按如下方式使用计划笔记本初始化`ReActAgent`：
+# 创建计划后，可以按如下方式使用计划笔记本初始化 ``ReActAgent`` ：
 
 agent = ReActAgent(
     name="Friday",
@@ -209,7 +217,7 @@ agent = ReActAgent(
 # 智能体自主管理
 # ---------------------------------
 # 智能体也可以通过调用计划管理工具函数自己创建和管理计划。
-# 我们只需要按如下方式使用计划笔记本初始化``ReActAgent``：
+# 我们只需要按如下方式使用计划笔记本初始化 ``ReActAgent`` ：
 #
 
 agent = ReActAgent(
@@ -244,10 +252,9 @@ agent = ReActAgent(
 #
 #     asyncio.run(interact_with_agent())
 #
-# %%
-# 计划可视化和监控
+# 可视化和监控
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# AgentScope通过钩子函数支持计划执行的实时可视化和监控。
+# AgentScope 通过钩子函数支持计划执行的实时可视化和监控。
 #
 # 当前计划被工具函数改变时，钩子函数将被触发，开发者可以在这些钩子函数中将当前的计划转发到对应的前端进行可视化或其他处理。
 # 计划变化钩子函数的模板如下：

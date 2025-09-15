@@ -138,7 +138,7 @@ class PlanTest(IsolatedAsyncioTestCase):
             "steps to complete (e.g. conduct research on a certain topic from "
             "different sources), you NEED to create a plan first by calling "
             "'create_plan'. Otherwise, you can directly execute the user's "
-            "query without planning.</system-hint>"
+            "query without planning.</system-hint>",
         )
 
         res = await plan_notebook.create_plan(

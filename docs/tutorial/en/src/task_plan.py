@@ -115,6 +115,8 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 #        | ``update_subtask_state``,
 #        | ``finish_subtask``,
 #        | ``finish_plan``,
+#        | ``view_historical_plans``,
+#        | ``recover_historical_plan``
 #      - The tool functions that allows the agent to manage the plan and subtasks
 #    * -
 #      - ``register_plan_change_hook``
@@ -127,9 +129,15 @@ from agentscope.plan import PlanNotebook, Plan, SubTask
 
 plan_notebook = PlanNotebook()
 
-print("The tools provided by PlanNotebook:")
-for tool in plan_notebook.list_tools():
-    print(tool.__name__)
+
+async def list_tools() -> None:
+    """List the tool functions provided by PlanNotebook."""
+    print("The tools provided by PlanNotebook:")
+    for tool in await plan_notebook.list_tools():
+        print(tool.__name__)
+
+
+asyncio.run(list_tools())
 
 
 # %%
@@ -201,7 +209,7 @@ async def manual_plan_specification() -> None:
     )
 
     print("The current hint message:\n")
-    msg = plan_notebook.get_current_hint()
+    msg = await plan_notebook.get_current_hint()
     print(f"{msg.name}: {msg.content}")
 
 
