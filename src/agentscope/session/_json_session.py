@@ -103,6 +103,7 @@ class JSONSession(SessionBase):
                 "Load session state from %s successfully.",
                 session_save_path,
             )
+
         elif allow_not_exist:
             logger.info(
                 "Session file %s does not exist. Skip loading session state.",

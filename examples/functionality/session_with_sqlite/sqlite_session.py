@@ -93,8 +93,8 @@ class SqliteSession(SessionBase):
                 )
                 return
             raise ValueError(
-                f"Failed to load session state for session_id "
-                f"{session_id} does not exist.",
+                "Failed to load session state because the SQLite database "
+                f"file '{self.sqlite_path}' does not exist.",
             )
 
         with sqlite3.connect(self.sqlite_path) as conn:
@@ -119,8 +119,9 @@ class SqliteSession(SessionBase):
                         return
 
                     raise ValueError(
-                        f"Failed to load session state for session_id "
-                        f"{session_id} does not exist.",
+                        "Failed to load session state because the session "
+                        "table 'as_session' does not exist in database "
+                        f"{self.sqlite_path}.",
                     )
 
                 # Query the session data
