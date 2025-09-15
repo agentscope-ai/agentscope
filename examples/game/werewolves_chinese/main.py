@@ -331,15 +331,19 @@ async def sheriff_election_vote(all_players_hub: MsgHub, all_players: list[ReAct
     
     # 处理投票结果
     votes_list = [_.metadata.get("vote") for _ in msgs_election_vote]
-    votes = {name: votes_list.count(name) for name in set(votes_list)}
-    
-    
+    # votes = {name: votes_list.count(name) for name in set(votes_list)}
+    voters_list = [_.name for _ in msgs_election_vote]
     
     # 没有自爆，正常处理投票结果
-    elected_sheriff, is_tie = majority_vote(votes)
+    elected_sheriff, votes, is_tie = majority_vote(
+        votes_list, detailed=True, voters=voters_list
+    )
     
     if is_tie:
-        
+        tied_candidates = [candidate.name for candidate in alive_candidates if candidate.name in elected_sheriff]
+        await all_players_hub.broadcast(
+            await moderator(Prompts.to_all_election_tie.format(votes, names_to_str(tied_candidates))),
+        )
             
         await all_players_hub.broadcast(
             await moderator(f"第二天警长选举平票，不再有PK环节，警徽流失。"),
@@ -353,7 +357,7 @@ async def sheriff_election_vote(all_players_hub: MsgHub, all_players: list[ReAct
             sheriff = elected_sheriff
             sheriff_has_badge = True
             await all_players_hub.broadcast(
-                await moderator(f"警长选举结果：{sheriff}当选警长。"),
+                await moderator(Prompts.to_all_election_result.format(sheriff, votes)),
             )
             # 警长选择发言顺序
             await choose_sheriff_speaking_order(all_players_hub, sheriff)
@@ -362,6 +366,7 @@ async def sheriff_election_vote(all_players_hub: MsgHub, all_players: list[ReAct
             await all_players_hub.broadcast(
                 await moderator("所有人弃票，警徽流失。"),
             )
+            return False
     
     return True
 
@@ -369,6 +374,7 @@ async def sheriff_election_vote(all_players_hub: MsgHub, all_players: list[ReAct
 async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent]) -> bool:
     """警长竞选环节"""
     global sheriff, sheriff_has_badge, moderator, exploded_agent, dead_today, first_explode_interrupted_election, first_day_candidates
+    
     
     # 询问谁要上警
     await all_players_hub.broadcast(
@@ -399,6 +405,10 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
         await moderator(Prompts.to_all_election.format(candidate_names)),
     )
     
+
+    # Open the auto broadcast to enable discussion
+    all_players_hub.set_auto_broadcast(True)
+
     # 候选人依次发言（基于时间决定顺序）
     speaking_order_candidates = get_time_based_speaking_order(candidates)
     for agent in speaking_order_candidates:
@@ -499,13 +509,20 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
                 active_candidates.append(agent)
                 break
     
+    # Disable auto broadcast to avoid leaking info
+    all_players_hub.set_auto_broadcast(False)
+
+    await all_players_hub.broadcast(
+        await moderator(Prompts.to_all_election_vote.format(names_to_str(active_candidates))),
+    )
+
     msgs_election_vote = await fanout_pipeline(
         voting_agents,
         await moderator(Prompts.to_all_election_vote.format(names_to_str(active_candidates))),
         structured_model=get_sheriff_election_model(active_candidates),
         enable_gather=False,
     )
-    
+
     # 处理投票结果
     votes_list = [_.metadata.get("vote") for _ in msgs_election_vote]
     voters_list = [_.name for _ in msgs_election_vote]
@@ -513,10 +530,13 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
         votes_list, detailed=True, voters=voters_list
     )
     
-    await all_players_hub.broadcast(msgs_election_vote)
+    # await all_players_hub.broadcast(msgs_election_vote)
     
     if is_tie:
         # 平票，进入PK环节
+        # Open the auto broadcast to enable discussion
+        all_players_hub.set_auto_broadcast(True)
+
         tied_candidates = [candidate.name for candidate in active_candidates if candidate.name in elected_sheriff]
         await all_players_hub.broadcast(
             await moderator(Prompts.to_all_election_tie.format(votes, names_to_str(tied_candidates))),
@@ -594,13 +614,20 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
             # 直接结束警长竞选，进入黑夜
             return False
 
+        # Disable auto broadcast to avoid leaking info
+        all_players_hub.set_auto_broadcast(False)
+
+        await all_players_hub.broadcast(
+            await moderator(Prompts.to_all_election_pk_vote.format(names_to_str(tied_candidates))),
+        )
+
         msgs_pk_vote = await fanout_pipeline(
             voting_agents,
             await moderator(Prompts.to_all_election_pk_vote.format(names_to_str(tied_candidates))),
             structured_model=get_sheriff_election_model(pk_candidates),
             enable_gather=False,
         )
-        
+
         # 处理PK投票结果
         pk_votes_list = [_.metadata.get("vote") for _ in msgs_pk_vote]
         pk_voters_list = [_.name for _ in msgs_pk_vote]
@@ -608,7 +635,7 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
             pk_votes_list, detailed=True, voters=pk_voters_list
         )
         
-        await all_players_hub.broadcast(msgs_pk_vote)
+        # await all_players_hub.broadcast(msgs_pk_vote)
         
         if pk_is_tie:
             # PK也平票，警徽流失
@@ -638,7 +665,7 @@ async def sheriff_election(all_players_hub: MsgHub, all_players: list[ReActAgent
         else:
             # 所有人弃票，警徽流失
             await all_players_hub.broadcast(
-                await moderator(Prompts.to_all_election_failed),
+                await moderator("所有人弃票，警徽流失。"),
             )
             return False
     
@@ -693,6 +720,9 @@ async def handle_tie_vote(
     """处理平票PK环节"""
     global moderator, exploded_agent, dead_today
     
+    # Open the auto broadcast to enable discussion
+    all_players_hub.set_auto_broadcast(True)
+
     # 宣布平票，进入PK环节
     tied_names = names_to_str(tied_players)
     await all_players_hub.broadcast(
@@ -763,13 +793,20 @@ async def handle_tie_vote(
         
         return None
 
+    # Disable auto broadcast to avoid leaking info
+    all_players_hub.set_auto_broadcast(False)
+
+    await all_players_hub.broadcast(
+        await moderator(Prompts.to_all_pk_vote.format(tied_names)),
+    )
+
     msgs_pk_vote = await fanout_pipeline(
         voting_agents,  # 只有非PK台的玩家可以投票
         await moderator(Prompts.to_all_pk_vote.format(tied_names)),
         structured_model=get_vote_model(pk_agents),
         enable_gather=False,
     )
-    
+
     # 处理PK投票结果
     pk_votes_list = [_.metadata.get("vote") for _ in msgs_pk_vote]
     pk_voters_list = [_.name for _ in msgs_pk_vote]
@@ -777,7 +814,7 @@ async def handle_tie_vote(
         pk_votes_list, detailed=True, voters=pk_voters_list
     )
     
-    await all_players_hub.broadcast(msgs_pk_vote)
+    # await all_players_hub.broadcast(msgs_pk_vote)
     
     if is_tie:
         # PK也平票，平安日
@@ -1266,9 +1303,6 @@ async def main() -> None:
                     await moderator(f"{agent.name}，请发言。"),
                 )
             
-            # Disable auto broadcast to avoid leaking info
-            all_players_hub.set_auto_broadcast(False)
-            
             # 如果有人自爆，直接进入黑夜
             if exploded_agent:
                 # 处理自爆玩家的死亡
@@ -1355,6 +1389,13 @@ async def main() -> None:
 
                 continue
 
+            # Disable auto broadcast to avoid leaking info
+            all_players_hub.set_auto_broadcast(False)
+
+            await all_players_hub.broadcast(
+                await moderator(Prompts.to_all_vote.format(names_to_str(current_alive))),
+            )
+
             # Voting
             msgs_vote = await fanout_pipeline(
                 current_alive,
@@ -1375,15 +1416,16 @@ async def main() -> None:
             if voted_player is None:
                 # 所有人弃票的情况
                 result_msg = await moderator(f"投票结果是{votes}。没有人被投票出局。")
-                await all_players_hub.broadcast(
-                    [
-                        *msgs_vote,
-                        result_msg,
-                    ],
-                )
+                # await all_players_hub.broadcast(
+                #     [
+                #         *msgs_vote,
+                #         result_msg,
+                #     ],
+                # )
+                await all_players_hub.broadcast(result_msg)
             elif is_tie:
                 # 平票情况，进入PK环节
-                await all_players_hub.broadcast(msgs_vote)
+                # await all_players_hub.broadcast(msgs_vote)
                 pk_result = await handle_tie_vote(votes,voted_player, all_players_hub, current_alive)
                 
                 if exploded_agent:
@@ -1402,12 +1444,13 @@ async def main() -> None:
                 result_msg = await moderator(
                     Prompts.to_all_res.format(votes, voted_player),
                 )
-                await all_players_hub.broadcast(
-                    [
-                        *msgs_vote,
-                        result_msg,
-                    ],
-                )
+                # await all_players_hub.broadcast(
+                #     [
+                #         *msgs_vote,
+                #         result_msg,
+                #     ],
+                # )
+                await all_players_hub.broadcast(result_msg)
 
             shot_player = None
             # 只有当有人被投票出局时才处理猎人/狼王的技能（开枪在遗言前）
