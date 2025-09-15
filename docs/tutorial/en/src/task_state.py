@@ -166,19 +166,19 @@ print(json.dumps(agent.state_dict(), indent=4))
 
 
 session = JSONSession(
-    session_id="session_2025-08-08",  # Use the time as session id
-    save_dir="./user-bob/",  # Use the username as the save directory
+    save_dir="./",  # The dir used to save the session files
 )
 
 
 async def example_session() -> None:
     """Example of session management."""
     await session.save_session_state(
+        session_id="user_1",  # Use the name as the session id
         agent=agent,
     )
 
     print("The saved state:")
-    with open(session.save_path, "r", encoding="utf-8") as f:
+    with open("./user_1.json", "r", encoding="utf-8") as f:
         print(json.dumps(json.load(f), indent=4))
 
 
@@ -201,6 +201,7 @@ async def example_load_session() -> None:
 
     # then we load the session state
     await session.load_session_state(
+        session_id="user_1",
         # The keyword argument must be the same as the one used in `save_session_state`
         agent=agent,
     )
