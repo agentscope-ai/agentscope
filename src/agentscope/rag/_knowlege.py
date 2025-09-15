@@ -1,10 +1,19 @@
 # -*- coding: utf-8 -*-
-""""""
+"""Knowledge """
 from typing import Any
 
-from agentscope.embedding import EmbeddingModelBase
-from agentscope.message import TextBlock, ImageBlock, AudioBlock, VideoBlock
-from agentscope.rag import KnowledgeBase, EmbeddingStoreBase, VectorRecord
+from . import VectorRecord
+from ..embedding import EmbeddingModelBase
+from ..message import (
+    TextBlock,
+    ImageBlock,
+    AudioBlock,
+    VideoBlock,
+)
+from ._knowledge_base import (
+    KnowledgeBase,
+    EmbeddingStoreBase,
+)
 
 
 class Knowledge(KnowledgeBase):
@@ -32,7 +41,8 @@ class Knowledge(KnowledgeBase):
                 VectorRecord(
                     embedding=_,
 
-                ) for _ in res_embeddings.embeddings
+                )
+                for _ in res_embeddings.embeddings
             ]
         )
 
