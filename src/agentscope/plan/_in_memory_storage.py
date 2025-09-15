@@ -25,7 +25,7 @@ class InMemoryPlanStorage(PlanStorageBase):
         """
         if plan.id in self.plans and not override:
             raise ValueError(
-                "Plan with id {plan.id} already exists.",
+                f"Plan with id {plan.id} already exists.",
             )
         self.plans[plan.id] = plan
 
