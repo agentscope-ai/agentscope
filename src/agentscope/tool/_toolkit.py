@@ -154,11 +154,11 @@ class Toolkit(StateModule):
             if group_name in self.groups:
                 self.groups[group_name].active = active
 
-    def remove_tool_groups(self, group_names: list[str]) -> None:
+    def remove_tool_groups(self, group_names: str | list[str]) -> None:
         """Remove tool functions from the toolkit by their group names.
 
         Args:
-            group_names (`str`):
+            group_names (`str | list[str]`):
                 The group names to be removed from the toolkit.
         """
         if isinstance(group_names, str):

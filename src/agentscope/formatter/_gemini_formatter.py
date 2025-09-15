@@ -84,7 +84,7 @@ class GeminiChatFormatter(TruncatedFormatterBase):
     ]
     """The list of supported message blocks"""
 
-    supported_extensions: list[str] = {
+    supported_extensions: dict[str, list[str]] = {
         "image": ["png", "jpeg", "webp", "heic", "heif"],
         "video": [
             "mp4",

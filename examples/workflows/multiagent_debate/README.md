@@ -17,3 +17,8 @@ To run the example, first install the latest version of AgentScope, then run:
 ```bash
 python examples/workflows/multiagent_debate/main.py
 ```
+
+
+> Note: The example is built with DashScope chat model. If you want to change the model in this example, don't forget
+> to change the formatter at the same time! The corresponding relationship between built-in models and formatters are
+> list in [our tutorial](https://doc.agentscope.io/tutorial/task_prompt.html#id1)

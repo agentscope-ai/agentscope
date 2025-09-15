@@ -19,6 +19,13 @@ class StdIOStatefulClient(StatefulClientBase):
     .. note:: The stateful client will maintain one session across multiple
      tool calls, until the client is closed by explicitly calling the
      `close()` method.
+
+    .. note:: When multiple StdIOStatefulClient instances are connected,
+     they should be closed following the Last In First Out (LIFO) principle
+     to avoid potential errors. Always close the most recently registered
+     client first, then work backwards to the first one.
+     For more details, please refer to this `issue
+     <https://github.com/modelcontextprotocol/python-sdk/issues/577>`_.
     """
 
     def __init__(
@@ -52,7 +59,7 @@ class StdIOStatefulClient(StatefulClientBase):
             encoding (`str`, optional):
                 The text encoding used when sending/receiving messages to the
                 server. Defaults to "utf-8".
-            encoding_error_handler (`Literal["strict", "ignore", "replace"]`,
+            encoding_error_handler (`Literal["strict", "ignore", "replace"]`, \
              defaults to "strict"):
                 The text encoding error handler.
         """

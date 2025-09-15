@@ -75,16 +75,16 @@ def openai_text_to_image(
         size (`Literal["256x256", "512x512", "1024x1024", "1792x1024", \
         "1024x1792"]`, defaults to `"256x256"`):
             The size of the generated images.
-             Must be one of 1024x1024, 1536x1024 (landscape), 1024x1536 (
-             portrait), or auto (default value) for gpt-image-1,
-              one of 256x256, 512x512, or 1024x1024 for dall-e-2,
-               and one of 1024x1024, 1792x1024, or 1024x1792 for dall-e-3.
+            Must be one of 1024x1024, 1536x1024 (landscape), 1024x1536 (
+            portrait), or auto (default value) for gpt-image-1,
+            one of 256x256, 512x512, or 1024x1024 for dall-e-2,
+            and one of 1024x1024, 1792x1024, or 1024x1792 for dall-e-3.
         quality (`Literal["auto", "standard", "hd", "high", "medium", \
         "low"]`,  defaults to `"auto"`):
             The quality of the image that will be generated.
 
             - `auto` (default value) will automatically select the best
-                quality for the given model.
+              quality for the given model.
             - `high`, `medium` and `low` are supported for gpt-image-1.
             - `hd` and `standard` are supported for dall-e-3.
             - `standard` is the only option for dall-e-2.
@@ -92,18 +92,20 @@ def openai_text_to_image(
             The style of the generated images.
             This parameter is only supported for dall-e-3.
             Must be one of `vivid` or `natural`.
+
             - `Vivid` causes the model to lean towards generating hyper-real
-                and dramatic images.
+              and dramatic images.
             - `Natural` causes the model to produce more natural,
-                less hyper-real looking images.
+              less hyper-real looking images.
         response_format (`Literal["url", "b64_json"]`, defaults to `"url"`):
             The format in which generated images with dall-e-2 and dall-e-3
-                are returned.
+            are returned.
+
             - Must be one of "url" or "b64_json".
             - URLs are only valid for 60 minutes after the image has been
-                generated.
+              generated.
             - This parameter isn't supported for gpt-image-1 which will always
-                return base64-encoded images.
+              return base64-encoded images.
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
@@ -212,16 +214,17 @@ def openai_edit_image(
             The size of the edited images.
         response_format (`Literal["url", "b64_json"]`, defaults to `"url"`):
             The format in which generated images are returned.
-            Must be one of "url" or "b64_json".
-            URLs are only valid for 60 minutes after generation.
-             This parameter isn't supported for gpt-image-1 which will
+
+            - Must be one of "url" or "b64_json".
+            - URLs are only valid for 60 minutes after generation.
+            - This parameter isn't supported for gpt-image-1 which will
               always return base64-encoded images.
 
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
 
     """
 
@@ -344,15 +347,16 @@ def openai_create_image_variation(
             The size of the generated image variations.
         response_format (`Literal["url", "b64_json"]`, defaults to `"url"`):
             The format in which generated images are returned.
-            Must be one of url or b64_json.
-            URLs are only valid for 60 minutes after the image has been
-            generated.
+
+            - Must be one of url or b64_json.
+            - URLs are only valid for 60 minutes after the image has been
+              generated.
 
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
     """
 
     # _parse_url handles both local and web URLs and returns BytesIO
@@ -434,8 +438,8 @@ def openai_image_to_text(
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
 
     """
     if isinstance(image_urls, str):
@@ -535,15 +539,14 @@ def openai_text_to_audio(
         speed (`float`, defaults to `1.0`):
             The speed of the audio playback. A value of 1.0 is normal speed.
         res_format (`Literal["mp3", "wav", "opus", "aac", "flac", \
-        "wav", "pcm"]`,
-        defaults to `"mp3"`):
+        "wav", "pcm"]`, defaults to `"mp3"`):
             The format of the audio file.
 
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
     """
 
     try:
@@ -612,8 +615,8 @@ def openai_audio_to_text(
     Returns:
         `ToolResponse`:
             A ToolResponse containing the generated content
-             (ImageBlock/TextBlock/AudioBlock) or error information if the
-             operation failed.
+            (ImageBlock/TextBlock/AudioBlock) or error information if the
+            operation failed.
     """
 
     try:

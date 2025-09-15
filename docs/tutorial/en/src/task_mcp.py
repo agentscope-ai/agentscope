@@ -53,6 +53,7 @@ from agentscope.tool import Toolkit
 #
 # .. note:: - The StdIO MCP server only has stateful client, when ``connect()`` is called, it will start the MCP server locally and then connect to it.
 #  - For stateful clients, developers must ensure the client is connected when calling the tool functions.
+#  - When multiple `HttpStatefulClients` or `StdIOStatefulClients` are connected, they should be closed in Last In First Out (LIFO) order to prevent errors.
 #
 # Taking Gaode map MCP server as an example, the creation of stateful and stateless clients are very similar:
 #

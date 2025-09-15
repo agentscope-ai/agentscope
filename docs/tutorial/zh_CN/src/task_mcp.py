@@ -55,6 +55,7 @@ from agentscope.tool import Toolkit
 #
 # .. note:: - StdIO MCP 服务器只有有状态客户端，当调用 ``connect()`` 时，它将在本地启动 MCP 服务器然后连接到它。
 #  - 对于有状态客户端，开发者必须确保在调用工具函数时客户端已连接。
+#  - 当有多个 `HttpStatefulClient` 或 `StdIOStatefulClient` 建立连接时，应按照后进先出 (LIFO) 的顺序关闭它们以避免引发错误。
 #
 # 以高德地图 MCP 服务器为例，有状态和无状态客户端的创建非常相似：
 #
