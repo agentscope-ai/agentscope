@@ -245,7 +245,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     {
                         "inline_data": {
                             "data": "ZmFrZSBhdWRpbyBjb250ZW50",
-                            "mime_type": "image/mp3",
+                            "mime_type": "audio/mp3",
                         },
                     },
                 ],
@@ -338,7 +338,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     {
                         "inline_data": {
                             "data": "ZmFrZSBhdWRpbyBjb250ZW50",
-                            "mime_type": "image/mp3",
+                            "mime_type": "audio/mp3",
                         },
                     },
                     {
@@ -476,7 +476,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                     {
                         "inline_data": {
                             "data": "ZmFrZSBhdWRpbyBjb250ZW50",
-                            "mime_type": "image/mp3",
+                            "mime_type": "audio/mp3",
                         },
                     },
                     {
