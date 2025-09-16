@@ -958,6 +958,8 @@ async def main() -> None:
                     )
                 elif guard_choice == last_guarded_player:
                     # 只给守卫自己发送结果
+                    guarded_player = None
+                    last_guarded_player = None
                     await agent.observe(
                         await moderator(Prompts.to_guard_failed.format(agent_name=last_guarded_player)),
                     )
