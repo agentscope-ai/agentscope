@@ -243,6 +243,7 @@ class OpenAIChatModel(ChatModelBase):
         thinking = ""
         tool_calls = OrderedDict()
         metadata = None
+        contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
 
         async with response as stream:
             async for item in stream:
@@ -261,9 +262,9 @@ class OpenAIChatModel(ChatModelBase):
                     )
 
                 if not chunk.choices:
-                    if usage:
+                    if usage and contents:
                         res = ChatResponse(
-                            content=[],
+                            content=contents,
                             usage=usage,
                             metadata=metadata,
                         )
@@ -292,7 +293,7 @@ class OpenAIChatModel(ChatModelBase):
                             "input": tool_call.function.arguments or "",
                         }
 
-                contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+                contents = []
 
                 if thinking:
                     contents.append(
