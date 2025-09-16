@@ -857,7 +857,7 @@ async def create_player(role: str) -> ReActAgent:
             guidance=getattr(Prompts, f"notes_{role}"),
         ),
         model=DashScopeChatModel(
-            model_name="qwen-max",
+            model_name="qwen3-max-preview",
             api_key=os.environ["DASHSCOPE_API_KEY"],
             enable_thinking=True,
         ),
