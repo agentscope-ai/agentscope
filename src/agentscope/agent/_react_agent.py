@@ -275,6 +275,10 @@ class ReActAgent(ReActAgentBase):
         for _ in range(self.max_iters):
             msg_reasoning = await self._reasoning()
 
+            # Add the assistant message with tool_calls to memory before executing tools
+            if msg_reasoning.has_content_blocks("tool_use"):
+                await self.memory.add(msg_reasoning)
+
             futures = [
                 self._acting(tool_call)
                 for tool_call in msg_reasoning.get_content_blocks(
@@ -387,7 +391,7 @@ class ReActAgent(ReActAgentBase):
                 )
                 for tool_call in tool_use_blocks:
                     msg_res = Msg(
-                        "system",
+                        "tool",
                         [
                             ToolResultBlock(
                                 type="tool_result",
@@ -397,7 +401,7 @@ class ReActAgent(ReActAgentBase):
                                 "by the user.",
                             ),
                         ],
-                        "system",
+                        "tool",
                     )
                     await self.memory.add(msg_res)
                     await self.print(msg_res, True)
@@ -416,7 +420,7 @@ class ReActAgent(ReActAgentBase):
         """
 
         tool_res_msg = Msg(
-            "system",
+            "tool",
             [
                 ToolResultBlock(
                     type="tool_result",
@@ -425,7 +429,7 @@ class ReActAgent(ReActAgentBase):
                     output=[],
                 ),
             ],
-            "system",
+            "tool",
         )
         try:
             # Execute the tool call

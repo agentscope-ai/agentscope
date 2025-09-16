@@ -52,7 +52,7 @@ class Msg:
         self.name = name
         self.content = content
 
-        assert role in ["user", "assistant", "system"]
+        assert role in ["user", "assistant", "system", "tool"]
         self.role = role
 
         self.metadata = metadata
