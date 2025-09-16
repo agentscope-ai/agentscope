@@ -1,0 +1,1 @@
+vllm serve --model Qwen/Qwen3-8B --enable-prefix-caching --max_model_len 40960 --tensor-parallel-size 2 --served-model-name qwen3-8b --host 0.0.0.0 --trust-remote-code --enable-auto-tool-choice --enable-reasoning --tool-call-parser hermes --reasoning-parser qwen3
