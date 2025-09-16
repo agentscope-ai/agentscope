@@ -366,7 +366,7 @@ as_studio
 
 ## ⚖️ 许可
 
-AgentScope 基于 Apache License 2.0发布。
+AgentScope 基于 Apache License 2.0 发布。
 
 ## 📚 论文
 
