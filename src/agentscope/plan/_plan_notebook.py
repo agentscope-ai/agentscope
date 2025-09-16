@@ -748,7 +748,7 @@ class PlanNotebook(StateModule):
         self.current_plan = historical_plan
         return res
 
-    async def list_tools(
+    def list_tools(
         self,
     ) -> list[Callable[..., Coroutine[Any, Any, ToolResponse]]]:
         """List all tool functions provided to agent

@@ -117,7 +117,7 @@ class PlanTest(IsolatedAsyncioTestCase):
         plan_notebook = PlanNotebook()
 
         self.assertListEqual(
-            [_.__name__ for _ in await plan_notebook.list_tools()],
+            [_.__name__ for _ in plan_notebook.list_tools()],
             [
                 "view_subtasks",
                 "update_subtask_state",

@@ -191,7 +191,7 @@ class ReActAgent(ReActAgentBase):
                 "plan_related",
                 description=self.plan_notebook.description,
             )
-            for tool in asyncio.run(plan_notebook.list_tools()):
+            for tool in plan_notebook.list_tools():
                 self.toolkit.register_tool_function(
                     tool,
                     group_name="plan_related",

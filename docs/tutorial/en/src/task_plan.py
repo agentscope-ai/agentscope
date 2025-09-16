@@ -133,7 +133,7 @@ plan_notebook = PlanNotebook()
 async def list_tools() -> None:
     """List the tool functions provided by PlanNotebook."""
     print("The tools provided by PlanNotebook:")
-    for tool in await plan_notebook.list_tools():
+    for tool in plan_notebook.list_tools():
         print(tool.__name__)
 
 

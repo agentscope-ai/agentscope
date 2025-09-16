@@ -125,7 +125,7 @@ plan_notebook = PlanNotebook()
 async def list_tools() -> None:
     """列出PlanNotebook提供的工具函数。"""
     print("PlanNotebook提供的工具：")
-    for tool in await plan_notebook.list_tools():
+    for tool in plan_notebook.list_tools():
         print(tool.__name__)
 
 
