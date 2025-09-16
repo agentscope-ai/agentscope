@@ -252,7 +252,7 @@ class OpenAIChatModel(ChatModelBase):
                     chunk = item.chunk
                 else:
                     chunk = item
-                    
+
                 if chunk.usage:
                     usage = ChatUsage(
                         input_tokens=chunk.usage.prompt_tokens,
@@ -263,13 +263,13 @@ class OpenAIChatModel(ChatModelBase):
                 if not chunk.choices:
                     if usage:
                         res = ChatResponse(
-                            content=contents,
+                            content=[],
                             usage=usage,
                             metadata=metadata,
                         )
                         yield res
                     continue
-                
+
                 choice = chunk.choices[0]
 
                 thinking += (
@@ -292,9 +292,7 @@ class OpenAIChatModel(ChatModelBase):
                             "input": tool_call.function.arguments or "",
                         }
 
-                contents: List[
-                    TextBlock | ToolUseBlock | ThinkingBlock
-                ] = []
+                contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
 
                 if thinking:
                     contents.append(
@@ -329,14 +327,13 @@ class OpenAIChatModel(ChatModelBase):
 
                 if not contents:
                     continue
-                
+
                 res = ChatResponse(
                     content=contents,
                     usage=usage,
                     metadata=metadata,
                 )
                 yield res
-                
 
     def _parse_openai_completion_response(
         self,
