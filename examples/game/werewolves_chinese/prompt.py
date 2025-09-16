@@ -212,6 +212,8 @@ class Prompts:
     
     to_guard_empty = "[仅守卫可见] 守卫选择空守，今晚不守护任何人。"
 
+    to_guard_failed = "[仅守卫可见] 守卫选择守护{}，但昨晚已经守护过该玩家，今晚不能连续两晚守护同一人。守护失效。"
+
     to_all_witch_turn = "女巫的回合，女巫请睁眼，决定今晚的行动。"
 
     to_witch_resurrect = "[仅女巫可见] {witch_name}，你是女巫，今晚{dead_name}被淘汰了。你可以使用解药复活他/她，注意解药整个游戏只能使用一次。你要复活{dead_name}吗？给出你的理由和决定。"
