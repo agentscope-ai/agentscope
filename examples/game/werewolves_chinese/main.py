@@ -940,7 +940,7 @@ async def main() -> None:
                     structured_model=get_guard_model(current_alive),
                 )
                 guard_choice = msg_guard.metadata.get("name")
-                if guard_choice and guard_choice != "空守":
+                if guard_choice and guard_choice != "空守" and guard_choice != last_guarded_player:
                     guarded_player = guard_choice
                     last_guarded_player = guarded_player
                     # 只给守卫自己发送结果
@@ -955,6 +955,11 @@ async def main() -> None:
                     last_guarded_player = None
                     await agent.observe(
                         await moderator(Prompts.to_guard_empty),
+                    )
+                elif guard_choice == last_guarded_player:
+                    # 只给守卫自己发送结果
+                    await agent.observe(
+                        await moderator(Prompts.to_guard_failed.format(agent_name=last_guarded_player)),
                     )
 
             await all_players_hub.broadcast(
