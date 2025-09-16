@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Discovery System - 智能洞察发现引擎</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+            background-color: #f0f4f8;
+            color: #1e293b;
+        }
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            gap: 1rem;
+            padding: 1rem;
+        }
+        @media (min-width: 1024px) {
+            .main-container {
+                grid-template-columns: 400px 1fr;
+                grid-template-rows: 1fr;
+            }
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 1rem;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+        .btn-primary {
+            background-color: #2563eb;
+            color: white;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(37, 99, 235, 0.3);
+        }
+        .btn-primary:hover {
+            background-color: #1d4ed8;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.4);
+        }
+        .btn-primary:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .btn-secondary {
+            background-color: #64748b;
+            color: white;
+            transition: all 0.3s ease;
+        }
+        .btn-secondary:hover {
+            background-color: #475569;
+        }
+        input, textarea, select {
+            background-color: #f8fafc;
+            border: 1px solid #cbd5e1;
+        }
+        input:focus, textarea:focus, select:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+            outline: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background-color: #e2e8f0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #2563eb;
+            transition: width 0.3s ease;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #2563eb;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error-message {
+            color: #dc2626;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+        .success-message {
+            color: #059669;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-idle { background-color: #94a3b8; }
+        .status-running { background-color: #2563eb; animation: pulse 2s infinite; }
+        .status-completed { background-color: #059669; }
+        .status-error { background-color: #dc2626; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .discovery-step {
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border-radius: 0.5rem;
+            border-left: 4px solid #2563eb;
+            background-color: #f1f5f9;
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            margin: 0.25rem 0;
+        }
+        .thinking-step {
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border-radius: 0.5rem;
+            background-color: #f8fafc;
+            border-left: 4px solid #3b82f6;
+            animation: slideIn 0.5s ease-out;
+        }
+        .thinking-step h4 {
+            font-weight: 600;
+            color: #1e40af;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .thinking-step p {
+            color: #475569;
+            font-size: 0.875rem;
+            line-height: 1.4;
+            margin-bottom: 0.25rem;
+        }
+        .thinking-step .timestamp {
+            color: #94a3b8;
+            font-size: 0.75rem;
+        }
+        .discovery-item {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            border: 1px solid #f59e0b;
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            animation: bounceIn 0.6s ease-out;
+        }
+        .discovery-item h5 {
+            color: #92400e;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .discovery-item p {
+            color: #78350f;
+            font-size: 0.8rem;
+            line-height: 1.3;
+        }
+        .confidence-badge {
+            display: inline-block;
+            background-color: #10b981;
+            color: white;
+            padding: 0.125rem 0.5rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-top: 0.25rem;
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+        @keyframes bounceIn {
+            from {
+                opacity: 0;
+                transform: scale(0.8);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- 控制面板 -->
+        <div id="control-panel" class="glass-panel p-6 flex flex-col space-y-4 overflow-y-auto">
+            <div class="text-center">
+                <h1 class="text-2xl font-bold text-slate-800">Agent Discovery System</h1>
+                <p class="text-sm text-slate-500">智能洞察发现引擎</p>
+                <div class="mt-2">
+                    <span id="status-indicator" class="status-indicator status-idle"></span>
+                    <span id="status-text" class="text-sm text-slate-600">准备就绪</span>
+                </div>
+            </div>
+            
+            <!-- 步骤1: 上传知识库 -->
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">📚 步骤1: 上传Markdown知识库</label>
+                <div class="border-2 border-dashed border-slate-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors"
+                     id="drop-zone">
+                    <input type="file" id="md-files" multiple accept=".md,.markdown" class="hidden">
+                    <div id="upload-prompt">
+                        <svg class="mx-auto h-12 w-12 text-slate-400 mb-2" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <p class="text-sm text-slate-600">点击或拖拽Markdown文件到此处</p>
+                        <p class="text-xs text-slate-500 mt-1">支持 .md 和 .markdown 文件</p>
+                    </div>
+                    <div id="file-list" class="hidden mt-3 text-left"></div>
+                </div>
+                <button id="upload-btn" class="w-full mt-2 py-2 px-4 rounded-lg font-semibold btn-secondary" disabled>
+                    📤 上传文件
+                </button>
+                <div id="upload-status" class="mt-2 text-sm"></div>
+            </div>
+
+            <!-- 步骤2: 配置探索参数 -->
+            <div id="config-section" class="opacity-50 pointer-events-none">
+                <label class="block text-sm font-medium text-slate-700 mb-2">🎯 步骤2: 配置探索参数</label>
+                
+                <div class="space-y-3">
+                    <div>
+                        <label for="initial-idea" class="block text-xs font-medium text-slate-600 mb-1">初始探索想法</label>
+                        <textarea id="initial-idea" rows="2" class="w-full p-2 text-sm rounded-lg" 
+                                  placeholder="输入一个问题、想法或关键词作为探索起点..."></textarea>
+                    </div>
+                    
+                    <div>
+                        <label for="focus-areas" class="block text-xs font-medium text-slate-600 mb-1">关注领域 (可选，用逗号分隔)</label>
+                        <input id="focus-areas" type="text" class="w-full p-2 text-sm rounded-lg" 
+                               placeholder="例如: 人工智能, 认知科学, 机器学习">
+                    </div>
+                    
+                    <div>
+                        <label for="exploration-depth" class="block text-xs font-medium text-slate-600 mb-1">探索深度</label>
+                        <select id="exploration-depth" class="w-full p-2 text-sm rounded-lg">
+                            <option value="shallow">浅层探索 (快速概览)</option>
+                            <option value="normal" selected>正常探索 (平衡深度)</option>
+                            <option value="deep">深度探索 (详细分析)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label for="max-loops" class="block text-xs font-medium text-slate-600 mb-1">探索轮数</label>
+                            <input id="max-loops" type="number" min="1" max="10" value="3" class="w-full p-2 text-sm rounded-lg">
+                        </div>
+                        <div>
+                            <label for="token-budget" class="block text-xs font-medium text-slate-600 mb-1">Token预算</label>
+                            <input id="token-budget" type="number" min="1000" max="50000" value="10000" class="w-full p-2 text-sm rounded-lg">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-grow"></div>
+            
+            <!-- 进度显示 -->
+            <div id="progress-section" class="hidden">
+                <div class="progress-bar mb-2">
+                    <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                </div>
+                <div id="progress-text" class="text-xs text-slate-600 text-center">准备中...</div>
+            </div>
+            
+            <div id="error-display" class="error-message hidden"></div>
+            <div id="success-display" class="success-message hidden"></div>
+
+            <!-- 控制按钮 -->
+            <div class="space-y-2">
+                <button id="start-btn" class="w-full py-3 rounded-lg font-semibold btn-primary" disabled>
+                    ✨ 开始智能探索
+                </button>
+                <button id="stop-btn" class="w-full py-2 rounded-lg font-semibold btn-secondary hidden" >
+                    ⏹️ 停止探索
+                </button>
+            </div>
+        </div>
+
+        <!-- 可视化与结果面板 -->
+        <div id="display-panel" class="glass-panel p-6 flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-slate-800">📊 探索可视化与结果</h2>
+                <div id="session-info" class="text-sm text-slate-600 hidden">
+                    会话ID: <span id="session-id">-</span>
+                </div>
+            </div>
+            
+            <!-- 探索步骤显示 -->
+            <div id="steps-container" class="flex-grow overflow-y-auto">
+                <div id="placeholder" class="h-full flex items-center justify-center text-slate-400">
+                    <div class="text-center">
+                        <svg class="mx-auto h-16 w-16 text-slate-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <p class="text-lg font-medium">准备开始智能探索</p>
+                        <p class="text-sm mt-2">上传Markdown文件并配置参数后开始探索</p>
+                    </div>
+                </div>
+                
+                <div id="discovery-steps" class="space-y-3 hidden"></div>
+                
+                <!-- Agent Thinking Process Display -->
+                <div id="thinking-container" class="space-y-3 hidden">
+                    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                        <h3 class="text-lg font-semibold text-blue-800 mb-3 flex items-center">
+                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                            </svg>
+                            🧠 Agent思考过程
+                        </h3>
+                        <div id="thinking-steps" class="space-y-2">
+                            <!-- Thinking steps will be displayed here -->
+                        </div>
+                    </div>
+                </div>
+                
+                 <div id="loader-container" class="h-full flex-col hidden items-center justify-center">
+                    <div class="loader"></div>
+                    <p id="loader-text" class="mt-4 text-slate-600">正在处理...</p>
+                </div>
+            </div>
+            
+            <!-- 结果报告 -->
+            <div id="results-container" class="mt-4 hidden">
+                <div class="bg-white border border-slate-200 rounded-lg p-4">
+                    <h3 class="text-lg font-bold mb-3 text-slate-800">✨ 探索结果报告</h3>
+                    <div id="results-content" class="space-y-4">
+                        <!-- 结果内容将在这里动态生成 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables and DOM elements
+        let websocket = null;
+        let uploadedFiles = [];
+        const dropZone = document.getElementById('drop-zone');
+        const mdFilesInput = document.getElementById('md-files');
+        const uploadBtn = document.getElementById('upload-btn');
+        const configSection = document.getElementById('config-section');
+        const initialIdeaInput = document.getElementById('initial-idea');
+        const focusAreasInput = document.getElementById('focus-areas');
+        const explorationDepthSelect = document.getElementById('exploration-depth');
+        const startBtn = document.getElementById('start-btn');
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+        const errorDisplay = document.getElementById('error-display');
+        const discoverySteps = document.getElementById('discovery-steps');
+        const placeholder = document.getElementById('placeholder');
+        const resultsContainer = document.getElementById('results-container');
+        
+        // File upload handling
+        dropZone.addEventListener('click', () => mdFilesInput.click());
+        mdFilesInput.addEventListener('change', (e) => {
+            uploadedFiles = Array.from(e.target.files);
+            const fileList = document.getElementById('file-list');
+            if (uploadedFiles.length > 0) {
+                document.getElementById('upload-prompt').classList.add('hidden');
+                fileList.classList.remove('hidden');
+                fileList.innerHTML = uploadedFiles.map(f => `<div class="file-item"><span>${f.name}</span></div>`).join('');
+                uploadBtn.disabled = false;
+            }
+            checkFormState();
+        });
+        
+        uploadBtn.addEventListener('click', async () => {
+            const formData = new FormData();
+            uploadedFiles.forEach(file => formData.append('files', file));
+            
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '📤 上传中...';
+            
+            try {
+                const response = await fetch('/api/upload-knowledge-base', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    configSection.classList.remove('opacity-50', 'pointer-events-none');
+                    updateStatus('completed', '知识库已准备');
+                    document.getElementById('upload-status').innerHTML = '<div class="text-green-600">✓ 上传成功</div>';
+                } else {
+                    throw new Error(result.detail || '上传失败');
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+                updateStatus('error', '上传失败');
+            } finally {
+                uploadBtn.textContent = '📤 上传文件';
+                uploadBtn.disabled = false;
+            }
+        });
+        
+        // Discovery control
+        startBtn.addEventListener('click', async () => {
+            const requestData = {
+                initial_idea: initialIdeaInput.value.trim(),
+                focus_areas: focusAreasInput.value.split(',').map(s => s.trim()).filter(s => s),
+                exploration_depth: explorationDepthSelect.value,
+                max_loops: parseInt(document.getElementById('max-loops').value),
+                token_budget: parseInt(document.getElementById('token-budget').value)
+            };
+            
+            startBtn.disabled = true;
+            startBtn.textContent = '🚀 启动中...';
+            
+            try {
+                const response = await fetch('/api/start-discovery', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (response.ok) {
+                    updateStatus('running', '探索中');
+                    placeholder.classList.add('hidden');
+                    discoverySteps.classList.remove('hidden');
+                    document.getElementById('progress-section').classList.remove('hidden');
+                    // Clear previous thinking steps
+                    document.getElementById('thinking-steps').innerHTML = '';
+                } else {
+                    throw new Error('启动失败');
+                }
+            } catch (error) {
+                showError('启动失败: ' + error.message);
+                resetUI();
+            }
+        });
+        
+        // WebSocket connection
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws/discovery-stream`;
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            websocket.onclose = () => {
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+        
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'discovery_started':
+                    addStep('🚀 探索已启动', '会话ID: ' + data.session_id);
+                    document.getElementById('session-id').textContent = data.session_id.substring(0, 8) + '...';
+                    document.getElementById('session-info').classList.remove('hidden');
+                    break;
+                case 'exploration_loop_starting':
+                    addStep(`🔍 探索轮次 ${data.loop_number}/${data.total_loops}`, data.message || '正在分析知识库...');
+                    updateProgress((data.loop_number - 1) / data.total_loops * 80);
+                    // Show thinking container for this loop
+                    document.getElementById('thinking-container').classList.remove('hidden');
+                    break;
+                case 'thinking_process_start':
+                    addThinkingStep('🤔 开始思考', '智能体正在分析知识库并形成思路...', data.loop_number);
+                    break;
+                case 'thinking_step':
+                    addThinkingStep(getThinkingStepTitle(data.step), data.content, data.loop_number, data.timestamp);
+                    break;
+                case 'discovery_found':
+                    addDiscoveryItem(data.discovery, data.loop_number, data.timestamp);
+                    break;
+                case 'exploration_loop_completed':
+                    const summary = data.summary;
+                    addStep(`✓ 轮次 ${data.loop_number} 完成`, 
+                           `发现: ${summary?.discoveries_count || 0} | 洞察: ${summary?.insights_count || 0} | 假设: ${summary?.hypotheses_count || 0}`);
+                    break;
+                case 'generating_insights':
+                    addStep('💡 生成洞察', '正在整合探索结果...');
+                    updateProgress(85);
+                    break;
+                case 'discovery_completed':
+                    addStep('✨ 探索完成', '所有洞察已生成');
+                    displayResults(data);
+                    updateStatus('completed', '探索完成');
+                    updateProgress(100);
+                    resetUI();
+                    break;
+                case 'error':
+                    showError(data.message);
+                    updateStatus('error', '探索失败');
+                    resetUI();
+                    break;
+            }
+        }
+        
+        function addStep(title, description) {
+            const stepEl = document.createElement('div');
+            stepEl.className = 'discovery-step';
+            stepEl.innerHTML = `
+                <h4 class="font-medium text-slate-800">${title}</h4>
+                <p class="text-sm text-slate-600 mt-1">${description}</p>
+                <div class="text-xs text-slate-500 mt-1">${new Date().toLocaleTimeString()}</div>
+            `;
+            discoverySteps.appendChild(stepEl);
+            stepEl.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function addThinkingStep(title, content, loopNumber, timestamp) {
+            const thinkingSteps = document.getElementById('thinking-steps');
+            const stepEl = document.createElement('div');
+            stepEl.className = 'thinking-step';
+            
+            // Format content with proper line breaks
+            const formattedContent = content.replace(/\n/g, '<br>');
+            
+            stepEl.innerHTML = `
+                <h4>🧠 ${title} (Loop ${loopNumber || '?'})</h4>
+                <p>${formattedContent}</p>
+                <div class="timestamp">${timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}</div>
+            `;
+            thinkingSteps.appendChild(stepEl);
+            stepEl.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function addDiscoveryItem(discovery, loopNumber, timestamp) {
+            const thinkingSteps = document.getElementById('thinking-steps');
+            const discoveryEl = document.createElement('div');
+            discoveryEl.className = 'discovery-item';
+            
+            const confidence = discovery.confidence || 0;
+            const confidencePercent = Math.round(confidence * 100);
+            
+            discoveryEl.innerHTML = `
+                <h5>🔍 发现 (Loop ${loopNumber || '?'})</h5>
+                <p>${discovery.text || discovery}</p>
+                ${discovery.reasoning ? `<p><strong>推理:</strong> ${discovery.reasoning}</p>` : ''}
+                <div>
+                    <span class="confidence-badge">置信度: ${confidencePercent}%</span>
+                    ${discovery.sources ? `<span class="text-xs text-slate-600 ml-2">来源: ${discovery.sources.join(', ')}</span>` : ''}
+                </div>
+                <div class="timestamp">${timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}</div>
+            `;
+            thinkingSteps.appendChild(discoveryEl);
+            discoveryEl.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function getThinkingStepTitle(step) {
+            const titles = {
+                'initial_analysis': '📊 初步分析',
+                'knowledge_exploration': '📚 知识探索',
+                'pattern_recognition': '🦅 模式识别',
+                'reasoning': '🤔 逻辑推理',
+                'error_analysis': '⚠️ 错误分析'
+            };
+            return titles[step] || `🧠 ${step.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
+        }
+        
+        function displayResults(data) {
+            resultsContainer.classList.remove('hidden');
+            const content = document.getElementById('results-content');
+            
+            const discoveries = data.final_results?.discoveries || [];
+            const insights = data.insights?.insights || [];
+            const hypotheses = data.insights?.hypotheses || [];
+            
+            content.innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <h4 class="font-semibold text-slate-800 mb-2">🔍 发现的洞察 (${discoveries.length})</h4>
+                        ${discoveries.slice(0, 5).map(d => `
+                            <div class="p-3 bg-blue-50 rounded-lg mt-2 border-l-4 border-blue-400">
+                                <div class="text-sm text-blue-800">
+                                    ${typeof d === 'string' ? d : d.insight || '无内容'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div>
+                        <h4 class="font-semibold text-slate-800 mb-2">🧪 生成的假设 (${hypotheses.length})</h4>
+                        ${hypotheses.slice(0, 3).map(h => `
+                            <div class="p-3 bg-green-50 rounded-lg mt-2 border-l-4 border-green-400">
+                                <div class="text-sm text-green-800">
+                                    ${typeof h === 'string' ? h : h.hypothesis || '无内容'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        function updateStatus(status, text) {
+            statusIndicator.className = `status-indicator status-${status}`;
+            statusText.textContent = text;
+        }
+        
+        function updateProgress(percentage) {
+            document.getElementById('progress-fill').style.width = `${percentage}%`;
+            document.getElementById('progress-text').textContent = `探索进度: ${percentage.toFixed(0)}%`;
+        }
+        
+        function showError(message) {
+            errorDisplay.textContent = message;
+            errorDisplay.classList.remove('hidden');
+        }
+        
+        function checkFormState() {
+            startBtn.disabled = !(uploadedFiles.length > 0 && initialIdeaInput.value.trim());
+        }
+        
+        function resetUI() {
+            startBtn.disabled = false;
+            startBtn.textContent = '✨ 开始智能探索';
+            checkFormState();
+        }
+        
+        // Event listeners
+        initialIdeaInput.addEventListener('input', checkFormState);
+        
+        // Initialize
+        connectWebSocket();
+        updateStatus('idle', '准备就绪');
+    </script>
+</body>
+</html>
+

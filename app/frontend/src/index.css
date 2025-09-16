@@ -1,0 +1,17 @@
+﻿:root {
+  color: #1c1c1e;
+  background-color: #f7f8fa;
+  font-family: "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body,
+html,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+button {
+  font-family: inherit;
+}

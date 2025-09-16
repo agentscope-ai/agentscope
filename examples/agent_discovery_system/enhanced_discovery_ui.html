@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentScope Discovery System</title>
+    <style>
+        /* Tailwind CSS Minimal Build for Production */
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .container { max-width: 1200px; }
+        .mx-auto { margin-left: auto; margin-right: auto; }
+        .px-4 { padding-left: 1rem; padding-right: 1rem; }
+        .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
+        .py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+        .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+        .p-6 { padding: 1.5rem; }
+        .p-4 { padding: 1rem; }
+        .p-2 { padding: 0.5rem; }
+        .p-3 { padding: 0.75rem; }
+        .mb-6 { margin-bottom: 1.5rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mt-6 { margin-top: 1.5rem; }
+        .mt-4 { margin-top: 1rem; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mr-8 { margin-right: 2rem; }
+        .mr-2 { margin-right: 0.5rem; }
+        .bg-gray-50 { background-color: #f9fafb; }
+        .bg-white { background-color: #ffffff; }
+        .bg-blue-500 { background-color: #3b82f6; }
+        .bg-blue-600 { background-color: #2563eb; }
+        .bg-blue-50 { background-color: #eff6ff; }
+        .bg-green-500 { background-color: #10b981; }
+        .bg-green-600 { background-color: #059669; }
+        .bg-green-50 { background-color: #ecfdf5; }
+        .bg-red-500 { background-color: #ef4444; }
+        .bg-red-600 { background-color: #dc2626; }
+        .bg-red-50 { background-color: #fef2f2; }
+        .bg-yellow-50 { background-color: #fffbeb; }
+        .bg-purple-50 { background-color: #faf5ff; }
+        .bg-gray-100 { background-color: #f3f4f6; }
+        .bg-gray-200 { background-color: #e5e7eb; }
+        .text-white { color: #ffffff; }
+        .text-gray-900 { color: #111827; }
+        .text-gray-700 { color: #374151; }
+        .text-gray-600 { color: #4b5563; }
+        .text-gray-500 { color: #6b7280; }
+        .text-gray-400 { color: #9ca3af; }
+        .text-blue-700 { color: #1d4ed8; }
+        .text-blue-600 { color: #2563eb; }
+        .text-green-600 { color: #059669; }
+        .text-red-600 { color: #dc2626; }
+        .text-yellow-600 { color: #d97706; }
+        .text-sm { font-size: 0.875rem; }
+        .text-xs { font-size: 0.75rem; }
+        .text-lg { font-size: 1.125rem; }
+        .text-3xl { font-size: 1.875rem; }
+        .font-bold { font-weight: 700; }
+        .font-semibold { font-weight: 600; }
+        .font-medium { font-weight: 500; }
+        .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .rounded-lg { border-radius: 0.5rem; }
+        .rounded-full { border-radius: 9999px; }
+        .rounded { border-radius: 0.25rem; }
+        .border { border-width: 1px; }
+        .border-2 { border-width: 2px; }
+        .border-gray-300 { border-color: #d1d5db; }
+        .border-gray-200 { border-color: #e5e7eb; }
+        .border-blue-200 { border-color: #c3ddfd; }
+        .border-green-200 { border-color: #bbf7d0; }
+        .border-red-200 { border-color: #fecaca; }
+        .border-dashed { border-style: dashed; }
+        .border-b { border-bottom-width: 1px; }
+        .shadow-md { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .min-h-screen { min-height: 100vh; }
+        .max-h-96 { max-height: 24rem; }
+        .max-h-64 { max-height: 16rem; }
+        .max-h-20 { max-height: 5rem; }
+        .w-full { width: 100%; }
+        .w-3 { width: 0.75rem; }
+        .h-3 { height: 0.75rem; }
+        .h-2 { height: 0.5rem; }
+        .overflow-y-auto { overflow-y: auto; }
+        .cursor-pointer { cursor: pointer; }
+        .hidden { display: none; }
+        .flex { display: flex; }
+        .grid { display: grid; }
+        .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+        .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        .gap-6 { gap: 1.5rem; }
+        .gap-2 { gap: 0.5rem; }
+        .justify-between { justify-content: space-between; }
+        .items-center { align-items: center; }
+        .items-start { align-items: flex-start; }
+        .space-x-4 > * + * { margin-left: 1rem; }
+        .space-x-2 > * + * { margin-left: 0.5rem; }
+        .space-y-4 > * + * { margin-top: 1rem; }
+        .space-y-3 > * + * { margin-top: 0.75rem; }
+        .text-center { text-align: center; }
+        .hover\:bg-blue-600:hover { background-color: #2563eb; }
+        .hover\:bg-green-600:hover { background-color: #059669; }
+        .hover\:bg-red-600:hover { background-color: #dc2626; }
+        .hover\:text-gray-700:hover { color: #374151; }
+        .hover\:border-blue-400:hover { border-color: #60a5fa; }
+        .disabled\:opacity-50:disabled { opacity: 0.5; }
+        @media (min-width: 1024px) {
+            .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+        @media (min-width: 768px) {
+            .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+    <style>
+        .thinking-step { animation: fadeInUp 0.5s ease-out; }
+        .discovery-item { animation: slideInRight 0.6s ease-out; }
+        .ai-call-item { animation: slideInLeft 0.6s ease-out; }
+        .progress-bar { transition: width 0.3s ease-in-out; }
+        .connection-indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .connected { background-color: #10b981; }
+        .disconnected { background-color: #ef4444; }
+        .connecting { background-color: #f59e0b; animation: pulse 1s infinite; }
+        .call-status-start { background-color: #3b82f6; }
+        .call-status-response { background-color: #f59e0b; }
+        .call-status-complete { background-color: #10b981; }
+        .call-status-error { background-color: #ef4444; }
+        
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app" class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">AgentScope Discovery System</h1>
+                    <p class="text-gray-600 mt-2">AI-powered knowledge exploration</p>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="connection-status">
+                        <span id="connection-indicator" class="connection-indicator disconnected"></span>
+                        <span id="connection-text" class="text-sm font-medium">Disconnected</span>
+                    </div>
+                    <button id="connect-btn" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+                        Connect
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <!-- Upload Panel -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold mb-4">Knowledge Base</h3>
+                <div id="upload-area" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400">
+                    <input type="file" id="file-input" multiple accept=".md" class="hidden">
+                    <p class="text-sm text-gray-600">Drop MD files here or click to browse</p>
+                </div>
+                <div id="upload-status" class="mt-4 hidden">
+                    <p class="text-sm text-blue-700"><span id="files-count">0</span> files uploaded</p>
+                </div>
+            </div>
+
+            <!-- Configuration Panel -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold mb-4">Configuration</h3>
+                <form id="config-form" class="space-y-4">
+                    <textarea id="initial-idea" class="w-full px-3 py-2 border rounded-lg" rows="3" placeholder="Enter your exploration idea..."></textarea>
+                    <input type="text" id="focus-areas" class="w-full px-3 py-2 border rounded-lg" placeholder="Focus areas (optional)">
+                    <select id="exploration-depth" class="w-full px-3 py-2 border rounded-lg">
+                        <option value="shallow">Shallow</option>
+                        <option value="normal" selected>Normal</option>
+                        <option value="deep">Deep</option>
+                    </select>
+                    <button type="submit" id="start-discovery-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded-lg disabled:opacity-50" disabled>
+                        Start Discovery
+                    </button>
+                </form>
+            </div>
+
+            <!-- Session Status -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold mb-4">Session Status</h3>
+                <div class="space-y-3">
+                    <div class="flex justify-between">
+                        <span class="text-sm text-gray-600">Status:</span>
+                        <span id="session-status" class="text-sm font-medium">Not Started</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div id="progress-bar" class="progress-bar bg-blue-500 h-2 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <div class="text-sm text-gray-600" id="current-step">Waiting</div>
+                    <button id="stop-discovery-btn" class="w-full bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-lg hidden">
+                        Stop Discovery
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Thinking Process -->
+            <div class="bg-white rounded-lg shadow-md">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold">Agent Thinking</h3>
+                </div>
+                <div id="thinking-container" class="p-6 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>Agent thinking processes will appear here</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Model Calls -->
+            <div class="bg-white rounded-lg shadow-md">
+                <div class="p-6 border-b border-gray-200">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-semibold">AI Model Calls</h3>
+                        <div class="flex items-center space-x-2 text-sm text-gray-600">
+                            <span id="total-calls">0</span>
+                            <span>calls</span>
+                            <span>•</span>
+                            <span id="total-tokens">0</span>
+                            <span>tokens</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="ai-calls-container" class="p-6 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>AI model calls will appear here</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Discoveries -->
+            <div class="bg-white rounded-lg shadow-md">
+                <div class="p-6 border-b border-gray-200">
+                    <h3 class="text-lg font-semibold">Discoveries</h3>
+                </div>
+                <div id="discoveries-container" class="p-6 max-h-96 overflow-y-auto">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>Discoveries will appear here</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results Panel -->
+        <div id="results-panel" class="mt-6 bg-white rounded-lg shadow-md hidden">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-lg font-semibold">Final Results</h3>
+            </div>
+            <div class="p-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <h4 class="font-medium mb-3">Insights</h4>
+                        <div id="final-insights"></div>
+                    </div>
+                    <div>
+                        <h4 class="font-medium mb-3">Hypotheses</h4>
+                        <div id="final-hypotheses"></div>
+                    </div>
+                    <div>
+                        <h4 class="font-medium mb-3">Questions</h4>
+                        <div id="final-questions"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="mt-6 bg-white rounded-lg shadow-md">
+            <div class="p-6 border-b border-gray-200">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-lg font-semibold">Event Log</h3>
+                    <button id="clear-log-btn" class="text-sm text-gray-500 hover:text-gray-700">Clear</button>
+                </div>
+            </div>
+            <div id="event-log" class="p-6 max-h-64 overflow-y-auto bg-gray-50 font-mono text-sm">
+                <div class="text-gray-500">System ready. Connect to start.</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State Management
+        class DiscoveryState {
+            constructor() {
+                this.session = { id: null, status: 'idle', progress: 0, currentStep: '' };
+                this.ui = { connected: false, exploring: false };
+                this.events = [];
+                this.listeners = new Map();
+            }
+            
+            updateSession(updates) {
+                Object.assign(this.session, updates);
+                this.emit('sessionUpdate', this.session);
+            }
+            
+            updateUI(updates) {
+                Object.assign(this.ui, updates);
+                this.emit('uiUpdate', this.ui);
+            }
+            
+            addEvent(event) {
+                this.events.push({ ...event, timestamp: new Date().toISOString() });
+                this.emit('newEvent', event);
+            }
+            
+            on(event, listener) {
+                if (!this.listeners.has(event)) this.listeners.set(event, []);
+                this.listeners.get(event).push(listener);
+            }
+            
+            emit(event, data) {
+                if (this.listeners.has(event)) {
+                    this.listeners.get(event).forEach(listener => listener(data));
+                }
+            }
+        }
+
+        // WebSocket Manager
+        class WebSocketManager {
+            constructor(url) {
+                this.url = url;
+                this.socket = null;
+                this.eventHandlers = new Map();
+            }
+            
+            connect() {
+                return new Promise((resolve, reject) => {
+                    this.socket = new WebSocket(this.url);
+                    this.socket.onopen = () => resolve();
+                    this.socket.onmessage = (event) => this.handleMessage(event);
+                    this.socket.onerror = (error) => reject(error);
+                });
+            }
+            
+            send(data) {
+                if (this.socket?.readyState === WebSocket.OPEN) {
+                    this.socket.send(JSON.stringify(data));
+                }
+            }
+            
+            registerHandler(eventType, handler) {
+                if (!this.eventHandlers.has(eventType)) this.eventHandlers.set(eventType, []);
+                this.eventHandlers.get(eventType).push(handler);
+            }
+            
+            handleMessage(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    const handlers = this.eventHandlers.get(data.type) || [];
+                    handlers.forEach(handler => handler(data));
+                } catch (error) {
+                    console.error('WebSocket message error:', error);
+                }
+            }
+        }
+
+        // Application
+        class DiscoveryApp {
+            constructor() {
+                this.state = new DiscoveryState();
+                this.ws = new WebSocketManager('ws://localhost:8000/ws/discovery-stream');
+                this.initializeUI();
+                this.setupWebSocketHandlers();
+            }
+            
+            initializeUI() {
+                // Get elements
+                this.elements = {
+                    connectionIndicator: document.getElementById('connection-indicator'),
+                    connectionText: document.getElementById('connection-text'),
+                    connectBtn: document.getElementById('connect-btn'),
+                    uploadArea: document.getElementById('upload-area'),
+                    fileInput: document.getElementById('file-input'),
+                    uploadStatus: document.getElementById('upload-status'),
+                    filesCount: document.getElementById('files-count'),
+                    configForm: document.getElementById('config-form'),
+                    initialIdea: document.getElementById('initial-idea'),
+                    focusAreas: document.getElementById('focus-areas'),
+                    explorationDepth: document.getElementById('exploration-depth'),
+                    startDiscoveryBtn: document.getElementById('start-discovery-btn'),
+                    sessionStatus: document.getElementById('session-status'),
+                    progressBar: document.getElementById('progress-bar'),
+                    currentStep: document.getElementById('current-step'),
+                    stopDiscoveryBtn: document.getElementById('stop-discovery-btn'),
+                    thinkingContainer: document.getElementById('thinking-container'),
+                    aiCallsContainer: document.getElementById('ai-calls-container'),
+                    discoveriesContainer: document.getElementById('discoveries-container'),
+                    resultsPanel: document.getElementById('results-panel'),
+                    finalInsights: document.getElementById('final-insights'),
+                    finalHypotheses: document.getElementById('final-hypotheses'),
+                    finalQuestions: document.getElementById('final-questions'),
+                    eventLog: document.getElementById('event-log'),
+                    clearLogBtn: document.getElementById('clear-log-btn')
+                };
+                
+                // Setup event listeners
+                this.state.on('sessionUpdate', (session) => this.updateSessionUI(session));
+                this.state.on('uiUpdate', (ui) => this.updateConnectionUI(ui));
+                this.state.on('newEvent', (event) => this.addEventToLog(event));
+                
+                this.elements.connectBtn.addEventListener('click', () => this.handleConnect());
+                this.elements.uploadArea.addEventListener('click', () => this.elements.fileInput.click());
+                this.elements.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+                this.elements.configForm.addEventListener('submit', (e) => this.handleConfigSubmit(e));
+                this.elements.stopDiscoveryBtn.addEventListener('click', () => this.handleStopDiscovery());
+                this.elements.clearLogBtn.addEventListener('click', () => this.clearEventLog());
+            }
+            
+            setupWebSocketHandlers() {
+                this.ws.registerHandler('agent_thinking_step', (data) => this.handleAgentThinking(data));
+                this.ws.registerHandler('discovery_found', (data) => this.handleDiscovery(data));
+                this.ws.registerHandler('ai_model_call_start', (data) => this.handleAICallStart(data));
+                this.ws.registerHandler('ai_model_call_response', (data) => this.handleAICallResponse(data));
+                this.ws.registerHandler('ai_model_call_complete', (data) => this.handleAICallComplete(data));
+                this.ws.registerHandler('ai_model_call_error', (data) => this.handleAICallError(data));
+                this.ws.registerHandler('exploration_loop_progress', (data) => this.handleProgress(data));
+                this.ws.registerHandler('discovery_completed', (data) => this.handleCompletion(data));
+                this.ws.registerHandler('error_occurred', (data) => this.handleError(data));
+            }
+            
+            async handleConnect() {
+                try {
+                    if (this.state.ui.connected) {
+                        this.ws.socket?.close();
+                        this.state.updateUI({ connected: false });
+                    } else {
+                        await this.ws.connect();
+                        this.state.updateUI({ connected: true });
+                        this.state.addEvent({ message: 'Connected to discovery system' });
+                    }
+                } catch (error) {
+                    this.state.addEvent({ message: `Connection failed: ${error.message}` });
+                }
+            }
+            
+            async handleFileSelect(e) {
+                const files = Array.from(e.target.files).filter(f => f.name.endsWith('.md'));
+                if (files.length === 0) return;
+                
+                const formData = new FormData();
+                files.forEach(file => formData.append('files', file));
+                
+                try {
+                    const response = await fetch('/api/upload-knowledge-base', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const result = await response.json();
+                    
+                    this.elements.uploadStatus.classList.remove('hidden');
+                    this.elements.filesCount.textContent = result.files_processed;
+                    this.elements.startDiscoveryBtn.disabled = !this.state.ui.connected;
+                    this.state.addEvent({ message: `Uploaded ${result.files_processed} files` });
+                } catch (error) {
+                    this.state.addEvent({ message: `Upload failed: ${error.message}` });
+                }
+            }
+            
+            async handleConfigSubmit(e) {
+                e.preventDefault();
+                
+                const config = {
+                    initial_idea: this.elements.initialIdea.value,
+                    focus_areas: this.elements.focusAreas.value.split(',').map(s => s.trim()).filter(s => s),
+                    exploration_depth: this.elements.explorationDepth.value,
+                    max_loops: 3
+                };
+                
+                try {
+                    const response = await fetch('/api/start-discovery', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(config)
+                    });
+                    const result = await response.json();
+                    
+                    this.state.updateSession({ 
+                        id: result.session_id, 
+                        status: 'running',
+                        progress: 0,
+                        currentStep: 'Starting discovery...'
+                    });
+                    this.state.addEvent({ message: 'Discovery session started' });
+                } catch (error) {
+                    this.state.addEvent({ message: `Failed to start: ${error.message}` });
+                }
+            }
+            
+            async handleStopDiscovery() {
+                try {
+                    await fetch('/api/stop-discovery', { method: 'POST' });
+                    this.state.updateSession({ status: 'stopped' });
+                    this.state.addEvent({ message: 'Discovery session stopped' });
+                } catch (error) {
+                    this.state.addEvent({ message: `Failed to stop: ${error.message}` });
+                }
+            }
+            
+            handleAgentThinking(data) {
+                if (this.elements.thinkingContainer.querySelector('.text-center')) {
+                    this.elements.thinkingContainer.innerHTML = '';
+                }
+                
+                const thoughtElement = document.createElement('div');
+                thoughtElement.className = 'thinking-step bg-blue-50 border-l-4 border-blue-400 p-4 mb-4 rounded-r-lg';
+                thoughtElement.innerHTML = `
+                    <div class="text-sm font-medium text-blue-900">${data.data.agent_name}</div>
+                    <div class="text-sm text-blue-800 mt-1">${data.data.thinking_step}</div>
+                    <div class="text-sm text-gray-700 mt-2">${data.data.content}</div>
+                `;
+                
+                this.elements.thinkingContainer.appendChild(thoughtElement);
+                this.elements.thinkingContainer.scrollTop = this.elements.thinkingContainer.scrollHeight;
+            }
+            
+            handleDiscovery(data) {
+                if (this.elements.discoveriesContainer.querySelector('.text-center')) {
+                    this.elements.discoveriesContainer.innerHTML = '';
+                }
+                
+                const discoveryElement = document.createElement('div');
+                discoveryElement.className = 'discovery-item bg-green-50 border border-green-200 rounded-lg p-4 mb-4';
+                discoveryElement.innerHTML = `
+                    <div class="text-sm font-medium text-green-900">Discovery</div>
+                    <div class="text-sm text-gray-700 mt-1">${data.data.discovery?.text || 'New discovery found'}</div>
+                    <div class="text-xs text-gray-500 mt-2">
+                        Confidence: ${Math.round((data.data.discovery?.confidence || 0) * 100)}%
+                    </div>
+                `;
+                
+                this.elements.discoveriesContainer.appendChild(discoveryElement);
+                this.elements.discoveriesContainer.scrollTop = this.elements.discoveriesContainer.scrollHeight;
+            }
+            
+            handleProgress(data) {
+                const progress = (data.data.loop_number / data.data.total_loops) * 100;
+                this.state.updateSession({
+                    progress: progress,
+                    currentStep: data.data.current_step
+                });
+            }
+            
+            handleCompletion(data) {
+                this.state.updateSession({ status: 'completed', progress: 100 });
+                this.showFinalResults(data.data.final_results);
+                this.state.addEvent({ message: 'Discovery session completed' });
+            }
+            
+            handleError(data) {
+                this.state.addEvent({ message: `Error: ${data.data.error_message}` });
+            }
+            
+            updateConnectionUI(ui) {
+                const indicator = this.elements.connectionIndicator;
+                const text = this.elements.connectionText;
+                const btn = this.elements.connectBtn;
+                
+                if (ui.connected) {
+                    indicator.className = 'connection-indicator connected';
+                    text.textContent = 'Connected';
+                    btn.textContent = 'Disconnect';
+                } else {
+                    indicator.className = 'connection-indicator disconnected';
+                    text.textContent = 'Disconnected';
+                    btn.textContent = 'Connect';
+                }
+            }
+            
+            updateSessionUI(session) {
+                this.elements.sessionStatus.textContent = session.status;
+                this.elements.progressBar.style.width = `${session.progress}%`;
+                this.elements.currentStep.textContent = session.currentStep;
+                
+                if (session.status === 'running') {
+                    this.elements.stopDiscoveryBtn.classList.remove('hidden');
+                    this.elements.startDiscoveryBtn.disabled = true;
+                } else {
+                    this.elements.stopDiscoveryBtn.classList.add('hidden');
+                    this.elements.startDiscoveryBtn.disabled = !this.state.ui.connected;
+                }
+            }
+            
+            showFinalResults(results) {
+                this.elements.resultsPanel.classList.remove('hidden');
+                
+                this.elements.finalInsights.innerHTML = '';
+                (results.insights || []).forEach(insight => {
+                    const el = document.createElement('div');
+                    el.className = 'text-sm text-gray-700 bg-blue-50 p-3 rounded mb-2';
+                    el.textContent = insight;
+                    this.elements.finalInsights.appendChild(el);
+                });
+                
+                this.elements.finalHypotheses.innerHTML = '';
+                (results.hypotheses || []).forEach(hypothesis => {
+                    const el = document.createElement('div');
+                    el.className = 'text-sm text-gray-700 bg-yellow-50 p-3 rounded mb-2';
+                    el.textContent = hypothesis;
+                    this.elements.finalHypotheses.appendChild(el);
+                });
+                
+                this.elements.finalQuestions.innerHTML = '';
+                (results.questions || []).forEach(question => {
+                    const el = document.createElement('div');
+                    el.className = 'text-sm text-gray-700 bg-purple-50 p-3 rounded mb-2';
+                    el.textContent = question;
+                    this.elements.finalQuestions.appendChild(el);
+                });
+            }
+            
+            addEventToLog(event) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'text-xs text-gray-600 mb-1';
+                logEntry.innerHTML = `<span class="text-gray-400">[${new Date().toLocaleTimeString()}]</span> ${event.message}`;
+                
+                this.elements.eventLog.appendChild(logEntry);
+                this.elements.eventLog.scrollTop = this.elements.eventLog.scrollHeight;
+            }
+            
+            clearEventLog() {
+                this.elements.eventLog.innerHTML = '<div class="text-gray-500">Event log cleared.</div>';
+            }
+            
+            // AI Model Call Handlers
+            handleAICallStart(data) {
+                const container = document.getElementById('ai-calls-container');
+                if (!container) return;
+                
+                const callElement = document.createElement('div');
+                callElement.className = 'ai-call-item p-4 border rounded-lg mb-3 border-blue-200 bg-blue-50';
+                callElement.id = `ai-call-${data.data.call_id}`;
+                
+                callElement.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-3 h-3 rounded-full call-status-start"></div>
+                            <span class="font-medium text-sm">${data.data.agent_name}</span>
+                            <span class="text-xs text-gray-500">${data.data.model_name}</span>
+                        </div>
+                        <span class="text-xs text-gray-500">${new Date(data.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div class="call-status text-xs text-blue-600">Starting call...</div>
+                `;
+                
+                if (container.children.length === 1 && container.children[0].classList.contains('text-center')) {
+                    container.innerHTML = '';
+                }
+                container.insertBefore(callElement, container.firstChild);
+                this.updateAICallStats();
+            }
+            
+            handleAICallResponse(data) {
+                const callElement = document.getElementById(`ai-call-${data.data.call_id}`);
+                if (!callElement) return;
+                
+                const statusElement = callElement.querySelector('.call-status');
+                statusElement.textContent = 'Receiving response...';
+                statusElement.className = 'call-status text-xs text-yellow-600';
+                
+                const indicator = callElement.querySelector('.w-3.h-3');
+                indicator.className = 'w-3 h-3 rounded-full call-status-response';
+            }
+            
+            handleAICallComplete(data) {
+                const callElement = document.getElementById(`ai-call-${data.data.call_id}`);
+                if (!callElement) return;
+                
+                const statusElement = callElement.querySelector('.call-status');
+                const tokens = data.data.token_usage;
+                const duration = Math.round(data.data.duration_ms);
+                statusElement.innerHTML = `Complete (${duration}ms) - Tokens: ${tokens.input_tokens || 0}/${tokens.output_tokens || 0}`;
+                statusElement.className = 'call-status text-xs text-green-600';
+                
+                const indicator = callElement.querySelector('.w-3.h-3');
+                indicator.className = 'w-3 h-3 rounded-full call-status-complete';
+                
+                callElement.className = 'ai-call-item p-4 border rounded-lg mb-3 border-green-200 bg-green-50';
+                this.updateAICallStats();
+            }
+            
+            handleAICallError(data) {
+                const callElement = document.getElementById(`ai-call-${data.data.call_id}`);
+                if (!callElement) return;
+                
+                const statusElement = callElement.querySelector('.call-status');
+                const duration = Math.round(data.data.duration_ms);
+                statusElement.innerHTML = `Error (${duration}ms): ${data.data.response_data.error_message}`;
+                statusElement.className = 'call-status text-xs text-red-600';
+                
+                const indicator = callElement.querySelector('.w-3.h-3');
+                indicator.className = 'w-3 h-3 rounded-full call-status-error';
+                
+                callElement.className = 'ai-call-item p-4 border rounded-lg mb-3 border-red-200 bg-red-50';
+            }
+            
+            updateAICallStats() {
+                const container = document.getElementById('ai-calls-container');
+                const totalCalls = container.querySelectorAll('.ai-call-item').length;
+                const totalTokensEl = document.getElementById('total-tokens');
+                const totalCallsEl = document.getElementById('total-calls');
+                
+                if (totalCallsEl) totalCallsEl.textContent = totalCalls;
+                
+                let totalTokens = 0;
+                container.querySelectorAll('.call-status').forEach(status => {
+                    const match = status.textContent.match(/Tokens: (\d+)\/(\d+)/);
+                    if (match) {
+                        totalTokens += parseInt(match[1]) + parseInt(match[2]);
+                    }
+                });
+                
+                if (totalTokensEl) totalTokensEl.textContent = totalTokens;
+            }
+        }
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', () => {
+            new DiscoveryApp();
+        });
+    </script>
+</body>
+</html>
