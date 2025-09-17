@@ -15,7 +15,26 @@ from .._task import Task
 from .._evaluator_storage import EvaluatorStorageBase
 
 
-@ray.remote
+def _check_ray_available() -> None:
+    """Check if ray is available and raise ImportError if not."""
+    if ray is None:
+        raise ImportError(
+            "Ray is not installed. Please install it with `pip install ray` "
+            "to use the RayEvaluator.",
+        )
+
+
+# Create a conditional decorator for ray.remote
+def _ray_remote_decorator(cls: Any) -> Any:
+    """
+    Conditional ray.remote decorator that only applies when ray is available.
+    """
+    if ray is not None:
+        return ray.remote(cls)
+    return cls
+
+
+@_ray_remote_decorator
 class RayEvaluationActor:
     """
     Actor class for running evaluation with ray remote.
@@ -47,7 +66,7 @@ class RayEvaluationActor:
             )
 
 
-@ray.remote
+@_ray_remote_decorator
 class RaySolutionActor:
     """
     Actor class for running agent solutions with ray remote.
@@ -140,6 +159,9 @@ class RayEvaluator(EvaluatorBase):
             n_repeat=n_repeat,
             storage=storage,
         )
+
+        # Check ray availability early
+        _check_ray_available()
 
         assert isinstance(benchmark, BenchmarkBase)
 
