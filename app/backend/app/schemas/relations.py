@@ -86,6 +86,25 @@ class AuditArtifact(BaseModel):
     path: str
 
 
+class AuditTimelineEntry(BaseModel):
+    stage: str
+    run_id: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    cost_cents: Optional[int] = None
+    artifacts: list[str] = Field(default_factory=list)
+
+
+class AuditTotals(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cost_cents: int = 0
+
+
 class AuditResponse(BaseModel):
     relation_id: str
     run_id: str
@@ -94,5 +113,7 @@ class AuditResponse(BaseModel):
     prompt_hash: Optional[str]
     input_hash: Optional[str]
     cost_cents: Optional[int]
-    artifacts: list[AuditArtifact]
+    artifacts: list[AuditArtifact] = Field(default_factory=list)
     notes: Optional[str] = None
+    timeline: list[AuditTimelineEntry] = Field(default_factory=list)
+    totals: AuditTotals = Field(default_factory=AuditTotals)
