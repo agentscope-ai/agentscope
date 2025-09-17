@@ -28,8 +28,6 @@ minimal_requires = [
     "opentelemetry-api",
     "opentelemetry-sdk",
     "opentelemetry-exporter-otlp",
-    "json5",
-    "aioitertools",
     "python-socketio",
     "shortuuid",
     "tiktoken",
