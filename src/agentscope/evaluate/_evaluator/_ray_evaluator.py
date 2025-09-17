@@ -3,11 +3,6 @@
 import asyncio
 from typing import Callable, Awaitable, Coroutine, Any
 
-try:
-    import ray
-except ImportError:
-    ray = None
-
 from .._benchmark_base import BenchmarkBase
 from .._evaluator._evaluator_base import EvaluatorBase
 from .._solution import SolutionOutput
@@ -17,11 +12,13 @@ from .._evaluator_storage import EvaluatorStorageBase
 
 def _check_ray_available() -> None:
     """Check if ray is available and raise ImportError if not."""
-    if ray is None:
+    try:
+        import ray  # noqa  # pylint: disable=unused-import
+    except ImportError as e:
         raise ImportError(
             "Ray is not installed. Please install it with `pip install ray` "
             "to use the RayEvaluator.",
-        )
+        ) from e
 
 
 # Create a conditional decorator for ray.remote
@@ -29,9 +26,12 @@ def _ray_remote_decorator(cls: Any) -> Any:
     """
     Conditional ray.remote decorator that only applies when ray is available.
     """
-    if ray is not None:
+    try:
+        import ray
+
         return ray.remote(cls)
-    return cls
+    except ImportError:
+        return cls
 
 
 @_ray_remote_decorator
