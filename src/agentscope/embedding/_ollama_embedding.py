@@ -13,6 +13,9 @@ from ..embedding import EmbeddingModelBase
 class OllamaTextEmbedding(EmbeddingModelBase):
     """The Ollama embedding model."""
 
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
     def __init__(
         self,
         model_name: str,

@@ -18,6 +18,7 @@ from agentscope.tool import (
 async def main() -> None:
     """The main entry point for the ReAct agent example."""
     import agentscope
+
     agentscope.init(studio_url="http://localhost:3000")
     toolkit = Toolkit()
     toolkit.register_tool_function(execute_shell_command)
@@ -29,7 +30,7 @@ async def main() -> None:
         sys_prompt="You are a helpful assistant named Friday.",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen-max",
+            model_name="qwen-vl-max",
             enable_thinking=False,
             stream=True,
         ),

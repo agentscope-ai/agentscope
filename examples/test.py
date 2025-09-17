@@ -1,4 +1,4 @@
-# # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 # """"""
 #
 # from qdrant_client import QdrantClient
@@ -37,46 +37,3 @@
 # )
 #
 # print(search_result)
-import asyncio
-import os
-import threading
-
-from agentscope import UserAgent
-from agentscope.agent import ReActAgent
-from agentscope.formatter import DashScopeChatFormatter, \
-    DashScopeMultiAgentFormatter
-from agentscope.model import DashScopeChatModel
-
-alice = ReActAgent(
-    name="Alice", model=DashScopeChatModel(model_name="qwen-max", api_key=os.environ["DASHSCOPE_API_KEY"]),
-    formatter=DashScopeMultiAgentFormatter(),
-    sys_prompt="You are a helpful assistant named Alice."
-)
-
-bob = ReActAgent(
-    name="Bob", model=DashScopeChatModel(model_name="qwen-max", api_key=os.environ["DASHSCOPE_API_KEY"]),
-    formatter=DashScopeMultiAgentFormatter(),
-    sys_prompt="You are a helpful assistant named Bob."
-)
-
-user = UserAgent(name="user")
-
-async def ask_user_input():
-    res = await user()
-
-async def speak():
-    msg = None
-    while True:
-        msg = await alice(msg)
-        msg = await bob(msg)
-# 新启动一个线程，这个线程内调用这个ask_user_input函数
-
-thread = threading.Thread(target=lambda: asyncio.run(speak()))
-
-thread.start()
-
-async def main():
-    await speak()
-
-
-

@@ -12,6 +12,9 @@ from ._embedding_base import EmbeddingModelBase
 class GeminiTextEmbedding(EmbeddingModelBase):
     """The Gemini text embedding model."""
 
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
     def __init__(
         self,
         api_key: str,

@@ -5,6 +5,7 @@ import asyncio
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.rag import QdrantStore, KnowledgeBase, TextReader, PDFReader
 
+
 async def main() -> None:
     """The main entry point of the RAG example."""
 

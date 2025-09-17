@@ -2,12 +2,13 @@
 """The Qdrant local vector store implementation."""
 from typing import Any
 
-from .. import VectorRecord
-from .._knowledge_base import EmbeddingStoreBase, RetrievalResponse
-from ...types import Embedding
+import shortuuid
+
+from .. import Document
+from .._knowledge_base import VDBStoreBase
 
 
-class QdrantLocalStore(EmbeddingStoreBase):
+class QdrantLocalStore(VDBStoreBase):
     """The Qdrant vector store implementation.
 
     In Qdrant, we use the ``metadata`` field in ``payload`` to store the
@@ -31,7 +32,13 @@ class QdrantLocalStore(EmbeddingStoreBase):
                 Other keyword arguments for the Qdrant client.
         """
 
-        from qdrant_client.local.async_qdrant_local import AsyncQdrantLocal
+        try:
+            from qdrant_client.local.async_qdrant_local import AsyncQdrantLocal
+        except ImportError as e:
+            raise ImportError(
+                "Qdrant client is not installed. Please install it with "
+                "`pip install qdrant-client`.",
+            ) from e
 
         self.client = AsyncQdrantLocal(location=location, **kwargs)
         self.collection_name = collection_name
@@ -45,12 +52,12 @@ class QdrantLocalStore(EmbeddingStoreBase):
                 **self.collection_kwargs,
             )
 
-    async def add(self, embeddings: list[VectorRecord], **kwargs: Any) -> None:
+    async def add(self, documents: list[Document], **kwargs: Any) -> None:
         """Add embeddings to the Qdrant vector store.
 
         Args:
-            embeddings:
-
+            documents (`list[Document]`):
+                A list of embedding records to be recorded in the Qdrant store.
         """
         await self._validate_collection()
 
@@ -60,28 +67,28 @@ class QdrantLocalStore(EmbeddingStoreBase):
             self.collection_name,
             points=[
                 PointStruct(
-                    id=_.id,
+                    id=shortuuid.uuid(),
                     vector=_.embedding,
-                    payload=_.metadata,
+                    payload={
+
+                    },
                 )
-                for _ in embeddings
-            ]
+                for _ in documents
+            ],
         )
 
     async def retrieve(
         self,
-        query: Embedding,
-        **kwargs: Any
-    ) -> list[RetrievalResponse]:
+        query: list[str],
+        **kwargs: Any,
+    ) -> list[Document]:
         """Retrieve relevant embeddings for the given queries.
 
         Args:
-            query (`list[float]`):
-                The query embedding vector.
-
-        Returns:
-            `list[RetrievalResponse]`:
-                The list of relevant retrieval responses.
+            query (`list[str]`):
+                The list of queries to be queried.
+            **kwargs (`Any`):
+                Other keyword arguments for the Qdrant client search API.
         """
         res = await self.client.query_points(
             collection_name=self.collection_name,
@@ -92,14 +99,13 @@ class QdrantLocalStore(EmbeddingStoreBase):
         collected_res = []
         for point in res.points:
             collected_res.append(
-                RetrievalResponse(
+                Document(
                     content=point.payload["metadata"],
                     embedding=point.vector,
                     score=point.score,
-                )
+                ),
             )
         return collected_res
 
     def delete(self, *args, **kwargs) -> None:
         pass
-

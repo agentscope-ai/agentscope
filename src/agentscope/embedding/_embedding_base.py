@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 """The embedding model base class."""
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List
 
 from ._embedding_response import EmbeddingResponse
-
-if TYPE_CHECKING:
-    from ..model import ChatResponse
-else:
-    ChatResponse = "ChatResponse"
 
 
 class EmbeddingModelBase:
@@ -15,6 +10,9 @@ class EmbeddingModelBase:
 
     model_name: str
     """The embedding model name"""
+
+    supported_modalities: list[str]
+    """The supported data modalities, e.g. "text", "image", "video"."""
 
     def __init__(
         self,
@@ -30,7 +28,7 @@ class EmbeddingModelBase:
 
     async def __call__(
         self,
-        text: List[str],
+        *args: Any,
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the embedding API with the given arguments."""

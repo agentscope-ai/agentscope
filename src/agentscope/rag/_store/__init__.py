@@ -2,13 +2,11 @@
 """"""
 
 from ._store_base import (
-    EmbeddingStoreBase,
-    VectorRecord,
+    VDBStoreBase,
 )
-from ._qdrant_store import QdrantStore
+from ._qdrant_store import QdrantLocalStore
 
 __all__ = [
-    "EmbeddingStoreBase",
-    "VectorRecord",
-    "QdrantStore"
+    "VDBStoreBase",
+    "QdrantLocalStore",
 ]

@@ -12,6 +12,9 @@ from ._embedding_base import EmbeddingModelBase
 class OpenAITextEmbedding(EmbeddingModelBase):
     """OpenAI text embedding model class."""
 
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
     def __init__(
         self,
         api_key: str,

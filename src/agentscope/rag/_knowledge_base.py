@@ -4,30 +4,12 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._reader import Document
 from .._utils._common import _get_timestamp
 from ..embedding import EmbeddingModelBase
 from ..message import VideoBlock, AudioBlock, ImageBlock, TextBlock
-from ._store import EmbeddingStoreBase
+from ._store import VDBStoreBase
 from ..types import Embedding
-
-
-@dataclass
-class RetrievalResponse:
-    """The retrieval response."""
-
-    content: TextBlock | ImageBlock | AudioBlock | VideoBlock
-    """The retrieved data."""
-
-    embedding: Embedding
-    """The embedding of the retrieved data."""
-
-    score: float | None = field(default_factory=lambda: None)
-    """The relevance scores of the retrieved data."""
-
-    created_at: str = field(default_factory=_get_timestamp)
-    """The timestamp of the retrieval response creation."""
-
-    id: str = field(default_factory=lambda: _get_timestamp(True))
 
 
 class KnowledgeBase:
@@ -42,7 +24,7 @@ class KnowledgeBase:
     more of these data types.
     """
 
-    embedding_store: EmbeddingStoreBase
+    embedding_store: VDBStoreBase
     """The embedding store for the knowledge base."""
 
     embedding_model: EmbeddingModelBase
@@ -50,7 +32,7 @@ class KnowledgeBase:
 
     def __init__(
         self,
-        embedding_store: EmbeddingStoreBase,
+        embedding_store: VDBStoreBase,
         embedding_model: EmbeddingModelBase,
     ) -> None:
         """Initialize the knowledge base."""
@@ -61,38 +43,20 @@ class KnowledgeBase:
     async def retrieve(
         self,
         queries: list[str],
-        **kwargs: Any
-    ) -> RetrievalResponse:
-        """Retrieve relevant data for the given queries."""
+        **kwargs: Any,
+    ) -> list[Document]:
+        """Retrieve relevant documents by the givne"""
 
     @abstractmethod
-    async def add_text(self, text: list[str], **kwargs: Any) -> None:
-        """Add a text document to the knowledge base."""
+    async def add_documents(
+        self,
+        documents: list[Document],
+        **kwargs: Any
+    ) -> None:
+        """Add documents to the knowledge base, which will embed the documents
+        and store them in the embedding store.
 
-    async def add_file(self, filepath: str, **kwargs: Any) -> None:
-        """Add a file to the knowledge base. Optional to implement."""
-        raise NotImplementedError(
-            f"The {self.__class__.__name__} class does not implement "
-            "the add_file method."
-        )
-
-    async def add_image(self, image: ImageBlock, **kwargs: Any) -> None:
-        """Add an image to the knowledge base. Optional to implement."""
-        raise NotImplementedError(
-            f"The {self.__class__.__name__} class does not implement "
-            "the add_image method."
-        )
-
-    async def add_audio(self, audio: AudioBlock, **kwargs: Any) -> None:
-        """Add an audio file to the knowledge base. Optional to implement."""
-        raise NotImplementedError(
-            f"The {self.__class__.__name__} class does not implement "
-            "the add_audio method."
-        )
-
-    async def add_video(self, video: VideoBlock, **kwargs: Any) -> None:
-        """Add a video file to the knowledge base. Optional to implement."""
-        raise NotImplementedError(
-            f"The {self.__class__.__name__} class does not implement "
-            "the add_video method."
-        )
+        Args:
+            documents (`list[Document]`):
+                A list of documents to add.
+        """
