@@ -52,7 +52,6 @@ class SessionTest(IsolatedAsyncioTestCase):
     async def test_session_base(self) -> None:
         """Test the SessionBase class."""
         session = JSONSession(
-            "user_1",
             save_dir="./",
         )
 
@@ -74,7 +73,11 @@ class SessionTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        await session.save_session_state(agent1=agent1, agent2=agent2)
+        await session.save_session_state(
+            session_id="user_1",
+            agent1=agent1,
+            agent2=agent2,
+        )
 
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""

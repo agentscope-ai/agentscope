@@ -162,8 +162,7 @@ print(json.dumps(agent.state_dict(), indent=4, ensure_ascii=False))
 # 然后我们将其保存到会话文件中：
 
 session = JSONSession(
-    session_id="session_2025-08-08",  # 使用时间作为会话 ID
-    save_dir="./user-bob/",  # 使用用户名作为保存目录
+    save_dir="./",  # 保存所有session文件的目录
 )
 
 
@@ -172,11 +171,12 @@ async def example_session() -> None:
 
     # 可以保存多个状态，只需要输入的对象为 `StateModule` 的子类。
     await session.save_session_state(
+        session_id="user_bob",
         agent=agent,
     )
 
     print("保存的状态：")
-    with open(session.save_path, "r", encoding="utf-8") as f:
+    with open("./user_bob.json", "r", encoding="utf-8") as f:
         print(json.dumps(json.load(f), indent=4, ensure_ascii=False))
 
 
@@ -200,12 +200,15 @@ async def example_load_session() -> None:
 
     # 从会话文件中加载状态
     await session.load_session_state(
+        session_id="user_bob",
         # 这里使用的关键词参数必须与 `save_session_state` 中的参数一致
         agent=agent,
     )
     print("加载会话状态后智能体的状态：")
     print(json.dumps(agent.state_dict(), indent=4, ensure_ascii=False))
 
+
+asyncio.run(example_load_session())
 
 # %%
 # 此时我们可以观察到智能体的状态已经恢复到之前保存的状态。

@@ -13,6 +13,7 @@ from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
 from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
 from ..model import ChatModelBase
+from ..plan import PlanNotebook
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
 
@@ -81,6 +82,8 @@ class ReActAgent(ReActAgentBase):
         enable_meta_tool: bool = False,
         parallel_tool_calls: bool = False,
         max_iters: int = 10,
+        plan_notebook: PlanNotebook | None = None,
+        print_hint_msg: bool = False,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -123,6 +126,9 @@ class ReActAgent(ReActAgentBase):
                 them in parallel.
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
+            print_hint_msg (`bool`, defaults to `False`):
+                Whether to print the reasoning hint messages before each
+                reasoning step.
         """
         super().__init__()
 
@@ -151,7 +157,10 @@ class ReActAgent(ReActAgentBase):
             "static_control",
             "both",
         ]
-        self._agent_control = long_term_memory and not self._static_control
+        self._agent_control = long_term_memory and long_term_memory_mode in [
+            "agent_control",
+            "both",
+        ]
 
         # If None, a default Toolkit will be created
         self.toolkit = toolkit or Toolkit()
@@ -167,13 +176,34 @@ class ReActAgent(ReActAgentBase):
                 long_term_memory.retrieve_from_memory,
             )
         # Add a meta tool function to allow agent-controlled tool management
-        if enable_meta_tool:
+        if enable_meta_tool or plan_notebook:
             self.toolkit.register_tool_function(
                 self.toolkit.reset_equipped_tools,
             )
 
         self.parallel_tool_calls = parallel_tool_calls
         self.max_iters = max_iters
+
+        self.plan_notebook = None
+        if plan_notebook:
+            self.plan_notebook = plan_notebook
+            self.toolkit.create_tool_group(
+                "plan_related",
+                description=self.plan_notebook.description,
+            )
+            for tool in plan_notebook.list_tools():
+                self.toolkit.register_tool_function(
+                    tool,
+                    group_name="plan_related",
+                )
+
+        self.print_hint_msg = print_hint_msg
+
+        # The hint messages that will be attached to the prompt to guide the
+        # agent's behavior before each reasoning step, and cleared after
+        # each reasoning step, meaning the hint messages is one-time use only.
+        # We use an InMemoryMemory instance to store the hint messages
+        self._reasoning_hint_msgs = InMemoryMemory()
 
         # Variables to record the intermediate state
 
@@ -288,12 +318,24 @@ class ReActAgent(ReActAgentBase):
         self,
     ) -> Msg:
         """Perform the reasoning process."""
+        if self.plan_notebook:
+            # Insert the reasoning hint from the plan notebook
+            hint_msg = await self.plan_notebook.get_current_hint()
+            if self.print_hint_msg and hint_msg:
+                await self.print(hint_msg)
+            await self._reasoning_hint_msgs.add(hint_msg)
+
+        # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
                 *await self.memory.get_memory(),
+                # The hint messages to guide the agent's behavior, maybe empty
+                *await self._reasoning_hint_msgs.get_memory(),
             ],
         )
+        # Clear the hint messages after use
+        await self._reasoning_hint_msgs.clear()
 
         res = await self.model(
             prompt,

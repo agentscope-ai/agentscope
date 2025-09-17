@@ -99,9 +99,12 @@ AgentScope v1.0 新功能概览:
 | evaluation | 提供分布式和并行评估                             | [Evaluation](https://doc.agentscope.io/zh_CN/tutorial/task_eval.html)         |
 | formatter  | 支持多Agent提示格式化与工具API                    | [Prompt Formatter](https://doc.agentscope.io/zh_CN/tutorial/task_prompt.html) |
 |            | 支持基于截断的格式化策略                           |                                                                               |
+| plan       | 支持任务分解和计划制定                           | [Plan](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)               |
+|            | 支持开发者手动设定计划                          | |
 | ...        |                                        |                                                                               |
 
 ## 📢 新闻
+- **[2025-09]** 一个全新功能强大的 📋**Plan** 模块已经上线 AgentScope！查看[文档](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)了解更多详情。
 - **[2025-09]** **AgentScope Runtime** 现已开源！支持沙盒化工具执行的高效智能体部署，助力打造生产级AI应用。查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-runtime)。
 - **[2025-09]** **AgentScope Studio** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-studio)。
 - **[2025-08]** v1 版本 Tutorial 已上线！查看[tutorial](https://doc.agentscope.io/zh_CN/)了解更多详情。
@@ -356,13 +359,14 @@ as_studio
   - 功能演示
     - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
     - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
+    - [计划](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
     - [结构化输出](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [长期记忆](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
     - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
 
 ## ⚖️ 许可
 
-AgentScope 基于 Apache License 2.0发布。
+AgentScope 基于 Apache License 2.0 发布。
 
 ## 📚 论文
 

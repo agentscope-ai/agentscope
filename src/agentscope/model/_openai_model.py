@@ -243,6 +243,7 @@ class OpenAIChatModel(ChatModelBase):
         thinking = ""
         tool_calls = OrderedDict()
         metadata = None
+        contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
 
         async with response as stream:
             async for item in stream:
@@ -260,71 +261,80 @@ class OpenAIChatModel(ChatModelBase):
                         time=(datetime.now() - start_datetime).total_seconds(),
                     )
 
-                if chunk.choices:
-                    choice = chunk.choices[0]
-
-                    thinking += (
-                        getattr(choice.delta, "reasoning_content", None) or ""
-                    )
-                    text += choice.delta.content or ""
-
-                    for tool_call in choice.delta.tool_calls or []:
-                        if tool_call.index in tool_calls:
-                            if tool_call.function.arguments is not None:
-                                tool_calls[tool_call.index][
-                                    "input"
-                                ] += tool_call.function.arguments
-
-                        else:
-                            tool_calls[tool_call.index] = {
-                                "type": "tool_use",
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "input": tool_call.function.arguments or "",
-                            }
-
-                    contents: List[
-                        TextBlock | ToolUseBlock | ThinkingBlock
-                    ] = []
-
-                    if thinking:
-                        contents.append(
-                            ThinkingBlock(
-                                type="thinking",
-                                thinking=thinking,
-                            ),
-                        )
-
-                    if text:
-                        contents.append(
-                            TextBlock(
-                                type="text",
-                                text=text,
-                            ),
-                        )
-
-                        if structured_model:
-                            metadata = _json_loads_with_repair(text)
-
-                    for tool_call in tool_calls.values():
-                        contents.append(
-                            ToolUseBlock(
-                                type=tool_call["type"],
-                                id=tool_call["id"],
-                                name=tool_call["name"],
-                                input=_json_loads_with_repair(
-                                    tool_call["input"] or "{}",
-                                ),
-                            ),
-                        )
-
-                    if contents:
+                if not chunk.choices:
+                    if usage and contents:
                         res = ChatResponse(
                             content=contents,
                             usage=usage,
                             metadata=metadata,
                         )
                         yield res
+                    continue
+
+                choice = chunk.choices[0]
+
+                thinking += (
+                    getattr(choice.delta, "reasoning_content", None) or ""
+                )
+                text += choice.delta.content or ""
+
+                for tool_call in choice.delta.tool_calls or []:
+                    if tool_call.index in tool_calls:
+                        if tool_call.function.arguments is not None:
+                            tool_calls[tool_call.index][
+                                "input"
+                            ] += tool_call.function.arguments
+
+                    else:
+                        tool_calls[tool_call.index] = {
+                            "type": "tool_use",
+                            "id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "input": tool_call.function.arguments or "",
+                        }
+
+                contents = []
+
+                if thinking:
+                    contents.append(
+                        ThinkingBlock(
+                            type="thinking",
+                            thinking=thinking,
+                        ),
+                    )
+
+                if text:
+                    contents.append(
+                        TextBlock(
+                            type="text",
+                            text=text,
+                        ),
+                    )
+
+                    if structured_model:
+                        metadata = _json_loads_with_repair(text)
+
+                for tool_call in tool_calls.values():
+                    contents.append(
+                        ToolUseBlock(
+                            type=tool_call["type"],
+                            id=tool_call["id"],
+                            name=tool_call["name"],
+                            input=_json_loads_with_repair(
+                                tool_call["input"] or "{}",
+                            ),
+                        ),
+                    )
+
+                if not contents:
+                    continue
+
+                res = ChatResponse(
+                    content=contents,
+                    usage=usage,
+                    metadata=metadata,
+                )
+                yield res
 
     def _parse_openai_completion_response(
         self,
