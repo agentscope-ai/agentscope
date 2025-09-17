@@ -1,51 +1,88 @@
-﻿# services/audit.py
 from __future__ import annotations
 
 import json
-import os
-import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import insert, update
 
-from ..db import models
+from ..db import audit as audit_db
 
 ARTIFACTS_ROOT = Path("artifacts/audit")
-
-
-def _now_iso() -> str:
-    return time.strftime("%FT%TZ", time.gmtime())
 
 
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def audit_start_sync(session: AsyncSession, run_id: str, rel_id: str, stage: str, model_ctx: dict) -> None:
-    # Fire-and-forget insert; ignore errors if table missing
-    try:
-        stmt = insert(models.__dict__.get("AuditRun2", models.AuditRun)).values(
-            run_id if hasattr(models.AuditRun, "run_id") else run_id
-        )
-    except Exception:
-        pass
+def _json_dump(path: Path, payload: Any) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
-@contextmanager
-def audit_stage(rel_id: str, stage: str, model_ctx: dict):
-    ts = int(time.time() * 1000)
-    run_id = f"{rel_id}_{stage}_{ts}"
+@asynccontextmanager
+async def audit_stage(
+    session: AsyncSession,
+    rel_id: str,
+    stage: str,
+    model_ctx: Optional[dict[str, Any]] = None,
+):
+    model_ctx = model_ctx or {}
+    started_at = datetime.now(timezone.utc)
+    run_id = f"{rel_id}_{stage}_{int(started_at.timestamp() * 1000)}"
+
     root = ARTIFACTS_ROOT / run_id
     _ensure_dir(root)
 
+    meta_path = root / "meta.json"
+    meta = {
+        "run_id": run_id,
+        "relation_id": rel_id,
+        "stage": stage,
+        "started_at": started_at.isoformat(),
+        "model_ctx": model_ctx,
+    }
+
     try:
-        def dump(name: str, payload: Any) -> None:
-            p = root / f"{name}.json"
-            with p.open("w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        yield dump, run_id
-    finally:
+        _json_dump(meta_path, meta)
+    except Exception:
         pass
+
+    await audit_db.audit_runs_insert_start(
+        session=session,
+        run_id=run_id,
+        relation_id=rel_id,
+        stage=stage,
+        model_ctx=model_ctx,
+        started_at=started_at,
+    )
+
+    status = "success"
+
+    def dump(name: str, payload: Any) -> None:
+        try:
+            _json_dump(root / f"{name}.json", payload)
+        except Exception:
+            pass
+
+    try:
+        yield dump, run_id
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        finished_at = datetime.now(timezone.utc)
+        meta.update({"finished_at": finished_at.isoformat(), "status": status})
+        try:
+            _json_dump(meta_path, meta)
+        except Exception:
+            pass
+
+        await audit_db.audit_runs_insert_finish(
+            session=session,
+            run_id=run_id,
+            finished_at=finished_at,
+            status=status,
+        )
