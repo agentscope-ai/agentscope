@@ -14,7 +14,7 @@ AgentScope provides a built-in evaluation framework for assessing agent performa
 .. note:: We are keeping integrating new benchmarks into AgentScope:
 
  - ✅ `ACEBench <https://github.com/ACEBench/ACEBench>`_
- - 🚧 `GAIA <https://huggingface.co/datasets/gaia-benchmark/GAIA/tree/main>`_ Benchmark
+ - ✅ `GAIA <https://huggingface.co/datasets/gaia-benchmark/GAIA/tree/main>`_ Benchmark
 
 
 Overview
@@ -42,6 +42,7 @@ The current implementation in AgentScope includes:
     - ``GeneralEvaluator``: A general evaluator that runs tasks sequentially, friendly for debugging.
 - Benchmark:
     - ``ACEBench``: A benchmark for evaluating agent capabilities.
+    - ``GAIABench``: A benchmark for evaluating agent performance on general and complex tasks.
 
 We have provided a toy example in our `GitHub repository <https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench>`_ with ``RayEvaluator`` and the agent multistep tasks in ACEBench.
 

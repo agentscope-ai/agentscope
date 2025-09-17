@@ -22,6 +22,8 @@ from ._multi_modality import (
     openai_image_to_text,
     openai_audio_to_text,
 )
+from ._pandas_read_file import read_file_with_pandas
+from ._view_docx_file import view_docx_file
 from ._toolkit import Toolkit
 
 __all__ = [
@@ -41,4 +43,6 @@ __all__ = [
     "openai_create_image_variation",
     "openai_image_to_text",
     "openai_audio_to_text",
+    "read_file_with_pandas",
+    "view_docx_file",
 ]
