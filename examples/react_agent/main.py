@@ -17,9 +17,6 @@ from agentscope.tool import (
 
 async def main() -> None:
     """The main entry point for the ReAct agent example."""
-    import agentscope
-
-    agentscope.init(tracing_url="")
     toolkit = Toolkit()
     toolkit.register_tool_function(execute_shell_command)
     toolkit.register_tool_function(execute_python_code)
