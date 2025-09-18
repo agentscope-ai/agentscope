@@ -20,10 +20,6 @@ from agentscope.tool import (
 
 async def main() -> None:
     """The main entry point for the plan example."""
-    import agentscope
-
-    agentscope.init(studio_url="http://localhost:3000")
-
     toolkit = Toolkit()
     toolkit.register_tool_function(execute_shell_command)
     toolkit.register_tool_function(execute_python_code)
