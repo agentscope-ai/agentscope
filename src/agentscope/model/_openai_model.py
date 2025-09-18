@@ -43,6 +43,7 @@ class OpenAIChatModel(ChatModelBase):
         organization: str = None,
         client_args: dict = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        azure_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
         """Initialize the openai client.
 
@@ -69,17 +70,29 @@ class OpenAIChatModel(ChatModelBase):
              optional):
                The extra keyword arguments used in OpenAI API generation,
                 e.g. `temperature`, `seed`.
+            azure_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
+                The extra keyword arguments for Azure OpenAI, e.g.
+                `azure_endpoint`, `azure_deployment`, `api_version`.
         """
 
         super().__init__(model_name, stream)
 
         import openai
 
-        self.client = openai.AsyncClient(
-            api_key=api_key,
-            organization=organization,
-            **(client_args or {}),
-        )
+        if azure_kwargs is not None:
+            self.client = openai.AsyncAzureOpenAI(
+                api_key=api_key,
+                organization=organization,
+                **azure_kwargs,
+                **(client_args or {}),
+            )
+        else:
+            self.client = openai.AsyncClient(
+                api_key=api_key,
+                organization=organization,
+                **(client_args or {}),
+            )
 
         self.reasoning_effort = reasoning_effort
         self.generate_kwargs = generate_kwargs or {}
@@ -89,9 +102,7 @@ class OpenAIChatModel(ChatModelBase):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -273,9 +284,7 @@ class OpenAIChatModel(ChatModelBase):
 
                 choice = chunk.choices[0]
 
-                thinking += (
-                    getattr(choice.delta, "reasoning_content", None) or ""
-                )
+                thinking += getattr(choice.delta, "reasoning_content", None) or ""
                 text += choice.delta.content or ""
 
                 for tool_call in choice.delta.tool_calls or []:
