@@ -1,4 +1,4 @@
-﻿[tool.poetry]
+[tool.poetry]
 name = "relation-zettel-backend"
 version = "0.1.0"
 description = "FastAPI service for the Relation-Zettel platform"

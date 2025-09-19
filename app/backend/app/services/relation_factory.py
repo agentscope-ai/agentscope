@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ai_registry import get_relation_factory_prompt
@@ -93,11 +93,11 @@ async def _fts_best_match(
 ) -> Optional[tuple[str, str]]:
     """Return (note_id, snippet) for the best FTS match different from subject."""
     try:
-        res = await session.execute(
-            "SELECT id, snippet(notes_fts, -1, '', '', ' … ', 64) as snip "
-            "FROM notes_fts WHERE notes_fts MATCH :q LIMIT 5",
-            {"q": query},
+        stmt = text(
+            "SELECT id, snippet(notes_fts, -1, '', '', ' … ', 64) AS snip "
+            "FROM notes_fts WHERE notes_fts MATCH :q LIMIT 5"
         )
+        res = await session.execute(stmt, {"q": query})
         rows = res.fetchall()
         for rid, snip in rows:
             if rid != subject:
