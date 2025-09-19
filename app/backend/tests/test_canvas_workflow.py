@@ -1,4 +1,4 @@
-﻿import os
+import os
 import asyncio
 
 import pytest
@@ -35,3 +35,22 @@ async def test_canvas_workflow(tmp_path):
 
         audit = await client.get(f"/audit/{relation_id}")
         assert audit.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_undo_after_deadline_expires(tmp_path):
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        response = await client.post("/canvas/submit", json={"content": "测试输入"})
+        assert response.status_code == 200
+        relation_id = response.json()["candidate"]["id"]
+
+        verify = await client.post("/relations/decide", json={"ops": [{"id": relation_id, "action": "verify"}]})
+        assert verify.status_code == 200
+
+        await asyncio.sleep(3.5)
+
+        undo = await client.post("/relations/decide", json={"ops": [{"id": relation_id, "action": "undo"}]})
+        assert undo.status_code == 200
+        body = undo.json()
+        assert relation_id in body["failed"]
+        assert body["ok"] == 0

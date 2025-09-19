@@ -57,10 +57,12 @@ async def verify_relation(session: AsyncSession, decision: RelationDecision) -> 
     if relation is None:
         raise HTTPException(status_code=404, detail=f"relation {decision.id} not found")
 
-    deadline = datetime.now(timezone.utc) + timedelta(seconds=3)
-    relation.status = "verified"
+    now = datetime.now(timezone.utc)
+    deadline = now + timedelta(seconds=3)
+
+    relation.status = "pending"
     relation.undo_expires_at = deadline
-    relation.updated_at = datetime.now(timezone.utc)
+    relation.updated_at = now
 
     await session.commit()
     return deadline
@@ -96,9 +98,13 @@ async def undo_relation(session: AsyncSession, decision: RelationDecision) -> No
     if relation is None:
         raise HTTPException(status_code=404, detail=f"relation {decision.id} not found")
 
+    now = datetime.now(timezone.utc)
+    if relation.undo_expires_at is None or relation.undo_expires_at <= now:
+        raise HTTPException(status_code=400, detail="undo window expired")
+
     relation.status = "proposed"
     relation.undo_expires_at = None
-    relation.updated_at = datetime.now(timezone.utc)
+    relation.updated_at = now
     await session.commit()
 
 
