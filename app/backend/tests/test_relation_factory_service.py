@@ -1,8 +1,10 @@
 import json
 import os
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_relation_zettel.db"
 
@@ -134,3 +136,58 @@ async def test_run_relation_factory_uses_non_openai_providers(
     assert candidate.claim == f"{provider_name} claim"
     assert candidate.evidence[1].note == other_id
     assert helper_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_transforms_response_format_for_agentscope(monkeypatch):
+    captured: dict[str, Any] = {}
+
+    class DummyResponse:
+        def __init__(self, content: str):
+            self.content = [{"type": "text", "text": content}]
+            self.usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+
+    class DummyAgentscopeModel:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        async def __call__(self, messages, **kwargs):
+            captured["call"] = kwargs
+            structured_model = kwargs.get("structured_model")
+            assert "response_format" not in kwargs
+            assert structured_model is not None and issubclass(structured_model, BaseModel)
+            payload = structured_model.model_validate(
+                {
+                    "claim": "valid claim",
+                    "reason": "valid reason",
+                    "evidence": [
+                        {"note": "n1", "span": "L1-L2", "quote": "Quote alpha"},
+                        {"note": "n2", "span": "L3-L4", "quote": "Quote beta"},
+                    ],
+                }
+            )
+            return DummyResponse(json.dumps(payload.model_dump()))
+
+    monkeypatch.setenv("LLM_API_KEY", "stub")
+    monkeypatch.setattr(provider_module, "_AGENTSCOPE_MODEL_CACHE", None)
+    monkeypatch.setattr(
+        provider_module,
+        "_load_agentscope_models",
+        lambda: {"dashscope": DummyAgentscopeModel},
+    )
+
+    response, stats = await provider_module.call_llm(
+        messages=[{"role": "user", "content": "hello"}],
+        model="fake-model",
+        provider="dashscope",
+        response_format={"type": "json_object"},
+    )
+
+    assert "structured_model" in captured.get("call", {})
+    assert "response_format" not in captured.get("call", {})
+
+    message = response["choices"][0]["message"]
+    parsed = json.loads(message["content"])
+    assert parsed["claim"] == "valid claim"
+    assert stats.prompt_tokens == 10
+    assert stats.completion_tokens == 5

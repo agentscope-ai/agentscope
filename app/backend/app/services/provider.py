@@ -8,8 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
 
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 
 from ..config import get_settings
+from ..schemas.relations import EvidenceSnippet
 
 
 @dataclass
@@ -33,6 +35,29 @@ _MODEL_PRICING: Dict[str, Tuple[int, int]] = {
 }
 
 _AGENTSCOPE_MODEL_CACHE: Optional[Dict[str, Any]] = None
+
+
+class _AgentscopeFuseOutput(BaseModel):
+    """Structured output schema compatible with claim/reason/evidence payloads."""
+
+    claim: str = Field(min_length=5, max_length=240)
+    reason: str = Field(min_length=5, max_length=240)
+    evidence: list[EvidenceSnippet] = Field(min_items=2, max_items=4)
+
+
+def _translate_response_format_for_agentscope(
+    response_format: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Convert OpenAI-style response_format into Agentscope kwargs."""
+
+    if not response_format or not isinstance(response_format, dict):
+        return {}
+
+    fmt_type = response_format.get("type")
+    if fmt_type == "json_object":
+        return {"structured_model": _AgentscopeFuseOutput}
+
+    return {}
 
 
 def _resolve_pricing(model: str) -> Optional[Tuple[int, int]]:
@@ -259,8 +284,10 @@ async def _call_agentscope_model(
         call_kwargs["max_tokens"] = max_tokens
     if extra_params:
         call_kwargs.update(extra_params)
-    if response_format is not None:
-        call_kwargs.setdefault("response_format", response_format)
+    call_kwargs.pop("response_format", None)
+    translated = _translate_response_format_for_agentscope(response_format)
+    for key, value in translated.items():
+        call_kwargs.setdefault(key, value)
 
     try:
         response = await model_client(list(messages), **call_kwargs)
