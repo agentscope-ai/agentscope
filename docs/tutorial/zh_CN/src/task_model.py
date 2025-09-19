@@ -20,7 +20,7 @@ AgentScope 目前支持的模型 API 和模型提供商包括：
       - 推理
     * - OpenAI
       - ``OpenAIChatModel``
-      - vLLM, DeepSeek
+      - vLLM, DeepSeek, Azure OpenAI
       - ✅
       - ✅
       - ✅
