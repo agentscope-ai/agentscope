@@ -42,6 +42,7 @@ extra_requires = [
     "jinja2",
     "ray",
     "mem0ai",
+    "zai-sdk",
     "packaging",
 ]
 
