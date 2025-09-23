@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """The retrieval-augmented generation (RAG) module in AgentScope."""
 
-from ._document import Document
+from ._document import (
+    DocMetadata,
+    Document,
+)
 from ._reader import (
     ReaderBase,
     TextReader,
@@ -19,6 +22,7 @@ __all__ = [
     "ReaderBase",
     "TextReader",
     "PDFReader",
+    "DocMetadata",
     "Document",
     "VDBStoreBase",
     "QdrantStore",

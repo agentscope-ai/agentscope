@@ -44,6 +44,7 @@ extra_requires = [
     "ray",
     "mem0ai",
     "packaging",
+    "pypdf",
 ]
 
 dev_requires = [

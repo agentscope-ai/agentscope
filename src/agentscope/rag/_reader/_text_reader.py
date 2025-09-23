@@ -73,38 +73,38 @@ class TextReader(ReaderBase):
                     "`pip install nltk`.",
                 ) from e
 
-            splits.extend(nltk.sent_tokenize(text))
+            sentences = nltk.sent_tokenize(text)
 
-        elif self.split_by == "paragraph":
-            paragraphs = text.split("\n")
-            current_para = ""
-            i = 0
-            while i < len(paragraphs):
-                para = paragraphs[i]
-                # If the new paragraph is smaller than chunk size, add it to
-                # the current paragraph
-                if len(current_para + para) <= self.chunk_size:
-                    current_para += "\n" + para
-                    # Deal with the next paragraph
-                    i += 1
-
-                elif current_para:
-                    # If exceeds chunk size, return the current paragraph
-                    splits.append(current_para)
-                    current_para = ""
-                    # Continue to handle this `para`
-                    continue
-
+            # Handle the chunk_size for sentences
+            processed_sentences = []
+            for _ in sentences:
+                if len(_) <= self.chunk_size:
+                    processed_sentences.append(_)
                 else:
-                    # If the current paragraph is empty, it means the new
-                    # paragraph itself exceeds chunk size, we need to
+                    # If the sentence itself exceeds chunk size, we need to
                     # truncate it
                     chunks = [
-                        para[j : j + self.chunk_size]
-                        for j in range(0, len(para), self.chunk_size)
+                        _[j : j + self.chunk_size]
+                        for j in range(0, len(_), self.chunk_size)
+                    ]
+                    processed_sentences.extend(chunks)
+
+            splits.extend(processed_sentences)
+
+        elif self.split_by == "paragraph":
+            paragraphs = [_ for _ in text.split("\n") if len(_)]
+            for para in paragraphs:
+                if len(para) <= self.chunk_size:
+                    splits.append(para)
+
+                else:
+                    # If the paragraph itself exceeds chunk size, we need to
+                    # truncate it
+                    chunks = [
+                        para[k : k + self.chunk_size]
+                        for k in range(0, len(para), self.chunk_size)
                     ]
                     splits.extend(chunks)
-                    i += 1
 
         doc_id = self.get_doc_id(text)
 
