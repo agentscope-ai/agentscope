@@ -26,13 +26,15 @@ def _to_gemini_inline_data(url: str) -> dict:
     parsed_url = urlparse(url)
     extension = url.split(".")[-1].lower()
 
+    # Pre-calculate media type from extension (image/audio/video).
+    typ = None
+    for k, v in GeminiChatFormatter.supported_extensions.items():
+        if extension in v:
+            typ = k
+            break
+
     if not os.path.exists(url) and parsed_url.scheme != "":
         # Web url
-        typ = None
-        for k, v in GeminiChatFormatter.supported_extensions.items():
-            if extension in v:
-                typ = k
-                break
         if typ is None:
             raise TypeError(
                 f"Unsupported file extension: {extension}, expected "
@@ -47,12 +49,18 @@ def _to_gemini_inline_data(url: str) -> dict:
 
     elif os.path.exists(url):
         # Local file
+        if typ is None:
+            raise TypeError(
+                f"Unsupported file extension: {extension}, expected "
+                f"{GeminiChatFormatter.supported_extensions}",
+            )
+
         with open(url, "rb") as f:
             data = base64.b64encode(f.read()).decode("utf-8")
 
         return {
             "data": data,
-            "mime_type": f"image/{extension}",
+            "mime_type": f"{typ}/{extension}",
         }
 
     raise ValueError(
@@ -84,7 +92,7 @@ class GeminiChatFormatter(TruncatedFormatterBase):
     ]
     """The list of supported message blocks"""
 
-    supported_extensions: list[str] = {
+    supported_extensions: dict[str, list[str]] = {
         "image": ["png", "jpeg", "webp", "heic", "heif"],
         "video": [
             "mp4",

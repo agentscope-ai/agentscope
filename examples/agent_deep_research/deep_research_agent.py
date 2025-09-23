@@ -1067,7 +1067,7 @@ class DeepResearchAgent(ReActAgent):
         you have done so far.
 
         Args:
-            _response (`str`):
+            response (`str`):
                 Your response to the user.
         """
         checklist = self.current_subtask[0].knowledge_gaps

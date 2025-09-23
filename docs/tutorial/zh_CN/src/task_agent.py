@@ -111,15 +111,18 @@ from agentscope.tool import Toolkit, ToolResponse
 # 当 LLM 生成多个工具调用且 ``parallel_tool_calls`` 设置为 ``True`` 时，
 # 它们将通过 ``asyncio.gather`` 函数并行执行。
 #
+# .. note:: ``ReActAgent`` 中的工具并行调用是基于异步 ``asyncio.gather`` 实现的，因此，只有当工具函数是异步函数，同时工具函数内也为异步逻辑时，才能最大程度发挥工具并行执行的效果
+#
+# .. note:: 运行时请确保模型层面支持工具并行调用，并且相应参数设置正确（可以通过 ``generate_kwargs`` 传入），例如对于DashScope API，需要设置 ``parallel_tool_calls`` 为 ``True``，否则将无法进行并行工具调用。
 
 
 # 准备一个工具函数
-def example_tool_function(tag: str) -> ToolResponse:
+async def example_tool_function(tag: str) -> ToolResponse:
     """一个示例工具函数"""
     start_time = datetime.now().strftime("%H:%M:%S.%f")
 
     # 休眠 3 秒以模拟长时间运行的任务
-    time.sleep(3)
+    await asyncio.sleep(3)
 
     end_time = datetime.now().strftime("%H:%M:%S.%f")
     return ToolResponse(
@@ -142,6 +145,10 @@ agent = ReActAgent(
     model=DashScopeChatModel(
         model_name="qwen-max",
         api_key=os.environ["DASHSCOPE_API_KEY"],
+        # 启用并行工具调用
+        generate_kwargs={
+            "parallel_tool_calls": True,
+        },
     ),
     memory=InMemoryMemory(),
     formatter=DashScopeChatFormatter(),

@@ -5,13 +5,21 @@ import json
 from asyncio import Task
 from collections import OrderedDict
 from typing import Callable, Any
-
+import base64
 import shortuuid
+import numpy as np
 
 from ._agent_meta import _AgentMeta
 from .._logging import logger
 from ..module import StateModule
-from ..message import Msg
+from ..message import (
+    Msg,
+    AudioBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    ImageBlock,
+    VideoBlock,
+)
 from ..types import AgentHookTypes
 
 
@@ -145,7 +153,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         self._instance_pre_observe_hooks = OrderedDict()
         self._instance_post_observe_hooks = OrderedDict()
 
-        # The prefix used in streaming printing
+        # The prefix used in streaming printing, which will save the
+        # accumulated text and audio streaming data for each message id.
+        # e.g. {"text": "xxx", "audio": (stream_obj, "{base64_data}")}
         self._stream_prefix = {}
 
         # The subscribers that will receive the reply message by their
@@ -190,40 +200,181 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         if self._disable_console_output:
             return
 
+        # The accumulated textual content to print, including the text blocks
+        # and the thinking blocks
         thinking_and_text_to_print = []
-        for block in msg.get_content_blocks():
-            prefix = self._stream_prefix.get(msg.id, "")
-            if block["type"] in ["text", "thinking"]:
-                block_type = block["type"]
-                format_prefix = "" if block_type == "text" else "(thinking)"
 
-                thinking_and_text_to_print.append(
-                    f"{msg.name}{format_prefix}: {block[block_type]}",
+        for block in msg.get_content_blocks():
+            if block["type"] == "audio":
+                self._process_audio_block(msg.id, block)
+
+            elif block["type"] == "text":
+                self._print_text_block(
+                    msg.id,
+                    name_prefix=msg.name,
+                    text_content=block["text"],
+                    thinking_and_text_to_print=thinking_and_text_to_print,
                 )
 
-                to_print = "\n".join(thinking_and_text_to_print)
-                if len(to_print) > len(prefix):
-                    print(to_print[len(prefix) :], end="")
-                    self._stream_prefix[msg.id] = to_print
+            elif block["type"] == "thinking":
+                self._print_text_block(
+                    msg.id,
+                    name_prefix=f"{msg.name}(thinking)",
+                    text_content=block["thinking"],
+                    thinking_and_text_to_print=thinking_and_text_to_print,
+                )
 
             elif last:
-                if prefix:
-                    if not prefix.endswith("\n"):
-                        print(
-                            "\n"
-                            + json.dumps(block, indent=4, ensure_ascii=False),
-                        )
-                    else:
-                        print(json.dumps(block, indent=4, ensure_ascii=False))
-                else:
-                    print(
-                        f"{msg.name}: "
-                        f"{json.dumps(block, indent=4, ensure_ascii=False)}",
-                    )
+                self._print_last_block(block, msg)
+
+        # Clean up resources if this is the last message in streaming
         if last and msg.id in self._stream_prefix:
-            last_prefix = self._stream_prefix.pop(msg.id)
-            if not last_prefix.endswith("\n"):
+            if "audio" in self._stream_prefix[msg.id]:
+                player, _ = self._stream_prefix[msg.id]["audio"]
+                # Close the miniaudio player
+                player.close()
+            stream_prefix = self._stream_prefix.pop(msg.id)
+            if "text" in stream_prefix and not stream_prefix["text"].endswith(
+                "\n",
+            ):
                 print()
+
+    def _process_audio_block(
+        self,
+        msg_id: str,
+        audio_block: AudioBlock,
+    ) -> None:
+        """Process audio block content.
+
+        Args:
+            msg_id (`str`):
+                The unique identifier of the message
+            audio_block (`AudioBlock`):
+                The audio content block
+        """
+        if "source" not in audio_block:
+            raise ValueError(
+                "The audio block must contain the 'source' field.",
+            )
+
+        if audio_block["source"]["type"] == "url":
+            # TODO: maybe download and play the audio from the URL?
+            print(json.dumps(audio_block, indent=4, ensure_ascii=False))
+
+        elif audio_block["source"]["type"] == "base64":
+            data = audio_block["source"]["data"]
+
+            if msg_id not in self._stream_prefix:
+                self._stream_prefix[msg_id] = {}
+
+            audio_prefix = self._stream_prefix[msg_id].get("audio", None)
+
+            import sounddevice as sd
+
+            # The player and the prefix data is cached for streaming audio
+            if audio_prefix:
+                player, audio_prefix_data = audio_prefix
+            else:
+                player = sd.OutputStream(
+                    samplerate=24000,
+                    channels=1,
+                    dtype=np.float32,
+                    blocksize=1024,
+                    latency="low",
+                )
+                player.start()
+                audio_prefix_data = ""
+
+            # play the audio data
+            new_audio_data = data[len(audio_prefix_data) :]
+            if new_audio_data:
+                audio_bytes = base64.b64decode(new_audio_data)
+                audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
+                audio_float = audio_np.astype(np.float32) / 32768.0
+
+                # Write to the audio output stream
+                player.write(audio_float)
+
+            # save the player and the prefix data
+            self._stream_prefix[msg_id]["audio"] = (
+                player,
+                data,
+            )
+
+        else:
+            raise ValueError(
+                "Unsupported audio source type: "
+                f"{audio_block['source']['type']}",
+            )
+
+    def _print_text_block(
+        self,
+        msg_id: str,
+        name_prefix: str,
+        text_content: str,
+        thinking_and_text_to_print: list[str],
+    ) -> None:
+        """Print the text block and thinking block content.
+
+        Args:
+            msg_id (`str`):
+                The unique identifier of the message
+            name_prefix (`str`):
+                The prefix for the message, e.g. "{name}: " for text block and
+                "{name}(thinking): " for thinking block.
+            text_content (`str`):
+                The textual content to be printed.
+            thinking_and_text_to_print (`list[str]`):
+                A list of textual content to be printed together. Here we
+                gather the text and thinking blocks to print them together.
+        """
+        thinking_and_text_to_print.append(
+            f"{name_prefix}: {text_content}",
+        )
+        # The accumulated text and thinking blocks to print
+        to_print = "\n".join(thinking_and_text_to_print)
+
+        # The text prefix that has been printed
+        if msg_id not in self._stream_prefix:
+            self._stream_prefix[msg_id] = {}
+
+        text_prefix = self._stream_prefix[msg_id].get("text", "")
+
+        # Only print when there is new text content
+        if len(to_print) > len(text_prefix):
+            print(to_print[len(text_prefix) :], end="")
+
+            # Save the printed text prefix
+            self._stream_prefix[msg_id]["text"] = to_print
+
+    def _print_last_block(
+        self,
+        block: ToolUseBlock | ToolResultBlock | ImageBlock | VideoBlock,
+        msg: Msg,
+    ) -> None:
+        """Process and print the last content block, and the block type
+        is not audio, text, or thinking.
+
+        Args:
+            block (`ToolUseBlock | ToolResultBlock | ImageBlock | VideoBlock`):
+                The content block to be printed
+            msg (`Msg`):
+                The message object
+        """
+        text_prefix = self._stream_prefix.get(msg.id, {}).get("text", "")
+
+        if text_prefix:
+            # Add a newline to separate from previous text content
+            print_newline = "" if text_prefix.endswith("\n") else "\n"
+            print(
+                f"{print_newline}"
+                f"{json.dumps(block, indent=4, ensure_ascii=False)}",
+            )
+        else:
+            print(
+                f"{msg.name}:"
+                f" {json.dumps(block, indent=4, ensure_ascii=False)}",
+            )
 
     async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
         """Call the reply function with the given arguments."""

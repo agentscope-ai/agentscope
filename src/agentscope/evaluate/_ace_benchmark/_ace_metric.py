@@ -20,7 +20,7 @@ class ACEProcessAccuracy(MetricBase):
         )
         self.mile_stone = mile_stone
 
-    def __call__(
+    async def __call__(
         self,
         solution: SolutionOutput,
     ) -> MetricResult:
@@ -82,7 +82,7 @@ class ACEAccuracy(MetricBase):
         )
         self.state = state
 
-    def __call__(
+    async def __call__(
         self,
         solution: SolutionOutput,
     ) -> MetricResult:

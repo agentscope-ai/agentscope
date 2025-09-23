@@ -19,7 +19,13 @@ from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
-from ..message import ToolUseBlock, TextBlock, ThinkingBlock
+from ..message import (
+    ToolUseBlock,
+    TextBlock,
+    ThinkingBlock,
+    AudioBlock,
+    Base64Source,
+)
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
@@ -241,8 +247,12 @@ class OpenAIChatModel(ChatModelBase):
         usage, res = None, None
         text = ""
         thinking = ""
+        audio = ""
         tool_calls = OrderedDict()
         metadata = None
+        contents: List[
+            TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
+        ] = []
 
         async with response as stream:
             async for item in stream:
@@ -260,71 +270,107 @@ class OpenAIChatModel(ChatModelBase):
                         time=(datetime.now() - start_datetime).total_seconds(),
                     )
 
-                if chunk.choices:
-                    choice = chunk.choices[0]
-
-                    thinking += (
-                        getattr(choice.delta, "reasoning_content", None) or ""
-                    )
-                    text += choice.delta.content or ""
-
-                    for tool_call in choice.delta.tool_calls or []:
-                        if tool_call.index in tool_calls:
-                            if tool_call.function.arguments is not None:
-                                tool_calls[tool_call.index][
-                                    "input"
-                                ] += tool_call.function.arguments
-
-                        else:
-                            tool_calls[tool_call.index] = {
-                                "type": "tool_use",
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "input": tool_call.function.arguments or "",
-                            }
-
-                    contents: List[
-                        TextBlock | ToolUseBlock | ThinkingBlock
-                    ] = []
-
-                    if thinking:
-                        contents.append(
-                            ThinkingBlock(
-                                type="thinking",
-                                thinking=thinking,
-                            ),
-                        )
-
-                    if text:
-                        contents.append(
-                            TextBlock(
-                                type="text",
-                                text=text,
-                            ),
-                        )
-
-                        if structured_model:
-                            metadata = _json_loads_with_repair(text)
-
-                    for tool_call in tool_calls.values():
-                        contents.append(
-                            ToolUseBlock(
-                                type=tool_call["type"],
-                                id=tool_call["id"],
-                                name=tool_call["name"],
-                                input=_json_loads_with_repair(
-                                    tool_call["input"] or "{}",
-                                ),
-                            ),
-                        )
-
-                    if contents:
+                if not chunk.choices:
+                    if usage and contents:
                         res = ChatResponse(
                             content=contents,
                             usage=usage,
                             metadata=metadata,
                         )
                         yield res
+                    continue
+
+                choice = chunk.choices[0]
+
+                thinking += (
+                    getattr(choice.delta, "reasoning_content", None) or ""
+                )
+                text += choice.delta.content or ""
+
+                if (
+                    hasattr(choice.delta, "audio")
+                    and "data" in choice.delta.audio
+                ):
+                    audio += choice.delta.audio["data"]
+                if (
+                    hasattr(choice.delta, "audio")
+                    and "transcript" in choice.delta.audio
+                ):
+                    text += choice.delta.audio["transcript"]
+
+                for tool_call in choice.delta.tool_calls or []:
+                    if tool_call.index in tool_calls:
+                        if tool_call.function.arguments is not None:
+                            tool_calls[tool_call.index][
+                                "input"
+                            ] += tool_call.function.arguments
+
+                    else:
+                        tool_calls[tool_call.index] = {
+                            "type": "tool_use",
+                            "id": tool_call.id,
+                            "name": tool_call.function.name,
+                            "input": tool_call.function.arguments or "",
+                        }
+
+                contents = []
+
+                if thinking:
+                    contents.append(
+                        ThinkingBlock(
+                            type="thinking",
+                            thinking=thinking,
+                        ),
+                    )
+
+                if audio:
+                    media_type = self.generate_kwargs.get("audio", {}).get(
+                        "format",
+                        "wav",
+                    )
+                    contents.append(
+                        AudioBlock(
+                            type="audio",
+                            source=Base64Source(
+                                data=audio,
+                                media_type=f"audio/{media_type}",
+                                type="base64",
+                            ),
+                        ),
+                    )
+
+                if text:
+                    contents.append(
+                        TextBlock(
+                            type="text",
+                            text=text,
+                        ),
+                    )
+
+                    if structured_model:
+                        metadata = _json_loads_with_repair(text)
+
+                for tool_call in tool_calls.values():
+                    contents.append(
+                        ToolUseBlock(
+                            type=tool_call["type"],
+                            id=tool_call["id"],
+                            name=tool_call["name"],
+                            input=_json_loads_with_repair(
+                                tool_call["input"] or "{}",
+                            ),
+                        ),
+                    )
+
+                if not contents:
+                    continue
+
+                res = ChatResponse(
+                    content=contents,
+                    usage=usage,
+                    metadata=metadata,
+                )
+                yield res
 
     def _parse_openai_completion_response(
         self,
@@ -352,7 +398,9 @@ class OpenAIChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        content_blocks: List[
+            TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
+        ] = []
         metadata = None
 
         if response.choices:
@@ -375,6 +423,29 @@ class OpenAIChatModel(ChatModelBase):
                         text=response.choices[0].message.content,
                     ),
                 )
+            if choice.message.audio:
+                media_type = self.generate_kwargs.get("audio", {}).get(
+                    "format",
+                    "mp3",
+                )
+                content_blocks.append(
+                    AudioBlock(
+                        type="audio",
+                        source=Base64Source(
+                            data=choice.message.audio.data,
+                            media_type=f"audio/{media_type}",
+                            type="base64",
+                        ),
+                    ),
+                )
+
+                if choice.message.audio.transcript:
+                    content_blocks.append(
+                        TextBlock(
+                            type="text",
+                            text=choice.message.audio.transcript,
+                        ),
+                    )
 
             for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(

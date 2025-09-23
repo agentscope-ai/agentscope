@@ -10,6 +10,7 @@ as syntax sugar for chaining agents together, including
 
 - **MsgHub**: a message hub for broadcasting messages among multiple agents
 - **sequential_pipeline** and **SequentialPipeline**: a functional and class-based implementation that chains agents in a sequential manner
+- **fanout_pipeline** and **FanoutPipeline**: a functional and class-based implementation that distributes the same input to multiple agents
 
 """
 
@@ -87,7 +88,7 @@ asyncio.run(example_broadcast_message())
 
 
 async def check_broadcast_message():
-    """Check if the messages are broadcasted correctly."""
+    """Check if the messages are broadcast correctly."""
     user_msg = Msg(
         "user",
         "Do you know who's Alice, and what she does? Answer me briefly.",
@@ -135,8 +136,16 @@ asyncio.run(check_broadcast_message())
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Pipeline serves as a syntax sugar for multi-agent orchestration.
 #
-# Currently, AgentScope provides a sequential pipeline implementation, which
-# execute agents one by one in a predefined order.
+# Currently, AgentScope provides two main pipeline implementations:
+#
+# 1. **Sequential Pipeline**: Execute agents one by one in a predefined order
+# 2. **Fanout Pipeline**: Distribute the same input to multiple agents and collect their responses
+#
+# Sequential Pipeline
+# ------------------------
+# The sequential pipeline executes agents one by one, where the output of the previous agent
+# becomes the input of the next agent.
+#
 # For example, the two following code snippets are equivalent:
 #
 #
@@ -161,8 +170,52 @@ asyncio.run(check_broadcast_message())
 #         msg=None
 #     )
 #
-# .. tip:: By combining `MsgHub` and `sequential_pipeline`, you can create more complex workflows very easily.
+
+# %%
+# Fanout Pipeline
+# ------------------------
+# The fanout pipeline distributes the same input message to multiple agents simultaneously and collects all their responses. This is useful when you want to gather different perspectives or expertise on the same topic.
 #
+# For example, the two following code snippets are equivalent:
+#
+#
+# .. code-block:: python
+#     :caption: Code snippet 3: Manually call agents one by one
+#
+#     from copy import deepcopy
+#
+#     msgs = []
+#     msg = None
+#     for agent in [alice, bob, charlie, david]:
+#         msgs.append(await agent(deepcopy(msg)))
+#
+#
+# .. code-block:: python
+#     :caption: Code snippet 4: Use fanout pipeline
+#
+#     from agentscope.pipeline import fanout_pipeline
+#     msgs = await fanout_pipeline(
+#         # List of agents to be executed in order
+#         agents=[alice, bob, charlie, david],
+#         # The first input message, can be None
+#         msg=None,
+#         enable_gather=False,
+#     )
+#
+# .. note::
+#     The ``enable_gather`` parameter controls the execution mode of the fanout pipeline:
+#
+#     - ``enable_gather=True`` (default): Executes all agents **concurrently** using ``asyncio.gather()``. This provides better performance for I/O-bound operations like API calls, as agents run in parallel.
+#     - ``enable_gather=False``: Executes agents **sequentially** one by one. This is useful when you need deterministic execution order or want to avoid overwhelming external services with concurrent requests.
+#
+#     Choose concurrent execution for better performance, or sequential execution for predictable ordering and resource control.
+#
+# .. tip::
+#     By combining ``MsgHub`` and ``sequential_pipeline`` or ``fanout_pipeline``, you can create more complex workflows very easily.
+
+# %%
+# Advanced Pipeline Features
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 # Additionally, for reusability, we also provide a class-based implementation:
 #
@@ -180,4 +233,18 @@ asyncio.run(check_broadcast_message())
 #     # Reuse the pipeline with different input
 #     msg = await pipeline(msg=Msg("user", "Hello!", "user"))
 #
+#
+# .. code-block:: python
+#     :caption: Using FanoutPipeline class
+#
+#     from agentscope.pipeline import FanoutPipeline
+#
+#     # Create a pipeline object
+#     pipeline = FanoutPipeline(agents=[alice, bob, charlie, david])
+#
+#     # Call the pipeline
+#     msgs = await pipeline(msg=None)
+#
+#     # Reuse the pipeline with different input
+#     msgs = await pipeline(msg=Msg("user", "Hello!", "user"))
 #
