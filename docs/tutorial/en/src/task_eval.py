@@ -101,7 +101,7 @@ class CheckEqual(MetricBase):
         )
         self.ground_truth = ground_truth
 
-    def __call__(
+    async def __call__(
         self,
         solution: SolutionOutput,
     ) -> MetricResult:
@@ -239,7 +239,7 @@ async def toy_solution_generation(
 
 async def main() -> None:
     evaluator = GeneralEvaluator(
-        name="ACEbench evaluation",
+        name="Toy benchmark evaluation",
         benchmark=ToyBenchmark(),
         # Repeat how many times
         n_repeat=1,

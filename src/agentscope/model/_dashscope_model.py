@@ -176,7 +176,10 @@ class DashScopeChatModel(ChatModelBase):
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
-        if self.enable_thinking and "enable_thinking" not in kwargs:
+        if (
+            self.enable_thinking is not None
+            and "enable_thinking" not in kwargs
+        ):
             kwargs["enable_thinking"] = self.enable_thinking
 
         if structured_model:

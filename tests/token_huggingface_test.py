@@ -24,7 +24,7 @@ class TokenCounterTest(IsolatedAsyncioTestCase):
         """Test the HuggingFace token counter."""
         counter = HuggingFaceTokenCounter(
             pretrained_model_name_or_path="Qwen/Qwen3-8B",
-            use_mirror=True,
+            use_mirror=False,
         )
 
         res = await counter.count(
