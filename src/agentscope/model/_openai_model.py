@@ -108,7 +108,9 @@ class OpenAIChatModel(ChatModelBase):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"] | str | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -293,7 +295,9 @@ class OpenAIChatModel(ChatModelBase):
 
                 choice = chunk.choices[0]
 
-                thinking += getattr(choice.delta, "reasoning_content", None) or ""
+                thinking += (
+                    getattr(choice.delta, "reasoning_content", None) or ""
+                )
                 text += choice.delta.content or ""
 
                 if (
