@@ -19,7 +19,13 @@ from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
-from ..message import ToolUseBlock, TextBlock, ThinkingBlock
+from ..message import (
+    ToolUseBlock,
+    TextBlock,
+    ThinkingBlock,
+    AudioBlock,
+    Base64Source,
+)
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
@@ -252,9 +258,12 @@ class OpenAIChatModel(ChatModelBase):
         usage, res = None, None
         text = ""
         thinking = ""
+        audio = ""
         tool_calls = OrderedDict()
         metadata = None
-        contents: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        contents: List[
+            TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
+        ] = []
 
         async with response as stream:
             async for item in stream:
@@ -287,6 +296,17 @@ class OpenAIChatModel(ChatModelBase):
                 thinking += getattr(choice.delta, "reasoning_content", None) or ""
                 text += choice.delta.content or ""
 
+                if (
+                    hasattr(choice.delta, "audio")
+                    and "data" in choice.delta.audio
+                ):
+                    audio += choice.delta.audio["data"]
+                if (
+                    hasattr(choice.delta, "audio")
+                    and "transcript" in choice.delta.audio
+                ):
+                    text += choice.delta.audio["transcript"]
+
                 for tool_call in choice.delta.tool_calls or []:
                     if tool_call.index in tool_calls:
                         if tool_call.function.arguments is not None:
@@ -309,6 +329,22 @@ class OpenAIChatModel(ChatModelBase):
                         ThinkingBlock(
                             type="thinking",
                             thinking=thinking,
+                        ),
+                    )
+
+                if audio:
+                    media_type = self.generate_kwargs.get("audio", {}).get(
+                        "format",
+                        "wav",
+                    )
+                    contents.append(
+                        AudioBlock(
+                            type="audio",
+                            source=Base64Source(
+                                data=audio,
+                                media_type=f"audio/{media_type}",
+                                type="base64",
+                            ),
                         ),
                     )
 
@@ -371,7 +407,9 @@ class OpenAIChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        content_blocks: List[
+            TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
+        ] = []
         metadata = None
 
         if response.choices:
@@ -394,6 +432,29 @@ class OpenAIChatModel(ChatModelBase):
                         text=response.choices[0].message.content,
                     ),
                 )
+            if choice.message.audio:
+                media_type = self.generate_kwargs.get("audio", {}).get(
+                    "format",
+                    "mp3",
+                )
+                content_blocks.append(
+                    AudioBlock(
+                        type="audio",
+                        source=Base64Source(
+                            data=choice.message.audio.data,
+                            media_type=f"audio/{media_type}",
+                            type="base64",
+                        ),
+                    ),
+                )
+
+                if choice.message.audio.transcript:
+                    content_blocks.append(
+                        TextBlock(
+                            type="text",
+                            text=choice.message.audio.transcript,
+                        ),
+                    )
 
             for tool_call in choice.message.tool_calls or []:
                 content_blocks.append(

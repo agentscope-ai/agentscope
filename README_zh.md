@@ -104,6 +104,7 @@ AgentScope v1.0 新功能概览:
 | ...        |                                        |                                                                               |
 
 ## 📢 新闻
+- **[2025-09]** **Voice agent** 已上线！`ReActAgent` 已原生支持 Qwen-Omni 和 GPT-Audio 系列模型，欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) 和 [roadmap](https://github.com/agentscope-ai/agentscope/issues/773)。
 - **[2025-09]** 一个全新功能强大的 📋**Plan** 模块已经上线 AgentScope！查看[文档](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)了解更多详情。
 - **[2025-09]** **AgentScope Runtime** 现已开源！支持沙盒化工具执行的高效智能体部署，助力打造生产级AI应用。查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-runtime)。
 - **[2025-09]** **AgentScope Studio** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-studio)。
@@ -337,6 +338,7 @@ as_studio
   - [长期记忆](https://doc.agentscope.io/zh_CN/tutorial/task_long_term_memory.html)
   - [智能体](https://doc.agentscope.io/zh_CN/tutorial/task_agent.html)
   - [管道（Pipeline）](https://doc.agentscope.io/zh_CN/tutorial/task_pipeline.html)
+  - [计划](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)
   - [状态/会话管理](https://doc.agentscope.io/zh_CN/tutorial/task_state.html)
   - [智能体钩子函数](https://doc.agentscope.io/zh_CN/tutorial/task_hook.html)
   - [MCP](https://doc.agentscope.io/zh_CN/tutorial/task_mcp.html)
@@ -363,6 +365,7 @@ as_studio
     - [结构化输出](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [长期记忆](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
     - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
+    - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
 
 ## ⚖️ 许可
 

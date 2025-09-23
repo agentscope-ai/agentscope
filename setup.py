@@ -31,6 +31,7 @@ minimal_requires = [
     "python-socketio",
     "shortuuid",
     "tiktoken",
+    "sounddevice",
 ]
 
 extra_requires = [
