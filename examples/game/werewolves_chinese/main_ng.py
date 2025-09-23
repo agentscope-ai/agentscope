@@ -24,7 +24,7 @@ from utils import (
     check_winning,
     majority_vote,
     majority_vote_with_sheriff,
-    get_player_name,
+    # get_player_name,
     names_to_str,
     reorder_speaking_order,
     handle_sheriff_election_tie,
@@ -39,6 +39,13 @@ from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeMultiAgentFormatter, OpenAIMultiAgentFormatter
 from agentscope.model import DashScopeChatModel, OpenAIChatModel
 from agentscope.pipeline import MsgHub, sequential_pipeline, fanout_pipeline
+import numpy as np
+
+candidate_names = ["1号", "2号", "3号", "4号", "5号", "6号", "7号", "8号", "9号", "10号","11号","12号"]
+
+def get_player_name() -> str:
+    """Generate player name."""
+    return candidate_names.pop(np.random.randint(len(candidate_names)))
 
 
 
@@ -678,11 +685,31 @@ async def main() -> None:
                                 await moderator(res)
                                 return False
 
-                            continue
+                            break
 
                         await agent(
                             await moderator(Prompts.to_sheriff_candidate.format(agent.name)),
                         )
+                        
+                    if exploded_agent:
+                        # 自爆了，处理自爆玩家的死亡逻辑
+                        dead_today = [exploded_agent.name]
+                        # 警长竞选阶段还没有警长，所以不需要检查警长死亡
+                        werewolves, villagers, seer, hunter, witch, guard, wolf_king, current_alive, full_werewolves = update_players(
+                            dead_today, werewolves, villagers, seer, hunter, witch, guard, wolf_king, current_alive,
+                            full_werewolves)
+
+                        # 设置第一次自爆打断警长竞选的标志
+                        first_explode_interrupted_election = True
+
+                        # 检查胜利条件
+                        res = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
+                        if res:
+                            await moderator(res)
+                            return False
+
+                        # 直接结束警长竞选，进入黑夜
+                        continue
 
                     # 发言完毕后，投票前统一询问退水
                     for agent in candidates:
