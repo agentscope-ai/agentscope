@@ -25,6 +25,7 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
         self,
         api_key: str,
         model_name: str,
+        dimensions: int = 1024,
         embedding_cache: EmbeddingCacheBase | None = None,
     ) -> None:
         """Initialize the DashScope multimodal embedding model class.
@@ -34,25 +35,30 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
                 The dashscope API key.
             model_name (`str`):
                 The name of the embedding model, e.g. "multimodal-embedding-v1"
+            dimensions (`int`, defaults to 1024):
+                The dimension of the embedding vector, refer to the
+                `official documentation
+                <https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=22517>`_
+                for more details.
             embedding_cache (`EmbeddingCacheBase`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
         """
-        super().__init__(model_name)
+        super().__init__(model_name, dimensions)
 
         self.api_key = api_key
         self.embedding_cache = embedding_cache
 
     async def __call__(
         self,
-        input: list[TextBlock | ImageBlock | VideoBlock],
+        inputs: list[TextBlock | ImageBlock | VideoBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the DashScope multimodal embedding API, which accepts text,
         image, and video data.
 
         Args:
-            input (`list[TextBlock | ImageBlock | VideoBlock]`):
+            inputs (`list[TextBlock | ImageBlock | VideoBlock]`):
                 The input data to be embedded. It can be a list of text,
                 image, and video blocks.
 
@@ -63,7 +69,7 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
         """
         # check data type
         formatted_data = []
-        for _ in input:
+        for _ in inputs:
             if (
                 not isinstance(_, dict)
                 or "type" not in _
@@ -88,11 +94,10 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
                 )
 
             if _["type"] == "text":
-                if "text" not in _:
-                    raise ValueError(
-                        f"Invalid text block: {_}. It should contain a "
-                        f"'text' field.",
-                    )
+                assert "text" in _, (
+                    f"Invalid text block: {_}. It should contain a "
+                    f"'text' field.",
+                )
                 formatted_data.append({"text": _["text"]})
 
             elif _["type"] == "video":
@@ -108,7 +113,7 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
                     formatted_data.append(
                         {
                             "image": f'data:{_["source"]["media_type"]};'
-                                     f'base64,{_["source"]["data"]}'
+                            f'base64,{_["source"]["data"]}',
                         },
                     )
                 elif typ == "url":

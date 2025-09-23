@@ -2,7 +2,9 @@
 """The embedding store base class."""
 from abc import abstractmethod
 from typing import Any
-from xml.dom.minidom import Document
+
+from .. import Document
+from ...types import Embedding
 
 
 class VDBStoreBase:
@@ -14,20 +16,31 @@ class VDBStoreBase:
         """Record the documents into the vector database."""
 
     @abstractmethod
-    async def delete(self, *args, **kwargs) -> None:
+    async def delete(self, *args: Any, **kwargs: Any) -> None:
         """Delete texts from the embedding store."""
 
     @abstractmethod
-    async def retrieve(
+    async def search(
         self,
-        queries: list[str],
+        query_embedding: Embedding,
+        limit: int,
+        score_threshold: float | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve relevant texts for the given queries.
 
         Args:
-            queries (`list[str]`):
-                The list of queries to be queried.
+            query_embedding (`Embedding`):
+                The embedding of the query text.
+            limit (`int`):
+                The number of relevant documents to retrieve.
+            score_threshold (`float | None`, optional):
+                The threshold of the score to filter the results.
             **kwargs (`Any`):
                 Other keyword arguments for the vector database search API.
         """
+
+    @abstractmethod
+    def get_client(self) -> Any:
+        """Get the underlying vector database client, so that developers can
+        access the full functionality of the vector database."""

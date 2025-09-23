@@ -19,6 +19,7 @@ class OllamaTextEmbedding(EmbeddingModelBase):
     def __init__(
         self,
         model_name: str,
+        dimensions: int,
         host: str | None = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         **kwargs: Any,
@@ -28,6 +29,9 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         Args:
             model_name (`str`):
                 The name of the embedding model.
+            dimensions (`int`):
+                The dimension of the embedding vector, the parameter should be
+                provided according to the model used.
             host (`str | None`, defaults to `None`):
                 The host URL for the Ollama API.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
@@ -36,7 +40,7 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         """
         import ollama
 
-        super().__init__(model_name)
+        super().__init__(model_name, dimensions)
 
         self.client = ollama.AsyncClient(host=host, **kwargs)
         self.embedding_cache = embedding_cache

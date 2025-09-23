@@ -19,6 +19,7 @@ class GeminiTextEmbedding(EmbeddingModelBase):
         self,
         api_key: str,
         model_name: str,
+        dimensions: int = 3072,
         embedding_cache: EmbeddingCacheBase | None = None,
         **kwargs: Any,
     ) -> None:
@@ -29,13 +30,18 @@ class GeminiTextEmbedding(EmbeddingModelBase):
                 The Gemini API key.
             model_name (`str`):
                 The name of the embedding model.
+            dimensions (`int`, defaults to 3072):
+                The dimension of the embedding vector, refer to the
+                `official documentation
+                <https://ai.google.dev/gemini-api/docs/embeddings?hl=zh-cn#control-embedding-size>`_
+                for more details.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
         """
         from google import genai
 
-        super().__init__(model_name)
+        super().__init__(model_name, dimensions)
 
         self.client = genai.Client(api_key=api_key, **kwargs)
         self.embedding_cache = embedding_cache

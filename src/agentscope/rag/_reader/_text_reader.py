@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """The text reader that reads text into vector records."""
 import hashlib
+from typing import Literal
 
 from ._reader_base import ReaderBase, Document
+from .._document import DocMetadata
 from ...message import TextBlock
 
 
@@ -13,34 +15,32 @@ class TextReader(ReaderBase):
     def __init__(
         self,
         chunk_size: int = 512,
-        chunk_overlap: int = 0,
+        split_by: Literal["char", "sentence", "paragraph"] = "sentence",
     ) -> None:
         """Initialize the text reader.
 
         Args:
             chunk_size (`int`, default to 512):
                 The size of each chunk, in number of characters.
-            chunk_overlap (`int`, default to 0):
-                The number of overlapping characters between chunks.
+            split_by (`Literal["char", "paragraph"]`, default to \
+            "sentence"):
+                The unit to split the text, can be "char", "sentence", or
+                "paragraph". Note that "sentence" is implemented by "nltk"
+                library, which only supports English text.
         """
         if chunk_size <= 0:
             raise ValueError(
                 f"The chunk_size must be positive, got {chunk_size}",
             )
 
-        if chunk_overlap < 0:
+        if split_by not in ["char", "sentence", "paragraph"]:
             raise ValueError(
-                f"The chunk_overlap must be non-negative, got {chunk_overlap}",
-            )
-
-        if chunk_overlap >= chunk_size:
-            raise ValueError(
-                f"The chunk_overlap must be smaller than chunk_size, got "
-                f"chunk_overlap={chunk_overlap}, chunk_size={chunk_size}",
+                "The split_by must be one of 'char', 'sentence' or "
+                f"'paragraph', got {split_by}",
             )
 
         self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        self.split_by = split_by
 
     async def __call__(
         self,
@@ -54,19 +54,74 @@ class TextReader(ReaderBase):
                 The input text string.
         """
         splits = []
-        for i in range(0, len(text), self.chunk_size):
-            start = max(0, i - self.chunk_overlap)
-            end = min(i + self.chunk_size + self.chunk_overlap, len(text))
-            splits.append(text[start:end])
+        if self.split_by == "char":
+            # Split by character
+            for i in range(0, len(text), self.chunk_size):
+                start = max(0, i)
+                end = min(i + self.chunk_size, len(text))
+                splits.append(text[start:end])
 
-        doc_id = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        elif self.split_by == "sentence":
+            try:
+                import nltk
+
+                nltk.download("punkt")
+                nltk.download("punkt_tab")
+            except ImportError as e:
+                raise ImportError(
+                    "nltk is not installed. Please install it with "
+                    "`pip install nltk`.",
+                ) from e
+
+            splits.extend(nltk.sent_tokenize(text))
+
+        elif self.split_by == "paragraph":
+            paragraphs = text.split("\n")
+            current_para = ""
+            i = 0
+            while i < len(paragraphs):
+                para = paragraphs[i]
+                # If the new paragraph is smaller than chunk size, add it to
+                # the current paragraph
+                if len(current_para + para) <= self.chunk_size:
+                    current_para += "\n" + para
+                    # Deal with the next paragraph
+                    i += 1
+
+                elif current_para:
+                    # If exceeds chunk size, return the current paragraph
+                    splits.append(current_para)
+                    current_para = ""
+                    # Continue to handle this `para`
+                    continue
+
+                else:
+                    # If the current paragraph is empty, it means the new
+                    # paragraph itself exceeds chunk size, we need to
+                    # truncate it
+                    chunks = [
+                        para[j : j + self.chunk_size]
+                        for j in range(0, len(para), self.chunk_size)
+                    ]
+                    splits.extend(chunks)
+                    i += 1
+
+        doc_id = self.get_doc_id(text)
 
         return [
             Document(
-                content=TextBlock(type="text", text=_),
-                doc_id=doc_id,
-                chunk_id=idx,
-                total_chunks=len(splits),
+                id=doc_id,
+                metadata=DocMetadata(
+                    content=TextBlock(type="text", text=_),
+                    doc_id=doc_id,
+                    chunk_id=idx,
+                    total_chunks=len(splits),
+                ),
             )
             for idx, _ in enumerate(splits)
         ]
+
+    def get_doc_id(self, text: str) -> str:
+        """Get the document ID. This function can be used to check if the
+        doc_id already exists in the knowledge base."""
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()

@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 """The knowledge base abstraction for retrieval-augmented generation (RAG)."""
 from abc import abstractmethod
-from dataclasses import dataclass, field
 from typing import Any
 
 from ._reader import Document
-from .._utils._common import _get_timestamp
 from ..embedding import EmbeddingModelBase
-from ..message import VideoBlock, AudioBlock, ImageBlock, TextBlock
 from ._store import VDBStoreBase
-from ..types import Embedding
 
 
 class KnowledgeBase:
@@ -42,16 +38,26 @@ class KnowledgeBase:
     @abstractmethod
     async def retrieve(
         self,
-        queries: list[str],
+        query: str,
+        limit: int = 5,
         **kwargs: Any,
     ) -> list[Document]:
-        """Retrieve relevant documents by the givne"""
+        """Retrieve relevant documents by the given query.
+
+        Args:
+            query (`str`):
+                The query string to retrieve relevant documents.
+            limit (`int`, defaults to 5):
+                The number of relevant documents to retrieve.
+            **kwargs (`Any`):
+                Other keyword arguments for the vector database search API.
+        """
 
     @abstractmethod
     async def add_documents(
         self,
         documents: list[Document],
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Add documents to the knowledge base, which will embed the documents
         and store them in the embedding store.

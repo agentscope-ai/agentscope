@@ -12,6 +12,16 @@ class ReaderBase:
     object."""
 
     @abstractmethod
-    def __call__(self, *args: Any, **kwargs: Any) -> list[Document]:
-        """The function that takes the input files and returns the
+    async def __call__(self, *args: Any, **kwargs: Any) -> list[Document]:
+        """The async call function that takes the input files and returns the
         vector records"""
+
+    @abstractmethod
+    def get_doc_id(self, *args: Any, **kwargs: Any) -> str:
+        """Get a unique document ID for the input data. This method is to
+        expose the document ID generation logic to the developers
+
+        Returns:
+            `str`:
+                A unique document ID for the input data.
+        """

@@ -13,6 +13,7 @@ from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
 from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
 from ..model import ChatModelBase
+from ..rag import KnowledgeBase
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
 
@@ -80,6 +81,7 @@ class ReActAgent(ReActAgentBase):
         ] = "both",
         enable_meta_tool: bool = False,
         parallel_tool_calls: bool = False,
+        knowledge: KnowledgeBase | list[KnowledgeBase] | None = None,
         max_iters: int = 10,
     ) -> None:
         """Initialize the ReAct agent
@@ -121,6 +123,9 @@ class ReActAgent(ReActAgentBase):
             parallel_tool_calls (`bool`, defaults to `False`):
                 When LLM generates multiple tool calls, whether to execute
                 them in parallel.
+            knowledge (`KnowledgeBase | list[KnowledgeBase] | None`, optional):
+                The knowledge object(s) used by the agent to retrieve
+                relevant documents at the beginning of each reply.
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
         """
@@ -173,6 +178,12 @@ class ReActAgent(ReActAgentBase):
             )
 
         self.parallel_tool_calls = parallel_tool_calls
+
+        # The knowledge base(s) used by the agent
+        if isinstance(knowledge, KnowledgeBase):
+            knowledge = [knowledge]
+        self.knowledge: list[KnowledgeBase] = knowledge or []
+
         self.max_iters = max_iters
 
         # Variables to record the intermediate state

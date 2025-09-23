@@ -2,48 +2,52 @@
 """A general implementation of the knowledge class in AgentScope RAG module."""
 from typing import Any
 
-from . import VectorRecord
 from ._reader import Document
-from ..embedding import EmbeddingModelBase
-from ..message import (
-    TextBlock,
-    ImageBlock,
-    AudioBlock,
-    VideoBlock,
-)
-from ._knowledge_base import (
-    KnowledgeBase,
-    VDBStoreBase,
-)
+from ..message import TextBlock
+from ._knowledge_base import KnowledgeBase
 
 
-class Knowledge(KnowledgeBase):
-    """The knowledge base implementation."""
-
-    def __init__(
-        self,
-        embedding_store: VDBStoreBase,
-        embedding_model: EmbeddingModelBase,
-    ) -> None:
-        """Initialize the knowledge base."""
-        super().__init__(embedding_store, embedding_model)
+class SimpleKnowledge(KnowledgeBase):
+    """A simple knowledge base implementation."""
 
     async def retrieve(
-        self, queries: list[str], **kwargs: Any
-    ) -> list[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
-        """Retrieve relevant documents by the given queries."""
+        self,
+        query: str,
+        limit: int = 5,
+        score_threshold: float | None = None,
+        **kwargs: Any,
+    ) -> list[Document]:
+        """Retrieve relevant documents by the given queries.
 
-        queries_embedding = await self.embedding_model(
+        Args:
+            query (`str`):
+                The query string to retrieve relevant documents.
+            limit (`int`, defaults to 5):
+                The number of relevant documents to retrieve.
+            score_threshold: float | None = None,
+                The threshold of the score to filter the results.
+            **kwargs (`Any`):
+                Other keyword arguments for the vector database search API.
+
+        Returns:
+            `list[Document]`:
+                A list of relevant documents.
+        """
+        res_embedding = await self.embedding_model(
             [
                 TextBlock(
                     type="text",
-                    text=_,
-                ) for _ in queries
-            ]
+                    text=query,
+                ),
+            ],
         )
-
-        self.embedding_store.retrieve()
-
+        res = await self.embedding_store.search(
+            res_embedding.embeddings[0],
+            limit=limit,
+            score_threshold=score_threshold,
+            **kwargs,
+        )
+        return res
 
     async def add_documents(
         self,
@@ -56,36 +60,23 @@ class Knowledge(KnowledgeBase):
             documents (`list[Document]`):
                 The list of documents to add.
         """
-
         # Prepare the content to be embedded
         for doc in documents:
-            if doc.content["type"] not in self.embedding_model.supported_modalities:
+            if (
+                doc.metadata.content["type"]
+                not in self.embedding_model.supported_modalities
+            ):
                 raise ValueError(
                     f"The embedding model {self.embedding_model.model_name} "
-                    f"does not support {doc.content['type']} data.",
+                    f"does not support {doc.metadata.content['type']} data.",
                 )
 
         # Get the embeddings
         res_embeddings = await self.embedding_model(
-            [_.content for _ in documents]
+            [_.metadata.content for _ in documents],
         )
 
-        res = await self.embedding_store.add(
-            [
-                VectorRecord(
-                    embedding=embedding,
-                    content=doc.content,
-                    metadata={
-                        "doc_id": doc.doc_id,
-                        "chunk_id": doc.chunk_id,
-                        "total_chunks": doc.total_chunks,
-                    }
-                )
-                for embedding, doc in zip(
-                    res_embeddings.embeddings,
-                    documents,
-                )
-            ]
-        )
+        for doc, embedding in zip(documents, res_embeddings.embeddings):
+            doc.embedding = embedding
 
-        return res
+        await self.embedding_store.add(documents)

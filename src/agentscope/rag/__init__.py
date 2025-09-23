@@ -2,17 +2,26 @@
 """The retrieval-augmented generation (RAG) module in AgentScope."""
 
 from ._document import Document
-from ._knowledge_base import KnowledgeBase
-from ._knowlege import Knowledge
+from ._reader import (
+    ReaderBase,
+    TextReader,
+    PDFReader,
+)
 from ._store import (
     VDBStoreBase,
-    QdrantLocalStore,
+    QdrantStore,
 )
+from ._knowledge_base import KnowledgeBase
+from ._knowlege import SimpleKnowledge
+
 
 __all__ = [
+    "ReaderBase",
+    "TextReader",
+    "PDFReader",
     "Document",
     "VDBStoreBase",
-    "QdrantLocalStore",
+    "QdrantStore",
     "KnowledgeBase",
-    "Knowledge"
+    "SimpleKnowledge",
 ]
