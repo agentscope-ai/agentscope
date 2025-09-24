@@ -599,7 +599,7 @@ class DeepResearchAgent(ReActAgent):
                 follow_up_subtask = {}
 
             #  Step #2: extract the url
-            if follow_up_subtask.get("need_more_information", False):
+            if follow_up_subtask.get("need_more_information", True):
                 expansion_response_msg = Msg(
                     "assistant",
                     follow_up_subtask.get(
