@@ -35,6 +35,4 @@ python main.py
 
 ## Video example
 
-<video src="https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250911/otcfsk/AgentScope+%E9%9B%86%E6%88%90+OpenAPI+MCP+Server%28%E8%87%AA%E7%84%B6%E8%AF%AD%E8%A8%80%E5%88%9B%E5%BB%BA+ECS%29.mp4" controls width="600">
-  https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250911/otcfsk/AgentScope+%E9%9B%86%E6%88%90+OpenAPI+MCP+Server%28%E8%87%AA%E7%84%B6%E8%AF%AD%E8%A8%80%E5%88%9B%E5%BB%BA+ECS%29.mp4
-</video>
+<https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250911/otcfsk/AgentScope+%E9%9B%86%E6%88%90+OpenAPI+MCP+Server%28%E8%87%AA%E7%84%B6%E8%AF%AD%E8%A8%80%E5%88%9B%E5%BB%BA+ECS%29.mp4>
