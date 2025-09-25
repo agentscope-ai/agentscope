@@ -17,7 +17,7 @@ from ..service_response import (
     ServiceResponse,
     ServiceExecStatus,
 )
-from ...models.openai_model import (
+from ...model.openai_model import (
     OpenAIDALLEWrapper,
     OpenAIChatWrapper,
 )

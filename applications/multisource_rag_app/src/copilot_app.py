@@ -100,7 +100,7 @@ def init_model(
             config["api_key"] = f"{os.environ.get('DASHSCOPE_API_KEY')}"
         else:
             # for other
-            logger.warning("Other models may not be supported now.")
+            logger.warning("Other model may not be supported now.")
             continue
     model_manager = ModelManager.get_instance()
     model_manager.register_model_wrapper_class(AsyncDashScopeChatWrapper, True)

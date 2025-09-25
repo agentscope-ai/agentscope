@@ -13,7 +13,7 @@ from utils.logging import logger
 
 from agentscope.agents import AgentBase
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 from agentscope.parsers import MarkdownJsonDictParser
 from .agent_util.distill_message import rule_based_shorten_msg
 from .agent_util.query_rewrite import ContextRewriter

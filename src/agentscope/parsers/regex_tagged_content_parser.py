@@ -7,7 +7,7 @@ from typing import Union, Sequence, Optional, List
 from loguru import logger
 
 from ..exception import TagNotFoundError
-from ..models import ModelResponse
+from ..model import ModelResponse
 from ..parsers import ParserBase
 from ..parsers.parser_base import DictFilterMixin
 

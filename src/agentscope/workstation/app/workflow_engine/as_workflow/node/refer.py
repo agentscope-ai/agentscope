@@ -13,7 +13,7 @@ from ...core.node_caches.workflow_var import WorkflowVariable, DataType
 class ReferNode(Node):
     """
     A node for referring to external applications or workflows through
-    model management. It handles the configuration and execution of models
+    model management. It handles the configuration and execution of model
     based on application reference codes.
     """
 

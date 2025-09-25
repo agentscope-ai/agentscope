@@ -4,7 +4,7 @@ import unittest
 
 from pydantic import BaseModel, Field
 
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import (
     MarkdownJsonDictParser,
     MarkdownJsonObjectParser,

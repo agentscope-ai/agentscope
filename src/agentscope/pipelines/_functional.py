@@ -6,54 +6,42 @@ from typing import (
     Union,
 )
 
+from ..agents._agent_base import AgentBase
 from ..message import Msg
 
 
-def sequential_pipeline(
-    operators: list[
-        Callable[
-            [Union[None, Msg, list[Msg]]],
-            Union[None, Msg, list[Msg]],
-        ]
-    ],
-    x: Optional[Union[Msg, list[Msg]]] = None,
-) -> Union[None, Msg, list[Msg]]:
-    """A syntactic sugar pipeline that executes a sequence of operators
-    sequentially. The output of the previous operator will be passed as the
-    input to the next operator. The final output will be the output of the
-    last operator.
+async def sequential_pipeline(
+        agents: list[AgentBase],
+        msg: Msg | list[Msg] | None = None,
+) -> Msg | list[Msg] | None:
+    """An async syntactic sugar pipeline that executes a sequence of agents
+    sequentially. The output of the previous agent will be passed as the
+    input to the next agent. The final output will be the output of the
+    last agent.
 
     Example:
         .. code-block:: python
 
-            agent1 = DialogAgent(...)
-            agent2 = DialogAgent(...)
-            agent3 = DialogAgent(...)
+            agent1 = ReActAgent(...)
+            agent2 = ReActAgent(...)
+            agent3 = ReActAgent(...)
 
             msg_input = Msg("user", "Hello", "user")
 
-            msg_output = sequential_pipeline(
+            msg_output = await sequential_pipeline(
                 [agent1, agent2, agent3],
                 msg_input
             )
 
     Args:
-        operators (`list[Callable[[Union[None, Msg, list[Msg]]],
-        Union[None, Msg, list[Msg]]]`):
-            A list of operators, which can be agent, pipeline or any callable
-            that takes `Msg` object(s) as input and returns `Msg` object or
-            `None`
-        x (`Optional[Union[Msg, list[Msg]]]`, defaults to `None`):
-            The initial input that will be passed to the first operator.
-
+        agents (`list[AgentBase]`):
+            A list of agents.
+        msg (`Msg | list[Msg] | None`, defaults to `None`):
+            The initial input that will be passed to the first agent.
     Returns:
-        `Union[None, Msg, list[Msg]]`:
-            The output of the last operator in the sequence.
+        `Msg | list[Msg] | None`:
+            The output of the last agent in the sequence.
     """
-    if len(operators) == 0:
-        raise ValueError("No operators provided.")
-
-    msg = operators[0](x)
-    for operator in operators[1:]:
-        msg = operator(msg)
+    for agent in agents:
+        msg = await agent(msg)
     return msg

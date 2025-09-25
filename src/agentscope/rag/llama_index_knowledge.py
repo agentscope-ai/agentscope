@@ -52,7 +52,7 @@ except ImportError:
     BaseNode = None
 
 from agentscope.manager import FileManager, ModelManager
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 from agentscope.constants import (
     DEFAULT_TOP_K,
     DEFAULT_CHUNK_SIZE,
@@ -190,7 +190,7 @@ class LlamaIndexKnowledge(Knowledge):
             to convert data to index, and retrieve information from index.
             For example:
             1) preprocessing documents with data loaders
-            2) generate embedding by configuring pipeline with embedding models
+            2) generate embedding by configuring pipeline with embedding model
             3) store the embedding-content to vector database
                 the default dir is " ~/.cache/agentscope/{knowledge_id}"
 

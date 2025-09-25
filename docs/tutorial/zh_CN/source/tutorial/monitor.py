@@ -56,7 +56,7 @@ print(json.dumps(agentscope.state_dict(), indent=2))
 # `print_llm_usage` 将打印并返回当前运行应用程序的 token 使用情况。
 #
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 qwen_max = DashScopeChatWrapper(
     config_name="-",

@@ -12,7 +12,7 @@ from utils.logging import logger
 
 from agentscope.agents import AgentBase
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 from agentscope.parsers import MarkdownJsonDictParser
 from agentscope.utils.token_utils import count_openai_token
 

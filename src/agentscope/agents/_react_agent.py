@@ -16,22 +16,57 @@ from agentscope.service import (
     ServiceResponse,
     ServiceExecStatus,
 )
+import asyncio
+from typing import Type, Any, AsyncGenerator, Literal
 
-INSTRUCTION_PROMPT = """## What You Should Do:
-1. First, analyze the current situation, and determine your goal.
-2. Then, check if your goal is already achieved. If so, try to generate a response. Otherwise, think about how to achieve it with the help of provided tool functions.
-3. Respond in the required format.
+import shortuuid
+from pydantic import BaseModel, ValidationError
 
-## Note:
-1. Fully understand the tool functions and their arguments before using them.
-2. You should decide if you need to use the tool functions, if not then return an empty list in "function" field.
-3. Make sure the types and values of the arguments you provided to the tool functions are correct.
-4. Don't take things for granted. For example, where you are, what's the time now, etc. You can try to use the tool functions to get information.
-5. If the function execution fails, you should analyze the error and try to solve it.
-"""  # noqa
+from ._react_agent_base import ReActAgentBase
+from ..formatters import FormatterBase
+from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
+from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
+from ..model import ChatModelBase
+from ..plan import PlanNotebook
+from ..tool import Toolkit, ToolResponse
+from ..tracing import trace_reply
 
 
-class ReActAgent(AgentBase):
+def finish_function_pre_print_hook(
+    self: "ReActAgent",
+    kwargs: dict[str, Any],
+) -> dict[str, Any] | None:
+    """A pre-speak hook function that check if finish_function is called. If
+    so, it will wrap the response argument into a message and return it to
+    replace the original message. By this way, the calling of the finish
+    function will be displayed as a text reply instead of a tool call."""
+
+    msg = kwargs["msg"]
+
+    if isinstance(msg.content, str):
+        return None
+
+    if isinstance(msg.content, list):
+        for i, block in enumerate(msg.content):
+            if (
+                block["type"] == "tool_use"
+                and block["name"] == self.finish_function_name
+            ):
+                # Convert the response argument into a text block for
+                # displaying
+                try:
+                    msg.content[i] = TextBlock(
+                        type="text",
+                        text=block["input"].get("response", ""),
+                    )
+                    return kwargs
+                except Exception:
+                    print("Error in block input", block["input"])
+
+    return None
+
+
+class ReActAgent(ReActAgentBase):
     """An agent class that implements the ReAct algorithm. More details refer
     to https://arxiv.org/abs/2210.03629.
 
@@ -49,177 +84,452 @@ class ReActAgent(AgentBase):
     """
 
     def __init__(
-        self,
-        name: str,
-        model_config_name: str,
-        service_toolkit: ServiceToolkit,
-        sys_prompt: str = "You're a helpful assistant named {name}.",
-        max_iters: int = 10,
-        verbose: bool = True,
+            self,
+            name: str,
+            sys_prompt: str,
+            model: ChatModelBase,
+            formatter: FormatterBase,
+            toolkit: Toolkit | None = None,
+            memory: MemoryBase | None = None,
+            long_term_memory: LongTermMemoryBase | None = None,
+            long_term_memory_mode: Literal[
+                "agent_control",
+                "static_control",
+                "both",
+            ] = "both",
+            enable_meta_tool: bool = False,
+            parallel_tool_calls: bool = False,
+            max_iters: int = 10,
+            plan_notebook: PlanNotebook | None = None,
+            print_hint_msg: bool = False,
     ) -> None:
-        """Initialize the ReAct agent with the given name, model config name
-        and tools.
+        """Initialize the ReAct agent
 
         Args:
             name (`str`):
                 The name of the agent.
             sys_prompt (`str`):
                 The system prompt of the agent.
-            model_config_name (`str`):
-                The name of the model config, which is used to load model from
-                configuration.
-            service_toolkit (`ServiceToolkit`):
-                A `ServiceToolkit` object that contains the tool functions.
+            model (`ChatModelBase`):
+                The chat model used by the agent.
+            formatter (`FormatterBase`):
+                The formatter used to format the messages into the required
+                format of the model API provider.
+            toolkit (`Toolkit | None`, optional):
+                A `Toolkit` object that contains the tool functions. If not
+                provided, a default empty `Toolkit` will be created.
+            memory (`MemoryBase | None`, optional):
+                The memory used to store the dialogue history. If not provided,
+                a default `InMemoryMemory` will be created, which stores
+                messages in a list in memory.
+            long_term_memory (`LongTermMemoryBase | None`, optional):
+                The optional long-term memory, which will provide two tool
+                functions: `retrieve_from_memory` and `record_to_memory`, and
+                will attach the retrieved information to the system prompt
+                before each reply.
+            enable_meta_tool (`bool`, defaults to `False`):
+                If `True`, a meta tool function `reset_equipped_tools` will be
+                added to the toolkit, which allows the agent to manage its
+                equipped tools dynamically.
+            long_term_memory_mode (`Literal['agent_control', 'static_control',\
+              'both']`, defaults to `both`):
+                The mode of the long-term memory. If `agent_control`, two
+                tool functions `retrieve_from_memory` and `record_to_memory`
+                will be registered in the toolkit to allow the agent to
+                manage the long-term memory. If `static_control`, retrieving
+                and recording will happen in the beginning and end of
+                each reply respectively.
+            parallel_tool_calls (`bool`, defaults to `False`):
+                When LLM generates multiple tool calls, whether to execute
+                them in parallel.
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
-            verbose (`bool`, defaults to `True`):
-                Whether to print the detailed information during reasoning and
-                acting steps. If `False`, only the content in speak field will
-                be print out.
+            print_hint_msg (`bool`, defaults to `False`):
+                Whether to print the reasoning hint messages before each
+                reasoning step.
         """
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model_config_name=model_config_name,
-        )
+        super().__init__()
 
-        self.service_toolkit = service_toolkit
+        assert long_term_memory_mode in [
+            "agent_control",
+            "static_control",
+            "both",
+        ]
 
-        # Add `finish` function to the toolkit to allow agent to end
-        # the reasoning-acting loop
-        self.service_toolkit.add(self.finish)
-
-        self.verbose = verbose
+        # Static variables in the agent
+        self.name = name
+        self._sys_prompt = sys_prompt
         self.max_iters = max_iters
+        self.model = model
+        self.formatter = formatter
 
-        if not sys_prompt.endswith("\n"):
-            sys_prompt = sys_prompt + "\n"
+        # Record the dialogue history in the memory
+        self.memory = memory or InMemoryMemory()
+        # If provide the long-term memory, it will be used to retrieve info
+        # in the beginning of each reply, and the result will be added to the
+        # system prompt
+        self.long_term_memory = long_term_memory
 
-        self.sys_prompt = "\n".join(
-            [
-                # The brief intro of the role and target
-                sys_prompt.format(name=self.name),
-                # The instruction prompt for tools
-                self.service_toolkit.tools_instruction,
-                # The detailed instruction prompt for the agent
-                INSTRUCTION_PROMPT,
-            ],
+        # The long-term memory mode
+        self._static_control = long_term_memory and long_term_memory_mode in [
+            "static_control",
+            "both",
+        ]
+        self._agent_control = long_term_memory and long_term_memory_mode in [
+            "agent_control",
+            "both",
+        ]
+
+        # If None, a default Toolkit will be created
+        self.toolkit = toolkit or Toolkit()
+        self.toolkit.register_tool_function(
+            getattr(self, self.finish_function_name),
         )
-
-        # Put sys prompt into memory
-        self.memory.add(Msg("system", self.sys_prompt, role="system"))
-
-        # Initialize a parser object to formulate the response from the model
-        self.parser = RegexTaggedContentParser(
-            format_instruction="""Respond with specific tags as outlined below:
-<thought>{what you thought}</thought>
-<function>{the function name you want to call}</function>
-<{argument name}>{argument value}</{argument name}>
-<{argument name}>{argument value}</{argument name}>
-...""",  # noqa
-            try_parse_json=True,
-            required_keys=["thought", "function"],
-        )
-
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
-        """The reply method of the agent."""
-        self.memory.add(x)
-
-        for _ in range(self.max_iters):
-            # Step 1: Reasoning: decide what function to call
-            tool_call = self._reasoning()
-
-            if tool_call is None:
-                # Meet parsing error, skip acting to reason the parsing error,
-                # which has been stored in memory
-                continue
-
-            # Step 2: Acting: execute the function accordingly
-            msg_finish = self._acting(tool_call)
-            if msg_finish:
-                return msg_finish
-
-        # Generate a response when exceeding the maximum iterations
-        return self._summarizing()
-
-    def _reasoning(self) -> Union[ToolUseBlock, None]:
-        """The reasoning process of the agent.
-
-        Returns:
-            `Union[ToolUseBlock, None]`:
-                Return `None` if no tool is used, otherwise return the tool use
-                block.
-        """
-        # Assemble the prompt
-        prompt = self.model.format(
-            self.memory.get_memory(),
-            # Hint LLM how to respond without putting hint message into memory
-            Msg(
-                "system",
-                self.parser.format_instruction,
-                role="system",
-                echo=self.verbose,
-            ),
-        )
-
-        # Get the response from the model and print it out
-        raw_response = self.model(prompt)
-        if self.verbose:
-            self.speak(raw_response.stream or raw_response.text)
-        self.memory.add(Msg(self.name, raw_response.text, role="assistant"))
-
-        # Try to parse the response into tool use block
-        try:
-            res = self.parser.parse(raw_response)
-            # Compose into a tool use block
-            function_name: str = res.parsed["function"]
-            input_ = {
-                k: v
-                for k, v in res.parsed.items()
-                if k not in ["function", "thought"]
-            }
-
-            return ToolUseBlock(
-                type="tool_use",
-                id=uuid(),
-                name=function_name,
-                input=input_,
+        if self._agent_control:
+            # Adding two tool functions into the toolkit to allow self-control
+            self.toolkit.register_tool_function(
+                long_term_memory.record_to_memory,
+            )
+            self.toolkit.register_tool_function(
+                long_term_memory.retrieve_from_memory,
+            )
+        # Add a meta tool function to allow agent-controlled tool management
+        if enable_meta_tool or plan_notebook:
+            self.toolkit.register_tool_function(
+                self.toolkit.reset_equipped_tools,
             )
 
-        except ResponseParsingError as e:
-            # When failed to parse the response, return the error message to
-            # the llm
-            self.memory.add(Msg("system", str(e), "system", echo=self.verbose))
-            return None
+        self.parallel_tool_calls = parallel_tool_calls
+        self.max_iters = max_iters
 
-    def _acting(self, tool_call: ToolUseBlock) -> Union[None, Msg]:
-        """The acting process of the agent, which takes a tool use block as
-        input, execute the function and return a message if the `finish`
-        function is called.
+        self.plan_notebook = None
+        if plan_notebook:
+            self.plan_notebook = plan_notebook
+            self.toolkit.create_tool_group(
+                "plan_related",
+                description=self.plan_notebook.description,
+            )
+            for tool in plan_notebook.list_tools():
+                self.toolkit.register_tool_function(
+                    tool,
+                    group_name="plan_related",
+                )
+
+        self.print_hint_msg = print_hint_msg
+
+        # The hint messages that will be attached to the prompt to guide the
+        # agent's behavior before each reasoning step, and cleared after
+        # each reasoning step, meaning the hint messages is one-time use only.
+        # We use an InMemoryMemory instance to store the hint messages
+        self._reasoning_hint_msgs = InMemoryMemory()
+
+        # Variables to record the intermediate state
+
+        # If required structured output model is provided
+        self._required_structured_model: Type[BaseModel] | None = None
+
+        # Register the status variables
+        self.register_state("name")
+        self.register_state("_sys_prompt")
+
+        self.register_instance_hook(
+            "pre_print",
+            "finish_function_pre_print_hook",
+            finish_function_pre_print_hook,
+        )
+
+    @property
+    def sys_prompt(self) -> str:
+        """The dynamic system prompt of the agent."""
+        return self._sys_prompt
+
+    @trace_reply
+    async def reply(
+            self,
+            msg: Msg | list[Msg] | None = None,
+            structured_model: Type[BaseModel] | None = None,
+    ) -> Msg:
+        """Generate a reply based on the current state and input arguments.
+
+        Args:
+            msg (`Msg | list[Msg] | None`, optional):
+                The input message(s) to the agent.
+            structured_model (`Type[BaseModel] | None`, optional):
+                The required structured output model. If provided, the agent
+                is expected to generate structured output in the `metadata`
+                field of the output message.
+
+        Returns:
+            `Msg`:
+                The output message generated by the agent.
+        """
+        await self.memory.add(msg)
+
+        # Long-term memory retrieval
+        if self._static_control:
+            # Retrieve information from the long-term memory if available
+            retrieved_info = await self.long_term_memory.retrieve(msg)
+            if retrieved_info:
+                await self.memory.add(
+                    Msg(
+                        name="long_term_memory",
+                        content="<long_term_memory>The content below are "
+                                "retrieved from long-term memory, which maybe "
+                                f"useful:\n{retrieved_info}</long_term_memory>",
+                        role="user",
+                    ),
+                )
+
+        self._required_structured_model = structured_model
+        # Record structured output model if provided
+        if structured_model:
+            self.toolkit.set_extended_model(
+                self.finish_function_name,
+                structured_model,
+            )
+
+        # The reasoning-acting loop
+        reply_msg = None
+        for _ in range(self.max_iters):
+            msg_reasoning = await self._reasoning()
+
+            futures = [
+                self._acting(tool_call)
+                for tool_call in msg_reasoning.get_content_blocks(
+                    "tool_use",
+                )
+            ]
+
+            # Parallel tool calls or not
+            if self.parallel_tool_calls:
+                acting_responses = await asyncio.gather(*futures)
+
+            else:
+                # Sequential tool calls
+                acting_responses = [await _ for _ in futures]
+
+            # Find the first non-None replying message from the acting
+            for acting_msg in acting_responses:
+                reply_msg = reply_msg or acting_msg
+
+            if reply_msg:
+                break
+
+        # When the maximum iterations are reached
+        if reply_msg is None:
+            reply_msg = await self._summarizing()
+
+        # Post-process the memory, long-term memory
+        if self._static_control:
+            await self.long_term_memory.record(
+                [
+                    *([*msg] if isinstance(msg, list) else [msg]),
+                    *await self.memory.get_memory(),
+                    reply_msg,
+                ],
+            )
+
+        await self.memory.add(reply_msg)
+        return reply_msg
+
+    async def _reasoning(
+        self,
+    ) -> Msg:
+        """Perform the reasoning process."""
+        if self.plan_notebook:
+            # Insert the reasoning hint from the plan notebook
+            hint_msg = await self.plan_notebook.get_current_hint()
+            if self.print_hint_msg and hint_msg:
+                await self.print(hint_msg)
+            await self._reasoning_hint_msgs.add(hint_msg)
+
+        # Convert Msg objects into the required format of the model API
+        prompt = await self.formatter.format(
+            msgs=[
+                Msg("system", self.sys_prompt, "system"),
+                *await self.memory.get_memory(),
+                # The hint messages to guide the agent's behavior, maybe empty
+                *await self._reasoning_hint_msgs.get_memory(),
+            ],
+        )
+        # Clear the hint messages after use
+        await self._reasoning_hint_msgs.clear()
+
+        res = await self.model(
+            prompt,
+            tools=self.toolkit.get_json_schemas(),
+        )
+
+        # handle output from the model
+        interrupted_by_user = False
+        msg = None
+        try:
+            if self.model.stream:
+                msg = Msg(self.name, [], "assistant")
+                async for content_chunk in res:
+                    msg.content = content_chunk.content
+                    await self.print(msg, False)
+                await self.print(msg, True)
+
+            else:
+                msg = Msg(self.name, list(res.content), "assistant")
+                await self.print(msg, True)
+
+            return msg
+
+        except asyncio.CancelledError as e:
+            interrupted_by_user = True
+            raise e from None
+
+        finally:
+            if msg and not msg.has_content_blocks("tool_use"):
+                # Turn plain text response into a tool call of the finish
+                # function
+                msg.content = [
+                    ToolUseBlock(
+                        id=shortuuid.uuid(),
+                        type="tool_use",
+                        name=self.finish_function_name,
+                        input={"response": msg.get_text_content()},
+                    ),
+                ]
+
+            # None will be ignored by the memory
+            await self.memory.add(msg)
+
+            # Post-process for user interruption
+            if interrupted_by_user and msg:
+                # Fake tool results
+                tool_use_blocks: list = msg.get_content_blocks(
+                    "tool_use",
+                )
+                for tool_call in tool_use_blocks:
+                    msg_res = Msg(
+                        "system",
+                        [
+                            ToolResultBlock(
+                                type="tool_result",
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                output="The tool call has been interrupted "
+                                "by the user.",
+                            ),
+                        ],
+                        "system",
+                    )
+                    await self.memory.add(msg_res)
+                    await self.print(msg_res, True)
+
+
+    async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
+        """Perform the acting process.
 
         Args:
             tool_call (`ToolUseBlock`):
                 The tool use block to be executed.
 
         Returns:
-            `Union[None, Msg]`:
-                Return `None` if the function is not `finish`, otherwise return
-                a message to the user.
+            `Union[Msg, None]`:
+                Return a message to the user if the `finish_function` is
+                called, otherwise return `None`.
         """
-        # The execution message, may be execution output or error information
-        msg_execution = self.service_toolkit.parse_and_call_func(tool_call)
 
-        if self.verbose:
-            self.speak(msg_execution)
-        self.memory.add(msg_execution)
+        tool_res_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call["id"],
+                    name=tool_call["name"],
+                    output=[],
+                ),
+            ],
+            "system",
+        )
+        try:
+            # Execute the tool call
+            tool_res = await self.toolkit.call_tool_function(tool_call)
 
-        if tool_call["name"] == "finish":
-            return Msg(
-                self.name,
-                str(tool_call["input"]["response"]),
-                "assistant",
-            )
-        return None
+            response_msg = None
+            # Async generator handling
+            async for chunk in tool_res:
+                # Turn into a tool result block
+                tool_res_msg.content[0][  # type: ignore[index]
+                    "output"
+                ] = chunk.content
+
+                # Skip the printing of the finish function call
+                if (
+                    tool_call["name"] != self.finish_function_name
+                    or tool_call["name"] == self.finish_function_name
+                    and (
+                        chunk.metadata is None
+                        or not chunk.metadata.get("success")
+                    )
+                ):
+                    await self.print(tool_res_msg, chunk.is_last)
+
+                # Return message if generate_response is called successfully
+                if (
+                    tool_call["name"] == self.finish_function_name
+                    and chunk.metadata
+                    and chunk.metadata.get(
+                        "success",
+                        True,
+                    )
+                ):
+                    response_msg = chunk.metadata.get("response_msg")
+
+            return response_msg
+
+        finally:
+            # Record the tool result message in the memory
+            await self.memory.add(tool_res_msg)
+
+    async def observe(self, msg: Msg | list[Msg] | None) -> None:
+        """Receive observing message(s) without generating a reply.
+
+        Args:
+            msg (`Msg | list[Msg] | None`):
+                The message or messages to be observed.
+        """
+        await self.memory.add(msg)
+
+    async def _summarizing(self) -> Msg:
+        """Generate a response when the agent fails to solve the problem in
+        the maximum iterations."""
+        hint_msg = Msg(
+            "user",
+            "You have failed to generate response within the maximum "
+            "iterations. Now respond directly by summarizing the current "
+            "situation.",
+            role="user",
+        )
+
+        # Generate a reply by summarizing the current situation
+        prompt = await self.formatter.format(
+            [
+                Msg("system", self.sys_prompt, "system"),
+                *await self.memory.get_memory(),
+                hint_msg,
+            ],
+        )
+        # TODO: handle the structured output here, maybe force calling the
+        #  finish_function here
+        res = await self.model(prompt)
+
+        res_msg = Msg(self.name, [], "assistant")
+        if isinstance(res, AsyncGenerator):
+            async for chunk in res:
+                res_msg.content = chunk.content
+                await self.print(res_msg, False)
+            await self.print(res_msg, True)
+
+        else:
+            res_msg.content = res.content
+            await self.print(res_msg, True)
+
+        return res_msg
 
     def _summarizing(self) -> Msg:
         """Generate a response when the agent fails to solve the problem in

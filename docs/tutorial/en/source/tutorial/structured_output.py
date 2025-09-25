@@ -63,7 +63,7 @@ def generate_response(
 # Considering that some complex constraints cannot be expressed using Python's
 # type annotations, AgentScope supports defining complex constraints using
 # Pydantic's `BaseModel`
-# Taking the following two models as an example:
+# Taking the following two model as an example:
 
 
 class Model1(BaseModel):
@@ -174,7 +174,7 @@ print(
 # Defining the Parser
 # -------------------
 
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import MarkdownJsonDictParser
 
 
@@ -196,7 +196,7 @@ print(parser.format_instruction)
 # -------------------
 # When receiving output from LLM, use `parse` method to extract the
 # structured data.
-# It takes an object of `agentscope.models.ModelResponse` as input, parses
+# It takes an object of `agentscope.model.ModelResponse` as input, parses
 # the value of the `text` field, and returns a parsed dictionary in the
 # `parsed` field.
 
@@ -355,7 +355,7 @@ print("To message metadata: ", parser.to_metadata(parsed_response.parsed))
 #
 # .. tip:: By changing different parsers, the agent can adapt to different scenarios and generate structured output in various formats.
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 from agentscope.agents import AgentBase
 from agentscope.message import Msg
 

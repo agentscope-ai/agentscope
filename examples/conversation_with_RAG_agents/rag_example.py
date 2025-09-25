@@ -50,7 +50,7 @@ def main() -> None:
     # prepare html for api agent
     prepare_docstring_html()
 
-    # prepare models
+    # prepare model
     model_configs = [
         {
             "model_type": "dashscope_text_embedding",

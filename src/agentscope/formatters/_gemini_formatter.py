@@ -7,7 +7,7 @@ from ..message import Msg
 
 
 class GeminiFormatter(FormatterBase):
-    """The formatter for Gemini models."""
+    """The formatter for Gemini model."""
 
     supported_model_regexes: list[str] = [
         "gemini-.*",

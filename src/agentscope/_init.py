@@ -12,7 +12,7 @@ from .constants import _DEFAULT_SAVE_DIR
 from .constants import _DEFAULT_LOG_LEVEL
 from .constants import _DEFAULT_CACHE_DIR
 from .manager import ASManager, ModelManager
-from .models import ModelWrapperBase
+from .model import ModelWrapperBase
 
 # init the singleton class by default settings to avoid reinit in subprocess
 # especially in spawn mode, which will copy the object from the parent process

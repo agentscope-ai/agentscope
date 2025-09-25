@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import agentscope
 from agentscope.manager import ModelManager, ASManager
 from agentscope.message import Msg
-from agentscope.models import (
+from agentscope.model import (
     ModelResponse,
     ModelWrapperBase,
     YiChatWrapper,

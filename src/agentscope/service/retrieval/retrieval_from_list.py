@@ -5,7 +5,7 @@ from loguru import logger
 
 from agentscope.service.service_response import ServiceResponse
 from agentscope.service.service_status import ServiceExecStatus
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 
 def retrieve_from_list(

@@ -9,7 +9,7 @@ from typing import List, Tuple, Sequence
 from loguru import logger
 
 from agentscope.message import Msg
-from agentscope.models import (
+from agentscope.model import (
     ModelWrapperBase,
     DashScopeChatWrapper,
 )

@@ -4,8 +4,10 @@ from typing import Optional, Union, Sequence, Any
 
 from loguru import logger
 
+from ..manager import ModelManager
+from ..memory import TemporaryMemory
 from ..message import Msg
-from ._agent import AgentBase
+from ._agent_base import AgentBase
 
 
 class DialogAgent(AgentBase):
@@ -34,19 +36,21 @@ class DialogAgent(AgentBase):
             use_memory (`bool`, defaults to `True`):
                 Whether the agent has memory.
         """
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model_config_name=model_config_name,
-            use_memory=use_memory,
-        )
-
+        super().__init__()
+        self.name = name
+        self.sys_prompt = sys_prompt
+        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        self.model = model_manager.get_model_by_config_name(model_config_name)
+        if use_memory:
+            self.memory = TemporaryMemory()
+        else:
+            self.memory = None
         if kwargs:
             logger.warning(
                 f"Unused keyword arguments are provided: {kwargs}",
             )
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
         """Reply function of the agent. Processes the input data,
         generates a prompt using the current dialogue memory and system
         prompt, and invokes the language model to produce a response. The
@@ -83,7 +87,7 @@ class DialogAgent(AgentBase):
 
         # Print/speak the message in this agent's voice
         # Support both streaming and non-streaming responses by "or"
-        self.speak(response.stream or response.text)
+        await self.print(response.stream or response.text)
 
         msg = Msg(self.name, response.text, role="assistant")
 

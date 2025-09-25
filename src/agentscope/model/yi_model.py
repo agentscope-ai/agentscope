@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for Yi models"""
+"""Model wrapper for Yi model"""
 import json
 from typing import (
     List,

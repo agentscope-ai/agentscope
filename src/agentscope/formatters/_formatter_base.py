@@ -116,7 +116,7 @@ class FormatterBase(ABC):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """A common format strategy for chat models, which will format the
+        """A common format strategy for chat model, which will format the
         input messages into a system message (if provided) and a user message.
 
         Note this strategy maybe not suitable for all scenarios,

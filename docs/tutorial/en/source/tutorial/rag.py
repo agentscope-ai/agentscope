@@ -162,8 +162,8 @@ print(f"\nThe retrieved content:\n{nodes[0].content}")
 # -----------------------------------------------------------
 #
 # For those who are interested in setting up a local embedding service, we provide the following example based on the
-# `sentence_transformers` package, which is a popular specialized package for embedding models (based on the `transformer` package and compatible with both HuggingFace and ModelScope models).
-# In this example, we will use one of the SOTA embedding models, `gte-Qwen2-7B-instruct`.
+# `sentence_transformers` package, which is a popular specialized package for embedding model (based on the `transformer` package and compatible with both HuggingFace and ModelScope model).
+# In this example, we will use one of the SOTA embedding model, `gte-Qwen2-7B-instruct`.
 #
 # * Step 1: Follow the instruction on `HuggingFace <https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct>`_ or `ModelScope <https://www.modelscope.cn/models/iic/gte_Qwen2-7B-instruct >"_ to download the embedding model.
 #   (For those who cannot access HuggingFace directly, you may want to use a HuggingFace mirror by running a bash command
@@ -255,7 +255,7 @@ print(f"\nThe retrieved content:\n{nodes[0].content}")
 #
 # .. code-block:: python
 #
-#     from agentscope.models.post_model import PostAPIEmbeddingWrapper
+#     from agentscope.model.post_model import PostAPIEmbeddingWrapper
 #
 #
 #     model = PostAPIEmbeddingWrapper(

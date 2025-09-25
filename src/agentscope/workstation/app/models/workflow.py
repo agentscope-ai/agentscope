@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The workflow related models"""
+"""The workflow related model"""
 from datetime import datetime
 from typing import Optional, List
 

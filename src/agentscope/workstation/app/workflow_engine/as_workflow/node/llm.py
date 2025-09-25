@@ -4,7 +4,7 @@
 import time
 from typing import Dict, Any
 from collections.abc import Generator
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 from .node import Node
 from .utils import NodeType

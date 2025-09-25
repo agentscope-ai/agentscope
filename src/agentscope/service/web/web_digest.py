@@ -9,7 +9,7 @@ from loguru import logger
 
 from agentscope.service.service_response import ServiceResponse
 from agentscope.service.service_status import ServiceExecStatus
-from agentscope.models.model import ModelWrapperBase
+from agentscope.model.model import ModelWrapperBase
 from agentscope.service import summarization
 
 

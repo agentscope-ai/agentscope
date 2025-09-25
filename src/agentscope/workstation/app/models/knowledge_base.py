@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The knowledge related models"""
+"""The knowledge related model"""
 from enum import Enum
 import uuid
 import datetime

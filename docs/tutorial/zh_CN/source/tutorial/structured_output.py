@@ -179,7 +179,7 @@ print(
 #
 # `MarkdownJsonDictParser` 要求输入的文本将结构化数据包裹在 Markdown 的代码快中，以`\`\`\``作为开头和结尾，并从中解析出对应的字典数据。
 
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import MarkdownJsonDictParser
 
 
@@ -198,7 +198,7 @@ print(parser.format_instruction)
 # 解析输出
 # -------------------
 # 当从 LLM 接收到输出时，使用 `parse` 方法来提取结构化数据。
-# 它接收一个 `agentscope.models.ModelResponse` 对象作为输入，解析 `text` 字段的值，并在 `parsed` 字段中返回解析后的字典。
+# 它接收一个 `agentscope.model.ModelResponse` 对象作为输入，解析 `text` 字段的值，并在 `parsed` 字段中返回解析后的字典。
 
 dummy_response = ModelResponse(
     text="""```json
@@ -347,7 +347,7 @@ print("存储到消息 metadata 字段: ", parser.to_metadata(parsed_response.pa
 # .. tip:: 通过更改不同的解析器，智能体可以适应不同的场景，并以各种格式生成结构化输出。
 #
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 from agentscope.agents import AgentBase
 
 

@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 import agentscope
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import MultiTaggedContentParser, TaggedContent
 from agentscope.service import (
     bing_search,

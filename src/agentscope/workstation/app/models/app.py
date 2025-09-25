@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The App models"""
+"""The App model"""
 from datetime import datetime
 from enum import Enum, unique
 from typing import Optional

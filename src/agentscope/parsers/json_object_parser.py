@@ -14,7 +14,7 @@ from ..exception import (
     JsonTypeError,
     RequiredFieldNotFoundError,
 )
-from ..models import ModelResponse
+from ..model import ModelResponse
 from ..parsers import ParserBase
 from ..parsers.parser_base import DictFilterMixin
 from ..utils.common import _join_str_with_comma_and

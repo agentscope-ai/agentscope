@@ -249,7 +249,7 @@ print(f"\nThe retrieved content:\n{nodes[0].content}")
 #
 # .. code-block:: python
 #
-#     from agentscope.models.post_model import PostAPIEmbeddingWrapper
+#     from agentscope.model.post_model import PostAPIEmbeddingWrapper
 #
 #
 #     model = PostAPIEmbeddingWrapper(

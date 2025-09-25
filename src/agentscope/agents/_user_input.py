@@ -1,34 +1,42 @@
 # -*- coding: utf-8 -*-
 """The user input module."""
+import json.decoder
 import time
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from dataclasses import dataclass
 from queue import Queue
 from threading import Event
-from typing import Optional, Any
+from typing import Any, Type, List
 
-import json5
 import jsonschema
 import requests
 import shortuuid
 import socketio
-from loguru import logger
 from pydantic import BaseModel
+import json5
 
-from ..message import ContentBlock, TextBlock
+from .. import _config
+from .._logging import logger
+from ..message import (
+    TextBlock,
+    VideoBlock,
+    AudioBlock,
+    ImageBlock,
+)
 
 
 class UserInputData(BaseModel):
     """The user input data."""
 
-    blocks_input: Optional[list[ContentBlock]] = None
-    """The text input from the user."""
+    blocks_input: List[TextBlock | ImageBlock | AudioBlock | VideoBlock] = None
+    """The text input from the user"""
 
-    structured_input: Optional[dict[str, Any]] = None
-    """The structured input from the user."""
+    structured_input: dict[str, Any] | None = None
+    """The structured input from the user"""
 
 
-class UserInputBase(ABC):
-    """The base class for user input."""
+class UserInputBase:
+    """The base class used to handle the user input from different sources."""
 
     @abstractmethod
     def __call__(
@@ -36,27 +44,109 @@ class UserInputBase(ABC):
         agent_id: str,
         agent_name: str,
         *args: Any,
-        structured_schema: Optional[BaseModel] = None,
+        structured_model: Type[BaseModel] | None = None,
         **kwargs: dict,
     ) -> UserInputData:
-        """The input method.
+        """The user input method, which returns the user input and the
+        required structured data.
 
         Args:
             agent_id (`str`):
-                The identity of the agent.
+                The agent identifier.
             agent_name (`str`):
-                The name of the agent.
-            structured_schema (`Optional[BaseModel]`, defaults to `None`):
-                The base model class of the structured input.
+                The agent name.
+            structured_model (`Type[BaseModel] | None`, optional):
+                A base model class that defines the structured input format.
 
         Returns:
             `UserInputData`:
                 The user input data.
         """
 
+class TerminalUserInput(UserInputBase):
+    """The terminal user input."""
+
+    def __init__(self, input_hint: str = "User Input: ") -> None:
+        """Initialize the terminal user input with a hint."""
+        self.input_hint = input_hint
+
+    async def __call__(
+        self,
+        agent_id: str,
+        agent_name: str,
+        *args: Any,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> UserInputData:
+        """Handle the user input from the terminal.
+
+        Args:
+            agent_id (`str`):
+                The agent identifier.
+            agent_name (`str`):
+                The agent name.
+            structured_model (`Type[BaseModel] | None`, optional):
+                A base model class that defines the structured input format.
+
+        Returns:
+            `UserInputData`:
+                The user input data.
+        """
+
+        text_input = input(self.input_hint)
+
+        structured_input = None
+        if structured_model is not None:
+            structured_input = {}
+
+            json_schema = structured_model.model_json_schema()
+            required = json_schema.get("required", [])
+            print("Structured input (press Enter to skip for optional):)")
+
+            for key, item in json_schema.get("properties").items():
+                requirements = {**item}
+                requirements.pop("title")
+
+                while True:
+                    res = input(f"\t{key} ({requirements}): ")
+
+                    if res == "":
+                        if key in required:
+                            print(f"Key {key} is required.")
+                            continue
+
+                        res = item.get("default", None)
+
+                    if item.get("type").lower() == "integer":
+                        try:
+                            res = json5.loads(res)
+                        except json.decoder.JSONDecodeError as e:
+                            print(
+                                "\033[31mInvalid input with error:\n"
+                                "```\n"
+                                f"{e}\n"
+                                "```\033[0m",
+                            )
+                            continue
+
+                    try:
+                        jsonschema.validate(res, item)
+                        structured_input[key] = res
+                        break
+                    except jsonschema.ValidationError as e:
+                        print(
+                            f"\033[31mValidation error:\n```\n{e}\n```\033[0m",
+                        )
+                        time.sleep(0.5)
+
+        return UserInputData(
+            blocks_input=[TextBlock(type="text", text=text_input)],
+            structured_input=structured_input,
+        )
+
 
 class StudioUserInput(UserInputBase):
-    """The agentscope studio user input."""
+    """The class that host the user input on the AgentScope Studio."""
 
     _websocket_namespace: str = "/python"
 
@@ -100,15 +190,23 @@ class StudioUserInput(UserInputBase):
         def on_connect() -> None:
             self._is_connected = True
             logger.info(
-                f"Connected to AgentScope Studio at {self.studio_url} with "
-                f"run_id {run_id}",
+                'Connected to AgentScope Studio with project name "%s" and '
+                'run name "%s".',
+                self.studio_url,
+                run_id,
+            )
+            logger.info(
+                "View the run at: %s/dashboard/projects/%s",
+                self.studio_url,
+                _config.project,
             )
 
         @self.sio.on("disconnect", namespace=self._websocket_namespace)
         def on_disconnect() -> None:
             self._is_connected = False
             logger.info(
-                f"Disconnected from AgentScope Studio at {self.studio_url}",
+                "Disconnected from AgentScope Studio at %s",
+                self.studio_url,
             )
 
         @self.sio.on("reconnect", namespace=self._websocket_namespace)
@@ -116,31 +214,37 @@ class StudioUserInput(UserInputBase):
             self._is_connected = True
             self._is_reconnecting = False
             logger.info(
-                f"Reconnected to AgentScope Studio at {self.studio_url} "
-                f"with run_id {self.run_id} after {attempt_number} attempts",
+                "Reconnected to AgentScope Studio at %s with run_id %s after "
+                "%d attempts",
+                self.studio_url,
+                self.run_id,
+                attempt_number,
             )
 
         @self.sio.on("reconnect_attempt", namespace=self._websocket_namespace)
         def on_reconnect_attempt(attempt_number: int) -> None:
             self._is_reconnecting = True
             logger.info(
-                f"Attempting to reconnect to AgentScope Studio at "
-                f"{self.studio_url} (attempt {attempt_number})",
+                "Attempting to reconnect to AgentScope Studio at %s "
+                "(attempt %d)",
+                self.studio_url,
+                attempt_number,
             )
 
         @self.sio.on("reconnect_failed", namespace=self._websocket_namespace)
         def on_reconnect_failed() -> None:
             self._is_reconnecting = False
             logger.error(
-                f"Failed to reconnect to AgentScope "
-                f"Studio at {self.studio_url}",
+                "Failed to reconnect to AgentScope Studio at %s",
+                self.studio_url,
             )
 
         @self.sio.on("reconnect_error", namespace=self._websocket_namespace)
         def on_reconnect_error(error: Any) -> None:
             logger.error(
-                "Error while reconnecting to AgentScope Studio at "
-                f"{self.studio_url}: {str(error)}",
+                "Error while reconnecting to AgentScope Studio at %s: %s",
+                self.studio_url,
+                str(error),
             )
 
         # The AgentScope Studio backend send the "sendUserInput" event to
@@ -148,7 +252,9 @@ class StudioUserInput(UserInputBase):
         @self.sio.on("forwardUserInput", namespace=self._websocket_namespace)
         def receive_user_input(
             request_id: str,
-            blocks_input: list[ContentBlock],
+            blocks_input: List[
+                TextBlock | ImageBlock | AudioBlock | VideoBlock
+                ],
             structured_input: dict[str, Any],
         ) -> None:
             if request_id in self.input_queues:
@@ -199,14 +305,14 @@ class StudioUserInput(UserInputBase):
                 elapsed_time = time.time() - start_time
                 if elapsed_time > timeout:
                     raise RuntimeError(
-                        "Reconnection timeout after "
-                        f"{elapsed_time:.1f} seconds",
+                        f"Reconnection timeout after {elapsed_time} seconds",
                     )
 
                 # Log status
                 logger.info(
-                    "Waiting for reconnection... "
-                    f"({elapsed_time:.1f}s / {timeout}s)",
+                    "Waiting for reconnection... (%.1fs / %.1fs)",
+                    elapsed_time,
+                    timeout,
                 )
 
                 # Wait for next check
@@ -226,7 +332,7 @@ class StudioUserInput(UserInputBase):
         agent_id: str,
         agent_name: str,
         *args: Any,
-        structured_schema: Optional[BaseModel] = None,
+        structured_model: Type[BaseModel] | None = None,
     ) -> UserInputData:
         """Get the user input from AgentScope Studio.
 
@@ -235,7 +341,7 @@ class StudioUserInput(UserInputBase):
                 The identity of the agent.
             agent_name (`str`):
                 The name of the agent.
-            structured_schema (`Optional[BaseModel]`, defaults to `None`):
+            structured_model (`Type[BaseModel] | None`, optional):
                 The base model class of the structured input.
 
         Raises:
@@ -253,6 +359,11 @@ class StudioUserInput(UserInputBase):
         self.input_queues[request_id] = Queue()
         self.input_events[request_id] = Event()
 
+        if structured_model is None:
+            structured_input = None
+        else:
+            structured_input = structured_model.model_json_schema()
+
         n_retry = 0
         while True:
             try:
@@ -263,7 +374,7 @@ class StudioUserInput(UserInputBase):
                         "runId": self.run_id,
                         "agentId": agent_id,
                         "agentName": agent_name,
-                        "structuredInput": structured_schema,
+                        "structuredInput": structured_input,
                     },
                 )
                 response.raise_for_status()
@@ -292,62 +403,8 @@ class StudioUserInput(UserInputBase):
             self.sio.disconnect()
         except Exception as e:
             logger.error(
-                f"Failed to disconnect from AgentScope Studio at "
-                f"{self.studio_url}: {str(e)}",
+                "Failed to disconnect from AgentScope Studio at %s: %s",
+                self.studio_url,
+                str(e),
             )
 
-
-class TerminalUserInput(UserInputBase):
-    """The terminal user input."""
-
-    def __init__(self, input_prefix: str = "User Input: ") -> None:
-        """The terminal user input."""
-        self.input_prefix = input_prefix
-
-    def __call__(  # type: ignore[override]
-        self,
-        agent_id: str,
-        agent_name: str,
-        *args: Any,
-        structured_schema: Optional[BaseModel] = None,
-    ) -> UserInputData:
-        """The input method for terminal."""
-
-        text_input = input(self.input_prefix)
-
-        structured_input = None
-        if structured_schema is not None:
-            structured_input = {}
-
-            json_schema = structured_schema.model_json_schema()
-            required = json_schema.get("required", [])
-            print("Structured input (press Enter to skip for optional):)")
-
-            for key, item in json_schema.get("properties").items():
-                requirements = {**item}
-                requirements.pop("title")
-
-                while True:
-                    res = input(f"\t{key} ({requirements}):")
-
-                    if res == "":
-                        if key in required:
-                            print(f"Key {key} is required.")
-                            continue
-
-                        res = item.get("default", None)
-
-                    if item.get("type").lower() == "integer":
-                        res = json5.loads(res)
-
-                    try:
-                        jsonschema.validate(res, item)
-                        structured_input[key] = res
-                        break
-                    except jsonschema.ValidationError as e:
-                        logger.error(f"Validation error: {e}")
-
-        return UserInputData(
-            blocks_input=[TextBlock(type="text", text=text_input)],
-            structured_input=structured_input,
-        )

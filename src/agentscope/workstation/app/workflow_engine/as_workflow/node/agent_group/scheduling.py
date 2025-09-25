@@ -8,7 +8,7 @@ from typing import Optional, Pattern, Union, Sequence
 
 import networkx as nx
 from agentscope.message import Msg
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 from ._prompt import (
     agent_sys_prompt_without_context_en,

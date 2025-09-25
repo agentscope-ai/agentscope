@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The provider related models"""
+"""The provider related model"""
 from datetime import datetime
 from typing import Optional
 

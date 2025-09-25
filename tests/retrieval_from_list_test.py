@@ -8,7 +8,7 @@ from agentscope.service import retrieve_from_list, cos_sim
 from agentscope.service.service_status import ServiceExecStatus
 from agentscope.message import Msg
 from agentscope.memory.temporary_memory import TemporaryMemory
-from agentscope.models import OpenAIEmbeddingWrapper, ModelResponse
+from agentscope.model import OpenAIEmbeddingWrapper, ModelResponse
 
 
 class TestRetrieval(unittest.TestCase):

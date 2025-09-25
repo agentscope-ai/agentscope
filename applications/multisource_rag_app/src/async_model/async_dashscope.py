@@ -7,7 +7,7 @@ from typing import Optional, Any
 from http import HTTPStatus
 import asyncio
 from dashscope.aigc.generation import AioGeneration
-from agentscope.models import DashScopeChatWrapper, ModelResponse
+from agentscope.model import DashScopeChatWrapper, ModelResponse
 
 
 class AsyncDashScopeChatWrapper(DashScopeChatWrapper):

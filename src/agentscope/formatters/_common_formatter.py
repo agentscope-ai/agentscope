@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The formatter for common models."""
+"""The formatter for common model."""
 
 from typing import Union
 

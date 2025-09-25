@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The formatter modules for different models."""
+"""The formatter modules for different model."""
 from ._formatter_base import FormatterBase
 from ._common_formatter import CommonFormatter
 from ._anthropic_formatter import AnthropicFormatter

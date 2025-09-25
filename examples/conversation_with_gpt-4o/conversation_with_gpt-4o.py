@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""An example for conversation with OpenAI vision models, especially for
+"""An example for conversation with OpenAI vision model, especially for
 GPT-4o."""
 import agentscope
 from agentscope.agents import UserAgent, DialogAgent

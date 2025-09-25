@@ -10,7 +10,7 @@ import shutil
 
 import agentscope
 from agentscope.manager import ASManager
-from agentscope.models import OpenAIEmbeddingWrapper, ModelResponse
+from agentscope.model import OpenAIEmbeddingWrapper, ModelResponse
 from agentscope.rag import Knowledge
 
 

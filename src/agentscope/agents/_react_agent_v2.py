@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 from ._agent import AgentBase
 from ..manager import ModelManager
 from ..message import Msg, ToolUseBlock, TextBlock, ContentBlock
-from ..models import (
+from ..model import (
     OpenAIChatWrapper,
     DashScopeChatWrapper,
     AnthropicChatWrapper,

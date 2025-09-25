@@ -70,7 +70,7 @@ There are two ways to use the model APIs in AgentScope. You can choose the one t
 """
 import os
 
-from agentscope.models import (
+from agentscope.model import (
     DashScopeChatWrapper,
     ModelWrapperBase,
     ModelResponse,
@@ -113,10 +113,10 @@ agentscope.init(
 # %%
 # Initializing Model Explicitly
 # --------------------------------
-# The available model APIs are modularized in the `agentscope.models` module.
+# The available model APIs are modularized in the `agentscope.model` module.
 # You can initialize a model explicitly by calling the corresponding model class.
 
-# print the modules under agentscope.models
+# print the modules under agentscope.model
 for module_name in agentscope.models.__all__:
     if module_name.endswith("Wrapper"):
         print(module_name)
@@ -138,7 +138,7 @@ response = model(
 )
 
 # %%
-# The `response` is an object of `agentscope.models.ModelResponse`, which contains the following fields:
+# The `response` is an object of `agentscope.model.ModelResponse`, which contains the following fields:
 #
 # - text: The generated text
 # - embedding: The generated embeddings
@@ -212,7 +212,7 @@ vllm_model_config = {
 # %%
 # Or, directly initialize the OpenAI Chat model wrapper with the parameters:
 
-from agentscope.models import OpenAIChatWrapper
+from agentscope.model import OpenAIChatWrapper
 
 model = OpenAIChatWrapper(
     config_name="",
@@ -246,7 +246,7 @@ model = OpenAIChatWrapper(
 #
 # The corresponding model wrapper initialization is as follows:
 
-from agentscope.models import PostAPIChatWrapper
+from agentscope.model import PostAPIChatWrapper
 
 post_api_model = PostAPIChatWrapper(
     config_name="",

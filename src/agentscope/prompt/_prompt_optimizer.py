@@ -4,7 +4,7 @@ from typing import Union, List
 
 from agentscope.manager import ModelManager
 from agentscope.message import Msg
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 _DEFAULT_META_PROMPT_TEMPLATE = """
 You are an excellent Prompt Engineer. Your task is to optimize an Agent's system prompt by adding notes.

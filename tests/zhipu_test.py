@@ -17,7 +17,7 @@ class TestZhipuAIChatWrapper(unittest.TestCase):
             {"role": "assistant", "content": "How can I assist you?"},
         ]
 
-    @patch("agentscope.models.zhipu_model.zhipuai")
+    @patch("agentscope.model.zhipu_model.zhipuai")
     def test_chat(self, mock_zhipuai: MagicMock) -> None:
         """
         Test chat"""
@@ -74,7 +74,7 @@ class TestZhipuAIEmbeddingWrapper(unittest.TestCase):
         self.model_name = "embedding-2"
         self.text_to_embed = "This is a test sentence for embedding."
 
-    @patch("agentscope.models.zhipu_model.zhipuai")
+    @patch("agentscope.model.zhipu_model.zhipuai")
     def test_embedding(self, mock_zhipuai: MagicMock) -> None:
         """Test embedding API"""
         mock_embedding_response = MagicMock()

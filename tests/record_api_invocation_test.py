@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 import agentscope
 from agentscope.manager import FileManager
 from agentscope.manager import ASManager
-from agentscope.models import OpenAIChatWrapper
+from agentscope.model import OpenAIChatWrapper
 
 
 class RecordApiInvocation(unittest.TestCase):

@@ -4,7 +4,7 @@ Service for text processing
 """
 from loguru import logger
 
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 from agentscope.service.service_status import ServiceExecStatus
 from agentscope.service.service_response import ServiceResponse
 from agentscope.message import Msg
@@ -67,7 +67,7 @@ def summarization(
             },
         ]
 
-    Messages will be processed by model.format() before feeding to models.
+    Messages will be processed by model.format() before feeding to model.
     """
     if max_return_token > 0:
         system_prompt += token_limit_prompt.format(max_return_token)

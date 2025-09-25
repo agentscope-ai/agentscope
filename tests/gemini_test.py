@@ -83,7 +83,7 @@ class GeminiModelWrapperTest(unittest.TestCase):
             model_configs={
                 "config_name": "my_gemini_embedding",
                 "model_type": "gemini_embedding",
-                "model_name": "models/embedding-001",
+                "model_name": "model/embedding-001",
                 "api_key": "xxx",
             },
             disable_saving=True,

@@ -13,7 +13,7 @@ from app.services.provider_service import ProviderService
 from app.utils.crypto import decrypt_with_rsa
 from loguru import logger
 
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 from ..constant import DO_NOT_INDENT_SIGN  # , DEV_MODE
 
@@ -342,7 +342,7 @@ def get_model_instance(
         api_key = os.getenv("DASHSCOPE_API_KEY")
 
     if "model_id" in model_config and "qwen" in model_config["model_id"]:
-        from agentscope.models import DashScopeChatWrapper
+        from agentscope.model import DashScopeChatWrapper
 
         params = {}
         for param in model_config["params"]:
@@ -357,7 +357,7 @@ def get_model_instance(
             generate_args=params,
         )
     elif "app_id" in model_config:
-        from agentscope.models import DashScopeApplicationWrapper
+        from agentscope.model import DashScopeApplicationWrapper
 
         return DashScopeApplicationWrapper(
             config_name="_",

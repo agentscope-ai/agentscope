@@ -38,7 +38,7 @@ class ModelDAO(BaseDAO[ModelEntity]):
         provider: str,
         workspace_id: Optional[str] = None,
     ) -> List[ModelEntity]:
-        """Get all models for a given provider (and optionally workspace_id)"""
+        """Get all model for a given provider (and optionally workspace_id)"""
         statement = select(self._model_class).where(
             self._model_class.provider == provider,
         )
@@ -50,7 +50,7 @@ class ModelDAO(BaseDAO[ModelEntity]):
         return result.all()
 
     def get_by_workspace(self, workspace_id: str) -> List[ModelEntity]:
-        """Get all models for a given workspace_id"""
+        """Get all model for a given workspace_id"""
         statement = select(self._model_class).where(
             self._model_class.workspace_id == workspace_id,
         )
@@ -62,7 +62,7 @@ class ModelDAO(BaseDAO[ModelEntity]):
         model_type: str,
         workspace_id: Optional[str] = None,
     ) -> List[ModelEntity]:
-        """Get all models by type (and optionally workspace_id)"""
+        """Get all model by type (and optionally workspace_id)"""
         statement = select(self._model_class).where(
             self._model_class.type == model_type,
         )
