@@ -5,8 +5,9 @@ from typing import Union, Optional, Tuple, Type, Any
 
 from pydantic import BaseModel, ValidationError
 
-from ._agent import AgentBase
+from ._agent_base import AgentBase
 from ..manager import ModelManager
+from ..memory import TemporaryMemory
 from ..message import Msg, ToolUseBlock, TextBlock, ContentBlock
 from ..model import (
     OpenAIChatWrapper,
@@ -63,7 +64,9 @@ class ReActAgentV2(AgentBase):
                 generated. If `True`, the agent is allowed to generate a
                 response without calling the `generate_response` function.
         """
-        super().__init__(name=name)
+        super().__init__()
+        self.name = name
+        self.memory = TemporaryMemory()
 
         self.sys_prompt: str = sys_prompt.format(name=self.name)
 
@@ -103,7 +106,7 @@ class ReActAgentV2(AgentBase):
             self._clear_structured_output_hook,
         )
 
-    def reply(
+    async def reply(
         self,
         x: Optional[Union[Msg, list[Msg]]] = None,
         structured_model: Optional[Type[BaseModel]] = None,
@@ -161,14 +164,14 @@ class ReActAgentV2(AgentBase):
             self.memory.add(msg_reasoning)
 
             # Acting based on the tool calls
-            msg_response = self._acting(tool_calls)
+            msg_response = await self._acting(tool_calls)
             if msg_response:
                 return msg_response
 
         # Generate a response when exceeding the maximum iterations
         return self._summarizing()
 
-    def _reasoning(
+    async def _reasoning(
         self,
         force_call_finish_func: bool = False,
     ) -> Tuple[Union[list[ToolUseBlock], None], Msg]:
@@ -206,10 +209,13 @@ class ReActAgentV2(AgentBase):
         )
 
         if self.verbose:
-            self.speak(
-                raw_response.stream or raw_response.text,
-                tool_calls=raw_response.tool_calls,
-            )
+            verbose_content_blocks = []
+            if raw_response.text:
+                verbose_content_blocks.append(TextBlock(type="text", text=raw_response.text))
+            if raw_response.tool_calls:
+                verbose_content_blocks.extend(raw_response.tool_calls)
+            verbose_msg = Msg(self.name, verbose_content_blocks, role="assistant")
+            await self.print(verbose_msg)
 
         # Prepare the content for the msg
         content: list[ContentBlock] = []
@@ -226,7 +232,7 @@ class ReActAgentV2(AgentBase):
 
         return raw_response.tool_calls, msg_reasoning
 
-    def _acting(self, tool_calls: list[ToolUseBlock]) -> Union[None, Msg]:
+    async def _acting(self, tool_calls: list[ToolUseBlock]) -> Union[None, Msg]:
         """The acting process of the agent, which takes a tool use block as
         input, execute the function and return a message if the
         `generate_response`
@@ -251,7 +257,7 @@ class ReActAgentV2(AgentBase):
 
             # Print and remember the execution result
             if self.verbose:
-                self.speak(msg_execution)
+                await self.print(msg_execution)
             self.memory.add(msg_execution)
 
             # When calling finish function, return a message if no structured
@@ -269,7 +275,7 @@ class ReActAgentV2(AgentBase):
                     "assistant",
                     metadata=self._current_structured_output,
                 )
-                self.speak(msg_response)
+                await self.print(msg_response)
 
         return msg_response
 
@@ -281,8 +287,7 @@ class ReActAgentV2(AgentBase):
             "You have failed to generate response within the maximum "
             "iterations. Now respond directly by summarizing the current "
             "situation.",
-            role="user",
-            echo=self.verbose,
+            role="user"
         )
 
         # Generate a reply by summarizing the current situation
@@ -291,7 +296,12 @@ class ReActAgentV2(AgentBase):
             hint_msg,
         )
         res = self.model(prompt)
-        self.speak(res.stream or res.text)
+        verbose_msg = Msg(
+            self.name,
+            [TextBlock(type="text", text=res.text)],  # 确保 content 是内容块列表
+            role="assistant",
+        )
+        self.print(verbose_msg)
         res_msg = Msg(self.name, res.text, "assistant")
         return res_msg
 

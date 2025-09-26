@@ -9,7 +9,10 @@ import json
 from typing import Any, List
 
 from pydantic import BaseModel, Field
-from utils.logging import logger
+
+from agentscope.manager import ModelManager
+from agentscope.memory import TemporaryMemory
+from ..utils.logging import logger
 
 from agentscope.agents import AgentBase
 from agentscope.message import Msg
@@ -53,24 +56,27 @@ class ContextManager(AgentBase):
         memory_context_length: int = 20,
         **kwargs: Any,
     ):
-        context_sys_prompt = (
-            "You are a manager to manage the context of the conversation. "
-            "Your duty is to extract the useful information from a long "
-            "conversation that is relevant to the latest query."
-            "If the latest query contains demonstrative pronoun "
-            "(he/she/it/this/that/these/those) or lacks of clear referee, "
-            "try to figure out in the context of the history."
+        super().__init__()
+        self.name = name
+        self.sys_prompt = (
+            sys_prompt
+            if sys_prompt
+            else "You are a manager to manage the context of the conversation. "
+                 "Your duty is to extract the useful information from a long "
+                 "conversation that is relevant to the latest query."
+                 "If the latest query contains demonstrative pronoun "
+                 "(he/she/it/this/that/these/those) or lacks of clear referee, "
+                 "try to figure out in the context of the history."
         )
-        super().__init__(
-            name=name,
-            sys_prompt=context_sys_prompt,
-            model_config_name=model_config_name,
-            use_memory=True,
-            **kwargs,
-        )
+
+        # 手动初始化 model
+        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        self.model = model_manager.get_model_by_config_name(model_config_name)
+
         self.mem_context_length = memory_context_length
         self.max_memories = 4
         self.max_len_per_memory = 100
+        self.memory = TemporaryMemory()
 
     def reply(self, x: dict = None) -> Msg:
         return asyncio.get_event_loop().run_until_complete(
@@ -124,6 +130,7 @@ class ContextManager(AgentBase):
             f"{self.name}.model has async_call? "
             f"{hasattr(self.model, 'async_call')}",
         )
+        response = None
 
         if hasattr(self.model, "async_call"):
             error_time = 0

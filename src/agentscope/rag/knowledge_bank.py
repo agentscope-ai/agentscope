@@ -244,7 +244,7 @@ class KnowledgeBank:
                 Whether to deepcopy the knowledge object
         TODO: to accommodate with distributed setting
         """
-        logger.info(f"Equipping {agent.name} knowledge {knowledge_id_list}")
+        logger.info(f"Equipping {agent.id} knowledge {knowledge_id_list}")
         knowledge_id_list = knowledge_id_list or []
 
         if not hasattr(agent, "knowledge_list"):

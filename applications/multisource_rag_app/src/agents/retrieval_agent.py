@@ -14,9 +14,9 @@ import time
 from typing import Optional, Any, Union, Dict, List, Sequence, Callable, Tuple
 
 import numpy as np
-from utils.constant import INPUT_MAX_TOKEN
-from utils.logging import logger
-from app_knowledge.search_knowledge import BingKnowledge
+from ..utils.constant import INPUT_MAX_TOKEN
+from ..utils.logging import logger
+from ..app_knowledge.search_knowledge import BingKnowledge
 
 from agentscope.agents import LlamaIndexAgent
 from agentscope.manager import ModelManager
@@ -543,7 +543,8 @@ class RetrievalAgent(LlamaIndexAgent):
                 log_info = ""
                 for info, score in zip(info_dict, scores):
                     log_info += f"-- score:【{score}】\n {info}\n"
-                self.speak(log_info)
+                log_msg = Msg(name="system", content=log_info, role="system")
+                await self.print(log_msg)
 
         # ======  If retrieval agents just need to return chunks =====
         if self.return_raw:
@@ -608,7 +609,7 @@ class RetrievalAgent(LlamaIndexAgent):
 
         # Print/speak the message in this agent's voice
         if self.speak_result:
-            self.speak(msg)
+            await self.print(msg)
 
         if self.memory:
             # Record the message in memory

@@ -87,7 +87,9 @@ class DialogAgent(AgentBase):
 
         # Print/speak the message in this agent's voice
         # Support both streaming and non-streaming responses by "or"
-        await self.print(response.stream or response.text)
+        msg = Msg(name=self.name, content=response.stream or response.text, role="assistant")
+
+        await self.print(msg)
 
         msg = Msg(self.name, response.text, role="assistant")
 
