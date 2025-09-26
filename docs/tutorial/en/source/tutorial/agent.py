@@ -16,7 +16,7 @@ the others.
 from agentscope.agents import AgentBase
 from agentscope.memory import TemporaryMemory
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 import json
 
 
@@ -30,7 +30,7 @@ import json
 # Within the constructor, we initialize the agent with its name, system prompt,
 # memory, and model.
 # In this example, we take `qwen-max` in DashScope Chat API for model serving.
-# You can replace it with other model wrappers under `agentscope.models`.
+# You can replace it with other model wrappers under `agentscope.model`.
 #
 # The `reply` method is the core of the agent, which takes message(s) as input
 # and returns a reply message.
@@ -151,7 +151,7 @@ print(f"The size after deletion: {memory.size()}")
 # %%
 # Model
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# The `agentscope.models` module encapsulates different model API, and
+# The `agentscope.model` module encapsulates different model API, and
 # provides basic prompt engineering strategies for different APIs in their
 # `format` function.
 #

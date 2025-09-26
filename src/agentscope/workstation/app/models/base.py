@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The base models"""
+"""The base model"""
 from typing import Any
 from sqlalchemy import TypeDecorator, Integer
 

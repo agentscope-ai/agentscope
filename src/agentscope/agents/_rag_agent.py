@@ -9,7 +9,9 @@ import json
 from typing import Any, Optional, Union, Sequence
 from loguru import logger
 
-from ..agents._agent import AgentBase
+from ..agents._agent_base import AgentBase
+from ..manager import ModelManager
+from ..memory import TemporaryMemory
 from ..message.msg import Msg
 from ..rag.knowledge import Knowledge
 
@@ -36,6 +38,7 @@ class LlamaIndexAgent(AgentBase):
         similarity_top_k: int = None,
         log_retrieval: bool = True,
         recent_n_mem_for_retrieve: int = 1,
+        use_memory: bool = True,
         **kwargs: Any,
     ) -> None:
         """
@@ -70,11 +73,15 @@ class LlamaIndexAgent(AgentBase):
                 The number of pieces of memory used as part of
                 retrieval query
         """
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model_config_name=model_config_name,
-        )
+        super().__init__()
+        self.name = name
+        self.sys_prompt = sys_prompt
+        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        self.model = model_manager.get_model_by_config_name(model_config_name)
+        if use_memory:
+            self.memory = TemporaryMemory()
+        else:
+            self.memory = None
         self.knowledge_list = knowledge_list or []
         self.knowledge_id_list = knowledge_id_list or []
         self.similarity_top_k = similarity_top_k
@@ -82,7 +89,7 @@ class LlamaIndexAgent(AgentBase):
         self.recent_n_mem_for_retrieve = recent_n_mem_for_retrieve
         self.description = kwargs.get("description", "")
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
         """
         Reply function of the RAG agent.
         Processes the input data,
@@ -141,7 +148,7 @@ class LlamaIndexAgent(AgentBase):
                     )
 
             if self.log_retrieval:
-                self.speak("[retrieved]:" + retrieved_docs_to_string)
+                await self.print(Msg(name="system", role="system", content="[retrieved]:" + retrieved_docs_to_string))
 
             if max(scores) < 0.4:
                 # if the max score is lower than 0.4, then we let LLM
@@ -184,7 +191,7 @@ class LlamaIndexAgent(AgentBase):
         msg = Msg(self.name, response, "assistant")
 
         # Print/speak the message in this agent's voice
-        self.speak(msg)
+        await self.print(msg)
 
         if self.memory:
             # Record the message in memory

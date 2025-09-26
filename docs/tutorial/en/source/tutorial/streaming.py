@@ -51,7 +51,7 @@ the streaming response within an agent.
 #
 # - Specifying in Initialization
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 import os
 
 model = DashScopeChatWrapper(

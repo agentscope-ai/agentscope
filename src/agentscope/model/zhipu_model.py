@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for ZhipuAI models"""
+"""Model wrapper for ZhipuAI model"""
 from abc import ABC
 from typing import Union, Any, List, Optional, Generator
 
@@ -297,7 +297,7 @@ class ZhipuAIChatWrapper(ZhipuAIWrapperBase):
         *args: Union[Msg, list[Msg], None],
         multi_agent_mode: bool = True,
     ) -> List[dict]:
-        """A common format strategy for chat models, which will format the
+        """A common format strategy for chat model, which will format the
         input messages into a user message.
 
         Note this strategy maybe not suitable for all scenarios,

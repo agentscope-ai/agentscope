@@ -10,7 +10,7 @@ from loguru import logger
 from ._model_usage import ChatUsage
 from ..formatters import GeminiFormatter
 from ..message import Msg
-from ..models import ModelWrapperBase, ModelResponse
+from ..model import ModelWrapperBase, ModelResponse
 
 try:
     import google.generativeai as genai
@@ -27,7 +27,7 @@ class GeminiWrapperBase(ModelWrapperBase, ABC):
 
     _generation_method = None
     """The generation method used in `__call__` function, which is used to
-    filter models in `list_models` function."""
+    filter model in `list_models` function."""
 
     def __init__(
         self,
@@ -68,7 +68,7 @@ class GeminiWrapperBase(ModelWrapperBase, ABC):
         self.model_name = model_name
 
     def list_models(self) -> Sequence:
-        """List all available models for this API calling."""
+        """List all available model for this API calling."""
         support_models = list(genai.list_models())
 
         if self.generation_method is None:
@@ -362,7 +362,7 @@ class GeminiChatWrapper(GeminiWrapperBase):
 
 class GeminiEmbeddingWrapper(GeminiWrapperBase):
     """The wrapper for Google Gemini embedding model,
-    e.g. models/embedding-001
+    e.g. model/embedding-001
 
     Response:
         - Refer to https://ai.google.dev/api/embeddings?hl=zh-cn#response-body

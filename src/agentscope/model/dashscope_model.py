@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for DashScope models"""
+"""Model wrapper for DashScope model"""
 import json
 from abc import ABC
 from http import HTTPStatus
@@ -368,7 +368,7 @@ class DashScopeChatWrapper(DashScopeWrapperBase):
         *args: Union[Msg, list[Msg], None],
         multi_agent_mode: bool = True,
     ) -> List[dict]:
-        """A common format strategy for chat models, which will format the
+        """A common format strategy for chat model, which will format the
         input messages into a user message.
 
         Note this strategy maybe not suitable for all scenarios,

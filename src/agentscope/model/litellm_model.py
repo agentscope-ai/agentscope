@@ -66,9 +66,9 @@ class LiteLLMChatWrapper(LiteLLMWrapperBase):
         - Different LLMs requires different environment variables
 
     Example:
-        - For OpenAI models, set "OPENAI_API_KEY"
-        - For models like "claude-2", set "ANTHROPIC_API_KEY"
-        - For Azure OpenAI models, you need to set "AZURE_API_KEY",
+        - For OpenAI model, set "OPENAI_API_KEY"
+        - For model like "claude-2", set "ANTHROPIC_API_KEY"
+        - For Azure OpenAI model, you need to set "AZURE_API_KEY",
         "AZURE_API_BASE" and "AZURE_API_VERSION"
         - Refer to the docs in https://docs.litellm.ai/docs/ .
 
@@ -295,7 +295,7 @@ class LiteLLMChatWrapper(LiteLLMWrapperBase):
         *args: Union[Msg, list[Msg], None],
         multi_agent_mode: bool = True,
     ) -> List[dict]:
-        """A common format strategy for chat models, which will format the
+        """A common format strategy for chat model, which will format the
         input messages into a user message.
 
         Note this strategy maybe not suitable for all scenarios,

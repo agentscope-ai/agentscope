@@ -53,7 +53,7 @@ print(json.dumps(agentscope.state_dict(), indent=2, ensure_ascii=False))
 # ------------------------
 # `print_llm_usage` will print and return the token usage of the current running application.
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 qwen_max = DashScopeChatWrapper(
     config_name="-",

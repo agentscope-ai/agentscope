@@ -23,7 +23,7 @@ from agentscope.environment import (
     Event,
     event_func,
 )
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.manager import ModelManager
 
 

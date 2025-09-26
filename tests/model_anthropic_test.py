@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import agentscope
 from agentscope.manager import ModelManager
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 
 
 class AnthropicModelWrapperTest(unittest.TestCase):

@@ -21,7 +21,7 @@ _Base: DeclarativeMeta = declarative_base()
 
 
 class _ModelTable(_Base):  # mypy: ignore
-    """The table for invocation records of chat and embedding models."""
+    """The table for invocation records of chat and embedding model."""
 
     __tablename__ = _DEFAULT_TABLE_NAME_FOR_CHAT_AND_EMBEDDING
 
@@ -33,7 +33,7 @@ class _ModelTable(_Base):  # mypy: ignore
 
 
 class _ImageModelTable(_Base):
-    """The table for invocation records of image models."""
+    """The table for invocation records of image model."""
 
     __tablename__ = _DEFAULT_TABLE_NAME_FOR_IMAGE
 
@@ -145,7 +145,7 @@ class MonitorManager:
         _Base.metadata.create_all(self.engine)
 
         with self.engine.connect() as connection:
-            # Create view for chat and embedding models
+            # Create view for chat and embedding model
             create_view_sql = text(
                 f"""
                 CREATE VIEW IF NOT EXISTS {self.view_chat_and_embedding} AS
@@ -163,7 +163,7 @@ class MonitorManager:
             )
             connection.execute(create_view_sql)
 
-            # Create new for text-to-image models
+            # Create new for text-to-image model
             create_view_sql = text(
                 f"""
                 CREATE VIEW IF NOT EXISTS {self.view_image} AS
@@ -197,7 +197,7 @@ class MonitorManager:
         resolution: str,
         image_count: int,
     ) -> None:
-        """Update the record of the image models."""
+        """Update the record of the image model."""
         if not self.use_monitor:
             return
 
@@ -255,7 +255,7 @@ class MonitorManager:
         }
 
     def show_image_tokens(self) -> List[dict]:
-        """Show the tokens of all image models."""
+        """Show the tokens of all image model."""
         usage = []
 
         if self.use_monitor:
@@ -286,7 +286,7 @@ class MonitorManager:
         ]
 
     def show_text_and_embedding_tokens(self) -> List[dict]:
-        """Show the tokens of all models."""
+        """Show the tokens of all model."""
         usage = []
 
         if self.use_monitor:

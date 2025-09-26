@@ -14,7 +14,7 @@ AgentScope 中，可以通过继承基类`agentscope.agents.AgentBase`来构建�
 from agentscope.agents import AgentBase
 from agentscope.memory import TemporaryMemory
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 import json
 
 
@@ -25,7 +25,7 @@ import json
 #
 # 在构造函数中，我们初始化智能体的名字、系统提示、记忆模块和模型。
 # 在本例中，我们采用 DashScope Chat API 中的 `qwen-max` 作为模型服务。
-# 当然，你可以将其替换为 `agentscope.models` 下的其它模型。
+# 当然，你可以将其替换为 `agentscope.model` 下的其它模型。
 #
 # `reply`方法是智能体的核心，它接受消息作为输入并返回回复消息。
 # 在该方法中，我们实现了智能体的基本逻辑:
@@ -151,7 +151,7 @@ print(f"删除后的大小: {memory.size()}")
 # %%
 # 模型
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# `agentscope.models` 封装了不同的模型 API，并在其 `format` 函数中为不同的 API 提供了基本的提示词构建策略。
+# `agentscope.model` 封装了不同的模型 API，并在其 `format` 函数中为不同的 API 提供了基本的提示词构建策略。
 #
 # 以 DashScope Chat API 为例:
 #

@@ -32,7 +32,7 @@ If you are interested in using the MoA module elsewhere, you can learn how to us
 You can init the module as follows:
 ```python
     moa_module = MixtureOfAgents(
-        main_model="qwen-max",  # the models you use
+        main_model="qwen-max",  # the model you use
         reference_models=["gpt-4", "qwen-max", "gemini-pro"],
         show_internal=False,  # set to True to see the internal of MoA modules
         rounds=1,  # can range from 0 to inf

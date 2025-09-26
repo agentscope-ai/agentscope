@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from agentscope.manager import FileManager, ModelManager
 from agentscope.message import Msg
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.prompt._prompt_utils import _find_top_k_embeddings
 
 

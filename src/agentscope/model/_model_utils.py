@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Utils for models"""
+"""Utils for model"""
 
 
 def _verify_text_content_in_openai_delta_response(response: dict) -> bool:

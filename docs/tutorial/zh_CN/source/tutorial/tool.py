@@ -26,7 +26,7 @@ import json
 
 import agentscope
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 # %%
 # 内置工具函数

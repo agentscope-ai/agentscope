@@ -4,6 +4,7 @@ Unit tests for agent classes and functions
 """
 
 import unittest
+import uuid
 from typing import Optional, Union
 
 from agentscope.agents import AgentBase
@@ -14,21 +15,17 @@ class TestAgent(AgentBase):
     """An agent for test usage"""
 
     def __init__(
-        self,
-        name: str,
-        sys_prompt: str = None,
-        **kwargs: dict,
+            self,
+            name: str,
+            sys_prompt: str = None,
+            **kwargs: dict,
     ) -> None:
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model_config_name=(
-                kwargs["model_config"] if "model_config" in kwargs else None
-            ),
-            use_memory=(
-                kwargs["use_memory"] if "use_memory" in kwargs else None
-            ),
-        )
+        super().__init__()
+        self.agent_id = str(uuid.uuid4())
+        self.name = name
+        self.sys_prompt = sys_prompt
+        self.model_config_name = kwargs.get("model_config")
+        self.use_memory = kwargs.get("use_memory")
 
     def reply(self, x: Optional[Union[Msg, list[Msg]]] = None) -> Msg:
         return x
@@ -49,30 +46,20 @@ class BasicAgentTest(unittest.TestCase):
             use_memory=False,  # type: ignore[arg-type]
             attribute_1="hello world",  # type: ignore[arg-type]
         )
-        self.assertTupleEqual(
-            a1._init_settings["args"],  # pylint: disable=W0212
-            (
-                "a",
-                "Hi",
-            ),
-        )
-        self.assertDictEqual(
-            a1._init_settings["kwargs"],  # pylint: disable=W0212
-            {"use_memory": False, "attribute_1": "hello world"},
-        )
+        self.assertEqual(a1.name, "a")
+        self.assertEqual(a1.sys_prompt, "Hi")
+        self.assertEqual(a1.use_memory, False)
+        self.assertEqual(a1.model_config_name, None)
+
         a2 = TestAgent(
             "b",
             sys_prompt="Hello",
             attribute_2="Bye",  # type: ignore[arg-type]
         )
-        self.assertTupleEqual(
-            a2._init_settings["args"],  # pylint: disable=W0212
-            ("b",),
-        )
-        self.assertDictEqual(
-            a2._init_settings["kwargs"],  # pylint: disable=W0212
-            {"sys_prompt": "Hello", "attribute_2": "Bye"},
-        )
+        self.assertEqual(a2.name, "b")
+        self.assertEqual(a2.sys_prompt, "Hello")
+        self.assertEqual(a2.use_memory, None)
+        self.assertEqual(a2.model_config_name, None)
         self.assertNotEqual(a1.agent_id, a2.agent_id)
         a3 = TestAgentCopy("c")
         self.assertNotEqual(a3.agent_id, a2.agent_id)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The formatter for Anthropic models."""
+"""The formatter for Anthropic model."""
 from typing import Union
 
 from loguru import logger
@@ -10,7 +10,7 @@ from ..utils.common import _to_anthropic_image_url
 
 
 class AnthropicFormatter(FormatterBase):
-    """The formatter for Anthropic models."""
+    """The formatter for Anthropic model."""
 
     supported_model_regexes: list[str] = [
         "claude-3-5.*",

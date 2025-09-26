@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock, Mock
 from agentscope.service import ServiceResponse
 from agentscope.service import load_web, digest_webpage
 from agentscope.service.service_status import ServiceExecStatus
-from agentscope.models import ModelWrapperBase, ModelResponse
+from agentscope.model import ModelWrapperBase, ModelResponse
 from agentscope.message import Msg
 
 

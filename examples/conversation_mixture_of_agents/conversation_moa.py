@@ -81,7 +81,7 @@ class DialogAgentWithMoA(AgentBase):
 
 
 if __name__ == "__main__":
-    # fill you api keys, or host local models using vllm or ollama.
+    # fill you api keys, or host local model using vllm or ollama.
     model_configs = [
         {
             "config_name": "qwen-max",
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     user_agent = UserAgent()
 
     your_moa_module = MixtureOfAgents(
-        main_model="qwen-max",  # the models you use
+        main_model="qwen-max",  # the model you use
         reference_models=["gpt-4", "qwen-max", "gemini-pro"],
         show_internal=False,  # set to True to see the internal of MoA modules
         rounds=1,  # can range from 0 to inf

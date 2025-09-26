@@ -200,7 +200,7 @@ class PostAPIChatWrapper(PostAPIModelWrapperBase):
     ) -> Union[List[dict]]:
         """Format the input messages into a list of dict according to the model
         name. For example, if the model name is prefixed with "gpt-", the
-        input messages will be formatted for OpenAI models.
+        input messages will be formatted for OpenAI model.
 
         Args:
             args (`Union[Msg, list[Msg], None]`):
@@ -230,8 +230,8 @@ class PostAPIChatWrapper(PostAPIModelWrapperBase):
         if GeminiFormatter.is_supported_model(model_name or ""):
             return GeminiFormatter.format_multi_agent(*args)
 
-        # Include DashScope, ZhipuAI, Ollama, the other models supported by
-        # litellm and unknown models
+        # Include DashScope, ZhipuAI, Ollama, the other model supported by
+        # litellm and unknown model
         else:
             return CommonFormatter.format_multi_agent(*args)
 

@@ -18,7 +18,7 @@ from agentscope.message import (
     ToolUseBlock,
     ToolResultBlock,
 )
-from agentscope.models import (
+from agentscope.model import (
     OpenAIChatWrapper,
     OllamaChatWrapper,
     GeminiChatWrapper,
@@ -147,7 +147,7 @@ class FormatTest(unittest.TestCase):
         mock_isfile: MagicMock,
     ) -> None:
         """Unit test for the format function in openai chat api wrapper with
-        vision models"""
+        vision model"""
         mock_exists.side_effect = lambda url: url == "/Users/xxx/abc.png"
         mock_isfile.side_effect = lambda url: url == "/Users/xxx/abc.png"
 
@@ -254,7 +254,7 @@ class FormatTest(unittest.TestCase):
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test openai chat wrapper with other models."""
+        """Test openai chat wrapper with other model."""
         # Prepare the mock client
         mock_client.return_value = "client_dummy"
 
@@ -286,7 +286,7 @@ class FormatTest(unittest.TestCase):
         self.assertListEqual(prompt, ground_truth)
 
     def test_format_for_common_models(self) -> None:
-        """Unit test for format function for common models."""
+        """Unit test for format function for common model."""
         prompt = CommonFormatter.format_multi_agent(*self.inputs)
         # correct format
         ground_truth = [

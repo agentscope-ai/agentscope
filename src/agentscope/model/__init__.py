@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""" Import modules in models package."""
+""" Import modules in model package."""
 
 from .model import ModelWrapperBase
 from .response import ModelResponse
@@ -40,7 +40,7 @@ from .yi_model import (
 )
 from .anthropic_model import AnthropicChatWrapper
 from ._model_usage import ChatUsage
-
+from ._model_base import ChatModelBase
 
 _BUILD_IN_MODEL_WRAPPERS = [
     "PostAPIChatWrapper",
@@ -87,4 +87,5 @@ __all__ = [
     "LiteLLMChatWrapper",
     "YiChatWrapper",
     "AnthropicChatWrapper",
+    "ChatModelBase",
 ]

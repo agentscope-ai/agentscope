@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for Ollama models."""
+"""Model wrapper for Ollama model."""
 from abc import ABC
 from typing import Sequence, Any, Optional, List, Union, Generator
 
 from ._model_usage import ChatUsage
 from ..formatters import CommonFormatter
 from ..message import Msg
-from ..models import ModelWrapperBase, ModelResponse
+from ..model import ModelWrapperBase, ModelResponse
 
 
 class OllamaWrapperBase(ModelWrapperBase, ABC):

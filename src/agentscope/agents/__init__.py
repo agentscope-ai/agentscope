@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """ Import all agent related modules in the package. """
-from ._agent import AgentBase
+from ._agent_base import AgentBase
 from ._dialog_agent import DialogAgent
 from ._dict_dialog_agent import DictDialogAgent
 from ._user_agent import UserAgent

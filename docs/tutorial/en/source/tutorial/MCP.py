@@ -15,7 +15,7 @@ In this tutorial, we will briefly introduce what MCP is and show how to use MCP 
 # %%
 # What is MCP
 # --------------------------
-# MCP (Model Context Protocol) is an open standard introduced by Anthropic, aimed at standardizing communication between large language models and external data sources and tools, enabling AI models to fully realize their potential.
+# MCP (Model Context Protocol) is an open standard introduced by Anthropic, aimed at standardizing communication between large language model and external data sources and tools, enabling AI model to fully realize their potential.
 # Through MCP, AI applications can securely access and manipulate local and remote data, providing a connection method similar to a "USB-C interface" for AI applications.
 # This standard not only facilitates API development by service providers but also avoids developers rebuilding basic functions, allowing existing MCP services to enhance the capabilities of intelligent agents. For example, MCP servers can provide predefined prompt templates for generating email drafts or optimizing code comments, thereby improving application development efficiency and quality.
 
@@ -27,7 +27,7 @@ In this tutorial, we will briefly introduce what MCP is and show how to use MCP 
 # %%
 # Add MCP Server to `ServiceToolkit`
 # --------------------------
-# AgentScope, as an MCP client, supports starting a local MCP server via STDIO protocol and establishing a connection, as well as using the SSE protocol to connect with a remote MCP server. These usage methods are based on the `ServiceToolkit.add_mcp_servers` interface. The following code demonstrates how to start and connect a server providing browser automation functionality via STDIO locally. This server uses Puppeteer, enabling large models to interact with web pages, take screenshots, and execute JavaScript in a real browser environment. Note that before using the following MCP server, ensure that `Node.js` is installed on your system to ensure the `npx` command runs properly.
+# AgentScope, as an MCP client, supports starting a local MCP server via STDIO protocol and establishing a connection, as well as using the SSE protocol to connect with a remote MCP server. These usage methods are based on the `ServiceToolkit.add_mcp_servers` interface. The following code demonstrates how to start and connect a server providing browser automation functionality via STDIO locally. This server uses Puppeteer, enabling large model to interact with web pages, take screenshots, and execute JavaScript in a real browser environment. Note that before using the following MCP server, ensure that `Node.js` is installed on your system to ensure the `npx` command runs properly.
 
 
 from agentscope.service import ServiceToolkit

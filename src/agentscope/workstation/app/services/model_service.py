@@ -89,7 +89,7 @@ class ModelService(BaseService[ModelDAO]):
         provider: str,
         workspace_id: Optional[str] = None,
     ) -> List[ModelEntity]:
-        """List models for a provider"""
+        """List model for a provider"""
         models = self.dao.get_by_provider(
             provider=provider,
             workspace_id=workspace_id,
@@ -171,7 +171,7 @@ class ModelService(BaseService[ModelDAO]):
         model_type: str,
         workspace_id: Optional[str] = None,
     ) -> List[ModelEntity]:
-        """List models by type"""
+        """List model by type"""
         models = self.dao.get_by_type(
             model_type=model_type,
             workspace_id=workspace_id,

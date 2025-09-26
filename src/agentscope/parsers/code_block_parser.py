@@ -2,7 +2,7 @@
 """Model response parser class for Markdown code block."""
 from typing import Optional
 
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import ParserBase
 
 

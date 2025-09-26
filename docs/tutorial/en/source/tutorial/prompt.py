@@ -203,8 +203,8 @@ from agentscope.formatters import (
 # Vision Models
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# For vision models, AgentScope currently supports OpenAI, DashScope and
-# Anthropic vision models.
+# For vision model, AgentScope currently supports OpenAI, DashScope and
+# Anthropic vision model.
 
 from agentscope.message import TextBlock, ImageBlock
 

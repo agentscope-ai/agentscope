@@ -9,7 +9,7 @@ from typing import Union, Optional, Literal, Sequence
 
 import os
 
-from ...models import (
+from ...model import (
     DashScopeImageSynthesisWrapper,
     DashScopeMultiModalWrapper,
 )

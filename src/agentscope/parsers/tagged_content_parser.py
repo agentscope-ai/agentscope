@@ -4,7 +4,7 @@ import json
 from typing import Union, Sequence, Optional, List
 
 from agentscope.exception import JsonParsingError, TagNotFoundError
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 from agentscope.parsers import ParserBase
 from agentscope.parsers.parser_base import DictFilterMixin
 

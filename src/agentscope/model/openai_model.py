@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Model wrapper for OpenAI models"""
+"""Model wrapper for OpenAI model"""
 import json
 from abc import ABC
 from typing import (

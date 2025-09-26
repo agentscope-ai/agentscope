@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The formatter for OpenAI models."""
+"""The formatter for OpenAI model."""
 import json
 from typing import Union
 
@@ -11,7 +11,7 @@ from ..utils.common import _to_openai_image_url
 
 
 class OpenAIFormatter(FormatterBase):
-    """The formatter for OpenAI models, which is responsible for formatting
+    """The formatter for OpenAI model, which is responsible for formatting
     messages, JSON schemas description of the tool functions."""
 
     supported_model_regexes: list[str] = [
@@ -29,7 +29,7 @@ class OpenAIFormatter(FormatterBase):
         """Format the messages in chat scenario, where only one user and one
         assistant are involved.
 
-        For OpenAI models, the `name` field can be used to distinguish
+        For OpenAI model, the `name` field can be used to distinguish
         different agents (even with the same role as `"assistant"`). So we
         simply reuse the `format_multi_agent` here.
         """
@@ -43,7 +43,7 @@ class OpenAIFormatter(FormatterBase):
         """Format the messages in multi-agent scenario, where multiple agents
         are involved.
 
-        For OpenAI models, the `name` field can be used to distinguish
+        For OpenAI model, the `name` field can be used to distinguish
         different agents (even with the same role as `"assistant"`).
         """
 

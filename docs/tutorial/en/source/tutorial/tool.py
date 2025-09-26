@@ -25,7 +25,7 @@ import json
 
 import agentscope
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 # %%
 # Using Built-in Tools
@@ -230,7 +230,7 @@ print(json.dumps(formatted_msgs, indent=4, ensure_ascii=False))
 # Using MCP with ServiceToolkit
 # -------------------------------
 # AgentScope provides support for integrating MCP (Model Context Protocol)
-# servers, enabling enhanced capabilities for models and tools. You can add
+# servers, enabling enhanced capabilities for model and tools. You can add
 # MCP servers to the `ServiceToolkit` using the `add_mcp_servers` method,
 # where you specify the configurations for each server.
 # Please note that MCP requires Python version >= 3.10.

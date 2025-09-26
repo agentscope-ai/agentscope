@@ -6,7 +6,7 @@ from typing import Union, Sequence
 from loguru import logger
 
 from agentscope.exception import TagNotFoundError
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 
 # TODO: Support one-time warning in logger rather than setting global variable
 _FIRST_TIME_TO_REPORT_CONTENT = True

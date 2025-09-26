@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The MCP related models"""
+"""The MCP related model"""
 from typing import Optional
 
 from sqlalchemy import Text, Column, SmallInteger
