@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime
 from typing import List, Any
 
+from anthropic.types import TextBlock
+
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
@@ -47,15 +49,25 @@ class OllamaTextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str],
+        text: List[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the Ollama embedding API.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
+        gather_text = []
+        for _ in text:
+            if isinstance(_, dict) and "text" in _:
+                gather_text.append(_["text"])
+            elif isinstance(_, str):
+                gather_text.append(_)
+            else:
+                raise ValueError(
+                    "Input text must be a list of strings or TextBlock dicts.",
+                )
 
         if self.embedding_cache:
             cached_embeddings = await self.embedding_cache.retrieve(
@@ -75,7 +87,7 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         response = await asyncio.gather(
             *[
                 self.client.embeddings(self.model_name, _, **kwargs)
-                for _ in text
+                for _ in gather_text
             ],
         )
         time = (datetime.now() - start_time).total_seconds()

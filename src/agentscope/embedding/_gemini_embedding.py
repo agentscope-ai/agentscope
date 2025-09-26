@@ -7,6 +7,7 @@ from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
 from ._embedding_base import EmbeddingModelBase
+from ..message import TextBlock
 
 
 class GeminiTextEmbedding(EmbeddingModelBase):
@@ -48,18 +49,31 @@ class GeminiTextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str],
+        text: List[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """The Gemini embedding API call.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
+
+        # TODO: handle the batch size limit
         """
+        gather_text = []
+        for _ in text:
+            if isinstance(_, dict) and "text" in _:
+                gather_text.append(_["text"])
+            elif isinstance(_, str):
+                gather_text.append(_)
+            else:
+                raise ValueError(
+                    "Input text must be a list of strings or TextBlock dicts.",
+                )
+
         kwargs = {
             "model": self.model_name,
-            "contents": text,
+            "contents": gather_text,
             "config": kwargs,
         }
 

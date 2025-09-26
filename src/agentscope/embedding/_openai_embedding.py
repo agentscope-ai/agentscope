@@ -3,6 +3,8 @@
 from datetime import datetime
 from typing import Any, List
 
+from anthropic.types import TextBlock
+
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
@@ -35,6 +37,8 @@ class OpenAITextEmbedding(EmbeddingModelBase):
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
+
+        # TODO: handle batch size limit and token limit
         """
         import openai
 
@@ -45,18 +49,28 @@ class OpenAITextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str],
+        text: List[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the OpenAI embedding API.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
+        gather_text = []
+        for _ in text:
+            if isinstance(_, dict) and "text" in _:
+                gather_text.append(_["text"])
+            elif isinstance(_, str):
+                gather_text.append(_)
+            else:
+                raise ValueError(
+                    "Input text must be a list of strings or TextBlock dicts.",
+                )
 
         kwargs = {
-            "input": text,
+            "input": gather_text,
             "model": self.model_name,
             "dimensions": self.dimensions,
             "encoding_format": "float",

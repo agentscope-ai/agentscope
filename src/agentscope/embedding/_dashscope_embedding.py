@@ -111,7 +111,7 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
         """Call the DashScope embedding API.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
         gather_text = []
