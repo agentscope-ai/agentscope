@@ -932,9 +932,9 @@ async def main() -> None:
                 msg_guard = await agent(
                     await moderator(
                         Prompts.to_guard_action.format(
-                            agent.name,
-                            last_guarded_player,
-                            names_to_str(current_alive),
+                            agent_name=agent.name,
+                            last_guarded_player=last_guarded_player,
+                            current_alive=names_to_str(current_alive),
                         ),
                     ),
                     structured_model=get_guard_model(current_alive),
@@ -957,9 +957,9 @@ async def main() -> None:
                         await moderator(Prompts.to_guard_empty),
                     )
                 elif guard_choice == last_guarded_player:
-                    # 只给守卫自己发送结果
                     guarded_player = None
                     last_guarded_player = None
+                    # 只给守卫自己发送结果
                     await agent.observe(
                         await moderator(Prompts.to_guard_failed.format(agent_name=last_guarded_player)),
                     )
@@ -1433,7 +1433,7 @@ async def main() -> None:
             elif is_tie:
                 # 平票情况，进入PK环节
                 # await all_players_hub.broadcast(msgs_vote)
-                pk_result = await handle_tie_vote(votes,voted_player, all_players_hub, current_alive)
+                pk_result = await handle_tie_vote(votes, voted_player, all_players_hub, current_alive)
                 
                 if exploded_agent:
                     dead_sheriff = None
