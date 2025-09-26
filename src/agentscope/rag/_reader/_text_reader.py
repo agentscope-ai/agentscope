@@ -5,6 +5,7 @@ from typing import Literal
 
 from ._reader_base import ReaderBase, Document
 from .._document import DocMetadata
+from ..._logging import logger
 from ...message import TextBlock
 
 
@@ -53,6 +54,11 @@ class TextReader(ReaderBase):
             text (`str`):
                 The input text string.
         """
+        logger.info(
+            "Reading text with chunk_size=%d, split_by=%s",
+            self.chunk_size,
+            self.split_by,
+        )
         splits = []
         if self.split_by == "char":
             # Split by character
@@ -105,6 +111,11 @@ class TextReader(ReaderBase):
                         for k in range(0, len(para), self.chunk_size)
                     ]
                     splits.extend(chunks)
+
+        logger.info(
+            "Finished splitting the text into %d chunks.",
+            len(splits),
+        )
 
         doc_id = self.get_doc_id(text)
 

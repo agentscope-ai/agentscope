@@ -32,6 +32,8 @@ class SimpleKnowledge(KnowledgeBase):
         Returns:
             `list[Document]`:
                 A list of relevant documents.
+
+        TODO: handle the case when the query is too long.
         """
         res_embedding = await self.embedding_model(
             [

@@ -40,6 +40,7 @@ class KnowledgeBase:
         self,
         query: str,
         limit: int = 5,
+        score_threshold: float | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve relevant documents by the given query.
@@ -49,6 +50,10 @@ class KnowledgeBase:
                 The query string to retrieve relevant documents.
             limit (`int`, defaults to 5):
                 The number of relevant documents to retrieve.
+            score_threshold (`float | None`, defaults to `None`):
+                The score threshold to filter the retrieved documents. If
+                provided, only documents with a score higher than the
+                threshold will be returned.
             **kwargs (`Any`):
                 Other keyword arguments for the vector database search API.
         """
