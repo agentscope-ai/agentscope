@@ -319,7 +319,7 @@ async def sheriff_election_vote(all_players_hub: MsgHub, all_players: list[ReAct
         return False
 
     # 投票玩家排除候选
-    voting_agents = [agent for agent in all_players if agent.name not in alive_candidates]
+    voting_agents = [agent for agent in all_players if agent.name not in candidate_names]
     
     # 让所有玩家直接投票选举警长
     msgs_election_vote = await fanout_pipeline(
