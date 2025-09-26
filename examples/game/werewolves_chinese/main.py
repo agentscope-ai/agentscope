@@ -658,7 +658,7 @@ async def main() -> None:
                     )
 
             if killed_player:
-                if killed_player == guarded_player and killed_player != poisoned_player and killed_player != healed_player:
+                if killed_player == guarded_player and killed_player != healed_player:
                     killed_player = None
 
             # Hunter's turn - 夜晚只告知中毒状态，不能开枪
