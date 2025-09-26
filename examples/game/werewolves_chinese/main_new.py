@@ -341,36 +341,27 @@ async def create_player(role: str, NAME_TO_ROLE: dict, ch_names: dict, moderator
     """Create a player with the given name and role."""
     name = get_player_name(agent_names)
     NAME_TO_ROLE[name] = role
-    # 添加外部对抗性
-    import random
-    # if random.random() < 0.8:
-    #     agent = ReActAgent(
-    #         name=name,
-    #         sys_prompt=Prompts.system_prompt.format(
-    #             player_name=name,
-    #             guidance=getattr(Prompts, f"notes_{role}"),
-    #         ),
-    #         # model=DashScopeChatModel(
-    #         #     model_name="qwen3-max-preview",
-    #         #     api_key=os.environ["DASHSCOPE_API_KEY"],
-    #         #     enable_thinking=True,
-    #         # ),
-    #         # model=OpenAIChatModel(
-    #         #     model_name="/root/dataDisk/Qwen3-8B",
-    #         #     client_args={"base_url": "http://127.0.0.1:8000/v1"},
-    #         #     api_key="xxx",
-    #         #     stream=False,
-    #         # ),
-    #         model=OpenAIChatModel(
-    #             model_name=llm.model,
-    #             client_args={"base_url": llm.endpoint},
-    #             api_key="xxx",
-    #             stream=False,
-    #         ),
-    #         # formatter=DashScopeMultiAgentFormatter(),
-    #         formatter=OpenAIMultiAgentFormatter(),
-    #     )
-    # else:
+    #VLLM or OPENAI
+    # agent = ReActAgent(
+    #     name=name,
+    #     sys_prompt=Prompts.system_prompt.format(
+    #         player_name=name,
+    #         guidance=getattr(Prompts, f"notes_{role}"),
+    #     ),
+    #     # model=OpenAIChatModel(
+    #     #     model_name="/root/dataDisk/Qwen3-8B",
+    #     #     client_args={"base_url": "http://127.0.0.1:8000/v1"},
+    #     #     api_key="xxx",
+    #     #     stream=False,
+    #     # ),
+    #     model=OpenAIChatModel(
+    #         model_name=llm.model,
+    #         client_args={"base_url": llm.endpoint},
+    #         api_key="xxx",
+    #         stream=False,
+    #     ),
+    #     formatter=OpenAIMultiAgentFormatter(),
+    # )
     agent = ReActAgent(
         name=name,
         sys_prompt=Prompts.system_prompt.format(
