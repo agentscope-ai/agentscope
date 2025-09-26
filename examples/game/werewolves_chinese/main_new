@@ -493,9 +493,9 @@ async def main() -> None:
                 msg_guard = await agent(
                     await moderator(
                         Prompts.to_guard_action.format(
-                            agent.name,
-                            last_guarded_player,
-                            names_to_str(current_alive),
+                            agent_name=agent.name,
+                            last_guarded_player=last_guarded_player,
+                            current_alive=names_to_str(current_alive),
                         ),
                     ),
                     structured_model=get_guard_model(current_alive),
