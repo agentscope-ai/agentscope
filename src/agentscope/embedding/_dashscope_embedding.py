@@ -55,6 +55,7 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
 
         self.api_key = api_key
         self.embedding_cache = embedding_cache
+        self.batch_size_limit = 10
 
     async def _call_api(self, kwargs: dict[str, Any]) -> EmbeddingResponse:
         """Call the DashScope embedding API by the given keyword arguments."""
@@ -125,21 +126,23 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
                     "Input text must be a list of strings or TextBlock dicts.",
                 )
 
-        if len(gather_text) > 10:
+        if len(gather_text) > self.batch_size_limit:
             logger.info(
                 "The input texts (%d) will be embedded with %d API calls due "
-                "to the batch size limit of 10 for DashScope embedding API.",
+                f"to the batch size limit of {self.batch_size_limit} for "
+                f"DashScope embedding API.",
                 len(gather_text),
-                (len(gather_text) + 9) // 10,
+                (len(gather_text) + self.batch_size_limit - 1)
+                // self.batch_size_limit,
             )
 
-        # Handle the batch size limit of 10 for DashScope embedding API
+        # Handle the batch size limit for DashScope embedding API
         collected_embeddings = []
         collected_time = 0.0
         collected_tokens = 0
         collected_source: Literal["cache", "api"] = "cache"
-        for _ in range(0, len(gather_text), 10):
-            batch_texts = gather_text[_ : _ + 10]
+        for _ in range(0, len(gather_text), self.batch_size_limit):
+            batch_texts = gather_text[_ : _ + self.batch_size_limit]
             batch_kwargs = {
                 "input": batch_texts,
                 "model": self.model_name,

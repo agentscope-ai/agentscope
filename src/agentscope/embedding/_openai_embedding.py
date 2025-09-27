@@ -3,12 +3,11 @@
 from datetime import datetime
 from typing import Any, List
 
-from anthropic.types import TextBlock
-
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
 from ._embedding_base import EmbeddingModelBase
+from ..message import TextBlock
 
 
 class OpenAITextEmbedding(EmbeddingModelBase):

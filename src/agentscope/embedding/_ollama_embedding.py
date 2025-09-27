@@ -4,12 +4,11 @@ import asyncio
 from datetime import datetime
 from typing import List, Any
 
-from anthropic.types import TextBlock
-
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
 from ..embedding import EmbeddingModelBase
+from ..message import TextBlock
 
 
 class OllamaTextEmbedding(EmbeddingModelBase):

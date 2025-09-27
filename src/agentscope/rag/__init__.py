@@ -16,7 +16,7 @@ from ._store import (
     QdrantStore,
 )
 from ._knowledge_base import KnowledgeBase
-from ._knowlege import SimpleKnowledge
+from ._simple_knowledge import SimpleKnowledge
 
 
 __all__ = [

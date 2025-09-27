@@ -3,9 +3,9 @@
 import uuid
 from typing import Any, Literal, TYPE_CHECKING
 
-from .. import Document
+from .._reader import Document
+from ._store_base import VDBStoreBase
 from .._document import DocMetadata
-from .._knowledge_base import VDBStoreBase
 from ...types import Embedding
 
 if TYPE_CHECKING:

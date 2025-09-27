@@ -3,7 +3,8 @@
 import hashlib
 from typing import Literal
 
-from .._reader import ReaderBase, TextReader
+from ._reader_base import ReaderBase
+from ._text_reader import TextReader
 from .._document import Document
 
 
