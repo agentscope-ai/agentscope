@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Test the RAG knowledge implementations."""
-import os
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.embedding import DashScopeTextEmbedding
+from agentscope.embedding import (
+    EmbeddingModelBase,
+    EmbeddingResponse,
+)
 from agentscope.message import TextBlock
 from agentscope.rag import (
     SimpleKnowledge,
@@ -13,6 +16,38 @@ from agentscope.rag import (
 )
 
 
+class TestTextEmbedding(EmbeddingModelBase):
+    """A mock text embedding model for testing."""
+
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
+    def __init__(self) -> None:
+        """The constructor for the mock text embedding model."""
+        super().__init__(model_name="mock-model", dimensions=3)
+
+    async def __call__(
+        self,
+        text: list[TextBlock | str],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        """Return a fixed embedding for testing."""
+        embeddings = []
+        for t in text:
+            if isinstance(t, dict):
+                t = t.get("text")
+            if t == "This is an apple":
+                embeddings.append([0.1, 0.2, 0.3])
+            elif t == "This is a banana":
+                embeddings.append([0.9, 0.1, 0.4])
+            elif t == "apple":
+                embeddings.append([0.15, 0.25, 0.35])
+
+        return EmbeddingResponse(
+            embeddings=embeddings,
+        )
+
+
 class RAGKnowledgeTest(IsolatedAsyncioTestCase):
     """Test cases for RAG knowledge implementations."""
 
@@ -20,14 +55,11 @@ class RAGKnowledgeTest(IsolatedAsyncioTestCase):
         """Test the SimpleKnowledge implementation."""
 
         knowledge = SimpleKnowledge(
-            embedding_model=DashScopeTextEmbedding(
-                model_name="text-embedding-v4",
-                api_key=os.environ["DASHSCOPE_API_KEY"],
-            ),
+            embedding_model=TestTextEmbedding(),
             embedding_store=QdrantStore(
                 location=":memory:",
                 collection_name="test",
-                dimensions=1024,
+                dimensions=3,
             ),
         )
 
@@ -63,7 +95,7 @@ class RAGKnowledgeTest(IsolatedAsyncioTestCase):
         res = await knowledge.retrieve(
             query="apple",
             limit=3,
-            score_threshold=0.5,
+            score_threshold=0.7,
         )
 
         self.assertEqual(len(res), 1)
@@ -73,5 +105,5 @@ class RAGKnowledgeTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             res[0].score,
-            0.6267428997503158,
+            0.9974149072579597,
         )
