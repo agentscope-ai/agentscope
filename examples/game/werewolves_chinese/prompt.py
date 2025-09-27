@@ -208,7 +208,7 @@ class Prompts:
 
     to_guard_empty = "[仅守卫可见] 守卫选择空守，今晚不守护任何人。"
 
-    to_guard_failed = "[仅守卫可见] 守卫选择守护{}，但昨晚已经守护过该玩家，今晚不能连续两晚守护同一人。守护失效。"
+    to_guard_failed = "[仅守卫可见] 守卫选择守护{agent_name}，但昨晚已经守护过该玩家，今晚不能连续两晚守护同一人。守护失效。"
 
     to_all_witch_turn = "女巫的回合，女巫请睁眼，决定今晚的行动。"
 
@@ -295,3 +295,4 @@ class Prompts:
     to_self_explode = "{}选择自爆，直接进入黑夜！"
 
     to_self_explode_announcement = "{}自爆了！游戏直接进入黑夜阶段。"
+
