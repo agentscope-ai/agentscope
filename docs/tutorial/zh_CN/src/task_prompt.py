@@ -27,8 +27,8 @@ AgentScope 内置的格式化器如下所列
       - 用户-助手场景
       - 多智能体场景
     * - OpenAI
-      - ``OpenAIFormatter``
-      - ``OpenAIFormatter``
+      - ``OpenAIChatFormatter``
+      - ``OpenAIMultiAgentFormatter``
     * - Anthropic
       - ``AnthropicChatFormatter``
       - ``AnthropicMultiAgentFormatter``

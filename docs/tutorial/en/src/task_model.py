@@ -56,6 +56,18 @@ The supported model APIs and providers include:
 
 .. note:: When using vLLM, you need to configure the appropriate tool calling parameters for different models during deployment, such as ``--enable-auto-tool-choice``, ``--tool-call-parser``, etc. For more details, refer to the `official vLLM documentation <https://docs.vllm.ai/en/latest/features/tool_calling.html>`_.
 
+.. note:: For models that support OpenAI API calling format (including locally deployed models with vLLM), it is recommended to use ``OpenAIChatModel`` and specify the API endpoint through the ``client_args={"base_url": "http://your-api-endpoint"}`` parameter. This recommendation applies to all models that support this API format, except for Ollama, which has its corresponding chat model ``OllamaChatModel`` and formatter ``OllamaChatFormatter``. For example:
+
+    .. code-block:: python
+
+        OpenAIChatModel(client_args={"base_url": "http://localhost:8000/v1"})
+
+.. note:: Model behavior parameters (such as temperature, maximum length, etc.) can be set via the ``generate_kwargs`` parameter. For example:
+
+    .. code-block:: python
+
+        OpenAIChatModel(generate_kwargs={"temperature": 0.3, "max_tokens": 1000})
+
 To provide unified model interfaces, the above model classes has the following common methods:
 
 - The first three arguments of the ``__call__`` method are ``messages`` , ``tools`` and ``tool_choice``, representing the input messages, JSON schema of tool functions, and tool selection mode, respectively.
