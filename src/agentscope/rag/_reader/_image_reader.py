@@ -25,14 +25,18 @@ class ImageReader(ReaderBase):
                 A list of Document objects containing the image data.
         """
         # Read the image data and wrap it into a Document object.
+        if isinstance(image_url, str):
+            image_url = [image_url]
+
         image_blocks: list[ImageBlock] = [
             ImageBlock(
                 type="image",
                 source=URLSource(
                     type="url",
-                    url=image_url,
+                    url=_,
                 ),
-            ),
+            )
+            for _ in image_url
         ]
 
         doc_idx = [self.get_doc_id(_) for _ in image_url]

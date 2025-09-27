@@ -716,7 +716,11 @@ class ReActAgent(ReActAgentBase):
                 )
             if docs:
                 # Rerank by the relevance score
-                sorted(docs, key=lambda doc: doc.score or 0.0, reverse=True)
+                docs = sorted(
+                    docs,
+                    key=lambda doc: doc.score or 0.0,
+                    reverse=True,
+                )
                 # Prepare the retrieved knowledge string
                 retrieved_msg = Msg(
                     name="user",
