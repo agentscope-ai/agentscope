@@ -3,7 +3,6 @@
 # mypy: disable-error-code="list-item"
 """ReAct agent class in agentscope."""
 import asyncio
-import json
 from typing import Type, Any, AsyncGenerator, Literal
 
 import shortuuid
@@ -718,18 +717,23 @@ class ReActAgent(ReActAgentBase):
                 # Rerank by the relevance score
                 sorted(docs, key=lambda doc: doc.score or 0.0, reverse=True)
                 # Prepare the retrieved knowledge string
-                retrieved_knowledge = json.dumps(
-                    [{"text": doc.metadata.content["text"]} for doc in docs],
-                    indent=2,
-                    ensure_ascii=False,
-                )
                 retrieved_msg = Msg(
                     name="user",
-                    content=(
-                        "<retrieved_knowledge>Use the following content "
-                        "from the knowledge base(s) if it's helpful:\n"
-                        f"{retrieved_knowledge}</retrieved_knowledge>"
-                    ),
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text=(
+                                "<retrieved_knowledge>Use the following "
+                                "content from the knowledge base(s) if it's "
+                                "helpful:\n"
+                            ),
+                        ),
+                        *[_.metadata.content for _ in docs],
+                        TextBlock(
+                            type="text",
+                            text="</retrieved_knowledge>",
+                        ),
+                    ],
                     role="user",
                 )
                 if self.print_hint_msg:

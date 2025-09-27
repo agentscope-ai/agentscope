@@ -34,11 +34,12 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
             api_key (`str`):
                 The dashscope API key.
             model_name (`str`):
-                The name of the embedding model, e.g. "multimodal-embedding-v1"
+                The name of the embedding model, e.g. "multimodal-embedding-
+                v1", "tongyi-embedding-vision-plus".
             dimensions (`int`, defaults to 1024):
                 The dimension of the embedding vector, refer to the
                 `official documentation
-                <https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=22517>`_
+                <https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712517>`_
                 for more details.
             embedding_cache (`EmbeddingCacheBase`):
                 The embedding cache class instance, used to cache the

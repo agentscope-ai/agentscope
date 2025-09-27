@@ -9,6 +9,7 @@ from ._reader import (
     ReaderBase,
     TextReader,
     PDFReader,
+    ImageReader,
 )
 from ._store import (
     VDBStoreBase,
@@ -22,6 +23,7 @@ __all__ = [
     "ReaderBase",
     "TextReader",
     "PDFReader",
+    "ImageReader",
     "DocMetadata",
     "Document",
     "VDBStoreBase",

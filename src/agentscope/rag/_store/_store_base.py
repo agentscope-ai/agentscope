@@ -40,7 +40,10 @@ class VDBStoreBase:
                 Other keyword arguments for the vector database search API.
         """
 
-    @abstractmethod
     def get_client(self) -> Any:
         """Get the underlying vector database client, so that developers can
         access the full functionality of the vector database."""
+        raise NotImplementedError(
+            "``get_client`` is not implemented for "
+            f"{self.__class__.__name__}.",
+        )

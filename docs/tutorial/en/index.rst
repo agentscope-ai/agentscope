@@ -43,6 +43,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_agent
    tutorial/task_pipeline
    tutorial/task_plan
+   tutorial/task_rag
    tutorial/task_state
    tutorial/task_hook
    tutorial/task_mcp

@@ -11,10 +11,10 @@ import os
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.formatter import DashScopeChatFormatter
-from agentscope.message import Msg, TextBlock
+from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.rag import SimpleKnowledge, QdrantStore, TextReader
-from agentscope.tool import Toolkit, ToolResponse
+from agentscope.tool import Toolkit
 
 # Create a knowledge base instance
 knowledge = SimpleKnowledge(
@@ -28,60 +28,6 @@ knowledge = SimpleKnowledge(
         model_name="text-embedding-v4",
     ),
 )
-
-
-# An agent-oriented tool function to retrieve knowledge from the knowledge base
-# We expose the `limit` and `score_threshold` parameters to the agent
-# for more flexible control
-async def retrieve_knowledge(
-    query: str,
-    limit: int = 3,
-    score_threshold: float | None = 0.8,
-) -> ToolResponse:
-    """Retrieve relevant documents from the knowledge base, which is relevant
-    to John Doe's profile. Note the `query` parameter is
-    very important for the retrieval quality, and you can try many different
-    queries to get the best results. Adjust the `limit` and `score_threshold`
-    parameters to get more or fewer results.
-
-    Args:
-        query (`str`):
-            The query string, which should be specific and concise. For
-            example, you should provide the specific name instead of
-            "you", "my", "he", "she", etc.
-        limit (`int`, defaults to 3):
-            The number of relevant documents to retrieve.
-        score_threshold (`float`, defaults to 0.8):
-            A threshold in [0, 1] and only the relevance score above this
-            threshold will be returned. Reduce this value to get more results.
-    """
-    # Retrieve relevant documents based on the given query
-    docs = await knowledge.retrieve(
-        query=query,
-        limit=limit,
-        score_threshold=score_threshold,
-    )
-    if len(docs):
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Score: {_.score}, "
-                    f"Content: {_.metadata.content['text']}",
-                )
-                for _ in docs
-            ],
-        )
-    return ToolResponse(
-        content=[
-            TextBlock(
-                type="text",
-                text="No relevant documents found. TRY to reduce the "
-                "`score_threshold` parameter to get "
-                "more results.",
-            ),
-        ],
-    )
 
 
 async def main() -> None:
@@ -109,7 +55,16 @@ async def main() -> None:
 
     # Create a toolkit and register the RAG tool function
     toolkit = Toolkit()
-    toolkit.register_tool_function(retrieve_knowledge)
+    toolkit.register_tool_function(
+        knowledge.retrieve_knowledge,
+        func_description=(  # Provide a clear description for the tool
+            "Retrieve relevant documents from the knowledge base, which is "
+            "relevant to John Doe's profile. Note the `query` parameter is "
+            "very important for the retrieval quality, and you can try many "
+            "different queries to get the best results. Adjust the `limit` "
+            "and `score_threshold` parameters to get more or fewer results."
+        ),
+    )
 
     # Create an agent and a user
     agent = ReActAgent(
