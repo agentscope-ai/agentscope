@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The dashscope multimodal embedding model in agentscope."""
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from ._cache_base import EmbeddingCacheBase
 from ._embedding_response import EmbeddingResponse
@@ -25,7 +25,7 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
         self,
         api_key: str,
         model_name: str,
-        dimensions: int = 1024,
+        dimensions: int | None = None,
         embedding_cache: EmbeddingCacheBase | None = None,
     ) -> None:
         """Initialize the DashScope multimodal embedding model class.
@@ -45,7 +45,45 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
         """
-        super().__init__(model_name, dimensions)
+        path_doc = (
+            "https://bailian.console.aliyun.com/?tab=api#/api/?type=model&"
+            "url=2712517"
+        )
+        self.batch_size_limit = 1
+
+        if model_name.startswith("tongyi-embedding-vision-plus"):
+            self.batch_size_limit = 8
+            if dimensions is None:
+                dimensions = 1152
+            elif dimensions != 1152:
+                raise ValueError(
+                    f"The dimension of model {model_name} must be  1152, "
+                    "refer to the official documentation for more details: "
+                    f"{path_doc}",
+                )
+        if model_name.startswith("tongyi-embedding-vision-flash"):
+            self.batch_size_limit = 8
+            if dimensions is None:
+                dimensions = 768
+            elif dimensions != 768:
+                raise ValueError(
+                    f"The dimension of model {model_name} must be  768, "
+                    "refer to the official documentation for more details: "
+                    f"{path_doc}",
+                )
+        if model_name.startswith("multimodal-embedding-v"):
+            if dimensions is None:
+                dimensions = 1024
+            elif dimensions != 1024:
+                raise ValueError(
+                    f"The dimension of model {model_name} must be  1024, "
+                    "refer to the official documentation for more details: "
+                    f"{path_doc}",
+                )
+        refined_dimensions: int = 1024
+        if dimensions is not None:
+            refined_dimensions = dimensions
+        super().__init__(model_name, refined_dimensions)
 
         self.api_key = api_key
         self.embedding_cache = embedding_cache
@@ -127,12 +165,40 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
                     f"ImageBlock, or VideoBlock.",
                 )
 
-        kwargs = {
-            "model": self.model_name,
-            "input": formatted_data,
-            **kwargs,
-        }
+        # Handle the batch size limit of the DashScope multimodal embedding API
+        collected_embeddings = []
+        collected_time = 0.0
+        collected_tokens = 0
+        collected_source: Literal["cache", "api"] = "cache"
+        for _ in range(0, len(formatted_data), self.batch_size_limit):
+            batch_data = formatted_data[_ : _ + self.batch_size_limit]
+            batch_kwargs = {
+                "input": batch_data,
+                "model": self.model_name,
+                **kwargs,
+            }
+            res = await self._call_api(batch_kwargs)
 
+            collected_embeddings.extend(res.embeddings)
+            collected_time += res.usage.time
+            if res.usage.tokens:
+                collected_tokens += res.usage.tokens
+            if res.source == "api":
+                collected_source = "api"
+
+        return EmbeddingResponse(
+            embeddings=collected_embeddings,
+            usage=EmbeddingUsage(
+                tokens=collected_tokens,
+                time=collected_time,
+            ),
+            source=collected_source,
+        )
+
+    async def _call_api(self, kwargs: dict[str, Any]) -> EmbeddingResponse:
+        """
+        Call the DashScope multimodal embedding API by the given arguments.
+        """
         # Search in cache first
         if self.embedding_cache:
             cached_embeddings = await self.embedding_cache.retrieve(
