@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """The Qdrant local vector store implementation."""
-import uuid
+import json
 from typing import Any, Literal, TYPE_CHECKING
 
 from .._reader import Document
 from ._store_base import VDBStoreBase
 from .._document import DocMetadata
+from ..._utils._common import _map_text_to_uuid
 from ...types import Embedding
 
 if TYPE_CHECKING:
@@ -100,7 +101,16 @@ class QdrantStore(VDBStoreBase):
             collection_name=self.collection_name,
             points=[
                 PointStruct(
-                    id=uuid.uuid4().hex,
+                    id=_map_text_to_uuid(
+                        json.dumps(
+                            {
+                                "doc_id": _.metadata.doc_id,
+                                "chunk_id": _.metadata.chunk_id,
+                                "content": _.metadata.content,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
                     vector=_.embedding,
                     payload=_.metadata,
                 )
