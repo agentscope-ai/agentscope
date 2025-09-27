@@ -99,8 +99,10 @@ AgentScope v1.0 新功能概览:
 | evaluation | 提供分布式和并行评估                             | [Evaluation](https://doc.agentscope.io/zh_CN/tutorial/task_eval.html)         |
 | formatter  | 支持多Agent提示格式化与工具API                    | [Prompt Formatter](https://doc.agentscope.io/zh_CN/tutorial/task_prompt.html) |
 |            | 支持基于截断的格式化策略                           |                                                                               |
-| plan       | 支持任务分解和计划制定                           | [Plan](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)               |
-|            | 支持开发者手动设定计划                          | |
+| plan       | 支持任务分解和计划制定                            | [Plan](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)               |
+|            | 支持开发者手动设定计划                            |                                                                               |
+| RAG        | 支持 agentic RAG                         | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                       |
+|            | 支持多模态 RAG                              |                                                                               |
 | ...        |                                        |                                                                               |
 
 ## 📢 新闻

@@ -99,7 +99,9 @@ Quick overview of important features in **AgentScope 1.0**:
 | formatter  | Support multi-agent prompt formatting with tools API                               | [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html) |
 |            | Support truncation-based formatter strategy                                        |                                                                         |
 | plan       | Support ReAct-based long-term planning                                             | [Plan](https://doc.agentscope.io/tutorial/task_plan.html)               |
-|            | Support manual plan specification                                                 |                                                                         |
+|            | Support manual plan specification                                                  |                                                                         |
+| RAG        | Support agentic RAG                                                                | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                 |
+|            | Support multimodal RAG                                                             |                                                                         |
 | ...        |                                                                                    |                                                                         |
 
 ## 📢 News

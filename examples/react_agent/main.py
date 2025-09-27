@@ -27,7 +27,7 @@ async def main() -> None:
         sys_prompt="You are a helpful assistant named Friday.",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen-vl-max",
+            model_name="qwen-max",
             enable_thinking=False,
             stream=True,
         ),

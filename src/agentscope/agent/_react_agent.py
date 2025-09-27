@@ -692,13 +692,14 @@ class ReActAgent(ReActAgentBase):
                             ),
                         ],
                     )
+                    stream_tmp = self.model.stream
                     self.model.stream = False
                     res = await self.model(
                         rewrite_prompt,
                         structured_model=_QueryRewriteModel,
                     )
-                    self.model.stream = True
-                    if res.metadata and res.metadata["rewritten_query"]:
+                    self.model.stream = stream_tmp
+                    if res.metadata and res.metadata.get("rewritten_query"):
                         query = res.metadata["rewritten_query"]
 
                 except Exception as e:
