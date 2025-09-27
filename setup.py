@@ -44,6 +44,9 @@ extra_requires = [
     "mem0ai",
     "packaging",
     "pypdf",
+    # RAG
+    "nltk",
+    "qdrant-client",
 ]
 
 dev_requires = [
