@@ -686,7 +686,7 @@ class ReActAgent(ReActAgentBase):
                                 "concise for knowledge retrieval. For "
                                 "example, rewrite the query 'what happened "
                                 "last day' to 'what happened on 2023-10-01' "
-                                "(assuming today is 2023-10-02). Only "
+                                "(assuming today is 2023-10-02)."
                                 "</system-hint>",
                                 "user",
                             ),

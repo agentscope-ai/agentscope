@@ -17,7 +17,7 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
     .. note:: From the `official documentation
     <https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2712515>`_:
 
-     - The max batch size that ``dashscope.embeddings.TextEmbedding.call`` API
+     - The max batch size that DashScope text embedding API
      supports is 10 for `text-embedding-v4` and `text-embedding-v3` models, and
      25 for `text-embedding-v2` and `text-embedding-v1` models.
      - The max token limit for a single input is 8192 tokens for `v4` and `v3`

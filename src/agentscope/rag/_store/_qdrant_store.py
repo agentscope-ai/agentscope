@@ -157,9 +157,9 @@ class QdrantStore(VDBStoreBase):
         return collected_res
 
     async def delete(self, *args: Any, **kwargs: Any) -> None:
-        """Delete is not implemented for QdrantLocalStore."""
+        """Delete is not implemented for QdrantStore."""
         raise NotImplementedError(
-            "Delete is not implemented for QdrantLocalStore.",
+            "Delete is not implemented for QdrantStore.",
         )
 
     def get_client(self) -> AsyncQdrantClient:
