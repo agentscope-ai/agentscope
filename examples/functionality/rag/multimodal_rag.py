@@ -23,12 +23,12 @@ plt.close()
 
 
 async def example_multimodal_rag() -> None:
-    """使用多模态 RAG 的示例。"""
-    # 使用 ImageReader 读取图片
+    """Example for multimodal RAG"""
+    # Reading the image and converting it to documents
     reader = ImageReader()
     docs = await reader(image_url=path_image)
 
-    # 创建一个知识库
+    # Create a knowledge base and add documents
     knowledge = SimpleKnowledge(
         embedding_model=DashScopeMultiModalEmbedding(
             api_key=os.environ["DASHSCOPE_API_KEY"],
@@ -58,13 +58,13 @@ async def example_multimodal_rag() -> None:
     await agent(
         Msg(
             "user",
-            "你知道我的名字吗？",
+            "Do you know my name?",
             "user",
         ),
     )
 
-    # 让我们看看检索到的图片数据是否已经加入了智能体的记忆中
-    print("\n查看智能体记忆中检索信息如何插入：")
+    # Let's see if the agent has stored the retrieved document in its memory
+    print("\nThe retrieved document stored in the agent's memory:")
     content = (await agent.memory.get_memory())[-4].content
     print(json.dumps(content, indent=2, ensure_ascii=False))
 
