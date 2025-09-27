@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The text reader that reads text into vector records."""
 import hashlib
+import os
 from typing import Literal
 
 from ._reader_base import ReaderBase, Document
@@ -52,8 +53,18 @@ class TextReader(ReaderBase):
 
         Args:
             text (`str`):
-                The input text string.
+                The input text string, or a path to the local text file.
+
+        Returns:
+            `list[Document]`:
+                A list of Document objects, where the metadata contains the
+                chunked text, doc id and chunk id.
         """
+        if os.path.exists(text) and os.path.isfile(text):
+            logger.info("Reading text from local file: %s", text)
+            with open(text, "r", encoding="utf-8") as file:
+                text = file.read()
+
         logger.info(
             "Reading text with chunk_size=%d, split_by=%s",
             self.chunk_size,
