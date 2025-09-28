@@ -351,6 +351,12 @@ as_studio
 - API
   - [API Docs](https://doc.agentscope.io/api/agentscope.html)
 - [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
+  - Agent
+    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
+    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
+    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
+    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
+    - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
   - Game
     - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - Workflow
@@ -360,14 +366,12 @@ as_studio
   - Evaluation
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
   - Functional
-    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
     - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
     - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
     - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)
     - [Long-Term Memory](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
     - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
-    - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
 
 ## ⚖️ License
 
