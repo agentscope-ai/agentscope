@@ -353,12 +353,20 @@ as_studio
 - API
   - [API文档](https://doc.agentscope.io/zh_CN/api/agentscope.html)
 - [示例](https://github.com/agentscope-ai/agentscope/tree/main/examples)
+  - 功能演示
+    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
+    - [计划](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
+    - [结构化输出](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
+    - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)
+    - [长期记忆](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
+    - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
+    - [流式获取打印消息](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
   - 智能体
     - [ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
+    - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
     - [Deep Research 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
     - [Browser-use 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
     - [Meta Planner 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
-    - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
   - 游戏
     - [九人制狼人杀](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - 工作流
@@ -367,13 +375,7 @@ as_studio
     - [多智能体并发](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - 评测
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
-  - 功能演示
-    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
-    - [计划](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
-    - [结构化输出](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
-    - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)
-    - [长期记忆](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
-    - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
+
 
 ## ⚖️ 许可
 
