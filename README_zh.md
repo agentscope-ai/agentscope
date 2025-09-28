@@ -353,7 +353,7 @@ as_studio
 - API
   - [API文档](https://doc.agentscope.io/zh_CN/api/agentscope.html)
 - [示例](https://github.com/agentscope-ai/agentscope/tree/main/examples)
-- 工具型智能体
+  - 工具型智能体
     - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
     - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
     - [Meta-planner](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
