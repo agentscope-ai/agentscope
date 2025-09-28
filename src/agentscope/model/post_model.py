@@ -12,7 +12,7 @@ from .model import ModelWrapperBase, ModelResponse
 from ..constants import _DEFAULT_MAX_RETRIES
 from ..constants import _DEFAULT_MESSAGES_KEY
 from ..constants import _DEFAULT_RETRY_INTERVAL
-from ..formatters import OpenAIFormatter, GeminiFormatter, CommonFormatter
+from ..formatter import OpenAIChatFormatter, GeminiFormatter, CommonFormatter
 from ..message import Msg
 
 
@@ -223,8 +223,8 @@ class PostAPIChatWrapper(PostAPIModelWrapperBase):
         )
 
         # OpenAI
-        if OpenAIFormatter.is_supported_model(model_name or ""):
-            return OpenAIFormatter.format_multi_agent(*args)
+        if OpenAIChatFormatter.is_supported_model(model_name or ""):
+            return OpenAIChatFormatter._format(*args)
 
         # Gemini
         if GeminiFormatter.is_supported_model(model_name or ""):

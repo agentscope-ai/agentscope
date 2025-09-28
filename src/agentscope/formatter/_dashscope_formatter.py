@@ -460,6 +460,133 @@ class DashScopeFormatter(TruncatedFormatterBase):
         return list(schemas.values())
 
 
+class DashScopeChatFormatter(TruncatedFormatterBase):
+    """Formatter for DashScope messages."""
+
+    support_tools_api: bool = True
+    """Whether support tools API"""
+
+    support_multiagent: bool = False
+    """Whether support multi-agent conversations"""
+
+    support_vision: bool = True
+    """Whether support vision data"""
+
+    supported_blocks: list[type] = [
+        TextBlock,
+        ImageBlock,
+        AudioBlock,
+        ToolUseBlock,
+        ToolResultBlock,
+    ]
+
+    async def _format(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format message objects into DashScope API format.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of message objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The formatted messages as a list of dictionaries.
+        """
+        self.assert_list_of_msgs(msgs)
+
+        formatted_msgs: list[dict] = []
+        for msg in msgs:
+            content_blocks = []
+            tool_calls = []
+            for block in msg.get_content_blocks():
+                typ = block.get("type")
+
+                if typ == "text":
+                    content_blocks.append(
+                        {
+                            "text": block.get("text"),
+                        },
+                    )
+
+                elif typ in ["image", "audio"]:
+                    source = block["source"]
+                    if source["type"] == "url":
+                        url = source["url"]
+                        if _is_accessible_local_file(url):
+                            content_blocks.append(
+                                {typ: "file://" + os.path.abspath(url)},
+                            )
+                        else:
+                            # treat as web url
+                            content_blocks.append({typ: url})
+
+                    elif source["type"] == "base64":
+                        media_type = source["media_type"]
+                        base64_data = source["data"]
+                        content_blocks.append(
+                            {typ: f"data:{media_type};base64,{base64_data}"},
+                        )
+
+                    else:
+                        raise NotImplementedError(
+                            f"Unsupported source type '{source.get('type')}' "
+                            f"for {typ} block.",
+                        )
+
+                elif typ == "tool_use":
+                    tool_calls.append(
+                        {
+                            "id": block.get("id"),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name"),
+                                "arguments": json.dumps(
+                                    block.get("input", {}),
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        },
+                    )
+
+                elif typ == "tool_result":
+                    formatted_msgs.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": block.get("id"),
+                            "content": self.convert_tool_result_to_string(
+                                block.get("output"),  # type: ignore[arg-type]
+                            ),
+                            "name": block.get("name"),
+                        },
+                    )
+
+                else:
+                    logger.warning(
+                        "Unsupported block type %s in the message, skipped.",
+                        typ,
+                    )
+
+            msg_dashscope = {
+                "role": msg.role,
+                "content": content_blocks or [{"text": None}],
+            }
+
+            if tool_calls:
+                msg_dashscope["tool_calls"] = tool_calls
+
+            if msg_dashscope["content"] != [
+                {"text": None},
+            ] or msg_dashscope.get(
+                "tool_calls",
+            ):
+                formatted_msgs.append(msg_dashscope)
+
+        return _reformat_messages(formatted_msgs)
+
+
+
 class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
     """DashScope formatter for multi-agent conversations, where more than
     a user and an agent are involved.

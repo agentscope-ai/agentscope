@@ -3,7 +3,7 @@
 
 from typing import Union
 
-from ..formatters import FormatterBase
+from ..formatter import FormatterBase
 from ..message import Msg
 
 

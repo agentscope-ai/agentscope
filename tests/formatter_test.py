@@ -5,9 +5,9 @@ from unittest import mock
 from unittest.mock import MagicMock, patch
 
 import agentscope
-from agentscope.formatters import (
+from agentscope.formatter import (
     CommonFormatter,
-    OpenAIFormatter,
+    OpenAIChatFormatter,
     DashScopeFormatter,
     AnthropicFormatter,
 )
@@ -624,7 +624,7 @@ class FormatTest(unittest.TestCase):
 
     def test_openai_with_tools(self) -> None:
         """Unit test for OpenAI Formatter with tools calling"""
-        prompt = OpenAIFormatter.format_chat(
+        prompt = OpenAIChatFormatter.format_chat(
             *self.inputs_with_tools,
         )
         ground_truth = [

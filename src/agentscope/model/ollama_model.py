@@ -4,7 +4,7 @@ from abc import ABC
 from typing import Sequence, Any, Optional, List, Union, Generator
 
 from ._model_usage import ChatUsage
-from ..formatters import CommonFormatter
+from ..formatter import CommonFormatter
 from ..message import Msg
 from ..model import ModelWrapperBase, ModelResponse
 

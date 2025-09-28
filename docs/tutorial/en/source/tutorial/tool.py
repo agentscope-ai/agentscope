@@ -164,7 +164,7 @@ res = agent(msg_task)
 #
 # Here we take DashScope as an example to show how to use the tools API.
 
-from agentscope.formatters import DashScopeFormatter
+from agentscope.formatter import DashScopeFormatter
 from agentscope.message import TextBlock, ToolUseBlock, ToolResultBlock
 
 model = DashScopeChatWrapper(

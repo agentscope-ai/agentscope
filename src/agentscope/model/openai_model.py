@@ -18,7 +18,7 @@ from ._model_utils import (
     _verify_text_content_in_openai_message_response,
 )
 from .model import ModelWrapperBase, ModelResponse
-from ..formatters import OpenAIFormatter, CommonFormatter
+from ..formatter import OpenAIChatFormatter, CommonFormatter
 from ..manager import FileManager
 from ..message import Msg, ToolUseBlock
 from ..utils.token_utils import get_openai_max_length
@@ -400,14 +400,14 @@ class OpenAIChatWrapper(OpenAIWrapperBase):
         # Multi agent scenario
         if multi_agent_mode:
             # Format messages according to the model name
-            if OpenAIFormatter.is_supported_model(self.model_name):
-                return OpenAIFormatter.format_multi_agent(*args)
+            if OpenAIChatFormatter.is_supported_model(self.model_name):
+                return OpenAIChatFormatter._format(*args)
 
             return CommonFormatter.format_multi_agent(*args)
 
         # Chat scenario
-        if OpenAIFormatter.is_supported_model(self.model_name):
-            return OpenAIFormatter.format_chat(*args)
+        if OpenAIChatFormatter.is_supported_model(self.model_name):
+            return OpenAIChatFormatter.format_chat(*args)
 
         return CommonFormatter.format_chat(*args)
 
@@ -452,7 +452,7 @@ class OpenAIChatWrapper(OpenAIWrapperBase):
             `list[dict]`:
                 The formatted JSON schemas of the tool functions.
         """
-        return OpenAIFormatter.format_tools_json_schemas(schemas)
+        return OpenAIChatFormatter.format_tools_json_schemas(schemas)
 
 
 class OpenAIDALLEWrapper(OpenAIWrapperBase):

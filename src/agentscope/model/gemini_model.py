@@ -8,7 +8,7 @@ from typing import Sequence, Union, Any, List, Optional, Generator
 from loguru import logger
 
 from ._model_usage import ChatUsage
-from ..formatters import GeminiFormatter
+from ..formatter import GeminiFormatter
 from ..message import Msg
 from ..model import ModelWrapperBase, ModelResponse
 

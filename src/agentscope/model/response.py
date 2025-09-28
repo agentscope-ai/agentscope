@@ -3,7 +3,6 @@
 import json
 from typing import Optional, Sequence, Any, Generator, Union, Tuple
 
-from ..message import ToolUseBlock
 from ..utils.common import _is_json_serializable
 
 
@@ -13,6 +12,7 @@ class ModelResponse:
     The main purpose of this class is to align the return formats of different
     model and act as a bridge between model and agents.
     """
+    from ..message import ToolUseBlock
 
     def __init__(
         self,

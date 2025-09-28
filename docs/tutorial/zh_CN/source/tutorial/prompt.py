@@ -120,12 +120,12 @@ class MyAgent(AgentBase):
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
 # `agentscope.formatter` 模块中实现了一系列的格式化策略，以支持不同的模型 API 和场景。
-# 具体而言，开发者可以调用 `format_chat` 和 `format_multi_agent` 方法来格式化 chat 和
+# 具体而言，开发者可以调用 `format_chat` 和 `_format` 方法来格式化 chat 和
 # multi-agent 场景下的消息。同时，还提供了一个 `format_auto` 方法，他会自动根据输入
 # 消息中涉及到的角色实体数量来决定使用哪种格式化策略。
 
 
-from agentscope.formatters import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 multi_agent_messages = [
     Msg("system", "You're a helpful assistant named Alice.", "system"),
@@ -144,7 +144,7 @@ chat_messages = [
 # %%
 # Multi-agent 场景:
 
-formatted_multi_agent = OpenAIFormatter.format_multi_agent(
+formatted_multi_agent = OpenAIChatFormatter._format(
     multi_agent_messages,
 )
 print(json.dumps(formatted_multi_agent, indent=4, ensure_ascii=False))
@@ -152,7 +152,7 @@ print(json.dumps(formatted_multi_agent, indent=4, ensure_ascii=False))
 # %%
 # Chat 场景:
 
-formatted_chat = OpenAIFormatter.format_chat(
+formatted_chat = OpenAIChatFormatter.format_chat(
     chat_messages,
 )
 print(json.dumps(formatted_chat, indent=4, ensure_ascii=False))
@@ -160,7 +160,7 @@ print(json.dumps(formatted_chat, indent=4, ensure_ascii=False))
 # %%
 # 自动格式化（输入中只包含 user 和 assistant 两个实体）：
 
-formatted_auto_chat = OpenAIFormatter.format_auto(
+formatted_auto_chat = OpenAIChatFormatter.format_auto(
     chat_messages,
 )
 print(json.dumps(formatted_auto_chat, indent=4, ensure_ascii=False))
@@ -168,7 +168,7 @@ print(json.dumps(formatted_auto_chat, indent=4, ensure_ascii=False))
 # %%
 # 自动格式化（输入中包含多个实体，即 multi-agent）：
 
-formatted_auto_multi_agent = OpenAIFormatter.format_auto(
+formatted_auto_multi_agent = OpenAIChatFormatter.format_auto(
     multi_agent_messages,
 )
 print(json.dumps(formatted_auto_multi_agent, indent=4, ensure_ascii=False))
@@ -176,10 +176,10 @@ print(json.dumps(formatted_auto_multi_agent, indent=4, ensure_ascii=False))
 # %%
 # AgentScope 中可用的 formatter 类如下：
 
-from agentscope.formatters import (
+from agentscope.formatter import (
     CommonFormatter,
     AnthropicFormatter,
-    OpenAIFormatter,
+    OpenAIChatFormatter,
     GeminiFormatter,
     DashScopeFormatter,
 )
@@ -217,7 +217,7 @@ multi_modal_messages = [
 
 # %%
 print("OpenAI prompt:")
-openai_prompt = OpenAIFormatter.format_chat(multi_modal_messages)
+openai_prompt = OpenAIChatFormatter.format_chat(multi_modal_messages)
 print(json.dumps(openai_prompt, indent=4, ensure_ascii=False))
 
 # %%

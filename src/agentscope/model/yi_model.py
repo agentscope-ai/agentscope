@@ -16,7 +16,7 @@ from ._model_utils import (
     _verify_text_content_in_openai_delta_response,
 )
 from .model import ModelWrapperBase, ModelResponse
-from ..formatters import CommonFormatter
+from ..formatter import CommonFormatter
 from ..message import Msg
 
 

@@ -8,7 +8,7 @@ from typing import Any, Union, List, Optional, Generator
 from loguru import logger
 
 from ._model_usage import ChatUsage
-from ..formatters import DashScopeFormatter
+from ..formatter import DashScopeFormatter
 from ..manager import FileManager
 from ..message import Msg, ToolUseBlock
 

@@ -148,13 +148,13 @@ res = agent(msg_task)
 #  其使用方法与 `ReActAgent` 保持高度一致。
 #
 # .. note:: 目前 `Formatter` 模块只有 `format_chat` 函数支持工具调用，
-# `format_multi_agent` 函数的支持还在开发中。
+# `_format` 函数的支持还在开发中。
 #
 # .. note:: tools API目前还不支持流式返回，相关功能处于开发中。
 #
 # 我们以 DashScope API 为例展示如何使用 tools API.
 
-from agentscope.formatters import DashScopeFormatter
+from agentscope.formatter import DashScopeFormatter
 from agentscope.message import TextBlock, ToolUseBlock, ToolResultBlock
 
 model = DashScopeChatWrapper(

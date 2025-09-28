@@ -23,7 +23,7 @@ import shortuuid
 from pydantic import BaseModel, ValidationError
 
 from ._react_agent_base import ReActAgentBase
-from ..formatters import FormatterBase
+from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
 from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
 from ..model import ChatModelBase

@@ -3,7 +3,7 @@
 from typing import Optional, Union, Generator, Any
 
 from ._model_usage import ChatUsage
-from ..formatters import AnthropicFormatter
+from ..formatter import AnthropicFormatter
 from ..message import Msg, ToolUseBlock
 from .model import ModelWrapperBase, ModelResponse
 
