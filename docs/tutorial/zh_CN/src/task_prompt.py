@@ -260,7 +260,7 @@ async def run_token_counter() -> int:
     # 我们使用 huggingface token 计数器用于 dashscope 模型。
     token_counter = HuggingFaceTokenCounter(
         "Qwen/Qwen2.5-VL-3B-Instruct",
-        use_mirror=True,
+        use_mirror=False,
     )
 
     return await token_counter.count(formatted_message)
@@ -279,7 +279,7 @@ async def run_truncated_formatter() -> None:
     """带截断的消息格式化示例。"""
     token_counter = HuggingFaceTokenCounter(
         pretrained_model_name_or_path="Qwen/Qwen2.5-VL-3B-Instruct",
-        use_mirror=True,
+        use_mirror=False,
     )
     formatter = DashScopeMultiAgentFormatter(
         token_counter=token_counter,
