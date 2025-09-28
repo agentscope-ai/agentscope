@@ -20,7 +20,7 @@ The supported model APIs and providers include:
       - Reasoning
     * - OpenAI
       - ``OpenAIChatModel``
-      - vLLM, DeepSeek
+      - vLLM, DeepSeek, Azure OpenAI
       - ✅
       - ✅
       - ✅
