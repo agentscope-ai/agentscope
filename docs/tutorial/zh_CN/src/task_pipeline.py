@@ -219,6 +219,9 @@ asyncio.run(check_broadcast_message())
 # ``stream_printing_messages`` 函数将智能体在回复过程中调用 ``self.print`` 打印的消息转换为一个异步生成器。
 # 可以帮助开发者快速以流式方式获取智能体的中间消息。
 #
+# 该函数接受一个或多个智能体和一个协程任务作为输入，并返回一个异步生成器。
+# 该异步生成器返回一个二元组，包含执行协程任务过程中通过 ``await self.print(...)`` 打印的消息，以及一个布尔值，表示该消息是否为一组流式消息中的最后一个。
+#
 # 需要注意的是，生成器返回的元组中，布尔值表示该消息是否为一组流式消息中的最后一个，而非此次智能体调用的最后一条消息。
 
 
@@ -230,8 +233,10 @@ async def run_example_pipeline() -> None:
     agent.set_console_output_enabled(False)
 
     async for msg, last in stream_printing_messages(
-        agent,
-        Msg("user", "你好，你是谁？", "user"),
+        agents=[agent],
+        coroutine_task=agent(
+            Msg("user", "你好，你是谁？", "user"),
+        ),
     ):
         print(msg, last)
         if last:

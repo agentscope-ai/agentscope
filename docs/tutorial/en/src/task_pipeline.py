@@ -11,7 +11,7 @@ as syntax sugar for chaining agents together, including
 - **MsgHub**: a message hub for broadcasting messages among multiple agents
 - **sequential_pipeline** and **SequentialPipeline**: a functional and class-based implementation that chains agents in a sequential manner
 - **fanout_pipeline** and **FanoutPipeline**: a functional and class-based implementation that distributes the same input to multiple agents
-- **stream_printing_messages**: a utility function that convert the printing messages from an agent into an async generator
+- **stream_printing_messages**: a utility function that convert the printing messages from agent(s) into an async generator
 
 """
 
@@ -219,10 +219,15 @@ asyncio.run(check_broadcast_message())
 #
 # Stream Printing Messages
 # -------------------------------------
-# The ``stream_printing_messages`` function converts the printing messages from an agent into an async generator.
-# It will help you to obtain the intermediate messages from the agent in a streaming way.
+# The ``stream_printing_messages`` function converts the printing messages from agent(s) into an async generator.
+# It will help you to obtain the intermediate messages from the agent(s) in a streaming way.
+#
+# It accepts a list of agents and a coroutine task, then returns an async generator that yields tuples of ``(Msg, bool)``,
+# containing the printing message during execution of the coroutine task.
 #
 # Note the messages with the same ``id`` are considered as the same message, and the ``last`` flag indicates whether it's the last chunk of this message.
+#
+# Taking the following code snippet as an example:
 
 
 async def run_example_pipeline() -> None:
@@ -233,8 +238,10 @@ async def run_example_pipeline() -> None:
     agent.set_console_output_enabled(False)
 
     async for msg, last in stream_printing_messages(
-        agent,
-        Msg("user", "Hello, who are you?", "user"),
+        agents=[agent],
+        coroutine_task=agent(
+            Msg("user", "Hello, who are you?", "user"),
+        ),
     ):
         print(msg, last)
         if last:

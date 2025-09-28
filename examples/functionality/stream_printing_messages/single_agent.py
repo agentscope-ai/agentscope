@@ -44,7 +44,7 @@ async def main() -> None:
     # Prepare a user message
     user_msg = Msg(
         "user",
-        "Help me to run the quick sort algorithm in Python",
+        "Hi! Who are you?",
         "user",
     )
 
@@ -52,7 +52,10 @@ async def main() -> None:
     agent.set_console_output_enabled(False)
 
     # obtain the printing messages from the agent in a streaming way
-    async for msg, last in stream_printing_messages(agent, user_msg):
+    async for msg, last in stream_printing_messages(
+        agents=[agent],
+        coroutine_task=agent(user_msg),
+    ):
         print(msg, last)
 
 

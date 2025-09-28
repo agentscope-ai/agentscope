@@ -67,6 +67,10 @@ Welcome to AgentScope's documentation!
    api/agentscope.memory
    api/agentscope.tool
    api/agentscope.mcp
+   api/agentscope.embedding
+   api/agentscope.evaluate
+   api/agentscope.plan
+   api/agentscope.rag
    api/agentscope.token
    api/agentscope.tracing
    api/agentscope.session

@@ -2,7 +2,7 @@
 """The agent base class in agentscope."""
 import asyncio
 import json
-from asyncio import Task
+from asyncio import Task, Queue
 from collections import OrderedDict
 from typing import Callable, Any
 import base64
@@ -404,11 +404,6 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                 await self._broadcast_to_subscribers(reply_msg)
             self._reply_task = None
 
-            # Put a None message to the message queue to indicate the end
-            # of streaming messages in a reply process
-            if not self._disable_msg_queue:
-                await self.msg_queue.put(None)
-
         return reply_msg
 
     async def _broadcast_to_subscribers(
@@ -654,15 +649,28 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         """
         self._disable_console_output = not enabled
 
-    def set_msg_queue_enabled(self, enabled: bool) -> None:
+    def set_msg_queue_enabled(
+        self,
+        enabled: bool,
+        queue: Queue | None = None,
+    ) -> None:
         """Enable or disable the message queue for streaming outputs.
 
         Args:
             enabled (`bool`):
                 If `True`, enable the message queue to allow streaming
                 outputs. If `False`, disable the message queue.
+            queue (`Queue | None`, optional):
+                The queue instance that will be used to initialize the
+                message queue when `enable` is `True`.
         """
-        if enabled and self.msg_queue is None:
-            self.msg_queue = asyncio.Queue(maxsize=100)
+        if enabled:
+            if queue is None:
+                if self.msg_queue is None:
+                    self.msg_queue = asyncio.Queue(maxsize=100)
+            else:
+                self.msg_queue = queue
+        else:
+            self.msg_queue = None
 
         self._disable_msg_queue = not enabled
