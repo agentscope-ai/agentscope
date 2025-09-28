@@ -2,7 +2,7 @@
 """Functional counterpart for Pipeline"""
 import asyncio
 from copy import deepcopy
-from typing import Any
+from typing import Any, AsyncGenerator, Tuple
 from ..agent import AgentBase
 from ..message import Msg
 
@@ -102,3 +102,56 @@ async def fanout_pipeline(
         return await asyncio.gather(*tasks)
     else:
         return [await agent(deepcopy(msg), **kwargs) for agent in agents]
+
+
+async def stream_printing_messages(
+    agent: AgentBase,
+    msg: Msg | list[Msg] | None = None,
+    **kwargs: Any,
+) -> AsyncGenerator[Tuple[Msg, bool], None]:
+    """An async generator pipeline that yields the printing messages from the
+    agent. Only the messages that are printed by `await self.print(msg)` will
+    be forwarded to the message queue and yielded by this pipeline.
+
+    .. note:: The boolean in the yielded tuple indicates whether the message
+     is the last **chunk** for a streaming message, not the last message
+     returned by the agent. That means, there'll be multiple tuples with
+     `is_last_chunk=True` if the agent prints multiple messages.
+
+    .. note:: The messages with the same ``id`` is considered as the same
+     message, e.g., the chunks of a streaming message.
+
+    Args:
+        agent (`AgentBase`):
+            An agent instance.
+        msg (`Msg | list[Msg] | None`, optional):
+            The message that will be passed to the agent.
+        **kwargs (`Any`):
+            Additional keyword arguments passed to the agent during execution.
+
+    Returns:
+        `AsyncGenerator[Tuple[Msg, bool], None]`:
+            An async generator that yields tuples of (message, is_last_chunk).
+            The `is_last_chunk` boolean indicates whether the message is the
+            last chunk in a streaming message.
+    """
+
+    # Enable the message queue to get the intermediate messages
+    agent.set_msg_queue_enabled(True)
+
+    # Execute the agent asynchronously
+    asyncio.create_task(
+        agent(msg, **kwargs),
+    )
+
+    # Receive the messages from the agent's message queue
+    while True:
+        # The message obj, and a boolean indicating whether it's the last chunk
+        # in a streaming message
+        printing_msg = await agent.msg_queue.get()
+
+        # End the loop when the message is None
+        if printing_msg is None:
+            break
+
+        yield printing_msg
