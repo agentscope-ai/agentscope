@@ -351,6 +351,10 @@ as_studio
 - API
   - [API Docs](https://doc.agentscope.io/api/agentscope.html)
 - [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
+  - Tool Agent
+    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
+    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
+    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
   - Game
     - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - Workflow
