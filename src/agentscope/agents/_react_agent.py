@@ -3,16 +3,8 @@
 and act iteratively to solve problems. More details can be found in the paper
 https://arxiv.org/abs/2210.03629.
 """
-from typing import Optional, Union, Sequence
-
-from shortuuid import uuid
-
-from agentscope.exception import ResponseParsingError
-from agentscope.agents import AgentBase
-from agentscope.message import Msg, ToolUseBlock
-from agentscope.parsers import RegexTaggedContentParser
+from typing import Union
 from agentscope.service import (
-    ServiceToolkit,
     ServiceResponse,
     ServiceExecStatus,
 )
@@ -20,7 +12,7 @@ import asyncio
 from typing import Type, Any, AsyncGenerator, Literal
 
 import shortuuid
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field
 
 from ._react_agent_base import ReActAgentBase
 from ..formatter import FormatterBase
@@ -28,8 +20,18 @@ from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
 from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
 from ..model import ChatModelBase
 from ..plan import PlanNotebook
-from ..tool import Toolkit, ToolResponse
+from ..tool import Toolkit
 from ..tracing import trace_reply
+
+
+class _QueryRewriteModel(BaseModel):
+    """The structured model used for query rewriting."""
+
+    rewritten_query: str = Field(
+        description=(
+            "The rewritten query, which should be specific and concise. "
+        ),
+    )
 
 
 def finish_function_pre_print_hook(
@@ -82,6 +84,7 @@ class ReActAgent(ReActAgentBase):
         2. The function name "finish" is also a reserved name when using this
         agent, which will be used to end the reasoning-acting loop.
     """
+    finish_function_name: str = "generate_response"
 
     def __init__(
             self,
@@ -420,7 +423,6 @@ class ReActAgent(ReActAgentBase):
                     await self.memory.add(msg_res)
                     await self.print(msg_res, True)
 
-
     async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
         """Perform the acting process.
 
@@ -529,28 +531,6 @@ class ReActAgent(ReActAgentBase):
             res_msg.content = res.content
             await self.print(res_msg, True)
 
-        return res_msg
-
-    def _summarizing(self) -> Msg:
-        """Generate a response when the agent fails to solve the problem in
-        the maximum iterations."""
-        hint_msg = Msg(
-            "user",
-            "You have failed to generate response within the maximum "
-            "iterations. Now respond directly by summarizing the current "
-            "situation.",
-            role="user",
-            echo=self.verbose,
-        )
-
-        # Generate a reply by summarizing the current situation
-        prompt = self.model.format(
-            self.memory.get_memory(),
-            hint_msg,
-        )
-        res = self.model(prompt)
-        self.speak(res.stream or res.text)
-        res_msg = Msg(self.name, res.text, "assistant")
         return res_msg
 
     @staticmethod

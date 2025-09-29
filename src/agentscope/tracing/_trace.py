@@ -23,8 +23,7 @@ from .._logging import logger
 from ._types import SpanKind, SpanAttributes
 
 if TYPE_CHECKING:
-    from ..agents._agent_base import AgentBase
-    from ..formatter import FormatterBase
+    from ..agents import AgentBase
     from ..formatter import FormatterBase
     from ..tool import (
         Toolkit,
@@ -381,8 +380,6 @@ def trace_reply(
         """The wrapper function for tracing the agent reply function call."""
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
-
-        from ..agent import AgentBase
 
         if not isinstance(self, AgentBase):
             logger.warning(

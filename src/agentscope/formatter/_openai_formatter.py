@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 import requests
 from loguru import logger
 
-from ._formatter_base import FormatterBase
 from ._truncated_formatter_base import TruncatedFormatterBase
 from ..message import Msg, URLSource, Base64Source, ToolUseBlock, TextBlock, ImageBlock, AudioBlock, ToolResultBlock
 from ..token import TokenCounterBase

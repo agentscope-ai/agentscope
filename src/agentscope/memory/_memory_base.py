@@ -7,59 +7,19 @@ TODO: data structure to organize multiple memory pieces in memory class
 """
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Any
 from typing import Optional
 from typing import Union
 from typing import Callable
+from ..module import StateModule
 
 from ..message import Msg
 
 
-class MemoryBase(ABC):
+class MemoryBase(StateModule):
     """Base class for memory."""
 
     _version: int = 1
-
-    @abstractmethod
-    def get_memory(
-        self,
-        recent_n: Optional[int] = None,
-        filter_func: Optional[Callable[[int, dict], bool]] = None,
-    ) -> list:
-        """
-        Return a certain range (`recent_n` or all) of memory,
-        filtered by `filter_func`
-        Args:
-            recent_n (int, optional):
-                indicate the most recent N memory pieces to be returned.
-            filter_func (Optional[Callable[[int, dict], bool]]):
-                filter function to decide which pieces of memory should
-                be returned, taking the index and a piece of memory as
-                input and return True (return this memory) or False
-                (does not return)
-        """
-
-    @abstractmethod
-    def add(
-        self,
-        memories: Union[Sequence[Msg], Msg, None],
-    ) -> None:
-        """
-        Adding new memory fragment, depending on how the memory are stored
-        Args:
-            memories (Union[Sequence[Msg], Msg, None]):
-                Memories to be added.
-        """
-
-    @abstractmethod
-    def delete(self, index: Union[Iterable, int]) -> None:
-        """
-        Delete memory fragment, depending on how the memory are stored
-        and matched
-        Args:
-            index (Union[Iterable, int]):
-                indices of the memory fragments to delete
-        """
 
     @abstractmethod
     def load(
@@ -100,10 +60,34 @@ class MemoryBase(ABC):
         """
 
     @abstractmethod
-    def clear(self) -> None:
-        """Clean memory, depending on how the memory are stored"""
-
-    @abstractmethod
     def size(self) -> int:
         """Returns the number of memory segments in memory."""
         raise NotImplementedError
+
+    @abstractmethod
+    async def add(self, *args: Any, **kwargs: Any) -> None:
+        """Add items to the memory."""
+
+    @abstractmethod
+    async def delete(self, *args: Any, **kwargs: Any) -> None:
+        """Delete items from the memory."""
+
+    @abstractmethod
+    async def retrieve(self, *args: Any, **kwargs: Any) -> None:
+        """Retrieve items from the memory."""
+
+    @abstractmethod
+    async def clear(self) -> None:
+        """Clear the memory content."""
+
+    @abstractmethod
+    async def get_memory(self, *args: Any, **kwargs: Any) -> list[Msg]:
+        """Get the memory content."""
+
+    @abstractmethod
+    def state_dict(self) -> dict:
+        """Get the state dictionary of the memory."""
+
+    @abstractmethod
+    def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """Load the state dictionary of the memory."""
