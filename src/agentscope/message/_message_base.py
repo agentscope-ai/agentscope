@@ -5,10 +5,10 @@ from typing import Literal, List, overload, Sequence
 
 import shortuuid
 
-from . import ToolResultBlock
 from ._message_block import (
     TextBlock,
     ToolUseBlock,
+    ToolResultBlock,
     ImageBlock,
     AudioBlock,
     ContentBlock,

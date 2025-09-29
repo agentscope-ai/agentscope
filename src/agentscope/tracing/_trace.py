@@ -69,9 +69,8 @@ def _trace_sync_generator_wrapper(
     import opentelemetry
 
     has_error = False
-
+    last_chunk = None
     try:
-        last_chunk = None
         for chunk in res:
             last_chunk = chunk
             yield chunk
@@ -113,8 +112,9 @@ async def _trace_async_generator_wrapper(
 
     has_error = False
 
+    last_chunk = None
+
     try:
-        last_chunk = None
         async for chunk in aioitertools.iter(res):
             last_chunk = chunk
             yield chunk
