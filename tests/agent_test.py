@@ -15,10 +15,10 @@ class TestAgent(AgentBase):
     """An agent for test usage"""
 
     def __init__(
-            self,
-            name: str,
-            sys_prompt: str = None,
-            **kwargs: dict,
+        self,
+        name: str,
+        sys_prompt: str = None,
+        **kwargs: dict,
     ) -> None:
         super().__init__()
         self.agent_id = str(uuid.uuid4())

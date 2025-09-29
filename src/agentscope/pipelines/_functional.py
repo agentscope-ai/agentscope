@@ -11,8 +11,8 @@ from ..message import Msg
 
 
 async def sequential_pipeline(
-        agents: list[AgentBase],
-        msg: Msg | list[Msg] | None = None,
+    agents: list[AgentBase],
+    msg: Msg | list[Msg] | None = None,
 ) -> Msg | list[Msg] | None:
     """An async syntactic sugar pipeline that executes a sequence of agents
     sequentially. The output of the previous agent will be passed as the

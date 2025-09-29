@@ -12,6 +12,7 @@ class ModelResponse:
     The main purpose of this class is to align the return formats of different
     model and act as a bridge between model and agents.
     """
+
     from ..message import ToolUseBlock
 
     def __init__(

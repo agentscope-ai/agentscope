@@ -39,7 +39,7 @@ class UserInputBase:
     """The base class used to handle the user input from different sources."""
 
     @abstractmethod
-    def __call__(
+    async def __call__(
         self,
         agent_id: str,
         agent_name: str,
@@ -62,6 +62,7 @@ class UserInputBase:
             `UserInputData`:
                 The user input data.
         """
+
 
 class TerminalUserInput(UserInputBase):
     """The terminal user input."""
@@ -254,7 +255,7 @@ class StudioUserInput(UserInputBase):
             request_id: str,
             blocks_input: List[
                 TextBlock | ImageBlock | AudioBlock | VideoBlock
-                ],
+            ],
             structured_input: dict[str, Any],
         ) -> None:
             if request_id in self.input_queues:
@@ -407,4 +408,3 @@ class StudioUserInput(UserInputBase):
                 self.studio_url,
                 str(e),
             )
-

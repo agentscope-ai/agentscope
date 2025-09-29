@@ -93,9 +93,9 @@ class UserAgent(AgentBase):
 
         blocks_input = input_data.blocks_input
         if (
-                blocks_input
-                and len(blocks_input) == 1
-                and blocks_input[0].get("type") == "text"
+            blocks_input
+            and len(blocks_input) == 1
+            and blocks_input[0].get("type") == "text"
         ):
             # Turn blocks_input into a string if only one text block exists
             blocks_input = blocks_input[0].get("text")
@@ -112,9 +112,9 @@ class UserAgent(AgentBase):
         return msg
 
     async def handle_interrupt(
-            self,
-            *args: Any,
-            **kwargs: Any,
+        self,
+        *args: Any,
+        **kwargs: Any,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
         user or something else."""

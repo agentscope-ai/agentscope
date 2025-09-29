@@ -20,7 +20,7 @@ from ..message import (
 
 
 def _reformat_messages(
-        messages: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Reformat the content to be compatible with HuggingFaceTokenCounter.
 
@@ -124,8 +124,8 @@ class DashScopeFormatter(TruncatedFormatterBase):
     ]
 
     async def _format(
-            self,
-            msgs: list[Msg],
+        self,
+        msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Format message objects into DashScope API format.
 
@@ -332,8 +332,8 @@ class DashScopeFormatter(TruncatedFormatterBase):
 
     @classmethod
     def format_multi_agent(
-            cls,
-            *msgs: Union[Msg, list[Msg], None],
+        cls,
+        *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
         """Format the messages in multi-agent scenario, where multiple agents
         are involved."""
@@ -445,11 +445,11 @@ class DashScopeFormatter(TruncatedFormatterBase):
             ), f"Expect dict schema, got {type(schema)}."
 
             assert (
-                    "type" in schema and "function" in schema
+                "type" in schema and "function" in schema
             ), f"Invalid schema: {schema}, expect keys 'type' and 'function'."
 
             assert (
-                    schema["type"] == "function"
+                schema["type"] == "function"
             ), f"Invalid schema type: {schema['type']}, expect 'function'."
 
             assert "name" in schema["function"], (
@@ -586,7 +586,6 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
         return _reformat_messages(formatted_msgs)
 
 
-
 class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
     """DashScope formatter for multi-agent conversations, where more than
     a user and an agent are involved.
@@ -627,14 +626,14 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
     """The list of supported message blocks"""
 
     def __init__(
-            self,
-            conversation_history_prompt: str = (
-                    "# Conversation History\n"
-                    "The content between <history></history> tags contains "
-                    "your conversation history\n"
-            ),
-            token_counter: TokenCounterBase | None = None,
-            max_tokens: int | None = None,
+        self,
+        conversation_history_prompt: str = (
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         """Initialize the DashScope multi-agent formatter.
 
@@ -651,8 +650,8 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         self.conversation_history_prompt = conversation_history_prompt
 
     async def _format_tool_sequence(
-            self,
-            msgs: list[Msg],
+        self,
+        msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Given a sequence of tool call/result messages, format them into
         the required format for the DashScope API.
@@ -668,9 +667,9 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         return await DashScopeChatFormatter().format(msgs)
 
     async def _format_agent_message(
-            self,
-            msgs: list[Msg],
-            is_first: bool = True,
+        self,
+        msgs: list[Msg],
+        is_first: bool = True,
     ) -> list[dict[str, Any]]:
         """Given a sequence of messages without tool calls/results, format
         them into a user message with conversation history tags. For the
@@ -718,7 +717,7 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
                             conversation_blocks.append(
                                 {
                                     block["type"]: "file://"
-                                                   + os.path.abspath(url),
+                                    + os.path.abspath(url),
                                 },
                             )
                         else:
@@ -748,9 +747,9 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         if conversation_blocks:
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                        conversation_history_prompt
-                        + "<history>\n"
-                        + conversation_blocks[0]["text"]
+                    conversation_history_prompt
+                    + "<history>\n"
+                    + conversation_blocks[0]["text"]
                 )
 
             else:
@@ -777,8 +776,8 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         return _reformat_messages(formatted_msgs)
 
     async def _format_system_message(
-            self,
-            msg: Msg,
+        self,
+        msg: Msg,
     ) -> dict[str, Any]:
         """Format system message for DashScope API."""
         return {

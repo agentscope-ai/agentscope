@@ -8,7 +8,15 @@ from urllib.parse import urlparse
 from ._formatter_base import FormatterBase
 from ._truncated_formatter_base import TruncatedFormatterBase
 from .._utils._common import _get_bytes_from_web_url
-from ..message import Msg, TextBlock, ImageBlock, VideoBlock, AudioBlock, ToolUseBlock, ToolResultBlock
+from ..message import (
+    Msg,
+    TextBlock,
+    ImageBlock,
+    VideoBlock,
+    AudioBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+)
 from ..token import TokenCounterBase
 from .._logging import logger
 
@@ -395,6 +403,7 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
             )
 
         return formatted_msgs
+
 
 class GeminiFormatter(FormatterBase):
     """The formatter for Gemini model."""

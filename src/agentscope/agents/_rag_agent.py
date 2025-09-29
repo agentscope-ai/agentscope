@@ -76,7 +76,10 @@ class LlamaIndexAgent(AgentBase):
         super().__init__()
         self.name = name
         self.sys_prompt = sys_prompt
-        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        model_manager = kwargs.get(
+            "model_manager",
+            ModelManager.get_instance(),
+        )
         self.model = model_manager.get_model_by_config_name(model_config_name)
         if use_memory:
             self.memory = TemporaryMemory()
@@ -89,7 +92,10 @@ class LlamaIndexAgent(AgentBase):
         self.recent_n_mem_for_retrieve = recent_n_mem_for_retrieve
         self.description = kwargs.get("description", "")
 
-    async def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
+    ) -> Msg:
         """
         Reply function of the RAG agent.
         Processes the input data,
@@ -148,7 +154,13 @@ class LlamaIndexAgent(AgentBase):
                     )
 
             if self.log_retrieval:
-                await self.print(Msg(name="system", role="system", content="[retrieved]:" + retrieved_docs_to_string))
+                await self.print(
+                    Msg(
+                        name="system",
+                        role="system",
+                        content="[retrieved]:" + retrieved_docs_to_string,
+                    ),
+                )
 
             if max(scores) < 0.4:
                 # if the max score is lower than 0.4, then we let LLM

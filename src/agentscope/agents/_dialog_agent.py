@@ -39,7 +39,10 @@ class DialogAgent(AgentBase):
         super().__init__()
         self.name = name
         self.sys_prompt = sys_prompt
-        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        model_manager = kwargs.get(
+            "model_manager",
+            ModelManager.get_instance(),
+        )
         self.model = model_manager.get_model_by_config_name(model_config_name)
         if use_memory:
             self.memory = TemporaryMemory()
@@ -50,7 +53,10 @@ class DialogAgent(AgentBase):
                 f"Unused keyword arguments are provided: {kwargs}",
             )
 
-    async def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
+    ) -> Msg:
         """Reply function of the agent. Processes the input data,
         generates a prompt using the current dialogue memory and system
         prompt, and invokes the language model to produce a response. The
@@ -87,7 +93,11 @@ class DialogAgent(AgentBase):
 
         # Print/speak the message in this agent's voice
         # Support both streaming and non-streaming responses by "or"
-        msg = Msg(name=self.name, content=response.stream or response.text, role="assistant")
+        msg = Msg(
+            name=self.name,
+            content=response.stream or response.text,
+            role="assistant",
+        )
 
         await self.print(msg)
 

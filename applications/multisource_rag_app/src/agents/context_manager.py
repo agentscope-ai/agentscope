@@ -62,15 +62,18 @@ class ContextManager(AgentBase):
             sys_prompt
             if sys_prompt
             else "You are a manager to manage the context of the conversation. "
-                 "Your duty is to extract the useful information from a long "
-                 "conversation that is relevant to the latest query."
-                 "If the latest query contains demonstrative pronoun "
-                 "(he/she/it/this/that/these/those) or lacks of clear referee, "
-                 "try to figure out in the context of the history."
+            "Your duty is to extract the useful information from a long "
+            "conversation that is relevant to the latest query."
+            "If the latest query contains demonstrative pronoun "
+            "(he/she/it/this/that/these/those) or lacks of clear referee, "
+            "try to figure out in the context of the history."
         )
 
         # 手动初始化 model
-        model_manager = kwargs.get("model_manager", ModelManager.get_instance())
+        model_manager = kwargs.get(
+            "model_manager",
+            ModelManager.get_instance(),
+        )
         self.model = model_manager.get_model_by_config_name(model_config_name)
 
         self.mem_context_length = memory_context_length

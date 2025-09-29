@@ -22,7 +22,7 @@ class MemoryBase(StateModule):
     _version: int = 1
 
     @abstractmethod
-    def load(
+    async def load(
         self,
         memories: Union[str, list[Msg], Msg],
         overwrite: bool = False,
@@ -43,7 +43,7 @@ class MemoryBase(StateModule):
         """
 
     @abstractmethod
-    def export(
+    async def export(
         self,
         file_path: Optional[str] = None,
         to_mem: bool = False,
@@ -60,7 +60,7 @@ class MemoryBase(StateModule):
         """
 
     @abstractmethod
-    def size(self) -> int:
+    async def size(self) -> int:
         """Returns the number of memory segments in memory."""
         raise NotImplementedError
 

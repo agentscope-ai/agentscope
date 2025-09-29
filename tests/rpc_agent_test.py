@@ -3,11 +3,12 @@
 """
 Unit tests for rpc agent classes
 """
+import asyncio
 import unittest
 import os
 import time
 import shutil
-from typing import Optional, Union, Sequence, Callable
+from typing import Optional, Union, Sequence, Callable, Any
 from unittest.mock import MagicMock
 
 from loguru import logger
@@ -37,91 +38,146 @@ from agentscope.rpc.retry_strategy import (
 class DemoRpcAgent(AgentBase):
     """A demo Rpc agent for test usage."""
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(**kwargs)
+    def __init__(self) -> None:
+        super().__init__()
         self.id = 0
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
         """Response after 2s"""
         x.id = self.id
         self.id += 1
-        time.sleep(2)
+        await asyncio.sleep(2)
         return x
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoRpcAgentAdd(AgentBase):
     """A demo Rpc agent for test usage"""
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
         """add the value, wait 1s"""
         x.metadata["value"] += 1
-        time.sleep(1)
+        await asyncio.sleep(1)
         return x
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoLocalAgentAdd(AgentBase):
     """A demo local agent for test usage"""
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
         """add the value, wait 1s"""
         x.metadata["value"] += 1
-        time.sleep(1)
+        await asyncio.sleep(1)
         return x
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoRpcAgentWithMemory(AgentBase):
     """A demo Rpc agent that count its memory"""
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
-        self.memory.add(x)
+    def __init__(self) -> None:
+        super().__init__()
+        self.memory = []
+
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
+        self.memory.append(x)
         msg = Msg(
             name=self.name,
             content="",
-            metadata={"mem_size": self.memory.size()},
+            metadata={"mem_size": self.memory_size()},
             role="assistant",
         )
-        self.memory.add(msg)
-        time.sleep(1)
+        self.memory.append(msg)
+        await asyncio.sleep(1)
         return msg
+
+    def memory_size(self) -> int:
+        """获取 memory 的大小"""
+        return len(self.memory)
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoRpcAgentWithMonitor(AgentBase):
     """A demo Rpc agent that use monitor"""
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
         monitor = MonitorManager.get_instance()
         try:
             monitor.update({"msg_num": 1})
         except QuotaExceededError:
             x.metadata["quota_exceeded"] = True
-            logger.chat(
-                Msg(self.name, "quota_exceeded", "assistant"),
-            )
+            logger.chat(Msg(self.name, "quota_exceeded", "assistant"))
             return x
         x.metadata["msg_num"] = monitor.get_value("msg_num")
-        logger.chat(
-            Msg(self.name, f"msg_num {x.metadata['msg_num']}", "assistant"),
-        )
-        time.sleep(0.2)
+        logger.chat(Msg(self.name, f"msg_num {x.metadata['msg_num']}", "assistant"))
+        await asyncio.sleep(0.2)
         return x
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoGeneratorAgent(AgentBase):
     """A demo agent to generate a number"""
 
     def __init__(self, name: str, value: int) -> None:
-        super().__init__(name)
+        super().__init__()
         self.value = value
+        self.name = name  # 手动设置 name 属性
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
-        time.sleep(1)
+    async def reply(
+        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+    ) -> Msg:
+        await asyncio.sleep(1)
         return Msg(
             name=self.name,
             role="assistant",
             content="",
-            metadata={
-                "value": self.value,
-            },
+            metadata={"value": self.value},
         )
 
 
@@ -265,11 +321,10 @@ class BasicRpcAgentTest(unittest.TestCase):
 
     def test_single_rpc_agent_server(self) -> None:
         """test setup a single rpc agent"""
-        agent_a = DemoRpcAgent(
-            name="a",
-            to_dist=True,
-        )
+        agent_a = DemoRpcAgent()
         self.assertIsNotNone(agent_a)
+        agent_a.name = "a"
+        agent_a.to_dist = True
         msg = Msg(
             name="System",
             content="",

@@ -15,8 +15,8 @@ class SequentialPipeline:
     re-used."""
 
     def __init__(
-            self,
-            agents: list[AgentBase],
+        self,
+        agents: list[AgentBase],
     ) -> None:
         """Initialize a sequential pipeline class
 
@@ -27,8 +27,8 @@ class SequentialPipeline:
         self.agents = agents
 
     async def __call__(
-            self,
-            msg: Msg | list[Msg] | None = None,
+        self,
+        msg: Msg | list[Msg] | None = None,
     ) -> Msg | list[Msg] | None:
         """Execute the sequential pipeline
 

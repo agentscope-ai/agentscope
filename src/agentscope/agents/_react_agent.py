@@ -84,27 +84,28 @@ class ReActAgent(ReActAgentBase):
         2. The function name "finish" is also a reserved name when using this
         agent, which will be used to end the reasoning-acting loop.
     """
+
     finish_function_name: str = "generate_response"
 
     def __init__(
-            self,
-            name: str,
-            sys_prompt: str,
-            model: ChatModelBase,
-            formatter: FormatterBase,
-            toolkit: Toolkit | None = None,
-            memory: MemoryBase | None = None,
-            long_term_memory: LongTermMemoryBase | None = None,
-            long_term_memory_mode: Literal[
-                "agent_control",
-                "static_control",
-                "both",
-            ] = "both",
-            enable_meta_tool: bool = False,
-            parallel_tool_calls: bool = False,
-            max_iters: int = 10,
-            plan_notebook: PlanNotebook | None = None,
-            print_hint_msg: bool = False,
+        self,
+        name: str,
+        sys_prompt: str,
+        model: ChatModelBase,
+        formatter: FormatterBase,
+        toolkit: Toolkit | None = None,
+        memory: MemoryBase | None = None,
+        long_term_memory: LongTermMemoryBase | None = None,
+        long_term_memory_mode: Literal[
+            "agent_control",
+            "static_control",
+            "both",
+        ] = "both",
+        enable_meta_tool: bool = False,
+        parallel_tool_calls: bool = False,
+        max_iters: int = 10,
+        plan_notebook: PlanNotebook | None = None,
+        print_hint_msg: bool = False,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -248,9 +249,9 @@ class ReActAgent(ReActAgentBase):
 
     @trace_reply
     async def reply(
-            self,
-            msg: Msg | list[Msg] | None = None,
-            structured_model: Type[BaseModel] | None = None,
+        self,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """Generate a reply based on the current state and input arguments.
 
@@ -277,8 +278,8 @@ class ReActAgent(ReActAgentBase):
                     Msg(
                         name="long_term_memory",
                         content="<long_term_memory>The content below are "
-                                "retrieved from long-term memory, which maybe "
-                                f"useful:\n{retrieved_info}</long_term_memory>",
+                        "retrieved from long-term memory, which maybe "
+                        f"useful:\n{retrieved_info}</long_term_memory>",
                         role="user",
                     ),
                 )

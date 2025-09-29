@@ -34,11 +34,12 @@ class FormatterBase:
         for msg in msgs:
             if not isinstance(msg, Msg):
                 raise TypeError(
-                    f"Expected Msg object, got {type(msg)} instead.",)
+                    f"Expected Msg object, got {type(msg)} instead.",
+                )
 
     @staticmethod
     def convert_tool_result_to_string(
-            output: str | List[TextBlock | ImageBlock | AudioBlock],
+        output: str | List[TextBlock | ImageBlock | AudioBlock],
     ) -> str:
         """Turn the tool result list into a textual output to be compatible
         with the LLM API that doesn't support multimodal data.

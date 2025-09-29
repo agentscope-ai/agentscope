@@ -35,14 +35,15 @@ class _TestAgent(AgentBase):
         if msg is not None:
             if self._disable_console_output:
                 return
-            print(msg)
+            await self.print(msg)
 
 
 class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
     """Unittests for agent hooks."""
 
-    def asyncSetUp(self) -> None:
+    async def asyncSetUp(self) -> None:
         """Set up the test."""
+        await super().asyncSetUp()
         self.agent = _TestAgent()
         self.agent2 = _TestAgent()
 
@@ -79,8 +80,8 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         """Test the reply hook."""
 
         async def pre_reply_hook(
-                self: AgentBase,
-                kwargs: Dict[str, Any],
+            self: AgentBase,
+            kwargs: Dict[str, Any],
         ) -> Optional[Dict[str, Any]]:
             """Pre-reply hook."""
             if "x" in kwargs and isinstance(kwargs["x"], Msg):
@@ -89,8 +90,8 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
             return None
 
         def pre_reply_hook_without_change(
-                self: AgentBase,
-                kwargs: Dict[str, Any],
+            self: AgentBase,
+            kwargs: Dict[str, Any],
         ) -> None:
             """Pre-reply hook without returning, so that the message is not
             changed."""
@@ -98,9 +99,9 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
                 kwargs["x"].content = "-2, " + kwargs["x"].content
 
         async def post_reply_hook(
-                self: AgentBase,
-                kwargs: Dict[str, Any],
-                output: Msg,
+            self: AgentBase,
+            kwargs: Dict[str, Any],
+            output: Msg,
         ) -> Optional[Msg]:
             """Post-reply hook."""
             output.content += ", 1"
@@ -113,7 +114,11 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("0", x.content)
 
         # Test with one pre hook
-        self.agent.register_instance_hook("pre_reply", "first_pre_hook", pre_reply_hook)
+        self.agent.register_instance_hook(
+            "pre_reply",
+            "first_pre_hook",
+            pre_reply_hook,
+        )
         x = await self.agent(msg_test)
         self.assertEqual("-1, 0", x.content)
 
@@ -168,7 +173,10 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
     async def test_speak_hook(self, mock_log_msg: MagicMock) -> None:
         """Test the speak hook."""
 
-        async def pre_print_hook_change(self: AgentBase, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        async def pre_print_hook_change(
+            self: AgentBase,
+            kwargs: Dict[str, Any],
+        ) -> Optional[Dict[str, Any]]:
             """Pre-print hook."""
             msg = kwargs.get("msg")
             if msg and isinstance(msg, Msg):
@@ -176,27 +184,31 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
                 return kwargs
             return None
 
-        async def post_print_hook(self: AgentBase, kwargs: Dict[str, Any], output: Any) -> None:
+        async def post_print_hook(
+            self: AgentBase,
+            kwargs: Dict[str, Any],
+            output: Any,
+        ) -> None:
             """Post-print hook."""
             if not hasattr(self, "cnt"):
                 self.cnt = 0
             self.cnt += 1
 
         def pre_print_hook_change2(
-                self: AgentBase,
-                msg: Msg,
-                stream: bool,
-                last: bool,
+            self: AgentBase,
+            msg: Msg,
+            stream: bool,
+            last: bool,
         ) -> Msg:
             """Pre-speak hook."""
             msg.content = "-2, " + msg.content
             return msg
 
         def pre_speak_hook_without_change(
-                self: AgentBase,
-                msg: Msg,
-                stream: bool,
-                last: bool,
+            self: AgentBase,
+            msg: Msg,
+            stream: bool,
+            last: bool,
         ) -> None:
             """Pre-speak hook."""
             return None
@@ -259,7 +271,11 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         global cnt_post
         cnt_post = 0
 
-        async def post_observe_hook(self: AgentBase, kwargs: Dict[str, Any], output: Any) -> None:
+        async def post_observe_hook(
+            self: AgentBase,
+            kwargs: Dict[str, Any],
+            output: Any,
+        ) -> None:
             """Post-observe hook."""
             global cnt_post
             cnt_post += 1
@@ -301,18 +317,18 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         """Test the class and object hook."""
 
         def pre_reply_hook_1(
-                self: AgentBase,
-                args: Tuple[Any, ...],
-                kwargs: Dict[str, Any],
+            self: AgentBase,
+            args: Tuple[Any, ...],
+            kwargs: Dict[str, Any],
         ) -> Union[Tuple[Tuple[Msg, ...], Dict[str, Any]], None]:
             """Pre-reply hook."""
             args[0].content = "-1, " + args[0].content
             return args, kwargs
 
         def pre_reply_hook_2(
-                self: AgentBase,
-                args: Tuple[Any, ...],
-                kwargs: Dict[str, Any],
+            self: AgentBase,
+            args: Tuple[Any, ...],
+            kwargs: Dict[str, Any],
         ) -> Union[Tuple[Tuple[Msg, ...], Dict[str, Any]], None]:
             """Pre-reply hook."""
             args[0].content = "-2, " + args[0].content
@@ -366,19 +382,19 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         """Test the class and object hook."""
 
         def post_reply_hook_1(
-                self: AgentBase,
-                args: Tuple[Any, ...],
-                kwargs: Dict[str, Any],
-                output: Msg,
+            self: AgentBase,
+            args: Tuple[Any, ...],
+            kwargs: Dict[str, Any],
+            output: Msg,
         ) -> Union[None, Msg]:
             """Post-reply hook."""
             return Msg("assistant", output.content + ", 1", "assistant")
 
         def post_reply_hook_2(
-                self: AgentBase,
-                args: Tuple[Any, ...],
-                kwargs: Dict[str, Any],
-                output: Msg,
+            self: AgentBase,
+            args: Tuple[Any, ...],
+            kwargs: Dict[str, Any],
+            output: Msg,
         ) -> Union[None, Msg]:
             """Post-reply hook."""
             return Msg("assistant", output.content + ", 2", "assistant")
@@ -427,7 +443,7 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         res = await self.agent2(msg_test)
         self.assertEqual(res.content, "0, 2")
 
-    def test_class_and_object_pre_observe_hook(self) -> None:
+    async def test_class_and_object_pre_observe_hook(self) -> None:
         """Test the class and object hook."""
 
         def pre_observe_hook_1(self: AgentBase, x: Msg) -> Msg:
@@ -476,13 +492,13 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
 
         msg_test = Msg("user", "0", "user")
 
-        self.agent.observe(msg_test)
+        await self.agent.observe(msg_test)
         self.assertEqual(
             "-2, -1, 0",
             self.agent.memory.get_memory()[0].content,
         )
 
-        self.agent2.observe(msg_test)
+        await self.agent2.observe(msg_test)
         self.assertEqual(
             "-2, 0",
             self.agent2.memory.get_memory()[0].content,
@@ -490,26 +506,26 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
 
     @patch("agentscope.agents._agent.log_msg")
     def test_class_and_object_pre_speak_hook(
-            self,
-            mock_log_msg: MagicMock,
+        self,
+        mock_log_msg: MagicMock,
     ) -> None:
         """Test the class and object hook."""
 
         def pre_speak_hook_change(
-                self: AgentBase,
-                msg: Msg,
-                stream: bool,
-                last: bool,
+            self: AgentBase,
+            msg: Msg,
+            stream: bool,
+            last: bool,
         ) -> Msg:
             """Pre-speak hook."""
             msg.content = "-1, " + msg.content
             return msg
 
         def pre_speak_hook_change2(
-                self: AgentBase,
-                msg: Msg,
-                stream: bool,
-                last: bool,
+            self: AgentBase,
+            msg: Msg,
+            stream: bool,
+            last: bool,
         ) -> Msg:
             """Pre-speak hook."""
             msg.content = "-2, " + msg.content

@@ -211,10 +211,16 @@ class ReActAgentV2(AgentBase):
         if self.verbose:
             verbose_content_blocks = []
             if raw_response.text:
-                verbose_content_blocks.append(TextBlock(type="text", text=raw_response.text))
+                verbose_content_blocks.append(
+                    TextBlock(type="text", text=raw_response.text),
+                )
             if raw_response.tool_calls:
                 verbose_content_blocks.extend(raw_response.tool_calls)
-            verbose_msg = Msg(self.name, verbose_content_blocks, role="assistant")
+            verbose_msg = Msg(
+                self.name,
+                verbose_content_blocks,
+                role="assistant",
+            )
             await self.print(verbose_msg)
 
         # Prepare the content for the msg
@@ -232,7 +238,10 @@ class ReActAgentV2(AgentBase):
 
         return raw_response.tool_calls, msg_reasoning
 
-    async def _acting(self, tool_calls: list[ToolUseBlock]) -> Union[None, Msg]:
+    async def _acting(
+        self,
+        tool_calls: list[ToolUseBlock],
+    ) -> Union[None, Msg]:
         """The acting process of the agent, which takes a tool use block as
         input, execute the function and return a message if the
         `generate_response`
@@ -287,7 +296,7 @@ class ReActAgentV2(AgentBase):
             "You have failed to generate response within the maximum "
             "iterations. Now respond directly by summarizing the current "
             "situation.",
-            role="user"
+            role="user",
         )
 
         # Generate a reply by summarizing the current situation

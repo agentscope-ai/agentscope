@@ -34,9 +34,9 @@ class AddAgent(AgentBase):
         """Observe function"""
 
     async def handle_interrupt(
-            self,
-            *args: Any,
-            **kwargs: Any,
+        self,
+        *args: Any,
+        **kwargs: Any,
     ) -> Msg:
         """Handle interrupt"""
 
@@ -61,9 +61,9 @@ class MultAgent(AgentBase):
         """Observe function"""
 
     async def handle_interrupt(
-            self,
-            *args: Any,
-            **kwargs: Any,
+        self,
+        *args: Any,
+        **kwargs: Any,
     ) -> Msg:
         """Handle interrupt"""
 
