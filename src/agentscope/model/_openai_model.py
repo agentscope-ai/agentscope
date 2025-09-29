@@ -137,6 +137,13 @@ class OpenAIChatModel(ChatModelBase):
             organization=organization,
             **(client_kwargs or {}),
         )
+        
+        if "azure_endpoint" in client_args:
+            self.client = openai.AsyncAzureOpenAI(
+                api_key=api_key,
+                organization=organization,
+                **(client_args or {}),
+            )
 
         self.reasoning_effort = reasoning_effort
         self.generate_kwargs = generate_kwargs or {}
