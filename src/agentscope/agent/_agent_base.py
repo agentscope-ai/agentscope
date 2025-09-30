@@ -267,8 +267,29 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             )
 
         if audio_block["source"]["type"] == "url":
-            # TODO: maybe download and play the audio from the URL?
-            print(json.dumps(audio_block, indent=4, ensure_ascii=False))
+            import urllib.request
+            import tempfile
+            import wave
+            import sounddevice as sd
+
+            url = audio_block["source"]["url"]
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+                    urllib.request.urlretrieve(url, tmp_file.name)
+                    with wave.open(tmp_file.name, 'rb') as wf:
+                        samplerate = wf.getframerate()
+                        n_frames = wf.getnframes()
+                        audio_data = wf.readframes(n_frames)
+                        
+                        # Convert byte data to numpy array
+                        audio_np = np.frombuffer(audio_data, dtype=np.int16)
+                        
+                        # Play audio
+                        sd.play(audio_np, samplerate)
+                        sd.wait()
+
+            except Exception as e:
+                logger.error(f"Failed to play audio from url {url}: {e}")
 
         elif audio_block["source"]["type"] == "base64":
             data = audio_block["source"]["data"]
