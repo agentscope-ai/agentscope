@@ -686,7 +686,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 dead_sheriff = None
                 if sheriff and sheriff in dead_tonight:
@@ -751,7 +751,7 @@ async def main() -> None:
                             res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                             if res:
                                 await moderator(res)
-                                return
+                                return wolf_win_flag
 
                             break
 
@@ -764,7 +764,7 @@ async def main() -> None:
                         res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                         if res:
                             await moderator(res)
-                            return
+                            return wolf_win_flag
 
                         # 不要直接跳过，还有遗言和开枪，下面处理
 
@@ -830,7 +830,7 @@ async def main() -> None:
                                     res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                                     if res:
                                         await moderator(res)
-                                        return
+                                        return wolf_win_flag
 
                                 if not first_explode_interrupted_election:
                                     # 将first_day_candidates转换为agent对象列表
@@ -919,7 +919,7 @@ async def main() -> None:
                                                                                NAME_TO_ROLE)
                                             if res:
                                                 await moderator(res)
-                                                return
+                                                return wolf_win_flag
 
                                         if not first_explode_interrupted_election:
                                             await sequential_pipeline(pk_candidates)
@@ -960,7 +960,7 @@ async def main() -> None:
                                                                                    NAME_TO_ROLE)
                                                 if res:
                                                     await moderator(res)
-                                                    return
+                                                    return wolf_win_flag
 
                                             if not first_explode_interrupted_election:
                                                 # Disable auto broadcast to avoid leaking info
@@ -1094,7 +1094,7 @@ async def main() -> None:
                             res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                             if res:
                                 await moderator(res)
-                                return
+                                return wolf_win_flag
 
                             await all_players_hub.broadcast(
                                 await moderator("双爆吞警徽！警徽流失，游戏继续。"),
@@ -1196,7 +1196,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 # Hunter's turn
                 for agent in gun_players:
@@ -1219,7 +1219,7 @@ async def main() -> None:
                     res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                     if res:
                         await moderator(res)
-                        return
+                        return wolf_win_flag
 
             # 处理连环枪的遗言（首夜）
             if round_num == 0:
@@ -1346,7 +1346,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 # 检查是否有警长死亡，如果有则处理警徽传递
                 dead_sheriff = None
@@ -1386,7 +1386,7 @@ async def main() -> None:
                         res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                         if res:
                             await moderator(res)
-                            return
+                            return wolf_win_flag
 
                         # 处理警徽传递
                         sheriff, sheriff_has_badge = await handle_sheriff_death(dead_sheriff, all_players_hub,
@@ -1422,7 +1422,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 # 检查是否有警长死亡，如果有则处理警徽传递
                 dead_sheriff = None
@@ -1513,7 +1513,7 @@ async def main() -> None:
                     res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                     if res:
                         await moderator(res)
-                        return
+                        return wolf_win_flag
 
                     continue
 
@@ -1545,7 +1545,7 @@ async def main() -> None:
                     res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                     if res:
                         await moderator(res)
-                        return
+                        return wolf_win_flag
 
                     continue
 
@@ -1628,7 +1628,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 for agent in gun_players:
                     if voted_player == agent.name and NAME_TO_ROLE[agent.name] == "hunter":
@@ -1671,7 +1671,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
                 for agent in gun_players:
                     if shot_player == agent.name and NAME_TO_ROLE[agent.name] == "hunter":
@@ -1710,7 +1710,7 @@ async def main() -> None:
                 res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
                 if res:
                     await moderator(res)
-                    return
+                    return wolf_win_flag
 
             # 处理白天投票出局的遗言（每天被投票出局的玩家都有遗言，开枪在遗言前）
             if voted_player is not None:
@@ -1740,7 +1740,7 @@ async def main() -> None:
             res, wolf_win_flag = check_winning(current_alive, full_werewolves, NAME_TO_ROLE)
             if res:
                 await moderator(res)
-                return
+                return wolf_win_flag
 
 
 if __name__ == "__main__":
