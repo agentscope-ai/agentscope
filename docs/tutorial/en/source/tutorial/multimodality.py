@@ -32,7 +32,7 @@ model_config = {
 #
 # As usual, we initialize AgentScope with the above configuration, and create a new agent with the vision LLM.
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 import agentscope
 
 agentscope.init(model_configs=model_config)

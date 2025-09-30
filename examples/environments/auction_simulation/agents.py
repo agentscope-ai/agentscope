@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The agents used to simulate an auction."""
+"""The agent used to simulate an auction."""
 import random
 import re
 import time
@@ -8,7 +8,7 @@ from typing import Optional, Sequence, Union
 from env import Item
 
 from loguru import logger
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 

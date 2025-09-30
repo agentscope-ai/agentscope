@@ -5,7 +5,7 @@ Unit tests for MixtureOfAgents strategy
 import unittest
 from unittest.mock import MagicMock, patch
 from agentscope.message import Msg
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 from agentscope.strategy import MixtureOfAgents
 
 
@@ -18,12 +18,12 @@ class TestMixtureOfAgents(unittest.TestCase):
         """
         Set up the test environment.
         """
-        # Mock main model and reference models
+        # Mock main model and reference model
         self.mock_main_model = MagicMock(spec=ModelWrapperBase)
         self.mock_ref_model_1 = MagicMock(spec=ModelWrapperBase)
         self.mock_ref_model_2 = MagicMock(spec=ModelWrapperBase)
 
-        # Mocking the format and call behavior of the models
+        # Mocking the format and call behavior of the model
         self.mock_main_model.format.return_value = "formatted_main_msg"
         self.mock_main_model.return_value.text = "main_model_response"
 

@@ -7,12 +7,12 @@ from typing import Any, Union, Type
 
 from loguru import logger
 
-from ..models import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
+from ..model import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
 
 
 class ModelManager:
     """The model manager for AgentScope, which is responsible for loading and
-    managing model configurations and models."""
+    managing model configurations and model."""
 
     _instance = None
 
@@ -51,7 +51,7 @@ class ModelManager:
         self.model_wrapper_mapping = {}
 
         for cls_name in _BUILD_IN_MODEL_WRAPPERS:
-            models_module = importlib.import_module("agentscope.models")
+            models_module = importlib.import_module("agentscope.model")
             cls = getattr(models_module, cls_name)
             if getattr(cls, "model_type", None):
                 self.register_model_wrapper_class(cls, exist_ok=False)

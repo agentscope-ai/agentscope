@@ -9,7 +9,7 @@ from llama_index.core.schema import MetadataMode
 from utils.logging import logger
 
 from agentscope.message import Msg
-from agentscope.models import (
+from agentscope.model import (
     ModelWrapperBase,
     DashScopeChatWrapper,
     ModelResponse,

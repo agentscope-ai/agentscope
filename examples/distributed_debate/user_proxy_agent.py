@@ -5,7 +5,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from agentscope.message import Msg
 
 

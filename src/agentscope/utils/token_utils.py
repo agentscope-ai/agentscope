@@ -43,7 +43,7 @@ OPENAI_MAX_LENGTH = {
 
 
 def get_openai_max_length(model_name: str) -> int:
-    """Get the max length of the OpenAi models."""
+    """Get the max length of the OpenAi model."""
     try:
         return OPENAI_MAX_LENGTH[model_name]
     except KeyError as exc:

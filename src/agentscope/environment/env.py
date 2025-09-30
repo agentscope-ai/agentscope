@@ -115,7 +115,7 @@ class EventListener(ABC):
 class Env(ABC, metaclass=RpcMeta):
     """The Env Interface.
     `Env` is a key concept of AgentScope, representing global
-    data shared among agents.
+    data shared among agent.
 
     Each env has its own name and value, and multiple envs can
     be organized into a tree structure, where each env can have

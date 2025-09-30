@@ -10,7 +10,7 @@ AgentScope implements hooks around three core agent functions:
 
 - `reply`: Generates response messages based on the agent's current state
 - `speak`: Displays and records messages to the terminal
-- `observe`: Records incoming messages from environment or other agents
+- `observe`: Records incoming messages from environment or other agent
 
 Available Hooks
 ----------------------
@@ -46,7 +46,7 @@ The signatures of the hook functions are as follows:
 
 from typing import Union, Tuple, Any, Dict
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -126,7 +126,7 @@ def post_observe_hook_template(self: AgentBase) -> None:
 
 from typing import Optional, Union
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -216,7 +216,7 @@ print("The content of the response message:\n", msg_response.content)
 #
 # We show how to use the pre/post-speak hooks below:
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 import agentscope
 
 agentscope.init(

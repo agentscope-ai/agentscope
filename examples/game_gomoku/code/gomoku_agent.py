@@ -6,8 +6,8 @@ from typing import Optional, Union, Sequence
 import json
 
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
-from agentscope.models import ModelResponse
+from agentscope.agent import AgentBase
+from agentscope.model import ModelResponse
 
 HINT_PROMPT = """
 You should respond in the following format, which can be loaded by json.loads in Python:

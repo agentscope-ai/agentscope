@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib import pyplot as plt, patches
 
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 
 
 CURRENT_BOARD_PROMPT_TEMPLATE = """The current board is as follows:

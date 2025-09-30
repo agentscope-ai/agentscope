@@ -196,7 +196,7 @@ class RpcClient:
         agent_id: str = None,
     ) -> bool:
         """
-        Delete agents with the specific agent_id.
+        Delete agent with the specific agent_id.
 
         Args:
             agent_id (`str`): id of the agent to be deleted.
@@ -213,11 +213,11 @@ class RpcClient:
         return status.ok
 
     def delete_all_agent(self) -> bool:
-        """Delete all agents on the server."""
+        """Delete all agent on the server."""
         stub = RpcAgentStub(RpcClient._get_channel(self.url))
         status = stub.delete_all_agents(Empty())
         if not status.ok:
-            logger.error(f"Error when delete all agents: {status.message}")
+            logger.error(f"Error when delete all agent: {status.message}")
         return status.ok
 
     def update_result(
@@ -260,7 +260,7 @@ class RpcClient:
 
     def get_agent_list(self) -> Sequence[dict]:
         """
-        Get the summary of all agents on the server as a list.
+        Get the summary of all agent on the server as a list.
 
         Returns:
             Sequence[str]: list of agent summary information.

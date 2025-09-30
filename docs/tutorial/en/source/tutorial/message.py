@@ -6,7 +6,7 @@ Message
 ====================
 
 Message is a specialized data structure for information exchange.
-In AgentScope, we use message to communicate among agents.
+In AgentScope, we use message to communicate among agent.
 
 A message consists of four fields: `name`, `role`, `content`, and `metadata`.
 The types and meanings of these fields are as follows:
@@ -24,14 +24,14 @@ The types and meanings of these fields are as follows:
     - `Literal["system", "assistant", "user"]`
     - The role of the message sender, which must be one of "system", "assistant", or "user".
         "system" is commonly used for system prompt or system messages (e.g., tool execution);
-        "assistant" is usually LLM-empowered agents; "user" is for users.
+        "assistant" is usually LLM-empowered agent; "user" is for users.
     * - content
     - `Union[str, list[ContentBlock]]`
     - The specific content of the message, which can be a string or a list of `ContentBlock`.
         `ContentBlock` is a dictionary.
     * - metadata
     - `JSONSerializable`
-    - Used to store structured data, which can be any serializable object, such as structured output of agents.
+    - Used to store structured data, which can be any serializable object, such as structured output of agent.
 
 .. tip:: In multi-agent systems, when the `role` field is "user" or
  "assistant", the `name` field can have different values to distinguish

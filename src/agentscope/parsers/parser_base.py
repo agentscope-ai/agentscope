@@ -6,7 +6,7 @@ from typing import Union, Sequence
 from loguru import logger
 
 from agentscope.exception import TagNotFoundError
-from agentscope.models import ModelResponse
+from agentscope.model import ModelResponse
 
 # TODO: Support one-time warning in logger rather than setting global variable
 _FIRST_TIME_TO_REPORT_CONTENT = True
@@ -134,7 +134,7 @@ class DictFilterMixin:
         allow_missing: bool = False,
     ) -> Union[str, dict, None]:
         """Filter the fields that will be fed into the content field in the
-        returned message, which will be exposed to other agents.
+        returned message, which will be exposed to other agent.
         """
         return self._filter_content_by_names(
             parsed_response,

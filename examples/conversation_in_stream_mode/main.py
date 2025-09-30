@@ -2,7 +2,7 @@
 """Main script for running the streaming agent."""
 from typing import Optional, Union, Sequence
 import agentscope
-from agentscope.agents import AgentBase, UserAgent
+from agentscope.agent import AgentBase, UserAgent
 from agentscope.message import Msg
 
 ###############################################################
@@ -97,7 +97,7 @@ class StreamingAgent(AgentBase):
         return msg_returned
 
 
-# Step2: Initialize the agents and start the conversation
+# Step2: Initialize the agent and start the conversation
 agent = StreamingAgent(
     "assistant",
     sys_prompt="You're a helpful assistant",

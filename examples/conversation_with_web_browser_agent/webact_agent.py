@@ -6,7 +6,7 @@ WebVoyager (https://arxiv.org/abs/2401.13919)."""
 
 from typing import Optional, Union, Sequence
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.exception import ResponseParsingError
 from agentscope.manager import FileManager
 from agentscope.message import Msg

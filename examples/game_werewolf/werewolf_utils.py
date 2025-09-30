@@ -7,7 +7,7 @@ import numpy as np
 from loguru import logger
 
 from prompt import Prompts
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -29,7 +29,7 @@ def update_alive_players(
     wolves: Sequence[AgentBase],
     dead_names: Union[str, list[str]],
 ) -> tuple[list, list]:
-    """update the list of alive agents"""
+    """update the list of alive agent"""
     if not isinstance(dead_names, list):
         dead_names = [dead_names]
     return [_ for _ in survivors if _.name not in dead_names], [
@@ -79,7 +79,7 @@ def set_parsers(
     agents: Union[AgentBase, list[AgentBase]],
     parser_name: str,
 ) -> None:
-    """Add parser to agents"""
+    """Add parser to agent"""
     if not isinstance(agents, list):
         agents = [agents]
     for agent in agents:

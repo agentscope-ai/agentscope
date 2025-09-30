@@ -135,7 +135,7 @@ pip install agentscope
 AgentScopeを使用して**ユーザー**と**アシスタント**の間の基本的な会話を**明示的に**作成：
 
 ```python
-from agentscope.agents import DialogAgent, UserAgent
+from agentscope.agent import DialogAgent, UserAgent
 import agentscope
 
 # モデル設定を読み込む
@@ -172,7 +172,7 @@ AgentScopeは**マルチエージェント**向けに設計されており、柔
 ![](https://img.shields.io/badge/✨_Feature-Multi--Agent-purple)
 
 ```python
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 from agentscope.pipelines import sequential_pipeline
 from agentscope import msghub
@@ -210,8 +210,9 @@ sunday = DialogAgent(
 
 # msghubを使用してチャットルームを作成し、エージェントのメッセージをすべての参加者にブロードキャスト
 with msghub(
-    participants=[friday, saturday, sunday],
-    announcement=Msg("user", "1から数え始め、一度に1つの数字だけを報告し、他のことは言わないでください", "user"),  # 挨拶メッセージ
+        participants=[friday, saturday, sunday],
+        announcement=Msg("user", "1から数え始め、一度に1つの数字だけを報告し、他のことは言わないでください", "user"),
+        # 挨拶メッセージ
 ) as hub:
     # 順番に発言
     sequential_pipeline([friday, saturday, sunday], x=None)
@@ -224,7 +225,7 @@ with msghub(
 ツールとMCP Serverを装備したReActエージェントを簡単に作成！
 
 ```python
-from agentscope.agents import ReActAgentV2, UserAgent
+from agentscope.agent import ReActAgentV2, UserAgent
 from agentscope.service import ServiceToolkit, execute_python_code
 import agentscope
 
@@ -245,7 +246,7 @@ toolkit.add_mcp_servers(
     {
         "mcpServers": {
             "amap-amap-sse": {
-            "url": "https://mcp.amap.com/sse?key={YOUR_GAODE_API_KEY}"
+                "url": "https://mcp.amap.com/sse?key={YOUR_GAODE_API_KEY}"
             }
         }
     }
@@ -274,7 +275,7 @@ while x is None or x.content != "exit":
 Pydanticの`BaseModel`を使用して構造化出力を簡単に指定＆切り替え：
 
 ```python
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 from pydantic import BaseModel, Field
@@ -297,13 +298,16 @@ agent = ReActAgentV2(
     max_iters=20
 )
 
+
 class CvModel(BaseModel):
     name: str = Field(max_length=50, description="名前")
     description: str = Field(max_length=200, description="簡単な説明")
     aget: int = Field(gt=0, le=120, description="年齢")
 
+
 class ChoiceModel(BaseModel):
     choice: Literal["apple", "banana"]
+
 
 # `structured_model`フィールドを使用して構造化出力を指定
 res_msg = agent(
@@ -327,7 +331,7 @@ print(res_msg.metadata)
 [Routing](https://www.anthropic.com/engineering/building-effective-agents)、[parallelization](https://www.anthropic.com/engineering/building-effective-agents)、[orchestrator-workers](https://www.anthropic.com/engineering/building-effective-agents)、または[evaluator-optimizer](https://www.anthropic.com/engineering/building-effective-agents)。AgentScopeを使用して様々なタイプのエージェントワークフローを簡単に構築！Routingを例に：
 
 ```python
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 from pydantic import BaseModel, Field
@@ -350,6 +354,7 @@ routing_agent = ReActAgentV2(
     service_toolkit=ServiceToolkit()
 )
 
+
 # 構造化出力を使用してルーティング結果を指定
 class RoutingChoice(BaseModel):
     your_choice: Literal[
@@ -359,6 +364,7 @@ class RoutingChoice(BaseModel):
         None
     ] = Field(description="適切な後続タスクを選択し、タスクが単純すぎるか適切なタスクがない場合は`None`を選択")
     task_description: Union[str, None] = Field(description="タスクの説明", default=None)
+
 
 res_msg = routing_agent(
     Msg("user", "詩を書いてください", "user"),
@@ -385,7 +391,7 @@ else:
 `to_dist`関数を使用してエージェントを分散モードで実行！
 
 ```python
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 import agentscope
 
@@ -402,13 +408,13 @@ agentscope.init(
 
 # `to_dist()`を使用してエージェントを分散モードで実行
 agent1 = DialogAgent(
-   name="Saturday",
-   model_config_name="my_config"
+    name="Saturday",
+    model_config_name="my_config"
 ).to_dist()
 
 agent2 = DialogAgent(
-   name="Sunday",
-   model_config_name="my_config"
+    name="Sunday",
+    model_config_name="my_config"
 ).to_dist()
 
 # 2つのエージェントが並列で実行される

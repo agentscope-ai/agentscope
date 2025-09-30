@@ -7,12 +7,12 @@ import json
 from typing import Any, List, Dict, Generator
 
 import dashscope
-from utils.constant import INPUT_MAX_TOKEN
-from utils.logging import logger
+from ..utils.constant import INPUT_MAX_TOKEN
+from ..utils.logging import logger
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 from agentscope.parsers import MarkdownJsonDictParser
 from agentscope.utils.token_utils import count_openai_token
 
@@ -189,12 +189,12 @@ class Summarizer(AgentBase):
             注意：如果有被采用的条目的Reference的值缺失或者是null，则不输出此Reference。
             """
 
-        super().__init__(
-            name=name,
-            sys_prompt=sys_prompt,
-            model_config_name=model_config_name,
-            **kwargs,
-        )
+        super().__init__()
+        self.name = name
+        self.model_config_name = model_config_name
+        self.memory_context_length = memory_context_length
+        self.sys_prompt = sys_prompt
+        self.kwargs = kwargs
 
     def _rerank(
         self,
@@ -297,7 +297,7 @@ class Summarizer(AgentBase):
                 )
 
     def prompt_for_digested(self, x: Msg = None) -> Any:
-        """prepare prompt with digested answer from retrieval agents"""
+        """prepare prompt with digested answer from retrieval agent"""
         metadata = x.metadata if x.metadata is not None else {}
         request_id = metadata.get(
             "request_id",
@@ -369,7 +369,7 @@ class Summarizer(AgentBase):
         x: Msg = None,
     ) -> Any:
         """
-        prepare prompt with raw answer from retrieval agents
+        prepare prompt with raw answer from retrieval agent
         """
         metadata = x.metadata if x.metadata is not None else {}
         request_id = metadata.get(

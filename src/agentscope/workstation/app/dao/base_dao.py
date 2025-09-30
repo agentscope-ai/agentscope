@@ -16,7 +16,7 @@ ModelType = TypeVar("ModelType", bound=SQLModel)
 class BaseDAO(Generic[ModelType]):
     """
     Base Data Access Object class, provides basic CRUD operations for
-    database models
+    database model
 
     Responsibilities:
     - Execute database operations

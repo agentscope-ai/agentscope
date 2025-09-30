@@ -10,8 +10,8 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 
 import agentscope
-from agentscope.agents import AgentBase
-from agentscope.agents import UserAgent
+from agentscope.agent import AgentBase
+from agentscope.agent import UserAgent
 from agentscope.message import Msg
 
 

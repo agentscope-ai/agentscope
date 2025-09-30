@@ -38,7 +38,7 @@ def count(model_name: str, messages: list[dict[str, str]]) -> int:
             )
 
     # Counting tokens according to the model name
-    # Register models
+    # Register model
     if model_name in __register_models:
         return __register_models[model_name](model_name, messages)
 
@@ -104,7 +104,7 @@ def _count_content_tokens_for_openai_vision_model(
     for item in content:
         if not isinstance(item, dict):
             raise TypeError(
-                "If you're using a vision model for OpenAI models,"
+                "If you're using a vision model for OpenAI model,"
                 "The content field should be a list of "
                 f"dictionaries, but got {type(item)}.",
             )
@@ -195,7 +195,7 @@ def count_openai_tokens(  # pylint: disable=too-many-branches
     for message in messages:
         num_tokens += tokens_per_message
         for key, value in message.items():
-            # Considering vision models
+            # Considering vision model
             if key == "content" and isinstance(value, list):
                 num_tokens += _count_content_tokens_for_openai_vision_model(
                     value,
@@ -232,7 +232,7 @@ def count_gemini_tokens(
     except ImportError as exc:
         raise ImportError(
             "The package `google.generativeai` is required for token counting "
-            "for Gemini models. Install it with "
+            "for Gemini model. Install it with "
             "`pip install -q -U google-generativeai` and refer to "
             "https://ai.google.dev/gemini-api/docs/get-started/"
             "tutorial?lang=python for details.",
@@ -272,7 +272,7 @@ def count_dashscope_tokens(
     except ImportError as exc:
         raise ImportError(
             "The package `dashscope` is required for token counting "
-            "for Dashscope models.",
+            "for Dashscope model.",
         ) from exc
 
     response = dashscope.Tokenization.call(
@@ -288,13 +288,13 @@ def count_dashscope_tokens(
 
 
 def supported_models() -> list[str]:
-    """Get the list of supported models for token counting."""
+    """Get the list of supported model for token counting."""
     infos = [
-        "Supported models for token counting: ",
-        " 1. OpenAI Chat models (starting with 'gpt-') ",
-        " 2. Gemini models (starting with 'gemini-') ",
-        " 3. Dashscope models (starting with 'qwen-') ",
-        f" 4. Registered models: {', '.join(__register_models.keys())} ",
+        "Supported model for token counting: ",
+        " 1. OpenAI Chat model (starting with 'gpt-') ",
+        " 2. Gemini model (starting with 'gemini-') ",
+        " 3. Dashscope model (starting with 'qwen-') ",
+        f" 4. Registered model: {', '.join(__register_models.keys())} ",
     ]
     for info in infos:
         logger.info(info)
@@ -330,7 +330,7 @@ def register_model(
         __register_models[name] = tokens_count_func
 
     logger.info(
-        f"Successfully registered token counting function for models: "
+        f"Successfully registered token counting function for model: "
         f"{', '.join(model_name)}.",
     )
 

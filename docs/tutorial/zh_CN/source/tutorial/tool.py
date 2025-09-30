@@ -26,7 +26,7 @@ import json
 
 import agentscope
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 # %%
 # 内置工具函数
@@ -104,7 +104,7 @@ tool_call = ToolUseBlock(
 # .. note:: `ReActAgent` 采用的是 prompt 本地拼接和解析的方式调用工具，而不是通过
 #  模型 API 的 tools API 进行调用。关于 tools API 的使用，请参考 :ref:`tools-api`.
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 agentscope.init(
     model_configs={
@@ -148,13 +148,13 @@ res = agent(msg_task)
 #  其使用方法与 `ReActAgent` 保持高度一致。
 #
 # .. note:: 目前 `Formatter` 模块只有 `format_chat` 函数支持工具调用，
-# `format_multi_agent` 函数的支持还在开发中。
+# `_format` 函数的支持还在开发中。
 #
 # .. note:: tools API目前还不支持流式返回，相关功能处于开发中。
 #
 # 我们以 DashScope API 为例展示如何使用 tools API.
 
-from agentscope.formatters import DashScopeFormatter
+from agentscope.formatter import DashScopeFormatter
 from agentscope.message import TextBlock, ToolUseBlock, ToolResultBlock
 
 model = DashScopeChatWrapper(
@@ -211,7 +211,7 @@ print(json.dumps(formatted_msgs, indent=4, ensure_ascii=False))
 
 # %%
 # 目前，我们已经完成了基于 API 的工具调用全过程。在智能体内的具体实现可以参
-# 考 `agentscope.agents.ReActAgentV2`。
+# 考 `agentscope.agent.ReActAgentV2`。
 
 # %%
 # 在 ServiceToolkit 中使用 MCP

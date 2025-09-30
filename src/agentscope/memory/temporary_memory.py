@@ -12,7 +12,7 @@ from typing import Callable
 
 from loguru import logger
 
-from .memory import MemoryBase
+from ._memory_base import MemoryBase
 from ..manager import ModelManager
 from ..serialize import serialize, deserialize
 from ..service.retrieval.retrieval_from_list import retrieve_from_list

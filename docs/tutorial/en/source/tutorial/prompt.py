@@ -13,7 +13,7 @@ Specifically, AgentScope supports both model-specific and model-agnostic
 formatting.
 
 .. tip:: **Chat scenario** refers to the conversation between a user and an
- assistant, while **multi-agent scenario** involves multiple agents with
+ assistant, while **multi-agent scenario** involves multiple agent with
  different names (though their roles are all "assistant").
 
 .. note:: Currently, most LLM API providers only support chat scenario. For
@@ -44,7 +44,7 @@ Chat API as an example:
 """
 from typing import Union, Optional
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.manager import ModelManager
 import agentscope
@@ -137,7 +137,7 @@ class MyAgent(AgentBase):
 # function that automatically selects the appropriate method based on the
 # input messages.
 
-from agentscope.formatters import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 multi_agent_messages = [
     Msg("system", "You're a helpful assistant named Alice.", "system"),
@@ -156,7 +156,7 @@ chat_messages = [
 # %%
 # Multi-agent scenario:
 
-formatted_multi_agent = OpenAIFormatter.format_multi_agent(
+formatted_multi_agent = OpenAIChatFormatter._format(
     multi_agent_messages,
 )
 print(json.dumps(formatted_multi_agent, indent=4, ensure_ascii=False))
@@ -164,7 +164,7 @@ print(json.dumps(formatted_multi_agent, indent=4, ensure_ascii=False))
 # %%
 # Chat scenario:
 
-formatted_chat = OpenAIFormatter.format_chat(
+formatted_chat = OpenAIChatFormatter.format_chat(
     chat_messages,
 )
 print(json.dumps(formatted_chat, indent=4, ensure_ascii=False))
@@ -172,7 +172,7 @@ print(json.dumps(formatted_chat, indent=4, ensure_ascii=False))
 # %%
 # Auto formatting when only two entities are involved:
 
-formatted_auto_chat = OpenAIFormatter.format_auto(
+formatted_auto_chat = OpenAIChatFormatter.format_auto(
     chat_messages,
 )
 print(json.dumps(formatted_auto_chat, indent=4, ensure_ascii=False))
@@ -180,7 +180,7 @@ print(json.dumps(formatted_auto_chat, indent=4, ensure_ascii=False))
 # %%
 # Auto formatting when more than two entities (multi-agent) are involved:
 
-formatted_auto_multi_agent = OpenAIFormatter.format_auto(
+formatted_auto_multi_agent = OpenAIChatFormatter.format_auto(
     multi_agent_messages,
 )
 print(json.dumps(formatted_auto_multi_agent, indent=4, ensure_ascii=False))
@@ -188,10 +188,10 @@ print(json.dumps(formatted_auto_multi_agent, indent=4, ensure_ascii=False))
 # %%
 # The available formatter classes are:
 
-from agentscope.formatters import (
+from agentscope.formatter import (
     CommonFormatter,
     AnthropicFormatter,
-    OpenAIFormatter,
+    OpenAIChatFormatter,
     GeminiFormatter,
     DashScopeFormatter,
 )
@@ -203,8 +203,8 @@ from agentscope.formatters import (
 # Vision Models
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #
-# For vision models, AgentScope currently supports OpenAI, DashScope and
-# Anthropic vision models.
+# For vision model, AgentScope currently supports OpenAI, DashScope and
+# Anthropic vision model.
 
 from agentscope.message import TextBlock, ImageBlock
 
@@ -228,7 +228,7 @@ multi_modal_messages = [
 
 # %%
 print("OpenAI prompt:")
-openai_prompt = OpenAIFormatter.format_chat(multi_modal_messages)
+openai_prompt = OpenAIChatFormatter.format_chat(multi_modal_messages)
 print(json.dumps(openai_prompt, indent=4, ensure_ascii=False))
 
 # %%

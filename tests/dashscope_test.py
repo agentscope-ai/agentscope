@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 
 import agentscope
 from agentscope.manager import ASManager
-from agentscope.models import (
+from agentscope.model import (
     ModelResponse,
     DashScopeChatWrapper,
     DashScopeImageSynthesisWrapper,
@@ -29,7 +29,7 @@ class TestDashScopeChatWrapper(unittest.TestCase):
             api_key=self.api_key,
         )
 
-    @patch("agentscope.models.dashscope_model.dashscope.Generation.call")
+    @patch("agentscope.model.dashscope_model.dashscope.Generation.call")
     def test_call_success(self, mock_generation_call: MagicMock) -> None:
         """Test call success"""
         # Set up the mock response for a successful API call
@@ -70,7 +70,7 @@ class TestDashScopeChatWrapper(unittest.TestCase):
             api_key="test_api_key",
         )
 
-    @patch("agentscope.models.dashscope_model.dashscope.Generation.call")
+    @patch("agentscope.model.dashscope_model.dashscope.Generation.call")
     def test_call_failure(self, mock_generation_call: MagicMock) -> None:
         """test call failure"""
         # Set up the mock response for a failed API call
@@ -130,7 +130,7 @@ class TestDashScopeImageSynthesisWrapper(unittest.TestCase):
         "agentscope.manager.FileManager.save_image",
         side_effect=lambda x: f'/local/path/{x.split("/")[-1]}',
     )
-    @patch("agentscope.models.dashscope_model.dashscope.ImageSynthesis.call")
+    @patch("agentscope.model.dashscope_model.dashscope.ImageSynthesis.call")
     def test_image_synthesis_wrapper_call_success(
         self,
         mock_call: MagicMock,
@@ -166,7 +166,7 @@ class TestDashScopeImageSynthesisWrapper(unittest.TestCase):
             ["/local/path/image.jpg"],
         )
 
-    @patch("agentscope.models.dashscope_model.dashscope.ImageSynthesis.call")
+    @patch("agentscope.model.dashscope_model.dashscope.ImageSynthesis.call")
     def test_image_synthesis_wrapper_call_failure(
         self,
         mock_call: MagicMock,
@@ -216,7 +216,7 @@ class TestDashScopeTextEmbeddingWrapper(unittest.TestCase):
             api_key="test_key",
         )
 
-    @patch("agentscope.models.dashscope_model.dashscope.TextEmbedding.call")
+    @patch("agentscope.model.dashscope_model.dashscope.TextEmbedding.call")
     def test_call_success(self, mock_call: MagicMock) -> None:
         """Test call success"""
         # Mock a successful API response
@@ -245,7 +245,7 @@ class TestDashScopeTextEmbeddingWrapper(unittest.TestCase):
         # Assert the response is as expected
         self.assertEqual(response.embedding, [[0.1, 0.2, 0.3]])
 
-    @patch("agentscope.models.dashscope_model.dashscope.TextEmbedding.call")
+    @patch("agentscope.model.dashscope_model.dashscope.TextEmbedding.call")
     def test_call_failure(self, mock_call: MagicMock) -> None:
         """Test call failure"""
         # Mock a failed API response
@@ -293,7 +293,7 @@ class TestDashScopeMultiModalWrapper(unittest.TestCase):
         )
 
     @patch(
-        "agentscope.models.dashscope_model."
+        "agentscope.model.dashscope_model."
         "dashscope.MultiModalConversation.call",
     )
     def test_call_success(self, mock_call: MagicMock) -> None:
@@ -336,7 +336,7 @@ class TestDashScopeMultiModalWrapper(unittest.TestCase):
         )
 
     @patch(
-        "agentscope.models.dashscope_model."
+        "agentscope.model.dashscope_model."
         "dashscope.MultiModalConversation.call",
     )
     def test_call_failure(self, mock_call: MagicMock) -> None:

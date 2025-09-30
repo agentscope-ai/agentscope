@@ -12,11 +12,11 @@ from loguru import logger
 from ._monitor import MonitorManager
 from ._file import FileManager
 from ._model import ModelManager
-from ..agents import AgentBase, UserAgent, StudioUserInput
+from ..agent import AgentBase, UserAgent, StudioUserInput
 from ..logging import LOG_LEVEL, setup_logger
 from .._version import __version__
 from ..message import Msg
-from ..models import ModelWrapperBase
+from ..model import ModelWrapperBase
 from ..utils.common import (
     _generate_random_code,
     _get_process_creation_time,

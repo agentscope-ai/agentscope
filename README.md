@@ -135,33 +135,33 @@ pip install agentscope
 Creating a basic conversation **explicitly** between **a user** and **an assistant** with AgentScope:
 
 ```python
-from agentscope.agents import DialogAgent, UserAgent
+from agentscope.agent import DialogAgent, UserAgent
 import agentscope
 
 # Load model configs
 agentscope.init(
-    model_configs=[
-        {
-            "config_name": "my_config",
-            "model_type": "dashscope_chat",
-            "model_name": "qwen-max",
-        }
-    ]
+  model_configs=[
+    {
+      "config_name": "my_config",
+      "model_type": "dashscope_chat",
+      "model_name": "qwen-max",
+    }
+  ]
 )
 
 # Create a dialog agent and a user agent
 dialog_agent = DialogAgent(
-    name="Friday",
-    model_config_name="my_config",
-    sys_prompt="You're a helpful assistant named Friday"
+  name="Friday",
+  model_config_name="my_config",
+  sys_prompt="You're a helpful assistant named Friday"
 )
 user_agent = UserAgent(name="user")
 
 # Build the workflow/conversation explicitly
 x = None
 while x is None or x.content != "exit":
-    x = dialog_agent(x)
-    x = user_agent(x)
+  x = dialog_agent(x)
+  x = user_agent(x)
 ```
 
 ### 🧑‍🤝‍🧑 Multi-Agent Conversation
@@ -172,7 +172,7 @@ AgentScope is designed for **multi-agent** applications, offering flexible contr
 ![](https://img.shields.io/badge/✨_Feature-Multi--Agent-purple)
 
 ```python
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 from agentscope.pipelines import sequential_pipeline
 from agentscope import msghub
@@ -180,41 +180,42 @@ import agentscope
 
 # Load model configs
 agentscope.init(
-    model_configs=[
-        {
-            "config_name": "my_config",
-            "model_type": "dashscope_chat",
-            "model_name": "qwen-max",
-        }
-    ]
+  model_configs=[
+    {
+      "config_name": "my_config",
+      "model_type": "dashscope_chat",
+      "model_name": "qwen-max",
+    }
+  ]
 )
 
-# Create three agents
+# Create three agent
 friday = DialogAgent(
-    name="Friday",
-    model_config_name="my_config",
-    sys_prompt="You're a helpful assistant named Friday"
+  name="Friday",
+  model_config_name="my_config",
+  sys_prompt="You're a helpful assistant named Friday"
 )
 
 saturday = DialogAgent(
-    name="Saturday",
-    model_config_name="my_config",
-    sys_prompt="You're a helpful assistant named Saturday"
+  name="Saturday",
+  model_config_name="my_config",
+  sys_prompt="You're a helpful assistant named Saturday"
 )
 
 sunday = DialogAgent(
-    name="Sunday",
-    model_config_name="my_config",
-    sys_prompt="You're a helpful assistant named Sunday"
+  name="Sunday",
+  model_config_name="my_config",
+  sys_prompt="You're a helpful assistant named Sunday"
 )
 
-# Create a chatroom by msghub, where agents' messages are broadcast to all participants
+# Create a chatroom by msghub, where agent' messages are broadcast to all participants
 with msghub(
-    participants=[friday, saturday, sunday],
-    announcement=Msg("user", "Counting from 1 and report one number each time without other things", "user"),  # A greeting message
+        participants=[friday, saturday, sunday],
+        announcement=Msg("user", "Counting from 1 and report one number each time without other things", "user"),
+        # A greeting message
 ) as hub:
-    # Speak in sequence
-    sequential_pipeline([friday, saturday, sunday], x=None)
+  # Speak in sequence
+  sequential_pipeline([friday, saturday, sunday], x=None)
 ```
 
 ### 💡 Reasoning with Tools & MCP
@@ -224,16 +225,16 @@ with msghub(
 Creating a reasoning agent with built-in tools and **MCP servers**!
 
 ```python
-from agentscope.agents import ReActAgentV2, UserAgent
+from agentscope.agent import ReActAgentV2, UserAgent
 from agentscope.service import ServiceToolkit, execute_python_code
 import agentscope
 
 agentscope.init(
-    model_configs={
-        "config_name": "my_config",
-        "model_type": "dashscope_chat",
-        "model_name": "qwen-max",
-    }
+  model_configs={
+    "config_name": "my_config",
+    "model_type": "dashscope_chat",
+    "model_name": "qwen-max",
+  }
 )
 
 # Add tools
@@ -242,29 +243,29 @@ toolkit.add(execute_python_code)
 
 # Connect to Gaode MCP server
 toolkit.add_mcp_servers(
-    {
-        "mcpServers": {
-            "amap-amap-sse": {
-            "url": "https://mcp.amap.com/sse?key={YOUR_GAODE_API_KEY}"
-            }
-        }
+  {
+    "mcpServers": {
+      "amap-amap-sse": {
+        "url": "https://mcp.amap.com/sse?key={YOUR_GAODE_API_KEY}"
+      }
     }
+  }
 )
 
 # Create a reasoning-acting agent
 agent = ReActAgentV2(
-    name="Friday",
-    model_config_name="my_config",
-    service_toolkit=toolkit,
-    sys_prompt="You're a helpful assistant named Friday."
+  name="Friday",
+  model_config_name="my_config",
+  service_toolkit=toolkit,
+  sys_prompt="You're a helpful assistant named Friday."
 )
 user_agent = UserAgent(name="user")
 
 # Build the workflow/conversation explicitly
 x = None
 while x is None or x.content != "exit":
-    x = agent(x)
-    x = user_agent(x)
+  x = agent(x)
+  x = user_agent(x)
 ```
 
 ### 🔠 Structured Output
@@ -274,7 +275,7 @@ while x is None or x.content != "exit":
 Specifying structured output with a Pydantic base model.
 
 ```python
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 from pydantic import BaseModel, Field
@@ -282,40 +283,43 @@ from typing import Literal
 import agentscope
 
 agentscope.init(
-    model_configs={
-        "config_name": "my_config",
-        "model_type": "dashscope_chat",
-        "model_name": "qwen-max",
-    }
+  model_configs={
+    "config_name": "my_config",
+    "model_type": "dashscope_chat",
+    "model_name": "qwen-max",
+  }
 )
 
 # Create a reasoning-acting agent
 agent = ReActAgentV2(
-    name="Friday",
-    model_config_name="my_config",
-    service_toolkit=ServiceToolkit(),
-    max_iters=20
+  name="Friday",
+  model_config_name="my_config",
+  service_toolkit=ServiceToolkit(),
+  max_iters=20
 )
 
+
 class CvModel(BaseModel):
-    name: str = Field(max_length=50, description="The name")
-    description: str = Field(max_length=200, description="The brief description")
-    aget: int = Field(gt=0, le=120, description="The age of the person")
+  name: str = Field(max_length=50, description="The name")
+  description: str = Field(max_length=200, description="The brief description")
+  aget: int = Field(gt=0, le=120, description="The age of the person")
+
 
 class ChoiceModel(BaseModel):
-    choice: Literal["apple", "banana"]
+  choice: Literal["apple", "banana"]
+
 
 # Specify structured output using `structured_model`
 res_msg = agent(
-    Msg("user", "Introduce Einstein", "user"),
-    structured_model=CvModel
+  Msg("user", "Introduce Einstein", "user"),
+  structured_model=CvModel
 )
 print(res_msg.metadata)
 
 # Switch to different structured model
 res_msg = agent(
-    Msg("user", "Choice a fruit", "user"),
-    structured_model=ChoiceModel
+  Msg("user", "Choice a fruit", "user"),
+  structured_model=ChoiceModel
 )
 print(res_msg.metadata)
 ```
@@ -328,7 +332,7 @@ print(res_msg.metadata)
 Build your own workflow with AgentScope easily! Taking routing as an example:
 
 ```python
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 from pydantic import BaseModel, Field
@@ -336,45 +340,48 @@ from typing import Literal, Union
 import agentscope
 
 agentscope.init(
-    model_configs={
-        "config_name": "my_config",
-        "model_type": "dashscope_chat",
-        "model_name": "qwen-max",
-    }
+  model_configs={
+    "config_name": "my_config",
+    "model_type": "dashscope_chat",
+    "model_name": "qwen-max",
+  }
 )
 
 # Workflow: Routing
 routing_agent = ReActAgentV2(
-    name="Routing",
-    model_config_name="my_config",
-    sys_prompt="You're a routing agent. Your target is to route the user query to the right follow-up task",
-    service_toolkit=ServiceToolkit()
+  name="Routing",
+  model_config_name="my_config",
+  sys_prompt="You're a routing agent. Your target is to route the user query to the right follow-up task",
+  service_toolkit=ServiceToolkit()
 )
+
 
 # Use structured output to specify the routing task
 class RoutingChoice(BaseModel):
-    your_choice: Literal[
-        'Content Generation',
-        'Programming',
-        'Information Retrieval',
-        None
-    ] = Field(description="Choice the right follow-up task, and choice `None` if the task is too simple or no suitable task")
-    task_description: Union[str, None] = Field(description="The task description", default=None)
+  your_choice: Literal[
+    'Content Generation',
+    'Programming',
+    'Information Retrieval',
+    None
+  ] = Field(
+    description="Choice the right follow-up task, and choice `None` if the task is too simple or no suitable task")
+  task_description: Union[str, None] = Field(description="The task description", default=None)
+
 
 res_msg = routing_agent(
-    Msg("user", "Help me to write a poem", "user"),
-    structured_model=RoutingChoice
+  Msg("user", "Help me to write a poem", "user"),
+  structured_model=RoutingChoice
 )
 
 # Execute the follow-up task
 if res_msg.metadata["your_choice"] == "Content Generation":
-    ...
+  ...
 elif res_msg.metadata["your_choice"] == "Programming":
-    ...
+  ...
 elif res_msg.metadata["your_choice"] == "Information Retrieval":
-    ...
+  ...
 else:
-    ...
+  ...
 ```
 
 ### ⚡️ Distribution and Parallelization
@@ -386,30 +393,30 @@ else:
 Using `to_dist` function to run the agent in distributed mode!
 
 ```python
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 import agentscope
 
 # Load model configs
 agentscope.init(
-    model_configs=[
-        {
-            "config_name": "my_config",
-            "model_type": "dashscope_chat",
-            "model_name": "qwen-max",
-        }
-    ]
+  model_configs=[
+    {
+      "config_name": "my_config",
+      "model_type": "dashscope_chat",
+      "model_name": "qwen-max",
+    }
+  ]
 )
 
 # Using `to_dist()` to run the agent in distributed mode
 agent1 = DialogAgent(
-   name="Saturday",
-   model_config_name="my_config"
+  name="Saturday",
+  model_config_name="my_config"
 ).to_dist()
 
 agent2 = DialogAgent(
-   name="Sunday",
-   model_config_name="my_config"
+  name="Sunday",
+  model_config_name="my_config"
 ).to_dist()
 
 # The two agent will run in parallel
