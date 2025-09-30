@@ -577,21 +577,27 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         """If `hook_type` is not specified, clear all instance-level hooks.
         Otherwise, clear the specified type of instance-level hooks."""
         if hook_type is None:
-            types_to_clear = self.supported_hook_types
+            for typ in self.supported_hook_types:
+                if not hasattr(self, f"_instance_{typ}_hooks"):
+                    raise ValueError(
+                        f"Call super().__init__() in the constructor "
+                        f"to initialize the instance-level hooks for "
+                        f"{self.__class__.__name__}.",
+                    )
+                hooks = getattr(self, f"_instance_{typ}_hooks")
+                hooks.clear()
+
         else:
             assert (
                 hook_type in self.supported_hook_types
             ), f"Invalid hook type: {hook_type}"
-            types_to_clear = [hook_type]
-
-        for typ in types_to_clear:
-            if not hasattr(self, f"_instance_{typ}_hooks"):
+            if not hasattr(self, f"_instance_{hook_type}_hooks"):
                 raise ValueError(
                     f"Call super().__init__() in the constructor "
                     f"to initialize the instance-level hooks for "
                     f"{self.__class__.__name__}.",
                 )
-            hooks = getattr(self, f"_instance_{typ}_hooks")
+            hooks = getattr(self, f"_instance_{hook_type}_hooks")
             hooks.clear()
 
     def reset_subscribers(
