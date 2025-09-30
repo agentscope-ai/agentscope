@@ -5,8 +5,8 @@ from typing import Optional, Union, Sequence, Type
 
 from loguru import logger
 
-from agentscope import agents
-from .agents import AgentBase
+from agentscope import agent
+from .agent import AgentBase
 from .logging import LOG_LEVEL
 from .constants import _DEFAULT_SAVE_DIR
 from .constants import _DEFAULT_LOG_LEVEL
@@ -73,7 +73,7 @@ def init(
         logger_level (`LOG_LEVEL`, defaults to `"INFO"`):
             The logging level of logger.
         agent_configs (`Optional[Union[str, list, dict]]`, defaults to `None`):
-            The config dict(s) of agents or the path to the config file,
+            The config dict(s) of agent or the path to the config file,
             which can be loaded by json.loads(). One agent config should
             cover the required arguments to initialize a specific agent
             object, otherwise the default values will be used.
@@ -107,10 +107,10 @@ def init(
         else:
             configs = agent_configs
 
-        # setup agents
+        # setup agent
         agent_objs = []
         for config in configs:
-            agent_cls = getattr(agents, config["class"])
+            agent_cls = getattr(agent, config["class"])
             agent_args = config["args"]
             agent = agent_cls(**agent_args)
             agent_objs.append(agent)

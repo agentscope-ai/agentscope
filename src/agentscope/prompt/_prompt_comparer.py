@@ -5,7 +5,7 @@ from loguru import logger
 
 from agentscope.manager import ModelManager
 from agentscope.message import Msg
-from agentscope.agents import UserAgent, AgentBase
+from agentscope.agent import UserAgent, AgentBase
 
 
 class _SystemPromptTestAgent(AgentBase):
@@ -116,7 +116,7 @@ class SystemPromptComparer:
         }
 
     def _set_display_status(self, status: bool) -> None:
-        """Set the display status of all agents."""
+        """Set the display status of all agent."""
         for agent in self.agents:
             if status:
                 agent.enable_display()
@@ -205,6 +205,6 @@ class SystemPromptComparer:
         return results
 
     def _clear_memories(self) -> None:
-        """Clear the memory of all agents."""
+        """Clear the memory of all agent."""
         for agent in self.agents:
             agent.memory.clear()

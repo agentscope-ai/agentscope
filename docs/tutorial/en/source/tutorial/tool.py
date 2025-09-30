@@ -106,7 +106,7 @@ tool_call = ToolUseBlock(
 #  rather than through the tools API provided by the model API. For using the
 #  tools API, please refer to :ref:`tools-api`.
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 agentscope.init(
     model_configs={
@@ -223,7 +223,7 @@ print(json.dumps(formatted_msgs, indent=4, ensure_ascii=False))
 # %%
 # Up to now, we have already finished the API-based tool calling process.
 # The whole process refers to the implementation of
-# `agentscope.agents.ReActAgentV2` class. You can also directly use this
+# `agentscope.agent.ReActAgentV2` class. You can also directly use this
 # agent.
 
 # %%

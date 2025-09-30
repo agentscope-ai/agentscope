@@ -149,7 +149,7 @@ class FormatterBase:
     @classmethod
     @abstractmethod
     def format_multi_agent(cls, *args: Any, **kwargs: Any) -> list[dict]:
-        """Format the messages in multi-agent scenario, where multiple agents
+        """Format the messages in multi-agent scenario, where multiple agent
         are involved."""
 
     @classmethod

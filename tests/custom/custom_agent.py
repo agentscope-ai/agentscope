@@ -3,7 +3,7 @@
 For testing the agent dir loading functionality.
 """
 from utils import speak  # pylint: disable=E0611
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 

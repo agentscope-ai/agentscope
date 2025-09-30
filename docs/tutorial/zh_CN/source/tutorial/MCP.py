@@ -72,7 +72,7 @@ remote_configs = {
 
 import agentscope
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 from mcp.server import FastMCP
 from pydantic import Field

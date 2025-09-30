@@ -5,7 +5,7 @@ import unittest
 from typing import Optional, Union, Tuple, Any, Dict
 from unittest.mock import patch, MagicMock
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.memory import TemporaryMemory
 from agentscope.message import Msg
 
@@ -169,7 +169,7 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
         # Test with no input
         await self.agent()
 
-    @patch("agentscope.agents._agent.log_msg")
+    @patch("agentscope.agent._agent.log_msg")
     async def test_speak_hook(self, mock_log_msg: MagicMock) -> None:
         """Test the speak hook."""
 
@@ -504,7 +504,7 @@ class AgentHooksTest(unittest.IsolatedAsyncioTestCase):
             self.agent2.memory.get_memory()[0].content,
         )
 
-    @patch("agentscope.agents._agent.log_msg")
+    @patch("agentscope.agent._agent.log_msg")
     def test_class_and_object_pre_speak_hook(
         self,
         mock_log_msg: MagicMock,

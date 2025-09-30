@@ -2,7 +2,7 @@
 """An example for conversation with OpenAI vision model, especially for
 GPT-4o."""
 import agentscope
-from agentscope.agents import UserAgent, DialogAgent
+from agentscope.agent import UserAgent, DialogAgent
 
 # Fill in your OpenAI API key
 YOUR_OPENAI_API_KEY = "xxx"

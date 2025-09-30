@@ -3,7 +3,7 @@
 
 This module provides a long-term memory implementation that integrates
 with the mem0 library to provide persistent memory storage and retrieval
-capabilities for AgentScope agents.
+capabilities for AgentScope agent.
 """
 import json
 from typing import Any, TYPE_CHECKING

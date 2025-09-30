@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """A simple example for conversation between user and assistant agent."""
 import agentscope
-from agentscope.agents import (
+from agentscope.agent import (
     DialogAgent,
     UserAgent,
 )
@@ -34,7 +34,7 @@ def main() -> None:
         save_api_invoke=True,
     )
 
-    # Init two agents
+    # Init two agent
     dialog_agent = DialogAgent(
         name="Assistant",
         sys_prompt="You're a helpful assistant.",

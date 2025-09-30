@@ -108,7 +108,7 @@ After that, ensure your application is wrapped by a `main` function.
 
 .. code-block:: python
 
-    from agentscope.agents import DialogAgent, UserAgent
+    from agentscope.agent import DialogAgent, UserAgent
     import agentscope
 
 
@@ -165,7 +165,7 @@ First, we build a pre-speak hook function
 """
 from pydantic import BaseModel
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg, TextBlock, ImageBlock
 from typing import Union, Any, Optional
 
@@ -217,9 +217,9 @@ AgentBase.register_class_hook(
 # `UserAgent`, notifying the target visualization platform that user input is
 # needed, and get the actual input from the user.
 #
-# .. tip:: You can refer to the implementation of `agentscope.agents.TerminalUserInput` and `agentscope.agents.StudioUserInput` in AgentScope
+# .. tip:: You can refer to the implementation of `agentscope.agent.TerminalUserInput` and `agentscope.agent.StudioUserInput` in AgentScope
 
-from agentscope.agents import UserInputBase, UserInputData
+from agentscope.agent import UserInputBase, UserInputData
 
 
 class CustomizedUserInput(UserInputBase):

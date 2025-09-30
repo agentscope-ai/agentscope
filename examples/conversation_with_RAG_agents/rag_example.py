@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-An example for conversation between user and agents with RAG capability.
+An example for conversation between user and agent with RAG capability.
 One agent is a tutorial assistant, the other is a code explainer.
 """
 import json
@@ -9,24 +9,24 @@ import os
 from groupchat_utils import filter_agents
 
 import agentscope
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from agentscope.rag import KnowledgeBank
 
 
 AGENT_CHOICE_PROMPT = """
-There are following available agents. You need to choose the most appropriate
+There are following available agent. You need to choose the most appropriate
 agent(s) to answer the user's question.
 
 agent descriptions:{}
 
 First, rephrase the user's question, which must contain the key information.
-The you need to think step by step. If you believe some of the agents are
+The you need to think step by step. If you believe some of the agent are
 good candidates to answer the question (e.g., AGENT_1 and AGENT_2), then
 you need to follow the following format to generate your output:
 
 '
 Because $YOUR_REASONING.
-I believe @AGENT_1 and @AGENT_2 are the most appropriate agents to answer
+I believe @AGENT_1 and @AGENT_2 are the most appropriate agent to answer
 your question.
 '
 """
@@ -66,14 +66,14 @@ def main() -> None:
         },
     ]
 
-    # load config of the agents
+    # load config of the agent
     with open("configs/agent_config.json", "r", encoding="utf-8") as f:
         agent_configs = json.load(f)
 
     agent_list = agentscope.init(
         model_configs=model_configs,
         agent_configs=agent_configs,
-        project="Conversation with RAG agents",
+        project="Conversation with RAG agent",
     )
     rag_agent_list = agent_list[:4]
     guide_agent = agent_list[4]
@@ -96,7 +96,7 @@ def main() -> None:
     for agent in rag_agent_list:
         knowledge_bank.equip(agent, agent.knowledge_id_list)
 
-    # An alternative way is to provide knowledge list to agents
+    # An alternative way is to provide knowledge list to agent
     # when initializing them one by one, e.g.
     #
     # ```
@@ -113,7 +113,7 @@ def main() -> None:
     # ```
 
     rag_agent_names = [agent.name for agent in rag_agent_list]
-    # update guide agent system prompt with the descriptions of rag agents
+    # update guide agent system prompt with the descriptions of rag agent
     rag_agent_descriptions = [
         "agent name: "
         + agent.name
@@ -134,7 +134,7 @@ def main() -> None:
     while True:
         # The workflow is the following:
         # 1. user input a message,
-        # 2. if it mentions (@) one of the agents, the agent will be called
+        # 2. if it mentions (@) one of the agent, the agent will be called
         # 3. otherwise, the guide agent will decide which agent to call
         # 4. the called agent will respond to the user
         # 5. repeat

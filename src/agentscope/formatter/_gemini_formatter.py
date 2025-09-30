@@ -447,7 +447,7 @@ class GeminiFormatter(FormatterBase):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """Format the messages in multi-agent scenario, where multiple agents
+        """Format the messages in multi-agent scenario, where multiple agent
         are involved.
 
         Requirements of Gemini generate API:

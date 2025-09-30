@@ -94,7 +94,7 @@ class Model2(BaseModel):
 #
 # 例如下面我们展示如何使用 `ReActAgentV2` 实现 ReAct 算法和结构化输出的结合
 
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 import agentscope
@@ -348,7 +348,7 @@ print("存储到消息 metadata 字段: ", parser.to_metadata(parsed_response.pa
 #
 
 from agentscope.model import DashScopeChatWrapper
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 
 
 class Agent(AgentBase):

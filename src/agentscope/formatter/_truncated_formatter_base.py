@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """The truncated formatter base class, which allows to truncate the input
 messages."""
-from abc import ABC
+from abc import ABC, abstractmethod
 from copy import deepcopy
 from typing import (
     Any,
     Tuple,
     Literal,
     AsyncGenerator,
+    Union,
 )
 
 from ._formatter_base import FormatterBase
@@ -295,3 +296,14 @@ class TruncatedFormatterBase(FormatterBase, ABC):
                     group.append(msg)
         if group_type:
             yield group_type, group
+
+    @abstractmethod
+    def format_chat(self, *msgs: Union[Msg, list[Msg], None]) -> list[dict]:
+        pass
+
+    @abstractmethod
+    def format_multi_agent(
+        self,
+        *msgs: Union[Msg, list[Msg], None],
+    ) -> list[dict]:
+        pass

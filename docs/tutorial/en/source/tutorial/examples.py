@@ -76,7 +76,7 @@ Agent
             <div class="gallery-item-card-title">RAG Agent</div>
         </div>
         <div class="gallery-item-description">
-            How to enable RAG when chatting with agents in AgentScope.
+            How to enable RAG when chatting with agent in AgentScope.
         </div>
     </a>
 
@@ -118,7 +118,7 @@ Game
             </div>
         </div>
         <div class="gallery-item-description">
-            Six LLM-empowered agents play a Werewolf game.
+            Six LLM-empowered agent play a Werewolf game.
         </div>
     </a>
     <a class="gallery-item" href="https://github.com/modelscope/agentscope/tree/main/examples/game_gomoku">

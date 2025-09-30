@@ -3,7 +3,7 @@
 from typing import Optional, Union, Sequence, Any
 from loguru import logger
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 

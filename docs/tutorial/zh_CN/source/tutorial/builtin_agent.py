@@ -52,7 +52,7 @@ agentscope.init(
 # 开发者可以通过提供不同的系统提示和模型配置来自定义它。
 #
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 
 # 初始化一个对话智能体
@@ -75,7 +75,7 @@ response = alice(msg)
 # 这里我们展示如何初始化一个 `UserAgent` 对象，并与对话智能体 `alice` 进行交互。
 #
 
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from io import StringIO
 import sys
 
@@ -98,7 +98,7 @@ msg = alice(msg)
 # 我们首先初始化一个 `DictDialogAgent` 对象，然后通过更换解析器，实现不同结构化的输出。
 #
 
-from agentscope.agents import DictDialogAgent
+from agentscope.agent import DictDialogAgent
 from agentscope.parsers import MarkdownJsonDictParser
 
 
@@ -203,7 +203,7 @@ toolkit.add(
 # 然后我们初始化一个 `ReActAgent` 来解决给定的问题。
 #
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 david = ReActAgent(
     name="David",

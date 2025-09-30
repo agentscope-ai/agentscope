@@ -6,7 +6,7 @@ from typing import (
     Union,
 )
 
-from ..agents._agent_base import AgentBase
+from ..agent._agent_base import AgentBase
 from ..message import Msg
 
 
@@ -14,7 +14,7 @@ async def sequential_pipeline(
     agents: list[AgentBase],
     msg: Msg | list[Msg] | None = None,
 ) -> Msg | list[Msg] | None:
-    """An async syntactic sugar pipeline that executes a sequence of agents
+    """An async syntactic sugar pipeline that executes a sequence of agent
     sequentially. The output of the previous agent will be passed as the
     input to the next agent. The final output will be the output of the
     last agent.
@@ -35,7 +35,7 @@ async def sequential_pipeline(
 
     Args:
         agents (`list[AgentBase]`):
-            A list of agents.
+            A list of agent.
         msg (`Msg | list[Msg] | None`, defaults to `None`):
             The initial input that will be passed to the first agent.
     Returns:

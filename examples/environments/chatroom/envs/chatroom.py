@@ -8,7 +8,7 @@ import threading
 import time
 from loguru import logger
 
-from agentscope.agents import (
+from agentscope.agent import (
     UserAgent,
     AgentBase,
 )
@@ -122,12 +122,12 @@ class ChatRoom(BasicEnv):
         Args:
             name (`str`): The name of the chatroom.
             announcement (`Msg`): The announcement message.
-            participants (`List[AgentBase]`): A list of agents
+            participants (`List[AgentBase]`): A list of agent
             all_history (`bool`): If `True`, new participant can see all
             history messages, else only messages generated after joining
             can be seen. Default to `False`.
             use_mention (`bool`): If `True`, the agent can mention other
-            agents by @name. Default to `True`.
+            agent by @name. Default to `True`.
         """
         super().__init__(
             name=name,
@@ -300,7 +300,7 @@ class ChatRoom(BasicEnv):
         max_round: int = 10,
         agent_name_list: List[str] = None,
     ) -> None:
-        """Let all agents to chat freely without any preset order"""
+        """Let all agent to chat freely without any preset order"""
         tasks = []
         if agent_name_list is None:
             agent_name_list = list(self.children.keys())
@@ -319,7 +319,7 @@ class ChatRoom(BasicEnv):
             task.join()
 
     def chat_in_sequence(self, agent_name_order: List[str] = None) -> None:
-        """Let all agents chat in sequence
+        """Let all agent chat in sequence
 
         Args:
             agent_name_order (`List[str]`): Order of speakers' names.

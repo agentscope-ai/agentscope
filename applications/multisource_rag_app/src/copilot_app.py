@@ -6,11 +6,11 @@ the code is executed in steps:
 * initializations
     * init model
     * init knowledge bank
-    * init agents
+    * init agent
 * receive the request and enter the main pipeline function
 * the query and past chat history are extracted from the request and passed
 to the context manager
-* the query is passed to the agents involved in the pipeline, and execute
+* the query is passed to the agent involved in the pipeline, and execute
 in async mode
 
 The environment variables used to initialize the components are:
@@ -19,11 +19,11 @@ The environment variables used to initialize the components are:
     * MODEL_CONFIG_PATH [str]: the path of the model config file
 
 For defining the workflow and execution mode, you need the following:
-    * RAG_AGENT_NAMES [str='']: the names of the RAG agents
+    * RAG_AGENT_NAMES [str='']: the names of the RAG agent
     * MAX_REFIND [int=1] the max retry times for the planning
-      (find best RAG agents)
+      (find best RAG agent)
     * RAG_RETURN_RAW [bool=True]: whether to return raw retrieved info from
-      RAG agents
+      RAG agent
 """
 
 import asyncio
@@ -52,7 +52,7 @@ from app_knowledge.local_knowledge import ESKnowledge, LocalKnowledge
 from app_knowledge.search_knowledge import BingKnowledge
 from async_model.async_dashscope import AsyncDashScopeChatWrapper
 
-from agentscope.agents import DialogAgent, AgentBase
+from agentscope.agent import DialogAgent, AgentBase
 from agentscope.message import Msg
 from agentscope.rag import KnowledgeBank
 from agentscope.manager import ModelManager
@@ -80,7 +80,7 @@ def init_model(
     model_config_path: str,
 ) -> None:
     """
-    Initialize the model used by the agents, all settings are taken from the
+    Initialize the model used by the agent, all settings are taken from the
     model config file.
 
     Args:
@@ -119,7 +119,7 @@ def init_knowledge_bank(
             The path of the knowledge config file
     Returns:
         `KnowledgeBank`: the container of knowledge that can be equipt with RAG
-          agents
+          agent
     """
     global knowledge_bank
 
@@ -157,14 +157,14 @@ def init_agents(
     ContextManager,
 ]:
     """
-    Init agents based on the given config file
+    Init agent based on the given config file
 
     Args:
         agent_config_path (`str`):
             The path of the agent config file
 
     Returns:
-        `Tuple`: A tuple of agents, RAG agents vary with the need of the user
+        `Tuple`: A tuple of agent, RAG agent vary with the need of the user
     """
     global rag_agents, guide_agent, summary_agent
     global backup_agent, context_manager
@@ -183,7 +183,7 @@ def init_agents(
         if agent_name not in AVAILABLE_RAG_AGENTS:
             continue
 
-    # init RAG agents
+    # init RAG agent
     if len(rag_agent_names) > 0:
         _create_rag_agent(
             rag_agent_names=rag_agent_names,
@@ -233,11 +233,11 @@ def _create_rag_agent(
 
     Args:
         rag_agent_names (`Union[str, List[str]]:
-            The names of the RAG agents
+            The names of the RAG agent
         agent_configs (`dict`):
-            The configurations of the agents
+            The configurations of the agent
     Returns:
-        A list of agents
+        A list of agent
     """
     global rag_agents
     if isinstance(rag_agent_names, str):
@@ -282,7 +282,7 @@ def str_to_bool(s: str) -> bool:
 
 def initializations() -> None:
     """
-    Initialize the knowledge bases and agents
+    Initialize the knowledge bases and agent
     """
     init_model(
         model_config_path=os.path.join(
@@ -383,7 +383,7 @@ def run_query(
         query (`Msg`):
             A query from user
         rag_return_raw (`bool`):
-            whether to let the retrieval agents return raw content
+            whether to let the retrieval agent return raw content
 
     Returns:
         `Generator`: stream output of the result
@@ -463,7 +463,7 @@ def run_query(
         },
     )
 
-    # STAGE 3: RAG agents (or backup agent) generate answers/raw material
+    # STAGE 3: RAG agent (or backup agent) generate answers/raw material
     agent_response_msgs = {}
     time_rewrite_start = time.perf_counter()
     # get context related rewritten query
@@ -490,7 +490,7 @@ def run_query(
         query = rewritten_query
         query.metadata["request_id"] = request_id
 
-    # run rag agents for results
+    # run rag agent for results
     reply_futures = [
         asyncio.run_coroutine_threadsafe(
             asyn_agent_reply(agent, query),

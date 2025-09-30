@@ -9,7 +9,7 @@ AgentScope 中，不同智能体之间通过“显式的消息交换”来构建
 
 """
 
-from agentscope.agents import DialogAgent, UserAgent
+from agentscope.agent import DialogAgent, UserAgent
 from agentscope.message import Msg
 from agentscope import msghub
 import agentscope

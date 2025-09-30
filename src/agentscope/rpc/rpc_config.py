@@ -5,7 +5,7 @@ from loguru import logger
 
 
 class DistConf(dict):
-    """Distribution configuration for agents."""
+    """Distribution configuration for agent."""
 
     def __init__(
         self,

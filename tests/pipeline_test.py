@@ -11,7 +11,7 @@ from agentscope.pipelines import (
     sequential_pipeline,
 )
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 
 
 class AddAgent(AgentBase):
@@ -72,7 +72,7 @@ class PipelineTest(unittest.TestCase):
     """Test cases for Pipelines"""
 
     async def test_functional_sequential_pipeline(self) -> None:
-        """Test SequentialPipeline executes agents sequentially"""
+        """Test SequentialPipeline executes agent sequentially"""
 
         add1 = AddAgent(1)
         add2 = AddAgent(2)
@@ -91,7 +91,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(3, res.metadata["result"])
 
     async def test_class_sequential_pipeline(self) -> None:
-        """Test SequentialPipeline executes agents sequentially"""
+        """Test SequentialPipeline executes agent sequentially"""
 
         add1 = AddAgent(1)
         add2 = AddAgent(2)

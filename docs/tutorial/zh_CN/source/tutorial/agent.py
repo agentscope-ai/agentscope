@@ -5,13 +5,13 @@
 构建智能体
 ====================
 
-AgentScope 中，可以通过继承基类`agentscope.agents.AgentBase`来构建智能体
+AgentScope 中，可以通过继承基类`agentscope.agent.AgentBase`来构建智能体
 
 在下面，我们将构建一个简单的，可以和其他人互动的智能体。
 
 """
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.memory import TemporaryMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatWrapper
@@ -21,7 +21,7 @@ import json
 # %%
 # 定义智能体
 # --------------------------------
-# 继承 `agentscope.agents.AgentBase` 类并实现其构造函数和 `reply` 方法。
+# 继承 `agentscope.agent.AgentBase` 类并实现其构造函数和 `reply` 方法。
 #
 # 在构造函数中，我们初始化智能体的名字、系统提示、记忆模块和模型。
 # 在本例中，我们采用 DashScope Chat API 中的 `qwen-max` 作为模型服务。

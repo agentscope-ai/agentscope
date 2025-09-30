@@ -3,7 +3,7 @@
 from router_agent import RouterAgent
 
 import agentscope
-from agentscope.agents import DialogAgent, UserAgent
+from agentscope.agent import DialogAgent, UserAgent
 
 # ================== Prepare model configuration =============================
 
@@ -20,8 +20,8 @@ agentscope.init(
     project="Conversation with router agent",
 )
 
-# Let's build some working agents with different capabilities. For simplicity,
-# we just use the same agent. You can replace them with your own agents.
+# Let's build some working agent with different capabilities. For simplicity,
+# we just use the same agent. You can replace them with your own agent.
 agent_math = DialogAgent(
     name="Math",
     sys_prompt="You are a math assistant to help solve math problems.",
@@ -38,12 +38,12 @@ agent_history = DialogAgent(
 SYS_PROMPT_ROUTER = """You're a router assistant named {name}.
 
 ## YOUR TARGET
-1. Given agents with different capabilities, your target is to assign questions to the corresponding agents according to the user requirement.
-2. You should make full use of the different abilities of the given agents.
+1. Given agent with different capabilities, your target is to assign questions to the corresponding agent according to the user requirement.
+2. You should make full use of the different abilities of the given agent.
 3. If no agent is suitable to answer user's question, then respond directly.
 
 ## Agents You Can Use
-The agents are listed in the format of "{index}. {agent_name}: {agent_description}"
+The agent are listed in the format of "{index}. {agent_name}: {agent_description}"
 1. math: An agent who is good at math.
 2. history: An agent who is good at history.
 """  # noqa
@@ -66,7 +66,7 @@ while True:
     # Replied by router agent
     router_msg = router_agent(user_msg)
 
-    # Route the question to the corresponding agents
+    # Route the question to the corresponding agent
     if router_msg.metadata == "math":
         msg = agent_math(user_msg)
     elif router_msg.metadata == "history":

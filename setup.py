@@ -139,7 +139,7 @@ setuptools.setup(
     long_description_content_type="text/markdown",
     url=URL,
     download_url=f"{URL}/archive/v{VERSION}.tar.gz",
-    keywords=["deep-learning", "multi agents", "agents"],
+    keywords=["deep-learning", "multi agent", "agent"],
     package_dir={"": "src"},
     packages=setuptools.find_packages("src"),
     package_data={

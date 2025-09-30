@@ -94,7 +94,7 @@ class AgentServerServicer(RpcAgentServicer):
             studio_url (`str`, defaults to `None`):
                 URL of the AgentScope Studio.
             capacity (`int`, default to `32`):
-                The number of concurrent agents in the servicer.
+                The number of concurrent agent in the servicer.
             max_pool_size (`int`, defaults to `8192`):
                 The max number of async results that the server can
                 accommodate. Note that the oldest result will be deleted
@@ -232,11 +232,11 @@ class AgentServerServicer(RpcAgentServicer):
         request: agent_pb2.StringMsg,
         context: ServicerContext,
     ) -> agent_pb2.GeneralResponse:
-        """Delete agents from the server.
+        """Delete agent from the server.
 
         Args:
             request (`StringMsg`): The `value` field is the agent_id of the
-            agents to be deleted.
+            agent to be deleted.
         """
         aid = request.value
         with self.agent_id_lock:
@@ -356,8 +356,8 @@ class AgentServerServicer(RpcAgentServicer):
         request: Empty,
         context: ServicerContext,
     ) -> agent_pb2.GeneralResponse:
-        """Get id of all agents on the server as a list."""
-        from agentscope.agents import AgentBase
+        """Get id of all agent on the server as a list."""
+        from agentscope.agent import AgentBase
 
         with self.agent_id_lock:
             summaries = []

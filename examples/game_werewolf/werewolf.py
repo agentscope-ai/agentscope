@@ -25,7 +25,7 @@ def main() -> None:
     healing, poison = True, True
     MAX_WEREWOLF_DISCUSSION_ROUND = 3
     MAX_GAME_ROUND = 6
-    # read model and agent configs, and initialize agents automatically
+    # read model and agent configs, and initialize agent automatically
     survivors = agentscope.init(
         model_configs="./configs/model_configs.json",
         agent_configs="./configs/agent_configs.json",

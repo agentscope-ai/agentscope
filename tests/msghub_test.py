@@ -3,7 +3,7 @@
 import unittest
 from typing import Optional, Union, Sequence
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope import msghub
 from agentscope.message import Msg
 

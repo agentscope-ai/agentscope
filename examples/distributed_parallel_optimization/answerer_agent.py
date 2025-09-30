@@ -3,7 +3,7 @@
 from typing import Optional, Union, Sequence
 
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.service import load_web
 
 

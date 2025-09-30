@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The metaclass for agents in agentscope."""
+"""The metaclass for agent in agentscope."""
 import inspect
 from copy import deepcopy
 from functools import wraps

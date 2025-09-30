@@ -14,7 +14,7 @@ from agentscope.manager import ModelManager
 from agentscope.memory import TemporaryMemory
 from ..utils.logging import logger
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatWrapper
 from agentscope.parsers import MarkdownJsonDictParser

@@ -10,7 +10,7 @@ class ModelResponse:
     """Encapsulation of data returned by the model.
 
     The main purpose of this class is to align the return formats of different
-    model and act as a bridge between model and agents.
+    model and act as a bridge between model and agent.
     """
 
     from ..message import ToolUseBlock

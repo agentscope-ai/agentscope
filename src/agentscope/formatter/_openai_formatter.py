@@ -61,7 +61,7 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
         assistant are involved.
 
         For OpenAI model, the `name` field can be used to distinguish
-        different agents (even with the same role as `"assistant"`). So we
+        different agent (even with the same role as `"assistant"`). So we
         simply reuse the `format_multi_agent` here.
         """
         flat_msgs = cls._parse_messages_from_args(*msgs)
@@ -72,11 +72,11 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """Format the messages in multi-agent scenario, where multiple agents
+        """Format the messages in multi-agent scenario, where multiple agent
         are involved.
 
         For OpenAI models, the `name` field can be used to distinguish
-        different agents (even with the same role as `"assistant"`).
+        different agent (even with the same role as `"assistant"`).
         """
 
         msgs = cls.check_and_flat_messages(*msgs)

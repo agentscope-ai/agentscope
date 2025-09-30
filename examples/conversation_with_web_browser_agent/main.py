@@ -2,7 +2,7 @@
 """ Example of using web browser module. """
 
 from webact_agent import WebActAgent
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 
 import agentscope
 

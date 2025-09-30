@@ -17,7 +17,7 @@ In this tutorial, we will briefly introduce what MCP is and show how to use MCP 
 # --------------------------
 # MCP (Model Context Protocol) is an open standard introduced by Anthropic, aimed at standardizing communication between large language model and external data sources and tools, enabling AI model to fully realize their potential.
 # Through MCP, AI applications can securely access and manipulate local and remote data, providing a connection method similar to a "USB-C interface" for AI applications.
-# This standard not only facilitates API development by service providers but also avoids developers rebuilding basic functions, allowing existing MCP services to enhance the capabilities of intelligent agents. For example, MCP servers can provide predefined prompt templates for generating email drafts or optimizing code comments, thereby improving application development efficiency and quality.
+# This standard not only facilitates API development by service providers but also avoids developers rebuilding basic functions, allowing existing MCP services to enhance the capabilities of intelligent agent. For example, MCP servers can provide predefined prompt templates for generating email drafts or optimizing code comments, thereby improving application development efficiency and quality.
 
 # %%
 # MCP supports two communication protocols: Standard Input/Output (STDIO) and HTTP Server-Sent Events (SSE).
@@ -74,7 +74,7 @@ remote_configs = {
 
 import agentscope
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 from mcp.server import FastMCP
 from pydantic import Field

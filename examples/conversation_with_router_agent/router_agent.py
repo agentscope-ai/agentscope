@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""The router agent which routes the questions to the corresponding agents."""
+"""The router agent which routes the questions to the corresponding agent."""
 from typing import Optional, Union, Sequence
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.parsers import RegexTaggedContentParser
 
@@ -10,7 +10,7 @@ from agentscope.parsers import RegexTaggedContentParser
 # Init a router agent
 class RouterAgent(AgentBase):
     """
-    The router agent who routes the questions to the corresponding agents.
+    The router agent who routes the questions to the corresponding agent.
     """
 
     def __init__(
@@ -33,7 +33,7 @@ class RouterAgent(AgentBase):
         self.parser = RegexTaggedContentParser(
             format_instruction="""Respond with specific tags as outlined below:
 
-- When routing questions to agents:
+- When routing questions to agent:
 <thought>what you thought</thought>
 <agent>the agent name</agent>
 

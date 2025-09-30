@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Agent and solver classes for LLM-based algorithms"""
 import copy
-from agentscope.agents import UserAgent
-from agentscope.agents import DialogAgent
+from agentscope.agent import UserAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 from src.utils import num_tokens_from_string
 

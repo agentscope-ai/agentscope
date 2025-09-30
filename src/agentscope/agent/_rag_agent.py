@@ -9,7 +9,7 @@ import json
 from typing import Any, Optional, Union, Sequence
 from loguru import logger
 
-from ..agents._agent_base import AgentBase
+from ..agent._agent_base import AgentBase
 from ..manager import ModelManager
 from ..memory import TemporaryMemory
 from ..message.msg import Msg
@@ -60,7 +60,7 @@ class LlamaIndexAgent(AgentBase):
             knowledge_id_list (list[Knowledge]):
                 A list of id of the knowledge.
                 This is designed for easy setting up multiple RAG
-                agents with a config file. To obtain the knowledge
+                agent with a config file. To obtain the knowledge
                 objects, users can pass this agent to the `equip`
                 function in a knowledge bank to add corresponding
                 knowledge to agent's self.knowledge_list.

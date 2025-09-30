@@ -6,7 +6,7 @@ More details can be found at the paper of CodeAct agent
 https://arxiv.org/abs/2402.01030
 and the original repo of codeact https://github.com/xingyaoww/code-act
 """
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.service import (
     ServiceResponse,

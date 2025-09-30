@@ -11,7 +11,7 @@ from agentdev.models.function_call import function_call_loop
 from agentdev.base.function_tool import tool_function_factory
 from openai.types.chat import ChatCompletionChunk
 from app.schemas.app_agent import AgentConfig, AgentRequest, AgentParameters
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 

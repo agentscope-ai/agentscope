@@ -2,7 +2,7 @@
 """agent class"""
 from typing import Optional, Union, Sequence
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.service import (
     ServiceToolkit,
     ServiceResponse,

@@ -131,7 +131,7 @@ class RpcAgentServicer(object):
         raise NotImplementedError("Method not implemented!")
 
     def get_agent_list(self, request, context):
-        """get id of all agents on the server as a list"""
+        """get id of all agent on the server as a list"""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")

@@ -47,7 +47,7 @@ AgentScope 围绕三个核心智能体函数实现了钩子函数：
 
 from typing import Union, Tuple, Dict, Any
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -117,7 +117,7 @@ def post_observe_hook_template(self: AgentBase) -> None:
 
 from typing import Optional, Union
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -203,7 +203,7 @@ print("回复消息的 content 域:\n", msg_response.content)
 #
 # 我们在下面展示如何使用 pre/post-speak 钩子：
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 import agentscope
 
 agentscope.init(

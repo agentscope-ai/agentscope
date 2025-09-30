@@ -6,7 +6,7 @@ from typing import Optional, Union, Sequence
 import json
 
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.model import ModelResponse
 
 HINT_PROMPT = """

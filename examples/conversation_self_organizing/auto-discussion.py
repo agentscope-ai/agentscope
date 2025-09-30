@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """A simple example for auto discussion: the agent builder automatically\
- set up the agents participating the discussion ."""
+ set up the agent participating the discussion ."""
 from tools import load_txt, extract_scenario_and_participants
 import agentscope
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.pipelines._functional import sequential_pipeline
 from agentscope.message import Msg
 
@@ -46,7 +46,7 @@ query = "Say the pupil of your eye has a diameter of 5 mm and you have a \
 telescope with an aperture of 50 cm. How much more light can the \
 telescope gather than your eye?"
 
-# get the discussion scenario and participant agents
+# get the discussion scenario and participant agent
 x = load_txt(
     "examples/conversation_self_organizing/agent_builder_instruct.txt",
 ).format(
@@ -57,7 +57,7 @@ x = Msg("user", x, role="user")
 settings = agent_builder(x)
 scenario_participants = extract_scenario_and_participants(settings.content)
 
-# set the agents that participant the discussion
+# set the agent that participant the discussion
 agents = [
     DialogAgent(
         name=key,

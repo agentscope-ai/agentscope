@@ -5,10 +5,10 @@
 Build Conversation
 ======================
 
-AgentScope supports developers to build conversation with explicit message exchange among different agents.
+AgentScope supports developers to build conversation with explicit message exchange among different agent.
 """
 
-from agentscope.agents import DialogAgent, UserAgent
+from agentscope.agent import DialogAgent, UserAgent
 from agentscope.message import Msg
 from agentscope import msghub
 import agentscope
@@ -40,7 +40,7 @@ monster = DialogAgent(
 )
 
 # %%
-# Now, we can start the conversation by exchanging messages between these two agents for three rounds.
+# Now, we can start the conversation by exchanging messages between these two agent for three rounds.
 
 msg = None
 for _ in range(3):
@@ -48,20 +48,20 @@ for _ in range(3):
     msg = monster(msg)
 
 # %%
-# If you want to participate in the conversation, just instantiate a built-in `UserAgent` to type messages to the agents.
+# If you want to participate in the conversation, just instantiate a built-in `UserAgent` to type messages to the agent.
 
 user = UserAgent(name="User")
 
 # %%
 # More than Two Agents
 # ---------------------
-# When there are more than two agents in a conversation, the message from one agent should be broadcasted to all the others.
+# When there are more than two agent in a conversation, the message from one agent should be broadcasted to all the others.
 #
 # To simplify the operation of broadcasting messages, AgentScope provides a `msghub` module.
-# Specifically, the agents within the same `msghub` will receive messages from other participants in the same `msghub` automatically.
-# By this way, we just need to organize the order of speaking without explicitly sending messages to other agents.
+# Specifically, the agent within the same `msghub` will receive messages from other participants in the same `msghub` automatically.
+# By this way, we just need to organize the order of speaking without explicitly sending messages to other agent.
 #
-# Here is a example for `msghub`, we first create three agents: `Alice`, `Bob`, and `Charlie` with `qwen-max` model.
+# Here is a example for `msghub`, we first create three agent: `Alice`, `Bob`, and `Charlie` with `qwen-max` model.
 
 alice = DialogAgent(
     name="Alice",
@@ -82,7 +82,7 @@ charlie = DialogAgent(
 )
 
 # %%
-# The three agents will participate in a conversation to report numbers alternatively.
+# The three agent will participate in a conversation to report numbers alternatively.
 
 # Introduce the rule of the conversation
 greeting = Msg(

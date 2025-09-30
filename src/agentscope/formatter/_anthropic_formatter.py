@@ -90,7 +90,7 @@ class AnthropicFormatter(FormatterBase):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """Format the messages in multi-agent scenario, where multiple agents
+        """Format the messages in multi-agent scenario, where multiple agent
         are involved."""
 
         # Parse all information into a list of messages

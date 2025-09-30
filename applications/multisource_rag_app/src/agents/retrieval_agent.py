@@ -18,7 +18,7 @@ from ..utils.constant import INPUT_MAX_TOKEN
 from ..utils.logging import logger
 from ..app_knowledge.search_knowledge import BingKnowledge
 
-from agentscope.agents import LlamaIndexAgent
+from agentscope.agent import LlamaIndexAgent
 from agentscope.manager import ModelManager
 from agentscope.message import Msg
 from agentscope.rag import Knowledge, RetrievedChunk
@@ -546,7 +546,7 @@ class RetrievalAgent(LlamaIndexAgent):
                 log_msg = Msg(name="system", content=log_info, role="system")
                 await self.print(log_msg)
 
-        # ======  If retrieval agents just need to return chunks =====
+        # ======  If retrieval agent just need to return chunks =====
         if self.return_raw:
             raw_pieces = raw_return(unique_nodes)
             for i in range(len(raw_pieces)):

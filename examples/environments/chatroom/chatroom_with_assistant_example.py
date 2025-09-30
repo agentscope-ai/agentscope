@@ -48,7 +48,7 @@ def main(args: argparse.Namespace) -> None:
         },
     ]
 
-    # Initialize the agents
+    # Initialize the agent
     agentscope.init(
         model_configs=YOUR_MODEL_CONFIGURATION,
         use_monitor=False,

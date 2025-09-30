@@ -16,7 +16,7 @@ import cloudpickle as pickle
 
 
 import agentscope
-from agentscope.agents import AgentBase, DialogAgent
+from agentscope.agent import AgentBase, DialogAgent
 from agentscope.manager import MonitorManager, ASManager
 from agentscope.server import RpcAgentServerLauncher
 from agentscope.rpc import AsyncResult, DistConf
@@ -43,7 +43,8 @@ class DemoRpcAgent(AgentBase):
         self.id = 0
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         """Response after 2s"""
         x.id = self.id
@@ -64,7 +65,8 @@ class DemoRpcAgentAdd(AgentBase):
     """A demo Rpc agent for test usage"""
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         """add the value, wait 1s"""
         x.metadata["value"] += 1
@@ -84,7 +86,8 @@ class DemoLocalAgentAdd(AgentBase):
     """A demo local agent for test usage"""
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         """add the value, wait 1s"""
         x.metadata["value"] += 1
@@ -108,7 +111,8 @@ class DemoRpcAgentWithMemory(AgentBase):
         self.memory = []
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         self.memory.append(x)
         msg = Msg(
@@ -138,7 +142,8 @@ class DemoRpcAgentWithMonitor(AgentBase):
     """A demo Rpc agent that use monitor"""
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         monitor = MonitorManager.get_instance()
         try:
@@ -148,7 +153,9 @@ class DemoRpcAgentWithMonitor(AgentBase):
             logger.chat(Msg(self.name, "quota_exceeded", "assistant"))
             return x
         x.metadata["msg_num"] = monitor.get_value("msg_num")
-        logger.chat(Msg(self.name, f"msg_num {x.metadata['msg_num']}", "assistant"))
+        logger.chat(
+            Msg(self.name, f"msg_num {x.metadata['msg_num']}", "assistant"),
+        )
         await asyncio.sleep(0.2)
         return x
 
@@ -170,7 +177,8 @@ class DemoGeneratorAgent(AgentBase):
         self.name = name  # 手动设置 name 属性
 
     async def reply(
-        self, x: Optional[Union[Msg, Sequence[Msg]]] = None
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
     ) -> Msg:
         await asyncio.sleep(1)
         return Msg(
@@ -179,6 +187,14 @@ class DemoGeneratorAgent(AgentBase):
             content="",
             metadata={"value": self.value},
         )
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoGatherAgent(AgentBase):
@@ -190,14 +206,19 @@ class DemoGatherAgent(AgentBase):
         agents: list[DemoGeneratorAgent],
         to_dist: dict = None,
     ) -> None:
-        super().__init__(name, to_dist=to_dist)
+        super().__init__()
+        self.name = name
         self.agents = agents
+        self.to_dist = to_dist
 
-    def reply(self, x: Optional[Union[Msg, Sequence[Msg]]] = None) -> Msg:
+    async def reply(
+        self,
+        x: Optional[Union[Msg, Sequence[Msg]]] = None,
+    ) -> Msg:
         result = []
         stime = time.time()
         for agent in self.agents:
-            result.append(agent())
+            result.append(await agent(x))
         value = 0
         for r in result:
             value += r.metadata["value"]
@@ -211,6 +232,14 @@ class DemoGatherAgent(AgentBase):
                 "time": etime - stime,
             },
         )
+
+    async def handle_interrupt(self, exc: Exception) -> None:
+        """Handle interrupt"""
+        pass
+
+    async def observe(self, *msgs: Msg) -> None:
+        """Observe messages"""
+        pass
 
 
 class DemoErrorAgent(AgentBase):

@@ -74,7 +74,7 @@ def _setup_agent_server(
         local_mode (`bool`, defaults to `True`):
             Only listen to local requests.
         capacity (`int`, default to `32`):
-            The number of concurrent agents in the server.
+            The number of concurrent agent in the server.
         pool_type (`str`, defaults to `"local"`): The type of the async
             message pool, which can be `local` or `redis`. If `redis` is
             specified, you need to start a redis server before launching
@@ -93,7 +93,7 @@ def _setup_agent_server(
             URL of the AgentScope Studio.
         custom_agent_classes (`list`, defaults to `None`):
             A list of customized agent classes that are not in
-            `agentscope.agents`.
+            `agentscope.agent`.
         agent_dir (`str`, defaults to `None`):
             The abs path to the directory containing customized agent python
             files.
@@ -160,7 +160,7 @@ async def _setup_agent_server_async(  # pylint: disable=R0912
             If `True`, only listen to requests from "localhost", otherwise,
             listen to requests from all hosts.
         capacity (`int`, default to `32`):
-            The number of concurrent agents in the server.
+            The number of concurrent agent in the server.
         pool_type (`str`, defaults to `"local"`): The type of the async
             message pool, which can be `local` or `redis`. If `redis` is
             specified, you need to start a redis server before launching
@@ -181,7 +181,7 @@ async def _setup_agent_server_async(  # pylint: disable=R0912
             URL of the AgentScope Studio.
         custom_classes (`list`, defaults to `None`):
             A list of customized agent classes that are not in
-            `agentscope.agents`.
+            `agentscope.agent`.
         agent_dir (`str`, defaults to `None`):
             The abs path to the directory containing customized agent python
             files.
@@ -295,7 +295,7 @@ def load_custom_class_from_file(agent_file: str) -> list:
 
 
 def load_agents_from_dir(agent_dir: str) -> list:
-    """Load customized agents from a directory.
+    """Load customized agent from a directory.
 
     Args:
         agent_dir (`str`): a directory contains customized agent python files.
@@ -354,7 +354,7 @@ class RpcAgentServerLauncher:
             port (`int`, defaults to `None`):
                 Socket port of the agent server.
             capacity (`int`, default to `32`):
-                The number of concurrent agents in the server.
+                The number of concurrent agent in the server.
             pool_type (`str`, defaults to `"local"`): The type of the async
                 message pool, which can be `local` or `redis`. If `redis` is
                 specified, you need to start a redis server before launching
@@ -377,7 +377,7 @@ class RpcAgentServerLauncher:
                 The directory containing customized agent python files.
             custom_agent_classes (`list`, defaults to `None`):
                 A list of customized agent classes that are not in
-                `agentscope.agents`.
+                `agentscope.agent`.
             server_id (`str`, defaults to `None`):
                 The id of the agent server. If not specified, a random id
                 will be generated.
@@ -487,7 +487,7 @@ class RpcAgentServerLauncher:
 
         Args:
             in_subprocess (bool, optional): launch the server in subprocess.
-                Defaults to True. For agents that need to obtain command line
+                Defaults to True. For agent that need to obtain command line
                 input, such as UserAgent, please set this value to False.
         """
         if in_subprocess:
@@ -524,7 +524,7 @@ def as_server() -> None:
 
         * `--host`: the hostname of the server.
         * `--port`: the socket port of the server.
-        * `--capacity`: the number of concurrent agents in the server.
+        * `--capacity`: the number of concurrent agent in the server.
         * `--pool-type`: the type of the async message pool, which can be
           `local` or `redis`. If `redis` is specified, you need to start a
           redis server before launching the server. Defaults to `local`.
@@ -580,7 +580,7 @@ def as_server() -> None:
         type=int,
         default=os.cpu_count(),
         help=(
-            "the number of concurrent agents in the server, exceeding this "
+            "the number of concurrent agent in the server, exceeding this "
             "may cause severe performance degradation or even deadlock."
         ),
     )
@@ -731,7 +731,7 @@ def as_server() -> None:
         agent_infos = client.get_agent_list()
         if agent_infos is None or len(agent_infos) == 0:
             logger.info(
-                f"No agents found on the server [{args.host}:{args.port}].",
+                f"No agent found on the server [{args.host}:{args.port}].",
             )
         for info in agent_infos:
             logger.info(json.dumps(info, indent=4))

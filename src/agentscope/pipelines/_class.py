@@ -5,7 +5,7 @@ from typing import Callable, Union
 from typing import Optional
 
 from ._functional import sequential_pipeline
-from ..agents._agent_base import AgentBase
+from ..agent._agent_base import AgentBase
 from ..message import Msg
 
 
@@ -22,7 +22,7 @@ class SequentialPipeline:
 
         Args:
             agents (`list[AgentBase]`):
-                A list of agents.
+                A list of agent.
         """
         self.agents = agents
 

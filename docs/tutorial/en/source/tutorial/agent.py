@@ -5,15 +5,15 @@
 Build Agent
 ====================
 
-AgentScope supports to build LLM-empowered agents by providing a basic agent
-class `agentscope.agents.AgentBase`.
+AgentScope supports to build LLM-empowered agent by providing a basic agent
+class `agentscope.agent.AgentBase`.
 
 In the following, we will build a simple dialog agent that can interact with
 the others.
 
 """
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.memory import TemporaryMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatWrapper
@@ -24,7 +24,7 @@ import json
 # Define the Agent
 # --------------------------------
 # We define a `DialogAgent` class by inheriting from
-# `agentscope.agents.AgentBase`, and implement the constructor and
+# `agentscope.agent.AgentBase`, and implement the constructor and
 # `reply` methods to make the agent work.
 #
 # Within the constructor, we initialize the agent with its name, system prompt,

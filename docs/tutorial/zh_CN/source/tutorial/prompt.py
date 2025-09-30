@@ -34,7 +34,7 @@ AgentScope 通过支持从配置中加载模型，并在 model wrapper 类中内
 """
 from typing import Union, Optional
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.manager import ModelManager
 import agentscope

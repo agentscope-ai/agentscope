@@ -7,7 +7,7 @@ Here is a simple example for conversation with MoA in Agentscope.
 from typing import Optional, Union, Sequence
 
 import agentscope
-from agentscope.agents import AgentBase, UserAgent
+from agentscope.agent import AgentBase, UserAgent
 from agentscope.strategy import MixtureOfAgents
 from agentscope.message import Msg
 
@@ -123,7 +123,7 @@ if __name__ == "__main__":
         rounds=1,  # can range from 0 to inf
     )
 
-    # Init two agents
+    # Init two agent
     dialog_agent = DialogAgentWithMoA(
         name="Assistant",
         moa_module=your_moa_module,

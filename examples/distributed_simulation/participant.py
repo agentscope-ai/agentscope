@@ -8,7 +8,7 @@ from typing import Optional, Union, Sequence
 from loguru import logger
 
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 
 
 class RandomParticipant(AgentBase):

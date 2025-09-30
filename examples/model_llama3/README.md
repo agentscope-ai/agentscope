@@ -73,7 +73,7 @@ After that, you can experience llama3 with our built-in examples! For example, s
 
 ```python
 import agentscope
-from agentscope.agents import UserAgent, DialogAgent
+from agentscope.agent import UserAgent, DialogAgent
 
 agentscope.init(model_configs=llama3_8b_ollama_model_configuration)
 

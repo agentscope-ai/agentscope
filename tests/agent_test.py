@@ -7,7 +7,7 @@ import unittest
 import uuid
 from typing import Optional, Union
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 
@@ -36,7 +36,7 @@ class TestAgentCopy(TestAgent):
 
 
 class BasicAgentTest(unittest.TestCase):
-    """Test cases for basic agents"""
+    """Test cases for basic agent"""
 
     def test_agent_init(self) -> None:
         """Test the init of AgentBase subclass."""

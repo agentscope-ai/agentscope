@@ -10,7 +10,7 @@ import dashscope
 from ..utils.constant import INPUT_MAX_TOKEN
 from ..utils.logging import logger
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatWrapper
 from agentscope.parsers import MarkdownJsonDictParser
@@ -297,7 +297,7 @@ class Summarizer(AgentBase):
                 )
 
     def prompt_for_digested(self, x: Msg = None) -> Any:
-        """prepare prompt with digested answer from retrieval agents"""
+        """prepare prompt with digested answer from retrieval agent"""
         metadata = x.metadata if x.metadata is not None else {}
         request_id = metadata.get(
             "request_id",
@@ -369,7 +369,7 @@ class Summarizer(AgentBase):
         x: Msg = None,
     ) -> Any:
         """
-        prepare prompt with raw answer from retrieval agents
+        prepare prompt with raw answer from retrieval agent
         """
         metadata = x.metadata if x.metadata is not None else {}
         request_id = metadata.get(

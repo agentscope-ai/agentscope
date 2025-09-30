@@ -155,7 +155,7 @@ class AgentNode(Node):
             "import os",
             "from agentscope.manager import ModelManager",
             "from agentscope.message.msg import Msg",
-            "from agentscope.agents import DialogAgent",
+            "from agentscope.agent import DialogAgent",
         ]
 
         init_str = ""

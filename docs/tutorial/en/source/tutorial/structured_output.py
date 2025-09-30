@@ -90,7 +90,7 @@ class Model2(BaseModel):
 # For example, the following code demonstrates how to use `ReActAgentV2` to
 # combine the ReAct algorithm with structured output.
 
-from agentscope.agents import ReActAgentV2
+from agentscope.agent import ReActAgentV2
 from agentscope.service import ServiceToolkit
 from agentscope.message import Msg
 import agentscope
@@ -356,7 +356,7 @@ print("To message metadata: ", parser.to_metadata(parsed_response.parsed))
 # .. tip:: By changing different parsers, the agent can adapt to different scenarios and generate structured output in various formats.
 
 from agentscope.model import DashScopeChatWrapper
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 
 

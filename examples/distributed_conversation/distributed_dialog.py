@@ -5,7 +5,7 @@ import argparse
 from loguru import logger
 
 import agentscope
-from agentscope.agents import UserAgent, DialogAgent
+from agentscope.agent import UserAgent, DialogAgent
 from agentscope.server import RpcAgentServerLauncher
 
 

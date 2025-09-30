@@ -23,7 +23,7 @@ from .._logging import logger
 from ._types import SpanKind, SpanAttributes
 
 if TYPE_CHECKING:
-    from ..agents import AgentBase
+    from ..agent import AgentBase
     from ..formatter import FormatterBase
     from ..tool import (
         Toolkit,

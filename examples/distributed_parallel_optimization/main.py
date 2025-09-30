@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""An example use multiple agents to search the Internet for answers"""
+"""An example use multiple agent to search the Internet for answers"""
 import time
 import argparse
 from loguru import logger
@@ -7,7 +7,7 @@ from searcher_agent import SearcherAgent
 from answerer_agent import AnswererAgent
 
 import agentscope
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from agentscope.message import Msg
 
 

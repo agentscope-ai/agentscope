@@ -124,4 +124,4 @@ class UserAgent(AgentBase):
         )
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
-        """Observe the message(s) from the other agents or the environment."""
+        """Observe the message(s) from the other agent or the environment."""

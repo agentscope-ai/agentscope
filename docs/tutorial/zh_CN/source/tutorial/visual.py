@@ -101,7 +101,7 @@ Gradio
 
 .. code-block:: python
 
-    from agentscope.agents import DialogAgent, UserAgent
+    from agentscope.agent import DialogAgent, UserAgent
     import agentscope
 
 
@@ -158,7 +158,7 @@ Gradio
 """
 from pydantic import BaseModel
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg, TextBlock, ImageBlock
 from typing import Union, Any, Optional
 
@@ -207,10 +207,10 @@ AgentBase.register_class_hook(
 # 会在调用 `UserAgent` 的 `reply` 函数时被触发，用于通知目标可视化平台现在需要哪个用户进行
 # 输入，并且在拿到输入后返回一个 `UserInputData` 对象
 #
-# .. tip:: 可以参考 `agentscope.agents.TerminalUserInput` 和
-#  `agentscope.agents.StudioUserInput` 两个内置模块的代码实现
+# .. tip:: 可以参考 `agentscope.agent.TerminalUserInput` 和
+#  `agentscope.agent.StudioUserInput` 两个内置模块的代码实现
 
-from agentscope.agents import UserInputBase, UserInputData
+from agentscope.agent import UserInputBase, UserInputData
 
 
 class CustomizedUserInput(UserInputBase):

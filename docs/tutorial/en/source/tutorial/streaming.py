@@ -73,7 +73,7 @@ model_config = {
 
 # %%
 # With the above configuration, we can obtain streaming output with built-in
-# agents in AgentScope.
+# agent in AgentScope.
 #
 # Next, we show how to handle the streaming output within an agent.
 
@@ -128,7 +128,7 @@ print(response.text)
 #       # ...
 #
 # To be compatible with both streaming and non-streaming mode, we use the
-# following code snippet for all built-in agents in AgentScope.
+# following code snippet for all built-in agent in AgentScope.
 #
 # .. code-block:: python
 #

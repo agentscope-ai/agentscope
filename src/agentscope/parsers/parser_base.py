@@ -134,7 +134,7 @@ class DictFilterMixin:
         allow_missing: bool = False,
     ) -> Union[str, dict, None]:
         """Filter the fields that will be fed into the content field in the
-        returned message, which will be exposed to other agents.
+        returned message, which will be exposed to other agent.
         """
         return self._filter_content_by_names(
             parsed_response,

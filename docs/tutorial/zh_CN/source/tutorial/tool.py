@@ -104,7 +104,7 @@ tool_call = ToolUseBlock(
 # .. note:: `ReActAgent` 采用的是 prompt 本地拼接和解析的方式调用工具，而不是通过
 #  模型 API 的 tools API 进行调用。关于 tools API 的使用，请参考 :ref:`tools-api`.
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 agentscope.init(
     model_configs={
@@ -211,7 +211,7 @@ print(json.dumps(formatted_msgs, indent=4, ensure_ascii=False))
 
 # %%
 # 目前，我们已经完成了基于 API 的工具调用全过程。在智能体内的具体实现可以参
-# 考 `agentscope.agents.ReActAgentV2`。
+# 考 `agentscope.agent.ReActAgentV2`。
 
 # %%
 # 在 ServiceToolkit 中使用 MCP

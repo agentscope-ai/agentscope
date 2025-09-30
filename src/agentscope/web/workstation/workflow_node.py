@@ -6,7 +6,7 @@ from functools import partial
 from typing import List, Optional
 
 from agentscope import msghub
-from agentscope.agents import (
+from agentscope.agent import (
     DialogAgent,
     UserAgent,
     DictDialogAgent,
@@ -181,7 +181,7 @@ class DialogAgentNode(WorkflowNode):
 
     def compile(self) -> dict:
         return {
-            "imports": "from agentscope.agents import DialogAgent",
+            "imports": "from agentscope.agent import DialogAgent",
             "inits": f"{self.var_name} = DialogAgent("
             f"{kwarg_converter(self.opt_kwargs)})",
             "execs": f"{DEFAULT_FLOW_VAR} = {self.var_name}"
@@ -211,7 +211,7 @@ class UserAgentNode(WorkflowNode):
 
     def compile(self) -> dict:
         return {
-            "imports": "from agentscope.agents import UserAgent",
+            "imports": "from agentscope.agent import UserAgent",
             "inits": f"{self.var_name} = UserAgent("
             f"{kwarg_converter(self.opt_kwargs)})",
             "execs": f"{DEFAULT_FLOW_VAR} = {self.var_name}"
@@ -241,7 +241,7 @@ class DictDialogAgentNode(WorkflowNode):
 
     def compile(self) -> dict:
         return {
-            "imports": "from agentscope.agents import DictDialogAgent",
+            "imports": "from agentscope.agent import DictDialogAgent",
             "inits": f"{self.var_name} = DictDialogAgent("
             f"{kwarg_converter(self.opt_kwargs)})",
             "execs": f"{DEFAULT_FLOW_VAR} = {self.var_name}"
@@ -285,7 +285,7 @@ class ReActAgentNode(WorkflowNode):
             for tool in tools
         )
         return {
-            "imports": "from agentscope.agents import ReActAgent",
+            "imports": "from agentscope.agent import ReActAgent",
             "inits": f"{self.var_name}_service_toolkit = ServiceToolkit()\n"
             f"    {service_toolkit_code}\n"
             f"    {self.var_name} = ReActAgent"
@@ -845,11 +845,11 @@ def get_all_agents(
     Retrieve all unique agent objects from a pipeline.
 
     Recursively traverses the pipeline to collect all distinct agent-based
-    participants. Prevents duplication by tracking already seen agents.
+    participants. Prevents duplication by tracking already seen agent.
 
     Args:
-        node (WorkflowNode): The WorkflowNode from which to extract agents.
-        seen_agents (set, optional): A set of agents that have already been
+        node (WorkflowNode): The WorkflowNode from which to extract agent.
+        seen_agents (set, optional): A set of agent that have already been
             seen to avoid duplication. Defaults to None.
 
     Returns:

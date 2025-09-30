@@ -13,7 +13,7 @@ Specifically, AgentScope supports both model-specific and model-agnostic
 formatting.
 
 .. tip:: **Chat scenario** refers to the conversation between a user and an
- assistant, while **multi-agent scenario** involves multiple agents with
+ assistant, while **multi-agent scenario** involves multiple agent with
  different names (though their roles are all "assistant").
 
 .. note:: Currently, most LLM API providers only support chat scenario. For
@@ -44,7 +44,7 @@ Chat API as an example:
 """
 from typing import Union, Optional
 
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.manager import ModelManager
 import agentscope

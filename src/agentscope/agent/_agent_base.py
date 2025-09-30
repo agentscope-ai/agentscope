@@ -24,7 +24,7 @@ from ..types import AgentHookTypes
 
 
 class AgentBase(StateModule, metaclass=_AgentMeta):
-    """Base class for asynchronous agents."""
+    """Base class for asynchronous agent."""
 
     id: str
     """The agent's unique identifier, generated using shortuuid."""
@@ -160,7 +160,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
         # The subscribers that will receive the reply message by their
         # `observe` method. The key is the MsgHub id, and the value is the
-        # list of agents.
+        # list of agent.
         self._subscribers: dict[str, list[AgentBase]] = {}
 
         # We add this variable in case developers want to disable the console
@@ -650,7 +650,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             msghub_name (`str`):
                 The name of the MsgHub that manages the subscribers.
             subscribers (`list[AgentBase]`):
-                A list of agents that will receive the reply message from
+                A list of agent that will receive the reply message from
                 this agent via their `observe` method.
         """
         self._subscribers[msghub_name] = [_ for _ in subscribers if _ != self]

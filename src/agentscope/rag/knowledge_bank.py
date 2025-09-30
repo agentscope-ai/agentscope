@@ -6,7 +6,7 @@ import copy
 import json
 from typing import Optional, Union, Type, Any
 from loguru import logger
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from .knowledge import Knowledge
 
 DEFAULT_INDEX_CONFIG = {
@@ -34,7 +34,7 @@ class KnowledgeBank:
     """
     KnowledgeBank enables
     1) provide an easy and fast way to initialize the Knowledge object;
-    2) make Knowledge object reusable and sharable for multiple agents.
+    2) make Knowledge object reusable and sharable for multiple agent.
     """
 
     def __init__(

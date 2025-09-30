@@ -49,7 +49,7 @@ class CommonFormatter(FormatterBase):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """Format the multi-agent messages, where more than two agents are
+        """Format the multi-agent messages, where more than two agent are
         involved."""
         return cls._format_multi_agent_for_common_models(*msgs)
 

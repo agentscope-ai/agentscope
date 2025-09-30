@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """An example of a conversation with a ReAct agent."""
 
-from agentscope.agents import UserAgent
-from agentscope.agents import ReActAgent
+from agentscope.agent import UserAgent
+from agentscope.agent import ReActAgent
 from agentscope.service import (
     bing_search,  # or google_search,
     read_text_file,
@@ -35,7 +35,7 @@ agentscope.init(
     project="Conversation with ReActAgent",
 )
 
-# Create agents
+# Create agent
 agent = ReActAgent(
     name="assistant",
     model_config_name=YOUR_MODEL_CONFIGURATION_NAME,

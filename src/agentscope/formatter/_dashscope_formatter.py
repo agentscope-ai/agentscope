@@ -2,7 +2,7 @@
 """The dashscope formatter class."""
 import json
 import os
-from typing import Union, Any
+from typing import Union, Any, cast
 
 from loguru import logger
 from ._truncated_formatter_base import TruncatedFormatterBase
@@ -16,6 +16,8 @@ from ..message import (
     AudioBlock,
     ToolUseBlock,
     ToolResultBlock,
+    Base64Source,
+    URLSource,
 )
 
 
@@ -154,29 +156,45 @@ class DashScopeFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ in ["image", "audio"]:
-                    source = block["source"]
-                    if source["type"] == "url":
-                        url = source["url"]
-                        if _is_accessible_local_file(url):
+                    if not isinstance(block, (ImageBlock, AudioBlock)):
+                        raise ValueError(
+                            f"Expected ImageBlock or AudioBlock for type "
+                            f"'{typ}', got {type(block)}",
+                        )
+
+                    source_block = cast(
+                        Union[ImageBlock, AudioBlock],
+                        block,
+                    )
+                    source = source_block.get("source")
+                    if source:
+                        source_type = source.get("type")
+                        if source_type == "url":
+                            url_source = cast(URLSource, source)
+                            url = url_source.get("url")
+                            if url and _is_accessible_local_file(url):
+                                content_blocks.append(
+                                    {typ: "file://" + os.path.abspath(url)},
+                                )
+                            else:
+                                content_blocks.append({typ: url or ""})
+
+                        elif source_type == "base64":
+                            base64_source = cast(Base64Source, source)
+                            media_type = base64_source.get("media_type")
+                            base64_data = base64_source.get("data")
                             content_blocks.append(
-                                {typ: "file://" + os.path.abspath(url)},
+                                {
+                                    typ: f"data:{media_type};"
+                                    f"base64,{base64_data}",
+                                },
                             )
+
                         else:
-                            # treat as web url
-                            content_blocks.append({typ: url})
-
-                    elif source["type"] == "base64":
-                        media_type = source["media_type"]
-                        base64_data = source["data"]
-                        content_blocks.append(
-                            {typ: f"data:{media_type};base64,{base64_data}"},
-                        )
-
-                    else:
-                        raise NotImplementedError(
-                            f"Unsupported source type '{source.get('type')}' "
-                            f"for {typ} block.",
-                        )
+                            raise NotImplementedError(
+                                f"Unsupported source type '{source.get('type')}' "
+                                f"for {typ} block.",
+                            )
 
                 elif typ == "tool_use":
                     tool_calls.append(
@@ -335,7 +353,7 @@ class DashScopeFormatter(TruncatedFormatterBase):
         cls,
         *msgs: Union[Msg, list[Msg], None],
     ) -> list[dict]:
-        """Format the messages in multi-agent scenario, where multiple agents
+        """Format the messages in multi-agent scenario, where multiple agent
         are involved."""
 
         input_msgs = cls.check_and_flat_messages(*msgs)
@@ -511,7 +529,11 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ in ["image", "audio"]:
-                    source = block["source"]
+                    source_block = cast(
+                        Union[ImageBlock, AudioBlock],
+                        block,
+                    )
+                    source = source_block["source"]
                     if source["type"] == "url":
                         url = source["url"]
                         if _is_accessible_local_file(url):
@@ -584,6 +606,19 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                 formatted_msgs.append(msg_dashscope)
 
         return _reformat_messages(formatted_msgs)
+
+    @classmethod
+    def format_chat(cls, *msgs: Union[Msg, list[Msg], None]) -> list[dict]:
+        """实现 format_chat 方法"""
+        return DashScopeFormatter.format_chat(*msgs)
+
+    @classmethod
+    def format_multi_agent(
+        cls,
+        *msgs: Union[Msg, list[Msg], None],
+    ) -> list[dict]:
+        """实现 format_multi_agent 方法"""
+        return DashScopeFormatter.format_multi_agent(*msgs)
 
 
 class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
