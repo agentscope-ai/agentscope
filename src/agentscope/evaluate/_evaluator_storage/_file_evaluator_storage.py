@@ -5,6 +5,8 @@ import os
 from json import JSONDecodeError
 from typing import Any, Callable
 
+from ..._logging import logger
+
 from ._evaluator_storage_base import EvaluatorStorageBase
 from .._solution import SolutionOutput
 from .._metric_base import MetricResult
@@ -60,6 +62,9 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
             output (`SolutionOutput`):
                 The solution output to be saved.
         """
+        if not output:
+            logger.warning("No solution output to save.")
+            return
         path_file = self._get_save_path(
             task_id,
             repeat_id,
