@@ -11,16 +11,16 @@ from typing import Any, Callable, Union, List, Optional
 
 from loguru import logger
 
-from ._model_usage import ChatUsage
-from .response import ModelResponse
-from ..exception import ResponseParsingError
+from agentscope.model._model_usage import ChatUsage
+from agentscope.model.response import ModelResponse
+from agentscope.exception import ResponseParsingError
 
-from ..manager import FileManager
-from ..manager import MonitorManager
-from ..message import Msg
-from ..utils.common import _get_timestamp
-from ..constants import _DEFAULT_MAX_RETRIES
-from ..constants import _DEFAULT_RETRY_INTERVAL
+from agentscope.manager import FileManager
+from agentscope.manager import MonitorManager
+from agentscope.message import Msg
+from agentscope.utils.common import _get_timestamp
+from agentscope.constants import _DEFAULT_MAX_RETRIES
+from agentscope.constants import _DEFAULT_RETRY_INTERVAL
 
 
 def _response_parse_decorator(

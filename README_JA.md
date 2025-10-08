@@ -11,7 +11,7 @@
     </a>
     <a href="https://pypi.org/project/agentscope/">
         <img
-            src="https://img.shields.io/badge/python-3.9+-blue?logo=python"
+            src="https://img.shields.io/badge/python-3.10+-blue?logo=python"
             alt="pypi"
         />
     </a>
@@ -106,7 +106,7 @@
 
 ### 💻 インストール
 
-> AgentScopeには**Python 3.9**以上が必要です。
+> AgentScopeには**Python 3.10**以上が必要です。
 
 #### 🛠️ ソースからインストール
 

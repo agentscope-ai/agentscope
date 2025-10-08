@@ -9,10 +9,6 @@ from typing import Union, Optional, Literal, Sequence
 
 import os
 
-from ...model import (
-    DashScopeImageSynthesisWrapper,
-    DashScopeMultiModalWrapper,
-)
 
 from ..service_response import (
     ServiceResponse,
@@ -67,6 +63,7 @@ def dashscope_text_to_image(
     > }
 
     """
+    from ...model import DashScopeImageSynthesisWrapper
     text2img = DashScopeImageSynthesisWrapper(
         config_name="dashscope-text-to-image-service",  # Just a placeholder
         model_name=model,
@@ -152,7 +149,7 @@ def dashscope_image_to_text(
     > {'status': 'SUCCESS', 'content': 'A beautiful sunset in the mountains'}
 
     """
-
+    from ...model import DashScopeMultiModalWrapper
     img2text = DashScopeMultiModalWrapper(
         config_name="dashscope-image-to-text-service",  # Just a placeholder
         model_name=model,

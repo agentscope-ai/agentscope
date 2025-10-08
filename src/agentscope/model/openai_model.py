@@ -17,7 +17,7 @@ from ._model_utils import (
     _verify_text_content_in_openai_delta_response,
     _verify_text_content_in_openai_message_response,
 )
-from .model import ModelWrapperBase, ModelResponse
+from agentscope.base import ModelWrapperBase, ModelResponse
 from ..formatter import OpenAIChatFormatter, CommonFormatter
 from ..manager import FileManager
 from ..message import Msg, ToolUseBlock

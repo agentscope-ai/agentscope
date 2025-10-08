@@ -5,7 +5,7 @@
 Quick Start
 ============================
 
-AgentScope requires Python 3.9 or higher. You can install from source or pypi.
+AgentScope requires Python 3.10 or higher. You can install from source or pypi.
 
 From PyPI
 ----------------

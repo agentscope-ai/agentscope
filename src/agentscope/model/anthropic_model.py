@@ -5,7 +5,7 @@ from typing import Optional, Union, Generator, Any
 from ._model_usage import ChatUsage
 from ..formatter import AnthropicFormatter
 from ..message import Msg, ToolUseBlock
-from .model import ModelWrapperBase, ModelResponse
+from agentscope.base import ModelWrapperBase, ModelResponse
 
 
 class AnthropicChatWrapper(ModelWrapperBase):

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """ Import modules in model package."""
 
-from .model import ModelWrapperBase
+from agentscope.base import ModelWrapperBase
 from .response import ModelResponse
 from .post_model import (
     PostAPIModelWrapperBase,

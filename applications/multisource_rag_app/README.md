@@ -33,7 +33,7 @@ The routing mechanism is embedding-similarity based. For more details, refer to 
 ## Pre-runing settings
 
 Create a conda environment:
-`conda create -n "copilot_core" python=3.9`
+`conda create -n "copilot_core" python=3.10`
 
 Install the latest AgentScope:
 ```bash

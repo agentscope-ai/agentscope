@@ -27,7 +27,7 @@ except ImportError:
     dashscope = None
     GenerationResponse = None
 
-from .model import ModelWrapperBase, ModelResponse
+from agentscope.base import ModelWrapperBase, ModelResponse
 
 
 class DashScopeWrapperBase(ModelWrapperBase, ABC):

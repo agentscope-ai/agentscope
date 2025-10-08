@@ -8,7 +8,7 @@ from typing import Any, Union, List, Optional
 import requests
 from loguru import logger
 
-from .model import ModelWrapperBase, ModelResponse
+from agentscope.base import ModelWrapperBase, ModelResponse
 from ..constants import _DEFAULT_MAX_RETRIES
 from ..constants import _DEFAULT_MESSAGES_KEY
 from ..constants import _DEFAULT_RETRY_INTERVAL

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """The model manager for AgentScope."""
 import importlib
 import json
 import os
-from typing import Any, Union, Type
+from typing import Any, Union, Type, TYPE_CHECKING
 
 from loguru import logger
 
-from ..model import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
 
 
 class ModelManager:
@@ -47,6 +47,7 @@ class ModelManager:
         self,
     ) -> None:
         """Initialize the model manager with model configs"""
+        from ..model import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
         self.model_configs = {}
         self.model_wrapper_mapping = {}
 
