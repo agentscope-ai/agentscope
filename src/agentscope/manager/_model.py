@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
 """The model manager for AgentScope."""
 import importlib
 import json
@@ -8,6 +9,8 @@ from typing import Any, Union, Type, TYPE_CHECKING
 
 from loguru import logger
 
+if TYPE_CHECKING:
+    from ..model import ModelWrapperBase
 
 
 class ModelManager:
@@ -19,7 +22,7 @@ class ModelManager:
     model_configs: dict[str, dict] = {}
     """The model configs"""
 
-    model_wrapper_mapping: dict[str, Type[ModelWrapperBase]] = {}
+    model_wrapper_mapping: dict[str, Type["ModelWrapperBase"]] = {}
     """The registered model wrapper classes."""
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Any:
@@ -47,7 +50,8 @@ class ModelManager:
         self,
     ) -> None:
         """Initialize the model manager with model configs"""
-        from ..model import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
+        from ..model import _BUILD_IN_MODEL_WRAPPERS
+
         self.model_configs = {}
         self.model_wrapper_mapping = {}
 

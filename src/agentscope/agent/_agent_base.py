@@ -133,10 +133,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
     """The class-level hook functions that will be called after the observe
     function, which takes the `self` object as input."""
 
-    def __init__(self) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the agent."""
         super().__init__()
-
         self.id = shortuuid.uuid()
 
         # The replying task and identify of the current replying

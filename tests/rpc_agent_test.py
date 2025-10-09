@@ -38,9 +38,14 @@ from agentscope.rpc.retry_strategy import (
 class DemoRpcAgent(AgentBase):
     """A demo Rpc agent for test usage."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.id = 0
+    def __init__(
+        self,
+        name: str = "DemoRpcAgent",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.name = name
+        self.id = "0"
 
     async def reply(
         self,
@@ -48,7 +53,7 @@ class DemoRpcAgent(AgentBase):
     ) -> Msg:
         """Response after 2s"""
         x.id = self.id
-        self.id += 1
+        self.id = str(int(self.id) + 1)
         await asyncio.sleep(2)
         return x
 
@@ -106,8 +111,13 @@ class DemoLocalAgentAdd(AgentBase):
 class DemoRpcAgentWithMemory(AgentBase):
     """A demo Rpc agent that count its memory"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        name: str = "DemoRpcAgentWithMemory",
+        **kwargs: Any,
+    ) -> None:
         super().__init__()
+        self.name = name
         self.memory = []
 
     async def reply(
@@ -141,6 +151,14 @@ class DemoRpcAgentWithMemory(AgentBase):
 class DemoRpcAgentWithMonitor(AgentBase):
     """A demo Rpc agent that use monitor"""
 
+    def __init__(
+        self,
+        name: str = "DemoRpcAgentWithMonitor",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.name = name
+
     async def reply(
         self,
         x: Optional[Union[Msg, Sequence[Msg]]] = None,
@@ -150,10 +168,10 @@ class DemoRpcAgentWithMonitor(AgentBase):
             monitor.update({"msg_num": 1})
         except QuotaExceededError:
             x.metadata["quota_exceeded"] = True
-            logger.chat(Msg(self.name, "quota_exceeded", "assistant"))
+            logger.info(Msg(self.name, "quota_exceeded", "assistant"))
             return x
         x.metadata["msg_num"] = monitor.get_value("msg_num")
-        logger.chat(
+        logger.info(
             Msg(self.name, f"msg_num {x.metadata['msg_num']}", "assistant"),
         )
         await asyncio.sleep(0.2)
