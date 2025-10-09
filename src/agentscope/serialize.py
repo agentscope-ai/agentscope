@@ -37,7 +37,7 @@ def serialize(obj: Any) -> str:
 
     For AgentScope, this function supports to serialize `Msg` object for now.
     """
-    # TODO: We leave the serialization of agents in next PR
+    # TODO: We leave the serialization of agent in next PR
     return json.dumps(obj, ensure_ascii=False, default=_default_serialize)
 
 
@@ -46,7 +46,7 @@ def deserialize(s: str) -> Any:
 
     For AgentScope, this function supports to serialize `Msg` object for now.
     """
-    # TODO: We leave the serialization of agents in next PR
+    # TODO: We leave the serialization of agent in next PR
     return json.loads(s, object_hook=_deserialize_hook)
 
 

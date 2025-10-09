@@ -30,7 +30,7 @@ model_config = {
 # 如往常一样，我们使用上述配置初始化 AgentScope，并使用视觉大语言模型创建一个新的智能体。
 #
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 import agentscope
 
 agentscope.init(model_configs=model_config)

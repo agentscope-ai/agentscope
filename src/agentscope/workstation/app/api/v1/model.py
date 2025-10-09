@@ -7,7 +7,7 @@ from app.schemas.response import create_response
 from app.services.model_service import ModelService
 from app.services.provider_service import ProviderService
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = APIRouter(prefix="/model", tags=["model"])
 
 
 @router.get("/{model_type}/selector")
@@ -26,7 +26,7 @@ async def model_selector(
             model_type=model_type,
             workspace_id=workspace_id,
         )
-        # Group models by provider
+        # Group model by provider
         provider_map = {p.provider: p for p in providers}
         result = []
         for provider_id, provider in provider_map.items():
@@ -37,7 +37,7 @@ async def model_selector(
                 result.append(
                     {
                         "provider": provider.model_dump(),
-                        "models": provider_models,
+                        "model": provider_models,
                     },
                 )
         return create_response(

@@ -3,7 +3,7 @@
 Minimal case for agentscope
 """
 import agentscope
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 
 print(agentscope.__version__)
 agentscope.init(

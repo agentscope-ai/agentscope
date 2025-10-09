@@ -19,7 +19,7 @@ from agentscope.service.service_response import (
     ServiceResponse,
     ServiceExecStatus,
 )
-from agentscope.agents import UserAgent, ReActAgent
+from agentscope.agent import UserAgent, ReActAgent
 from agentscope.manager import ModelManager
 from agentscope.rpc.rpc_meta import RpcMeta, async_func
 

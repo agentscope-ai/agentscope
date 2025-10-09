@@ -12,7 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import agentscope
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 
 from src.utils import create_timestamp

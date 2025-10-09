@@ -70,7 +70,7 @@ AgentScope 已集成了许多不同模态的模型 API 。
 
 import os
 
-from agentscope.models import (
+from agentscope.model import (
     DashScopeChatWrapper,
     ModelWrapperBase,
     ModelResponse,
@@ -114,11 +114,11 @@ agentscope.init(
 # %%
 # 显式初始化模型
 # --------------------------------
-# `agentscope.models` 模块提供了所有的内置模型 API。
+# `agentscope.model` 模块提供了所有的内置模型 API。
 # 您可以通过调用相应的模型类来显式初始化模型。
 #
 
-# 打印 agentscope.models 下的模块
+# 打印 agentscope.model 下的模块
 for module_name in agentscope.models.__all__:
     if module_name.endswith("Wrapper"):
         print(module_name)
@@ -141,7 +141,7 @@ response = model(
 )
 
 # %%
-# `response` 是 `agentscope.models.ModelResponse` 的一个对象，它包含以下字段：
+# `response` 是 `agentscope.model.ModelResponse` 的一个对象，它包含以下字段：
 #
 # - text：生成的文本
 # - embedding：生成的嵌入
@@ -216,7 +216,7 @@ vllm_model_config = {
 # 或者，直接用参数初始化 OpenAI Chat API 的模型类：
 #
 
-from agentscope.models import OpenAIChatWrapper
+from agentscope.model import OpenAIChatWrapper
 
 model = OpenAIChatWrapper(
     config_name="",
@@ -251,7 +251,7 @@ model = OpenAIChatWrapper(
 # 相应的模型类初始化如下：
 #
 
-from agentscope.models import PostAPIChatWrapper
+from agentscope.model import PostAPIChatWrapper
 
 post_api_model = PostAPIChatWrapper(
     config_name="",

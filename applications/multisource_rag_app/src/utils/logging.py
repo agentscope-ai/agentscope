@@ -106,7 +106,7 @@ class logger:
             if kwargs:
                 return loguru_logger.error(
                     f"{arg[0]}, "
-                    f"{json.dumps(kwargs,ensure_ascii=False,default=to_dict)}",
+                    f"{json.dumps(kwargs, ensure_ascii=False, default=to_dict)}",
                 )
             else:
                 return loguru_logger.error(f"{arg[0]}")

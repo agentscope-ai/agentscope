@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The main script to start a Gomoku game between two agents and a board
+"""The main script to start a Gomoku game between two agent and a board
 agent."""
 
 from board_agent import NAME_TO_PIECE, NAME_BLACK, NAME_WHITE, BoardAgent
@@ -35,7 +35,7 @@ YOUR_MODEL_CONFIGURATION = {
     # ...
 }
 
-# Initialize the agents
+# Initialize the agent
 agentscope.init(model_configs=YOUR_MODEL_CONFIGURATION)
 
 piece_black = NAME_TO_PIECE[NAME_BLACK]

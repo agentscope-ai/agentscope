@@ -5,6 +5,7 @@ from typing import Callable, Union
 from typing import Optional
 
 from ._functional import sequential_pipeline
+from ..agent._agent_base import AgentBase
 from ..message import Msg
 
 
@@ -15,33 +16,27 @@ class SequentialPipeline:
 
     def __init__(
         self,
-        operators: list[
-            Callable[
-                [Union[None, Msg, list[Msg]]],
-                Union[None, Msg, list[Msg]],
-            ]
-        ],
+        agents: list[AgentBase],
     ) -> None:
         """Initialize a sequential pipeline class
 
         Args:
-            operators (`list[Callable[[Union[None, Msg, list[Msg]]],
-            Union[None, Msg, list[Msg]]]`):
-                A list of operators, which can be agent, pipeline or any
-                callable that takes `Msg` object(s) as input and returns
-                `Msg` object or `None`
+            agents (`list[AgentBase]`):
+                A list of agent.
         """
-        self.operators = operators
-        self.participants = list(self.operators)
+        self.agents = agents
 
-    def __call__(
+    async def __call__(
         self,
-        x: Optional[Union[Msg, list[Msg]]],
-    ) -> Union[Msg, list[Msg], None]:
+        msg: Msg | list[Msg] | None = None,
+    ) -> Msg | list[Msg] | None:
         """Execute the sequential pipeline
 
         Args:
-            x (`Optional[Union[Msg, list[Msg]]]`, defaults to `None`):
-                The initial input that will be passed to the first operator.
+            msg (`Msg | list[Msg] | None`, defaults to `None`):
+                The initial input that will be passed to the first agent.
         """
-        return sequential_pipeline(operators=self.operators, x=x)
+        return await sequential_pipeline(
+            agents=self.agents,
+            msg=msg,
+        )

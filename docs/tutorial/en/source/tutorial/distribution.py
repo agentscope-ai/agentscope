@@ -20,7 +20,7 @@ Distribution
 ============
 
 This section introduces the usage of the distributed mode of AgentScope. AgentScope natively provides a distributed mode based on gRPC.
-In this mode, multiple agents in one application can be deployed to different processes or even different machines, thereby fully utilizing computational resources and improving efficiency.
+In this mode, multiple agent in one application can be deployed to different processes or even different machines, thereby fully utilizing computational resources and improving efficiency.
 
 Basic Usage
 ~~~~~~~~~~~
@@ -34,7 +34,7 @@ a web search case.
 To highlight the acceleration effect brought by the distributed mode of
 AgentScope, a simple custom ``WebAgent`` is used here.
 ``WebAgent`` will sleep 5 seconds to simulate the process of crawling a
-webpage and looking for answers from it, and there are 5 agents in the example.
+webpage and looking for answers from it, and there are 5 agent in the example.
 
 The process of performing the search is the ``run`` function. The difference
 between the traditional and distributed mode is only in the initialization
@@ -50,7 +50,7 @@ the original Agent into the corresponding distributed version.
 
     import time
     import agentscope
-    from agentscope.agents import AgentBase
+    from agentscope.agent import AgentBase
     from agentscope.message import Msg
 
     class WebAgent(AgentBase):
@@ -80,11 +80,11 @@ the original Agent into the corresponding distributed version.
         return [WebAgent(f"W{i}").to_dist() for i in range(len(URLS))]
 
 
-    def run(agents):
+    def run(agent):
         start = time.time()
         results = []
         for i, url in enumerate(URLS):
-            results.append(agents[i].reply(
+            results.append(agent[i].reply(
                 Msg(
                     name="system",
                     role="system",
@@ -153,7 +153,7 @@ in the following sections.
 # Before diving into the advanced usage, we must first cover some basic concepts of the AgentScope distributed model.
 #
 # - **Main Process**: The process where the AgentScope application resides is referred to as the main process. For example, the ``run`` function in the previous section runs in the main process. There will only be one main process in each AgentScope application.
-# - **Agent Server Process**: The AgentScope agent server process is where the agent runs in distributed mode. For example, in the previous section, all agents in ``dist_agents`` run in the agent server process. There can be multiple AgentScope agent server processes. These processes can run on any network-reachable machine and numerous agents can run simultaneously within each agent server process.
+# - **Agent Server Process**: The AgentScope agent server process is where the agent runs in distributed mode. For example, in the previous section, all agent in ``dist_agents`` run in the agent server process. There can be multiple AgentScope agent server processes. These processes can run on any network-reachable machine and numerous agent can run simultaneously within each agent server process.
 # - **Child Mode**: In child mode, the agent server process is started by the main process as a child process. For example, in the previous section, each agent in ``dist_agents`` is actually a child process of the main process. This mode is the default mode, which means if you call the ``to_dist`` function without any parameters, it will use this mode.
 # - **Independent Mode**: In independent mode, the agent servers are independent of the main process and need to be pre-started on the machine. Specific parameters must be passed to the ``to_dist`` function, and the usage method will be introduced in the following section.
 #
@@ -220,7 +220,7 @@ in the following sections.
 #
 # In the code above, the ``to_dist`` function is called on an already initialized agent. The essence of ``to_dist`` is to clone the original agent to the agent server process, while retaining an ``RpcAgent`` in the main process as a proxy of the original agent. Calls to this ``RpcAgent`` will be forwarded to the corresponding agent in the agent server process.
 #
-# There is a potential issue with this approach: the original Agent is initialized twice—once in the main process and once in the agent server process—and these initializations are executed sequentially, which cannot be accelerated via parallelism. For Agents with low initialization costs, directly calling the ``to_dist`` function won't significantly affect performance. However, for agents with high initialization costs, it is important to avoid redundant initialization. Therefore, the AgentScope distributed mode offers an alternative method for distributed mode initialization, which allows directly passing the ``to_dist`` parameter within any Agent's initialization function, as shown in the modified example below:
+# There is a potential issue with this approach: the original Agent is initialized twice—once in the main process and once in the agent server process—and these initializations are executed sequentially, which cannot be accelerated via parallelism. For Agents with low initialization costs, directly calling the ``to_dist`` function won't significantly affect performance. However, for agent with high initialization costs, it is important to avoid redundant initialization. Therefore, the AgentScope distributed mode offers an alternative method for distributed mode initialization, which allows directly passing the ``to_dist`` parameter within any Agent's initialization function, as shown in the modified example below:
 #
 # .. code-block:: python
 #

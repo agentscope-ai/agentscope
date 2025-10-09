@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
 from dataclasses import dataclass, asdict
 from loguru import logger
-from agentscope.models import ModelWrapperBase
+from agentscope.model import ModelWrapperBase
 
 
 @dataclass

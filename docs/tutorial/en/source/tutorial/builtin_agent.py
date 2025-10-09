@@ -6,7 +6,7 @@ Built-in Agents
 =============================
 
 AgentScope builds in several agent class to support different scenarios and
-show how to build agents with AgentScope.
+show how to build agent with AgentScope.
 
 .. list-table::
     :header-rows: 1
@@ -33,7 +33,7 @@ for module in agentscope.agents.__all__:
         print(module)
 
 # %%
-# .. note:: To support different LLM APIs, all built-in agents are initialized by specifying the model configuration name `model_config_name` in AgentScope.
+# .. note:: To support different LLM APIs, all built-in agent are initialized by specifying the model configuration name `model_config_name` in AgentScope.
 #
 
 import agentscope
@@ -55,7 +55,7 @@ agentscope.init(
 # configurations.
 #
 
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.message import Msg
 
 # Init a dialog agent
@@ -72,7 +72,7 @@ response = alice(msg)
 # %%
 # UserAgent
 # ----------------------------
-# The `UserAgent` class allows users to interact with the other agents.
+# The `UserAgent` class allows users to interact with the other agent.
 # When the `UserAgent` object is called, it will ask for user input and format
 # it into a `Msg` object.
 #
@@ -80,7 +80,7 @@ response = alice(msg)
 # dialog agent `alice`.
 #
 
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from io import StringIO
 import sys
 
@@ -104,7 +104,7 @@ msg = alice(msg)
 # We first initialize a `DictDialogAgent` object, and switch between different outputs by changing the parser.
 #
 
-from agentscope.agents import DictDialogAgent
+from agentscope.agent import DictDialogAgent
 from agentscope.parsers import MarkdownJsonDictParser
 
 
@@ -207,7 +207,7 @@ toolkit.add(
 # Then we initialize a `ReActAgent` to solve the given problem.
 #
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 david = ReActAgent(
     name="David",

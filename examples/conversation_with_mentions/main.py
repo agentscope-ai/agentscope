@@ -6,7 +6,7 @@ from groupchat_utils import (
 )
 
 import agentscope
-from agentscope.agents import UserAgent
+from agentscope.agent import UserAgent
 from agentscope.message import Msg
 from agentscope.msghub import msghub
 

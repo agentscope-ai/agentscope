@@ -15,7 +15,7 @@ from loguru import logger
 
 from agentscope.rpc import async_func, RpcClient
 from agentscope.message import Msg
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.environment import BasicEnv
 from agentscope.exception import ResponseParsingError
 from agentscope.utils.common import _get_timestamp

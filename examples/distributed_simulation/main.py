@@ -11,7 +11,7 @@ from loguru import logger
 from participant import Moderator, RandomParticipant, LLMParticipant
 
 import agentscope
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.server import RpcAgentServerLauncher
 from agentscope.message import Msg
 

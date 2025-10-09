@@ -15,7 +15,7 @@ from _prompt import (
     scheduling_progress_format_zh,
     scheduling_progress_format_en,
 )
-from agentscope.agents import Operator, DialogAgent
+from agentscope.agent import Operator, DialogAgent
 from agentscope.message import Msg
 
 

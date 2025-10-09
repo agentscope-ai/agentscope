@@ -41,7 +41,7 @@
 
     import time
     import agentscope
-    from agentscope.agents import AgentBase
+    from agentscope.agent import AgentBase
     from agentscope.message import Msg
 
     class WebAgent(AgentBase):
@@ -71,11 +71,11 @@
         return [WebAgent(f"W{i}").to_dist() for i in range(len(URLS))]
 
 
-    def run(agents):
+    def run(agent):
         start = time.time()
         results = []
         for i, url in enumerate(URLS):
-            results.append(agents[i].reply(
+            results.append(agent[i].reply(
                 Msg(
                     name="system",
                     role="system",

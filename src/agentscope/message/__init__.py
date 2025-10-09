@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
-"""The message module of AgentScope."""
+"""
+The message module of AgentScope.
+"""
 
-from .msg import (
-    Msg,
-)
-
-from .block import (
+# 先导入基础模块
+from ._message_base import Msg
+from ._message_block import (
+    TextBlock,
     ToolUseBlock,
     ToolResultBlock,
-    TextBlock,
     ImageBlock,
     AudioBlock,
     VideoBlock,
-    FileBlock,
+    ThinkingBlock,
     ContentBlock,
+    Base64Source,
+    URLSource,
 )
 
 __all__ = [
@@ -24,6 +26,6 @@ __all__ = [
     "ImageBlock",
     "AudioBlock",
     "VideoBlock",
-    "FileBlock",
+    "ThinkingBlock",
     "ContentBlock",
 ]

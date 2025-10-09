@@ -6,7 +6,7 @@ from user_proxy_agent import UserProxyAgent
 
 
 import agentscope
-from agentscope.agents import DialogAgent
+from agentscope.agent import DialogAgent
 from agentscope.msghub import msghub
 from agentscope.server import RpcAgentServerLauncher
 from agentscope.message import Msg

@@ -25,7 +25,7 @@ import json
 
 import agentscope
 from agentscope.message import Msg
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 
 # %%
 # Using Built-in Tools
@@ -106,7 +106,7 @@ tool_call = ToolUseBlock(
 #  rather than through the tools API provided by the model API. For using the
 #  tools API, please refer to :ref:`tools-api`.
 
-from agentscope.agents import ReActAgent
+from agentscope.agent import ReActAgent
 
 agentscope.init(
     model_configs={
@@ -164,7 +164,7 @@ res = agent(msg_task)
 #
 # Here we take DashScope as an example to show how to use the tools API.
 
-from agentscope.formatters import DashScopeFormatter
+from agentscope.formatter import DashScopeFormatter
 from agentscope.message import TextBlock, ToolUseBlock, ToolResultBlock
 
 model = DashScopeChatWrapper(
@@ -223,14 +223,14 @@ print(json.dumps(formatted_msgs, indent=4, ensure_ascii=False))
 # %%
 # Up to now, we have already finished the API-based tool calling process.
 # The whole process refers to the implementation of
-# `agentscope.agents.ReActAgentV2` class. You can also directly use this
+# `agentscope.agent.ReActAgentV2` class. You can also directly use this
 # agent.
 
 # %%
 # Using MCP with ServiceToolkit
 # -------------------------------
 # AgentScope provides support for integrating MCP (Model Context Protocol)
-# servers, enabling enhanced capabilities for models and tools. You can add
+# servers, enabling enhanced capabilities for model and tools. You can add
 # MCP servers to the `ServiceToolkit` using the `add_mcp_servers` method,
 # where you specify the configurations for each server.
 # Please note that MCP requires Python version >= 3.10.

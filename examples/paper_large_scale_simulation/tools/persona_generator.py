@@ -9,7 +9,7 @@ from tqdm import tqdm
 from loguru import logger
 import numpy as np
 import agentscope
-from agentscope.agents import AgentBase
+from agentscope.agent import AgentBase
 from agentscope.message import Msg
 from agentscope.server import RpcAgentServerLauncher
 from agentscope.rpc.retry_strategy import RetryFixedTimes

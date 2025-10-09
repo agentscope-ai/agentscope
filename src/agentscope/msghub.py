@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""MsgHub is designed to share messages among a group of agents.
+"""MsgHub is designed to share messages among a group of agent.
 """
 from __future__ import annotations
 from typing import Any, Optional, Union, Sequence
 
 from loguru import logger
 
-from .agents import AgentBase
+from .agent import AgentBase
 from .message import Msg
 
 
 class MsgHubManager:
-    """MsgHub manager class for sharing dialog among a group of agents."""
+    """MsgHub manager class for sharing dialog among a group of agent."""
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class MsgHubManager:
         self,
         participant: Union[Sequence[AgentBase], AgentBase],
     ) -> None:
-        """Delete agents from participant."""
+        """Delete agent from participant."""
         if isinstance(participant, AgentBase):
             participant = [participant]
 
@@ -100,7 +100,7 @@ class MsgHubManager:
                     f" deletion.",
                 )
 
-        # Remove this agent from the audience of other agents
+        # Remove this agent from the audience of other agent
         self._reset_audience()
 
     def broadcast(self, msg: Union[Msg, Sequence[Msg]]) -> None:
@@ -119,19 +119,19 @@ def msghub(
     participants: Sequence[AgentBase],
     announcement: Optional[Union[Sequence[Msg], Msg]] = None,
 ) -> MsgHubManager:
-    """msghub is used to share messages among a group of agents.
+    """msghub is used to share messages among a group of agent.
 
     Args:
         participants (`Sequence[AgentBase]`):
-            A Sequence of participated agents in the msghub.
+            A Sequence of participated agent in the msghub.
         announcement (`Optional[Union[list[Msg], Msg]]`, defaults to `None`):
             The message that will be broadcast to all participants at the
             very beginning without requiring response.
 
     Example:
-        In the following code, we create a msghub with three agents, and each
+        In the following code, we create a msghub with three agent, and each
         message output by `agent1`, `agent2`, `agent3` will be passed to all
-        other agents, that's what we mean msghub.
+        other agent, that's what we mean msghub.
 
         .. code-block:: python
 

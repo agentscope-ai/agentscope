@@ -6,8 +6,8 @@ from typing import List, Optional
 
 from loguru import logger
 
-from agentscope.agents import AgentBase
-from agentscope.agents import LlamaIndexAgent
+from agentscope.agent import AgentBase
+from agentscope.agent import LlamaIndexAgent
 from agentscope.manager import ModelManager
 from agentscope.message import Msg
 
@@ -25,17 +25,17 @@ def cluster_similarity_planning(
         query: (`Msg`):
             Input query for routing.
         rag_agents (`List[LlamaIndexAgent]`):
-            List of available retrieval agents.
+            List of available retrieval agent.
         backup_agent (`AgentBase`, optional):
-            Default agent to select when non of the retrieval agents
+            Default agent to select when non of the retrieval agent
             is appropriate.
         top_k_clusters (`int`):
             The number of closest cluster to consider.
         max_agents (`int`):
-            The maximum number of retrieval agents to select.
+            The maximum number of retrieval agent to select.
 
     Returns:
-        `List[AgentBase]`: selected agents.
+        `List[AgentBase]`: selected agent.
     """
     logger.info("Planning based on cluster similarity starts")
 
@@ -46,7 +46,7 @@ def cluster_similarity_planning(
     # only clusters with at least MIN_THRESHOLD will be considered
     MIN_THRESHOLD = 0.3
 
-    # STEP 1: retrieve cluster-level similarities from rag agents
+    # STEP 1: retrieve cluster-level similarities from rag agent
     model_manager = ModelManager.get_instance()
     emb_model = model_manager.get_model_by_config_name("qwen_emb_config")
     query_embedding = emb_model(query.content).embedding[0]
@@ -72,7 +72,7 @@ def cluster_similarity_planning(
         logger.info(f"handling irrelevant query: {query.content}")
         return [backup_agent]
 
-    # STEP 3: return agents with clusters of top_k_clusters similarities
+    # STEP 3: return agent with clusters of top_k_clusters similarities
     call_agent_names = set()
     for name, score in agent_similarities[:top_k_clusters]:
         if len(call_agent_names) < max_agents and score > MIN_THRESHOLD:

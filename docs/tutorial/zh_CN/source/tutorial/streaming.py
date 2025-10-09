@@ -48,7 +48,7 @@ AgentScope 支持在终端和 AgentScope Studio 中以打字机效果显示流�
 # - 在初始化中指定
 #
 
-from agentscope.models import DashScopeChatWrapper
+from agentscope.model import DashScopeChatWrapper
 import os
 
 model = DashScopeChatWrapper(

@@ -11,9 +11,9 @@ import traceback
 
 from pydantic import BaseModel
 
-from ...agents._user_agent import UserAgent
-from ...agents._agent import AgentBase
-from ...agents._user_input import (
+from ...agent._user_agent import UserAgent
+from ...agent._agent import AgentBase
+from ...agent._user_input import (
     UserInputBase,
     UserInputData,
 )

@@ -229,7 +229,7 @@ async def get_provider_detail(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@router.post("/{provider}/models")
+@router.post("/{provider}/model")
 async def add_model(
     provider: str,
     request: CreateModelRequest,
@@ -266,7 +266,7 @@ async def add_model(
         )
 
 
-@router.put("/{provider}/models/{model_id}")
+@router.put("/{provider}/model/{model_id}")
 async def update_model(
     provider: str,
     model_id: str,
@@ -305,7 +305,7 @@ async def update_model(
         )
 
 
-@router.delete("/{provider}/models/{model_id}")
+@router.delete("/{provider}/model/{model_id}")
 async def delete_model(
     provider: str,
     model_id: str,
@@ -334,14 +334,14 @@ async def delete_model(
         )
 
 
-@router.get("/{provider}/models")
+@router.get("/{provider}/model")
 async def list_models(
     provider: str,
     session: SessionDep,
     current_account: CurrentAccount,  # pylint: disable=unused-argument
     workspace_id: str = Depends(get_workspace_id),
 ) -> dict:
-    """List models for a provider"""
+    """List model for a provider"""
     try:
         model_service = ModelService(session=session)
         models = model_service.list_models(
@@ -379,7 +379,7 @@ async def list_models(
         )
 
 
-@router.get("/{provider}/models/{model_id}")
+@router.get("/{provider}/model/{model_id}")
 async def get_model_detail(
     provider: str,
     model_id: str,
@@ -423,7 +423,7 @@ async def get_model_detail(
         )
 
 
-@router.get("/{provider}/models/{model_id}/parameter_rules")
+@router.get("/{provider}/model/{model_id}/parameter_rules")
 async def get_model_parameter_rules(
     provider: str,
     model_id: str,

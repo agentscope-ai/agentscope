@@ -1,25 +1,28 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
+
 """The model manager for AgentScope."""
 import importlib
 import json
 import os
-from typing import Any, Union, Type
+from typing import Any, Union, Type, TYPE_CHECKING
 
 from loguru import logger
 
-from ..models import ModelWrapperBase, _BUILD_IN_MODEL_WRAPPERS
+if TYPE_CHECKING:
+    from ..model import ModelWrapperBase
 
 
 class ModelManager:
     """The model manager for AgentScope, which is responsible for loading and
-    managing model configurations and models."""
+    managing model configurations and model."""
 
     _instance = None
 
     model_configs: dict[str, dict] = {}
     """The model configs"""
 
-    model_wrapper_mapping: dict[str, Type[ModelWrapperBase]] = {}
+    model_wrapper_mapping: dict[str, Type["ModelWrapperBase"]] = {}
     """The registered model wrapper classes."""
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Any:
@@ -47,11 +50,13 @@ class ModelManager:
         self,
     ) -> None:
         """Initialize the model manager with model configs"""
+        from ..model import _BUILD_IN_MODEL_WRAPPERS
+
         self.model_configs = {}
         self.model_wrapper_mapping = {}
 
         for cls_name in _BUILD_IN_MODEL_WRAPPERS:
-            models_module = importlib.import_module("agentscope.models")
+            models_module = importlib.import_module("agentscope.model")
             cls = getattr(models_module, cls_name)
             if getattr(cls, "model_type", None):
                 self.register_model_wrapper_class(cls, exist_ok=False)
