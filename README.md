@@ -99,10 +99,13 @@ Quick overview of important features in **AgentScope 1.0**:
 | formatter  | Support multi-agent prompt formatting with tools API                               | [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html) |
 |            | Support truncation-based formatter strategy                                        |                                                                         |
 | plan       | Support ReAct-based long-term planning                                             | [Plan](https://doc.agentscope.io/tutorial/task_plan.html)               |
-|            | Support manual plan specification                                                 |                                                                         |
+|            | Support manual plan specification                                                  |                                                                         |
+| RAG        | Support agentic RAG                                                                | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                 |
+|            | Support multimodal RAG                                                             |                                                                         |
 | ...        |                                                                                    |                                                                         |
 
 ## 📢 News
+- **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
 - **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
 - **[2025-09]** A new powerful 📋**Plan** module is online now! Check out the [tutorial](https://doc.agentscope.io/tutorial/task_plan.html) for more details.
 - **[2025-09]** **AgentScope Runtime** is open-sourced now! Enabling effective agent deployment with sandboxed tool execution for production-ready AI applications. Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-runtime).
@@ -348,6 +351,20 @@ as_studio
 - API
   - [API Docs](https://doc.agentscope.io/api/agentscope.html)
 - [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
+  - Functional
+    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
+    - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
+    - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
+    - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)
+    - [Long-Term Memory](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
+    - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
+    - [Stream Printing Messages](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
+  - Agent
+    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
+    - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
+    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
+    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
+    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
   - Game
     - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - Workflow
@@ -356,14 +373,7 @@ as_studio
     - [Multi-agent Concurrent](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - Evaluation
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
-  - Functional
-    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
-    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
-    - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
-    - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
-    - [Long-Term Memory](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
-    - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
-    - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
+
 
 ## ⚖️ License
 

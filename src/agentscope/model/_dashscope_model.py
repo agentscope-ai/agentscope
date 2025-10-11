@@ -401,7 +401,7 @@ class DashScopeChatModel(ChatModelBase):
             raise RuntimeError(response)
 
         content_blocks: List[TextBlock | ToolUseBlock] = []
-        metadata = None
+        metadata: dict | None = None
 
         message = response.output.choices[0].message
         content = message.get("content")

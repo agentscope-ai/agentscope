@@ -8,14 +8,19 @@ from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
 from ..embedding import EmbeddingModelBase
+from ..message import TextBlock
 
 
 class OllamaTextEmbedding(EmbeddingModelBase):
     """The Ollama embedding model."""
 
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
     def __init__(
         self,
         model_name: str,
+        dimensions: int,
         host: str | None = None,
         embedding_cache: EmbeddingCacheBase | None = None,
         **kwargs: Any,
@@ -25,6 +30,9 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         Args:
             model_name (`str`):
                 The name of the embedding model.
+            dimensions (`int`):
+                The dimension of the embedding vector, the parameter should be
+                provided according to the model used.
             host (`str | None`, defaults to `None`):
                 The host URL for the Ollama API.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
@@ -33,22 +41,32 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         """
         import ollama
 
-        super().__init__(model_name)
+        super().__init__(model_name, dimensions)
 
         self.client = ollama.AsyncClient(host=host, **kwargs)
         self.embedding_cache = embedding_cache
 
     async def __call__(
         self,
-        text: List[str],
+        text: List[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the Ollama embedding API.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
+        gather_text = []
+        for _ in text:
+            if isinstance(_, dict) and "text" in _:
+                gather_text.append(_["text"])
+            elif isinstance(_, str):
+                gather_text.append(_)
+            else:
+                raise ValueError(
+                    "Input text must be a list of strings or TextBlock dicts.",
+                )
 
         if self.embedding_cache:
             cached_embeddings = await self.embedding_cache.retrieve(
@@ -68,7 +86,7 @@ class OllamaTextEmbedding(EmbeddingModelBase):
         response = await asyncio.gather(
             *[
                 self.client.embeddings(self.model_name, _, **kwargs)
-                for _ in text
+                for _ in gather_text
             ],
         )
         time = (datetime.now() - start_time).total_seconds()

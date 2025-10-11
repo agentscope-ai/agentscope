@@ -195,7 +195,7 @@ class OllamaChatModel(ChatModelBase):
         accumulated_text = ""
         acc_thinking_content = ""
         tool_calls = OrderedDict()  # Store tool calls
-        metadata = None
+        metadata: dict | None = None
 
         async for chunk in response:
             # Handle text content
@@ -289,7 +289,7 @@ class OllamaChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
         """
         content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
-        metadata = None
+        metadata: dict | None = None
 
         if response.message.thinking:
             content_blocks.append(
@@ -307,7 +307,9 @@ class OllamaChatModel(ChatModelBase):
                 ),
             )
             if structured_model:
-                metadata = _json_loads_with_repair(response.message.content)
+                metadata = _json_loads_with_repair(
+                    response.message.content,
+                )
 
         for idx, tool_call in enumerate(response.message.tool_calls or []):
             content_blocks.append(

@@ -9,6 +9,7 @@ from agentscope.pipeline import (
     FanoutPipeline,
     sequential_pipeline,
     fanout_pipeline,
+    stream_printing_messages,
 )
 
 from agentscope.agent import AgentBase
@@ -29,6 +30,50 @@ class AddAgent(AgentBase):
             return None
         x.metadata["result"] += self.value
         return x
+
+    async def observe(self, msg: Msg | list[Msg] | None) -> None:
+        """Observe function"""
+
+    async def handle_interrupt(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Msg:
+        """Handle interrupt"""
+
+
+class StreamAgent(AgentBase):
+    """Add agent class."""
+
+    def __init__(self) -> None:
+        """Initialize the agent"""
+        super().__init__()
+        self.name = "Stream"
+
+    async def reply(self) -> Msg | None:
+        """Reply function"""
+        await self.print(
+            Msg(
+                self.name,
+                "123",
+                "user",
+            ),
+        )
+        await self.print(
+            Msg(
+                "user",
+                "456",
+                "user",
+            ),
+        )
+        await self.print(
+            Msg(
+                self.name,
+                "789",
+                "user",
+            ),
+        )
+        return None
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         """Observe function"""
@@ -299,3 +344,35 @@ class PipelineTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(res), 2)
         self.assertIsNone(res[0])
         self.assertIsNone(res[1])
+
+    async def test_stream_printing_messages(self) -> None:
+        """Test stream_printing_messages function"""
+
+        agent = StreamAgent()
+
+        i = 0
+        async for msg, last in stream_printing_messages(
+            [agent],
+            agent(),
+        ):
+            self.assertTrue(last)
+
+            if i == 0:
+                self.assertEqual(
+                    msg.content,
+                    "123",
+                )
+
+            elif i == 1:
+                self.assertEqual(
+                    msg.content,
+                    "456",
+                )
+
+            elif i == 2:
+                self.assertEqual(
+                    msg.content,
+                    "789",
+                )
+
+            i += 1

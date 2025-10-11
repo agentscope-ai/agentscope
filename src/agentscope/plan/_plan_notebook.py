@@ -221,7 +221,7 @@ class PlanNotebook(StateModule):
         # Register the current_plan state for state management
         self.register_state(
             "current_plan",
-            custom_to_json=lambda _: _.model_dump_json() if _ else None,
+            custom_to_json=lambda _: _.model_dump() if _ else None,
             custom_from_json=lambda _: Plan.model_validate(_) if _ else None,
         )
 

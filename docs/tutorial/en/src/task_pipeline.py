@@ -11,6 +11,7 @@ as syntax sugar for chaining agents together, including
 - **MsgHub**: a message hub for broadcasting messages among multiple agents
 - **sequential_pipeline** and **SequentialPipeline**: a functional and class-based implementation that chains agents in a sequential manner
 - **fanout_pipeline** and **FanoutPipeline**: a functional and class-based implementation that distributes the same input to multiple agents
+- **stream_printing_messages**: a utility function that convert the printing messages from agent(s) into an async generator
 
 """
 
@@ -20,7 +21,8 @@ from agentscope.formatter import DashScopeMultiAgentFormatter
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.agent import ReActAgent
-from agentscope.pipeline import MsgHub
+from agentscope.pipeline import MsgHub, stream_printing_messages
+
 
 # %%
 # Broadcasting with MsgHub
@@ -136,10 +138,11 @@ asyncio.run(check_broadcast_message())
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Pipeline serves as a syntax sugar for multi-agent orchestration.
 #
-# Currently, AgentScope provides two main pipeline implementations:
+# Currently, AgentScope provides three main pipeline implementations:
 #
 # 1. **Sequential Pipeline**: Execute agents one by one in a predefined order
 # 2. **Fanout Pipeline**: Distribute the same input to multiple agents and collect their responses
+# 3. **Stream Printing Messages**: Convert the printing messages from an agent into an async generator
 #
 # Sequential Pipeline
 # ------------------------
@@ -212,10 +215,45 @@ asyncio.run(check_broadcast_message())
 #
 # .. tip::
 #     By combining ``MsgHub`` and ``sequential_pipeline`` or ``fanout_pipeline``, you can create more complex workflows very easily.
+#
+#
+# Stream Printing Messages
+# -------------------------------------
+# The ``stream_printing_messages`` function converts the printing messages from agent(s) into an async generator.
+# It will help you to obtain the intermediate messages from the agent(s) in a streaming way.
+#
+# It accepts a list of agents and a coroutine task, then returns an async generator that yields tuples of ``(Msg, bool)``,
+# containing the printing message during execution of the coroutine task.
+#
+# Note the messages with the same ``id`` are considered as the same message, and the ``last`` flag indicates whether it's the last chunk of this message.
+#
+# Taking the following code snippet as an example:
+
+
+async def run_example_pipeline() -> None:
+    """Run an example of streaming printing messages."""
+    agent = create_agent("Alice", 20, "student")
+
+    # We disable the terminal printing to avoid messy outputs
+    agent.set_console_output_enabled(False)
+
+    async for msg, last in stream_printing_messages(
+        agents=[agent],
+        coroutine_task=agent(
+            Msg("user", "Hello, who are you?", "user"),
+        ),
+    ):
+        print(msg, last)
+        if last:
+            print()
+
+
+asyncio.run(run_example_pipeline())
+
 
 # %%
 # Advanced Pipeline Features
-# ~~~~~~~~~~~~~~~~~~~~~~~~~
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 # Additionally, for reusability, we also provide a class-based implementation:
 #

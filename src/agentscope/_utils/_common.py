@@ -9,6 +9,7 @@ import os
 import tempfile
 import types
 import typing
+import uuid
 from datetime import datetime
 from typing import Union, Any, Callable, Type, Dict
 
@@ -268,3 +269,17 @@ def _create_tool_from_base_model(
         },
     }
     return tool_definition
+
+
+def _map_text_to_uuid(text: str) -> str:
+    """Map the given text to a deterministic UUID string.
+
+    Args:
+        text (`str`):
+            The input text to be mapped to a UUID.
+
+    Returns:
+        `str`:
+            A deterministic UUID string derived from the input text.
+    """
+    return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))

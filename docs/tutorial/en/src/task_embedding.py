@@ -22,11 +22,12 @@ AgentScope has built-in embedding classes for the following API providers:
     * - Gemini
       - ``GeminiTextEmbedding``
     * - DashScope
-      - ``DashScopeTextEmbedding``
+      - ``DashScopeTextEmbedding``, ``DashScopeMultiModalEmbedding``
     * - Ollama
       - ``OllamaTextEmbedding``
 
 All classes inherit from ``EmbeddingModelBase``, implementing the ``__call__`` method and generating ``EmbeddingResponse`` object with the embeddings and usage information.
+The ``DashScopeMultiModalEmbedding`` supports multi-modal embeddings for text, images, and videos.
 
 Taking the DashScope embedding class as an example, you can use it as follows:
 """

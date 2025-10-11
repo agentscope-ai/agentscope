@@ -2,12 +2,13 @@
 """The agent base class in agentscope."""
 import asyncio
 import json
-from asyncio import Task
+from asyncio import Task, Queue
 from collections import OrderedDict
 from typing import Callable, Any
 import base64
 import shortuuid
 import numpy as np
+from typing_extensions import deprecated
 
 from ._agent_meta import _AgentMeta
 from .._logging import logger
@@ -167,6 +168,11 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         # output of the agent, e.g., in a production environment.
         self._disable_console_output: bool = False
 
+        # The streaming message queue used to export the messages as a
+        # generator
+        self._disable_msg_queue: bool = True
+        self.msg_queue = None
+
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         """Receive the given message(s) without generating a reply.
 
@@ -197,6 +203,9 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                 Whether this is the last one in streaming messages. For
                 non-streaming message, this should always be `True`.
         """
+        if not self._disable_msg_queue:
+            await self.msg_queue.put((msg, last))
+
         if self._disable_console_output:
             return
 
@@ -622,7 +631,46 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         else:
             self._subscribers.pop(msghub_name)
 
+    @deprecated("Please use set_console_output_enabled() instead.")
     def disable_console_output(self) -> None:
         """This function will disable the console output of the agent, e.g.
         in a production environment to avoid messy logs."""
         self._disable_console_output = True
+
+    def set_console_output_enabled(self, enabled: bool) -> None:
+        """Enable or disable the console output of the agent. E.g. in a
+        production environment, you may want to disable the console output to
+        avoid messy logs.
+
+        Args:
+            enabled (`bool`):
+                If `True`, enable the console output. If `False`, disable
+                the console output.
+        """
+        self._disable_console_output = not enabled
+
+    def set_msg_queue_enabled(
+        self,
+        enabled: bool,
+        queue: Queue | None = None,
+    ) -> None:
+        """Enable or disable the message queue for streaming outputs.
+
+        Args:
+            enabled (`bool`):
+                If `True`, enable the message queue to allow streaming
+                outputs. If `False`, disable the message queue.
+            queue (`Queue | None`, optional):
+                The queue instance that will be used to initialize the
+                message queue when `enable` is `True`.
+        """
+        if enabled:
+            if queue is None:
+                if self.msg_queue is None:
+                    self.msg_queue = asyncio.Queue(maxsize=100)
+            else:
+                self.msg_queue = queue
+        else:
+            self.msg_queue = None
+
+        self._disable_msg_queue = not enabled

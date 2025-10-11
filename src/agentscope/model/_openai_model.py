@@ -262,7 +262,7 @@ class OpenAIChatModel(ChatModelBase):
         thinking = ""
         audio = ""
         tool_calls = OrderedDict()
-        metadata = None
+        metadata: dict | None = None
         contents: List[
             TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
         ] = []
@@ -414,7 +414,7 @@ class OpenAIChatModel(ChatModelBase):
         content_blocks: List[
             TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
         ] = []
-        metadata = None
+        metadata: dict | None = None
 
         if response.choices:
             choice = response.choices[0]

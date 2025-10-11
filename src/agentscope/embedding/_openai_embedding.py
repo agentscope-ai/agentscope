@@ -7,15 +7,20 @@ from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._cache_base import EmbeddingCacheBase
 from ._embedding_base import EmbeddingModelBase
+from ..message import TextBlock
 
 
 class OpenAITextEmbedding(EmbeddingModelBase):
     """OpenAI text embedding model class."""
 
+    supported_modalities: list[str] = ["text"]
+    """This class only supports text input."""
+
     def __init__(
         self,
         api_key: str,
         model_name: str,
+        dimensions: int = 1024,
         embedding_cache: EmbeddingCacheBase | None = None,
         **kwargs: Any,
     ) -> None:
@@ -26,32 +31,47 @@ class OpenAITextEmbedding(EmbeddingModelBase):
                 The OpenAI API key.
             model_name (`str`):
                 The name of the embedding model.
+            dimensions (`int`, defaults to 1024):
+                The dimension of the embedding vector.
             embedding_cache (`EmbeddingCacheBase | None`, defaults to `None`):
                 The embedding cache class instance, used to cache the
                 embedding results to avoid repeated API calls.
+
+        # TODO: handle batch size limit and token limit
         """
         import openai
 
-        super().__init__(model_name)
+        super().__init__(model_name, dimensions)
 
         self.client = openai.AsyncClient(api_key=api_key, **kwargs)
         self.embedding_cache = embedding_cache
 
     async def __call__(
         self,
-        text: List[str],
+        text: List[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the OpenAI embedding API.
 
         Args:
-            text (`List[str]`):
+            text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
         """
+        gather_text = []
+        for _ in text:
+            if isinstance(_, dict) and "text" in _:
+                gather_text.append(_["text"])
+            elif isinstance(_, str):
+                gather_text.append(_)
+            else:
+                raise ValueError(
+                    "Input text must be a list of strings or TextBlock dicts.",
+                )
 
         kwargs = {
-            "input": text,
+            "input": gather_text,
             "model": self.model_name,
+            "dimensions": self.dimensions,
             "encoding_format": "float",
             **kwargs,
         }
