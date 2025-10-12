@@ -1,13 +1,13 @@
 # Memory Module
 
 **Location:** `src/agentscope/memory/`
-**Parent:** [AgentScope Root](../CLAUDE.md)
+**Parent:** [Project Root](../CLAUDE.md)
 
-## 🧩 Overview
+## Overview
 
 The memory module provides short-term and long-term memory management for agents, enabling state persistence and knowledge retention across sessions.
 
-## 📚 Components
+## Components
 
 ### Memory Types
 - **In-memory storage** - Fast volatile memory for active conversations
@@ -17,7 +17,7 @@ The memory module provides short-term and long-term memory management for agents
 - **Agent-controlled memory** - Dynamic memory management by agents themselves
 - **Memory preservation** - State retention during interruptions and restarts
 
-## 🎯 Features
+## Features
 
 ### Memory Hierarchy
 - **Short-term** - Conversation context and immediate reasoning
@@ -25,4 +25,4 @@ The memory module provides short-term and long-term memory management for agents
 
 ---
 
-🏠 [Back to AgentScope Root](../CLAUDE.md)
+[Back to Project Root](../CLAUDE.md)

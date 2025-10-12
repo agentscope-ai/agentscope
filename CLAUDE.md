@@ -7,7 +7,7 @@ Role
 - **Docs-first Policy**: When a function/class usage is unclear, consult CLAUDE.md first. If missing, **add it before touching code**.
 - Bridges the gap between high-level SOPs and concrete implementation details.
 
-🚨 **Critical Principle**: SOP is the soul, CLAUDE.md is the program memory, `src/` is just regenerative expression.
+**Critical Principle**: SOP is the soul, CLAUDE.md is the program memory, `src/` is just regenerative expression.
 
 Conventions
 - File references use clickable repo‑relative paths, optionally with line numbers: `src/agentscope/agent/_react_agent.py:120`.
@@ -15,7 +15,7 @@ Conventions
 - Use `rg -n "<symbol>" src/` to find definitions/usages.
 - Keep entries in sync with SOPs in `docs/`.
 
-🏗️ **Architecture Boundaries**
+**Architecture Boundaries**
 - `src/` provides **composable scaffolding only** - no direct business logic
 - Business behaviors go to plugins/MCP tools/examples/
 - Maintain clear separation: framework logic vs application logic
@@ -112,7 +112,7 @@ Notes
 - If a flow spans multiple modules (e.g., Agent → Formatter → Model → Toolkit), add a short cross‑module call graph.
 - Update or create entries as part of the SOP‑first change process and list in `todo.md` acceptance checklist.
 
-🔄 **Workflow Integration**
+**Workflow Integration**
 Follow the strict "Documentation → Planning → Execution → Verification" chain:
 
 1. **Preparation Phase**
@@ -136,3 +136,10 @@ Follow the strict "Documentation → Planning → Execution → Verification" ch
    - Run relevant tests: `pytest`, `mypy src`, `ruff check src`
    - Update examples, READMEs, CLAUDE.md
    - Accept clean history only (rebase/FF)
+
+**Documentation Standards**
+- **Emoji-Free Policy**: All documentation files (SOP.md, CLAUDE.md, README.md, etc.) must NOT contain any emoji characters
+- Use plain text headings and formatting: `## Title` instead of `## 🎯 Title`
+- Maintain professional technical documentation style
+- Verify emoji removal during code review before merging
+- This ensures compatibility across different viewers and maintains formal documentation tone

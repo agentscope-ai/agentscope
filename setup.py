@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Setup script for AgentScope."""
+"""Setup script for AgentScope-easy."""
 import re
 import setuptools
 
@@ -11,8 +11,9 @@ with open("src/agentscope/_version.py", encoding="UTF-8") as f:
         re.MULTILINE,
     ).group(1)
 
+# Keep distribution name compatible unless a publish plan is finalized.
 NAME = "agentscope"
-URL = "https://github.com/agentscope-ai/agentscope"
+URL = "https://github.com/charSLee013/agentscope-easy"
 
 minimal_requires = [
     "aioitertools",
@@ -67,9 +68,9 @@ with open("README.md", "r", encoding="UTF-8") as fh:
 setuptools.setup(
     name=NAME,
     version=VERSION,
-    author="SysML team of Alibaba Tongyi Lab ",
-    author_email="gaodawei.gdw@alibaba-inc.com",
-    description="AgentScope: A Flexible yet Robust Multi-Agent Platform.",
+    author="AgentScope-easy maintainers",
+    author_email="noreply@example.com",
+    description="AgentScope-easy: Developer-first, composable multi-agent scaffolding.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url=URL,

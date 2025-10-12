@@ -1,13 +1,13 @@
 # Agent Module
 
 **Location:** `src/agentscope/agent/`
-**Parent:** [AgentScope Root](../CLAUDE.md)
+**Parent:** [Project Root](../CLAUDE.md)
 
-## 🧩 Overview
+## Overview
 
-The agent module provides the core building blocks for creating and managing agents in AgentScope. This module implements various agent types including ReAct agents, user agents, and custom agent implementations.
+The agent module provides the core building blocks for creating and managing agents in AgentScope-easy. This module implements various agent types including ReAct agents, user agents, and custom agent implementations.
 
-## 📚 Key Files
+## Key Files
 
 ### Core Agent Classes
 - **`_agent_base.py`** - Base classes for all agents including `AgentBase`
@@ -19,14 +19,14 @@ The agent module provides the core building blocks for creating and managing age
 - **`_agent_meta.py`** - Meta-programming capabilities for agent construction
 - **`_react_agent_base.py`** - Base ReAct agent functionality
 
-## 🔧 Dependencies
+## Dependencies
 
 - Model providers (`src/agentscope/model/`)
 - Memory management (`src/agentscope/memory/`)
 - Tool framework (`src/agentscope/tool/`)
 - Formatter system (`src/agentscope/formatter/`)
 
-## 🎯 Entry Points
+## Entry Points
 
 ### Main Exports
 ```python
@@ -38,12 +38,12 @@ from agentscope.agent import AgentBase, ReActAgent, UserAgent
 - **Realtime steering** - Native interruption support with memory preservation
 - **Automatic state management** - Built-in state tracking and recovery
 
-## 🧪 Testing
+## Testing
 
 - Test files located in `tests/` directory
 - Look for `*agent*_test.py` files
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ```python
 # ReAct Agent with reasoning capabilities
@@ -59,7 +59,7 @@ agent = ReActAgent(
 user = UserAgent(name="Human")
 ```
 
-## 🔗 Related Modules
+## Related Modules
 
 - **[Model Integration](../model/CLAUDE.md)**
 - **[Memory Management](../memory/CLAUDE.md)**
@@ -67,4 +67,4 @@ user = UserAgent(name="Human")
 
 ---
 
-🏠 [Back to AgentScope Root](../CLAUDE.md)
+[Back to Project Root](../CLAUDE.md)
