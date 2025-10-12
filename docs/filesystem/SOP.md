@@ -12,14 +12,52 @@
 - 不接受任何 OS 级别调用（如 `cat /path`），唯一入口是接口函数，例如 `handle.read_file("/workspace/a.md")`。
 - 不支持相对路径、通配符、软链接、符号解析等；仅接收本模块定义的逻辑绝对路径。
 
+### 二、文件/类/函数/成员变量映射到 src 路径
+- 目录（骨架层，允许根据实现扩展）：`src/agentscope/filesystem/`
+  - `_types.py`：基础类型、Grant、EntryMeta 等定义。
+  - `_errors.py`：骨架使用的标准异常（`InvalidPathError` 等）。
+  - `_base.py`：`class FileSystemBase(StateModule)`，暴露 `create_handle`、`_snapshot_impl`、读写钩子。
+  - `_handle.py`：`class FsHandle`，封装授权、索引字典与对外 API。
+  - `_memory.py`：可选内存实现（示例）。
+  - `_builtin.py`：可选参考策略实现（例如三前缀布局）。
+  - `__init__.py`：统一导出骨架符号。
+
+> 具体实现可增加更多文件/模块；如有新模块或参考实现，需在此章节同步说明责任边界。
+
+### 三、关键数据结构与对外接口（含类型/返回约束）
+
+#### 1) 类型概览
+- `Path = str`：逻辑绝对路径，必须以实现注册的任一前缀开头；严格区分大小写与空白，`"/a"` 与 `"/a "` 視为不同。
+- `Operation = Literal["list", "file", "read_binary", "read_file", "read_re", "write", "delete"]`：骨架支持的原子动作集合。
+- `Grant = TypedDict("Grant", {"prefix": Path, "ops": set[Operation]})`：授权条目，定义某前缀允许的动作集合。
+- `EntryMeta = TypedDict("EntryMeta", {"path": Path, "size": int, "updated_at": datetime | str | None})`：文件元信息（可扩展字段）。
+
+#### 2) FsHandle 对外 API
+| 方法 | 返回值 | 主要错误 | 说明 |
+| --- | --- | --- | --- |
+| `list(prefix: Path | None = None)` | `list[EntryMeta]` | `AccessDeniedError` | 返回 `_snapshot_impl` 视图（可按 `prefix` 过滤）。 |
+| `file(path: Path)` | `EntryMeta` | `InvalidPathError` / `AccessDeniedError` / `NotFoundError` | 返回单个路径的最新元信息。 |
+| `read_binary(path: Path)` | `bytes` | `InvalidPathError` / `AccessDeniedError` / `NotFoundError` | 读取二进制内容。 |
+| `read_file(path: Path, index: int | None = None, line: int | None = None)` | `str` | `InvalidPathError` / `InvalidArgumentError` / `AccessDeniedError` / `NotFoundError` | 返回文本；`index` 从 0 开始，`line > 0`。 |
+| `read_re(path: Path, pattern: str, overlap: int | None = None)` | `list[str]` | `InvalidPathError` / `InvalidArgumentError` / `AccessDeniedError` / `NotFoundError` | 基于正则的窗口匹配；`overlap >= 0`。 |
+| `write(path: Path, data: bytes | str, *, overwrite: bool = True)` | `EntryMeta` | `InvalidPathError` / `AccessDeniedError` / `ConflictError` | 写入内容；当 `overwrite=False` 且文件存在时抛冲突。 |
+| `delete(path: Path)` | `None` | `InvalidPathError` / `AccessDeniedError` / `NotFoundError` | 删除逻辑文件。 |
+
+> FsHandle 内部仅维护 `_filesystem`, `_grants`, `_index`; 每次操作都通过 `_snapshot_impl` 获取最新 `{path -> EntryMeta}` 字典，禁止依赖缓存。
+
+#### 3) FileSystemBase 受保护钩子
+- `_snapshot_impl(grants: Sequence[Grant]) -> dict[Path, EntryMeta]`
+- `_read_binary_impl(path)` / `_read_file_impl(path, *, index, line)` / `_read_re_impl(path, pattern, overlap)`
+- `_write_impl(path, data, overwrite)` / `_delete_impl(path)`
+
 ### 3) 架构设计
 ```mermaid
 flowchart TD
   FS[FileSystemBase<br/>骨架] --> HG[create_handle]
   HG --> FH[FsHandle<br/>操作+权限]
-  FH --> N1["命名空间 A"]
-  FH --> N2["命名空间 B"]
-  FH --> N3["命名空间 C"]
+  FH --> N1["前缀 A"]
+  FH --> N2["前缀 B"]
+  FH --> N3["前缀 C"]
   A[调用方 A] -. 授权 .-> FH
   B[调用方 B] -. 授权 .-> FH
   C[调用方 C] -. 授权 .-> FH
