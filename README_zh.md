@@ -1,3 +1,13 @@
+<p align="center">
+  <strong>分支说明</strong><br/>
+  致谢原项目与开源社区：上游地址
+  <a href="https://github.com/agentscope-ai/agentscope">agentscope-ai/agentscope</a>。<br/>
+  本仓库为精简变体，并包含少量独有增强（见 <code>docs/roadmap.md</code>）。<br/>
+  默认开发分支为 <code>easy</code>（并非 <code>main</code>）。
+</p>
+
+---
+
 [**English Homepage**](https://github.com/agentscope-ai/agentscope/blob/main/README.md) | [**Tutorial**](https://doc.agentscope.io/zh_CN/) | [**Roadmap**](https://github.com/agentscope-ai/agentscope/blob/main/docs/roadmap.md) | [**FAQ**](https://doc.agentscope.io/zh_CN/tutorial/faq.html)
 
 <p align="center">

@@ -136,3 +136,7 @@ dmypy.json
 # docs
 docs/tutorial/en/build/
 docs/tutorial/zh_CN/build/
+
+# project helpers (do not version transient guides/working files)
+.spec-workflow
+todo.md

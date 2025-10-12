@@ -1,3 +1,13 @@
+<p align="center">
+  <strong>Fork notice</strong><br/>
+  Thanks to the original authors and community of AgentScope — upstream:
+  <a href="https://github.com/agentscope-ai/agentscope">agentscope-ai/agentscope</a>.<br/>
+  This repository is a streamlined variant with several unique additions (see <code>docs/roadmap.md</code>).<br/>
+  Development happens on the <code>easy</code> branch (not <code>main</code>).
+</p>
+
+---
+
 [**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Tutorial**](https://doc.agentscope.io/) | [**Roadmap**](https://github.com/agentscope-ai/agentscope/blob/main/docs/roadmap.md) | [**FAQ**](https://doc.agentscope.io/tutorial/faq.html)
 
 <p align="center">

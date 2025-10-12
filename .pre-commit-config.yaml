@@ -53,6 +53,13 @@ repos:
     hooks:
     - id: black
       args: [--line-length=79]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.4
+    hooks:
+      - id: ruff
+        name: ruff (detect only)
+        files: ^src/
+        args: ["--exit-zero", "--select", "F401,F841,F821", "--statistics"]
   - repo: https://github.com/PyCQA/flake8
     rev: 6.1.0
     hooks:
