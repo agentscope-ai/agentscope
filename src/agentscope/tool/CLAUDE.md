@@ -1,13 +1,13 @@
 # Tool Module
 
 **Location:** `src/agentscope/tool/`
-**Parent:** [AgentScope Root](../CLAUDE.md)
+**Parent:** [Project Root](../CLAUDE.md)
 
-## 🧩 Overview
+## Overview
 
 The tool module provides a comprehensive framework for tool management, execution, and integration with agents.
 
-## 📚 Key Files
+## Key Files
 
 ### Core Components
 - **Toolkit class** - Central registry for tool functions
@@ -18,7 +18,7 @@ The tool module provides a comprehensive framework for tool management, executio
 - **Agentic tools management** - Tools that can manage other tools
 - **Meta tool support** - Tools that provide capabilities for tool management
 
-## 🎯 Features
+## Features
 
 ### Tool Control
 - **Sync/async tool functions** - Flexible execution modes
@@ -31,7 +31,7 @@ The tool module provides a comprehensive framework for tool management, executio
 - **Complex tools** - Multi-step tool chains
 - **MCP tools** - External tool integration via MCP protocol
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ```python
 from agentscope.tool import Toolkit, execute_python_code, execute_shell_command
@@ -42,7 +42,7 @@ toolkit.register_tool_function(execute_python_code)
 toolkit.register_tool_function(execute_shell_command)
 ```
 
-## 🔧 Dependencies
+## Dependencies
 
 - **MCP client** (`src/agentscope/mcp/`)
 
@@ -60,4 +60,4 @@ Tool execution parameters and security settings for safe operation in multi-agen
 
 ---
 
-🏠 [Back to AgentScope Root](../CLAUDE.md)
+[Back to Project Root](../CLAUDE.md)

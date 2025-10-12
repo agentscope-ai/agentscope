@@ -1,13 +1,13 @@
 # Model Module
 
 **Location:** `src/agentscope/model/`
-**Parent:** [AgentScope Root](../CLAUDE.md)
+**Parent:** [Project Root](../CLAUDE.md)
 
-## 🧩 Overview
+## Overview
 
 The model module provides unified interfaces to various Large Language Model (LLM) providers, enabling model-agnostic agent development.
 
-## 📚 Key Files
+## Key Files
 
 ### Core Interfaces
 - Model wrapper base classes for different LLM providers
@@ -22,11 +22,11 @@ The model module provides unified interfaces to various Large Language Model (LL
 - Gemini
 - And more...
 
-## 🔧 Dependencies
+## Dependencies
 
 - Formatter system (`src/agentscope/formatter/`)
 
-## 🎯 Features
+## Features
 
 ### Universal Support
 - **Async execution** - All models support asynchronous operations
@@ -37,7 +37,7 @@ The model module provides unified interfaces to various Large Language Model (LL
 - **Reasoning models** - Support for chain-of-thought and logical reasoning
 - **Flexible output modes** - From simple responses to complex structured outputs
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ```python
 # OpenAI model
@@ -54,7 +54,7 @@ model = DashScopeChatModel(
 )
 ```
 
-## 🌐 Model Providers
+## Model Providers
 
 ### Available Integrations
 - **OpenAI** - GPT-3.5, GPT-4, and other OpenAI models
@@ -73,4 +73,4 @@ Model-specific configuration including:
 
 ---
 
-🏠 [Back to AgentScope Root](../CLAUDE.md)
+[Back to Project Root](../CLAUDE.md)

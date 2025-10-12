@@ -1,466 +1,124 @@
+# AgentScope-easy: Developer-First Multi-Agent Framework
+
 <p align="center">
-  <strong>Fork notice</strong><br/>
+  <strong>Fork Notice</strong><br/>
   Thanks to the original authors and community of AgentScope — upstream:
-  <a href="https://github.com/agentscope-ai/agentscope">agentscope-ai/agentscope</a>.<br/>
-  This repository is a streamlined variant with several unique additions (see <code>docs/roadmap.md</code>).<br/>
-  Development happens on the <code>easy</code> branch (not <code>main</code>).
+  <a href="https://github.com/agentscope-ai/agentscope">agentscope-ai/agentscope</a>.
+  <br/>
+  AgentScope-easy is a streamlined variant branched from the AgentScope ecosystem.
+  This repository is developed on the <code>easy</code> branch, offering several unique additions while maintaining compatibility with the core AgentScope framework.
 </p>
 
 ---
 
-[**中文主页**](https://github.com/agentscope-ai/agentscope/blob/main/README_zh.md) | [**Tutorial**](https://doc.agentscope.io/) | [**Roadmap**](https://github.com/agentscope-ai/agentscope/blob/main/docs/roadmap.md) | [**FAQ**](https://doc.agentscope.io/tutorial/faq.html)
+## 🚀 Why AgentScope-easy?
 
-<p align="center">
-  <img
-    src="https://img.alicdn.com/imgextra/i1/O1CN01nTg6w21NqT5qFKH1u_!!6000000001621-55-tps-550-550.svg"
-    alt="AgentScope Logo"
-    width="200"
-  />
-</p>
+**Easy for beginners, powerful for experts** — AgentScope-easy provides a developer-centric approach to multi-agent application development.
 
-<h2 align="center">AgentScope: Agent-Oriented Programming for Building LLM Applications</h2>
+## ✨ Core Philosophy
 
-<p align="center">
-    <a href="https://arxiv.org/abs/2402.14034">
-        <img
-            src="https://img.shields.io/badge/cs.MA-2402.14034-B31C1C?logo=arxiv&logoColor=B31C1C"
-            alt="arxiv"
-        />
-    </a>
-    <a href="https://pypi.org/project/agentscope/">
-        <img
-            src="https://img.shields.io/badge/python-3.10+-blue?logo=python"
-            alt="pypi"
-        />
-    </a>
-    <a href="https://pypi.org/project/agentscope/">
-        <img
-            src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fpypi.org%2Fpypi%2Fagentscope%2Fjson&query=%24.info.version&prefix=v&logo=pypi&label=version"
-            alt="pypi"
-        />
-    </a>
-    <a href="https://doc.agentscope.io/">
-        <img
-            src="https://img.shields.io/badge/Docs-English%7C%E4%B8%AD%E6%96%87-blue?logo=markdown"
-            alt="docs"
-        />
-    </a>
-    <a href="https://agentscope.io/">
-        <img
-            src="https://img.shields.io/badge/GUI-AgentScope_Studio-blue?logo=look&logoColor=green&color=dark-green"
-            alt="workstation"
-        />
-    </a>
-    <a href="./LICENSE">
-        <img
-            src="https://img.shields.io/badge/license-Apache--2.0-black"
-            alt="license"
-        />
-    </a>
-</p>
+### Transparency First
+- **Everything Visible**: Prompt engineering, API invocation, agent building, workflow orchestration — all are visible and controllable for developers.
+- **No Deep Encapsulation Magic**: Reject implicit logic and black-box patterns.
 
-<p align="center">
-<img src="https://trendshift.io/api/badge/repositories/10079" alt="modelscope%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
-</p>
+### Architectural Excellence
+- **Asynchronous Native**: Full embrace of async/await patterns for realtime responsiveness.
+- **Multi-Agent Oriented**: Explicit message passing and workflow orchestration designed specifically for multi-agent scenarios.
 
-## ✨ Why AgentScope?
+## 🎯 Key Features
 
-Easy for beginners, powerful for experts.
+### ⚡ Real-Time Steering
+Native support for interruption handling with robust memory preservation.
 
-<p align="center">
-<img src="./assets/images/agentscope_v1_0822.png" alt="AgentScope Framework" width="80%"/>
-</p>
+### Advanced Capabilities
+- **Agentic Tools Management**: Tools that can manage other tools dynamically.
+- **LEGO-Style Composition**: Every component is modular and independent, enabling flexible agent construction.
 
-- **Transparent to Developers**: Transparent is our **FIRST principle**. Prompt engineering, API invocation, agent building, workflow orchestration, all are visible and controllable for developers. No deep encapsulation or implicit magic.
-- **[Realtime Steering](https://doc.agentscope.io/tutorial/task_agent.html#realtime-steering)**: Native support for realtime interruption and customized handling.
-- **More Agentic**: Support [agentic tools management](https://doc.agentscope.io/tutorial/task_tool.html), [agentic long-term memory control](https://doc.agentscope.io/tutorial/task_long_term_memory.html) and agentic RAG, etc.
-- **Model Agnostic**: Programming once, run with all models.
-- **LEGO-style Agent Building**: All components are **modular** and **independent**.
-- **Multi-Agent Oriented**: Designed for **multi-agent**, **explicit** message passing and workflow orchestration, NO deep encapsulation.
-- **Highly Customizable**: Tools, prompt, agent, workflow, third-party libs & visualization, customization is encouraged everywhere.
+## 🛠️ Feature Matrix
 
-Quick overview of important features in **AgentScope 1.0**:
-
-| Module     | Feature                                                                            | Tutorial                                                                |
-|------------|------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| model      | Support async invocation                                                           | [Model](https://doc.agentscope.io/tutorial/task_model.html)             |
-|            | Support reasoning model                                                            |                                                                         |
-|            | Support streaming/non-streaming returns                                            |                                                                         |
-| tool       | Support async/sync tool functions                                                  | [Tool](https://doc.agentscope.io/tutorial/task_tool.html)               |
-|            | Support streaming/non-streaming returns                                            |                                                                         |
-|            | Support user interruption                                                          |                                                                         |
-|            | Support post-processing                                                            |                                                                         |
-|            | Support group-wise tools management                                                |                                                                         |
-|            | Support agentic tools management by meta tool                                      |                                                                         |
-| MCP        | Support streamable HTTP/SSE/StdIO transport                                        | [MCP](https://doc.agentscope.io/tutorial/task_mcp.html)                 |
-|            | Support both **stateful** and **stateless** mode MCP Client                        |                                                                         |
-|            | Support client- & function-level fine-grained control                              |                                                                         |
-| agent      | Support async execution                                                            |                                                                         |
-|            | Support parallel tool calls                                                        |                                                                         |
-|            | Support realtime steering interruption and customized handling                     |                                                                         |
-|            | Support automatic state management                                                 |                                                                         |
-|            | Support agent-controlled long-term memory                                          |                                                                         |
-|            | Support agent hooks                                                                |                                                                         |
-| tracing    | Support OpenTelemetry-based tracing in LLM, tools, agent and formatter             | [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)         |
-|            | Support connecting to third-party tracing platforms (e.g. Arize-Phoenix, Langfuse) |                                                                         |
-| memory     | Support long-term memory                                                           | [Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html) |
-| session    | Provide session/application-level automatic state management                       | [Session](https://doc.agentscope.io/tutorial/task_state.html)           |
-| evaluation | Provide distributed and parallel evaluation                                        | [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)         |
-| formatter  | Support multi-agent prompt formatting with tools API                               | [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html) |
-|            | Support truncation-based formatter strategy                                        |                                                                         |
-| plan       | Support ReAct-based long-term planning                                             | [Plan](https://doc.agentscope.io/tutorial/task_plan.html)               |
-|            | Support manual plan specification                                                  |                                                                         |
-| RAG        | Support agentic RAG                                                                | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                 |
-|            | Support multimodal RAG                                                             |                                                                         |
-| ...        |                                                                                    |                                                                         |
-
-## 📢 News
-- **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
-- **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
-- **[2025-09]** A new powerful 📋**Plan** module is online now! Check out the [tutorial](https://doc.agentscope.io/tutorial/task_plan.html) for more details.
-- **[2025-09]** **AgentScope Runtime** is open-sourced now! Enabling effective agent deployment with sandboxed tool execution for production-ready AI applications. Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-runtime).
-- **[2025-09]** **AgentScope Studio** is open-sourced now! Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-studio).
-- **[2025-08]** The new tutorial of v1 is online now! Check out the [tutorial](https://doc.agentscope.io) for more details.
-- **[2025-08]** 🎉🎉 AgentScope v1 is released now! This version fully embraces the asynchronous execution, providing many new features and improvements. Check out [changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md) for detailed changes.
-
-## 💬 Contact
-
-Welcome to join our community on
-
-| [Discord](https://discord.gg/eYMpfnkG8h)                                                                                         | DingTalk                                                                                                                          |
-|----------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| <img src="https://gw.alicdn.com/imgextra/i1/O1CN01hhD1mu1Dd3BWVUvxN_!!6000000000238-2-tps-400-400.png" width="100" height="100"> | <img src="https://img.alicdn.com/imgextra/i1/O1CN01LxzZha1thpIN2cc2E_!!6000000005934-2-tps-497-477.png" width="100" height="100"> |
-
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-## 📑 Table of Contents
-
-- [🚀 Quickstart](#-quickstart)
-  - [💻 Installation](#-installation)
-    - [🛠️ From source](#-from-source)
-    - [📦 From PyPi](#-from-pypi)
-- [📝 Example](#-example)
-  - [👋 Hello AgentScope!](#-hello-agentscope)
-  - [🎯 Realtime Steering](#-realtime-steering)
-  - [🛠️ Fine-Grained MCP Control](#-fine-grained-mcp-control)
-  - [🧑‍🤝‍🧑 Multi-Agent Conversation](#-multi-agent-conversation)
-  - [💻 AgentScope Studio](#-agentscope-studio)
-- [📖 Documentation](#-documentation)
-- [⚖️ License](#-license)
-- [📚 Publications](#-publications)
-- [✨ Contributors](#-contributors)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+| Module | Capabilities | Documentation |
+|--------|--------------|----------------|
+| **Agent** | ReAct pattern implementation, structured output, parallel tool calling | [Agent Tutorial](https://doc.agentscope.io/tutorial/task_agent.html) |
+| **Model** | Async execution, streaming/non-streaming returns, tool calls |
+| **Tool** | Tool registration/grouping/JSON-Schema/MCP integration | [Tool Guide](https://doc.agentscope.io/tutorial/task_tool.html) |
+| **Pipeline** | Sequential processing, concurrent execution, dynamic message routing | [Pipeline Tutorial](https://doc.agentscope.io/tutorial/task_pipeline.html) |
+| **Memory** | Short/long-term memory systems | [Memory Guide](https://doc.agentscope.io/tutorial/task_memory.html) |
 
 ## 🚀 Quickstart
 
-### 💻 Installation
+### Installation
 
-> AgentScope requires **Python 3.10** or higher.
-
-#### 🛠️ From source
-
+#### From Source (recommended)
 ```bash
-# Pull the source code from GitHub
-git clone -b main https://github.com/agentscope-ai/agentscope.git
-
-# Install the package in editable mode
-cd agentscope
-pip install -e .
+git clone -b easy https://github.com/charSLee013/agentscope-easy.git
+cd agentscope-easy
+pip install -e .[dev]
 ```
 
-#### 📦 From PyPi
-
-```bash
-pip install agentscope
-```
-
-## 📝 Example
-
-### 👋 Hello AgentScope!
-
-Start with a conversation between user and a ReAct agent 🤖 named "Friday"!
+### Hello AgentScope-easy!
 
 ```python
-from agentscope.agent import ReActAgent, UserAgent
-from agentscope.model import DashScopeChatModel
-from agentscope.formatter import DashScopeChatFormatter
+import asyncio
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.tool import Toolkit, execute_python_code, execute_shell_command
-import os, asyncio
-
+from agentscope.message import Msg
 
 async def main():
-    toolkit = Toolkit()
-    toolkit.register_tool_function(execute_python_code)
-    toolkit.register_tool_function(execute_shell_command)
-
     agent = ReActAgent(
         name="Friday",
         sys_prompt="You're a helpful assistant named Friday.",
-        model=DashScopeChatModel(
-            model_name="qwen-max",
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-            stream=True,
-        ),
+        model=OpenAIChatModel(model_name="gpt-4o", stream=True),
+        formatter=OpenAIChatFormatter(),
         memory=InMemoryMemory(),
-        formatter=DashScopeChatFormatter(),
-        toolkit=toolkit,
     )
 
-    user = UserAgent(name="user")
-
-    msg = None
-    while True:
-        msg = await agent(msg)
-        msg = await user(msg)
-        if msg.get_text_content() == "exit":
-            break
+    # single round
+    reply = await agent(Msg("user", "Hello!", "user"))
+    print(reply.get_text_content())
 
 asyncio.run(main())
 ```
 
-### 🎯 Realtime Steering
+## 💡 Advanced Features
 
-Natively support **realtime interruption** in ``ReActAgent`` with robust memory preservation, and convert interruption into an **observable event** for agent to seamlessly resume conversations.
+### Real-Time Steering
+Native interruption support allows for dynamic conversation control without losing context.
 
-<p align="center">
-  <img src="./assets/images/realtime_steering_zh.gif" alt="Realtime Steering" width="49%"/>
-  <img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="49%"/>
-</p>
+### Multi-Agent Conversation
 
-### 🛠️ Fine-Grained MCP Control
+AgentScope-easy provides comprehensive support for complex multi-agent workflows.
 
-Developers can obtain the MCP tool as a **local callable function**, and use it anywhere (e.g. call directly, pass to agent, wrap into a more complex tool, etc.)
+## 🔧 Architecture Overview
 
-```python
-from agentscope.mcp import HttpStatelessClient
-from agentscope.tool import Toolkit
-import os
-
-async def fine_grained_mcp_control():
-    # Initialize the MCP client
-    client = HttpStatelessClient(
-        name="gaode_mcp",
-        transport="streamable_http",
-        url=f"https://mcp.amap.com/mcp?key={os.environ['GAODE_API_KEY']}",
-    )
-
-    # Obtain the MCP tool as a **local callable function**, and use it anywhere
-    func = await client.get_callable_function(func_name="maps_geo")
-
-    # Option 1: Call directly
-    await func(address="Tiananmen Square", city="Beijing")
-
-    # Option 2: Pass to agent as a tool
-    toolkit = Toolkit()
-    toolkit.register_tool_function(func)
-    # ...
-
-    # Option 3: Wrap into a more complex tool
-    # ...
-```
-
-### 🧑‍🤝‍🧑 Multi-Agent Conversation
-
-AgentScope provides ``MsgHub`` and pipelines to streamline multi-agent conversations, offering efficient message routing and seamless information sharing
-
-```python
-from agentscope.pipeline import MsgHub, sequential_pipeline
-from agentscope.message import Msg
-import asyncio
-
-async def multi_agent_conversation():
-    # Create agents
-    agent1 = ...
-    agent2 = ...
-    agent3 = ...
-    agent4 = ...
-
-    # Create a message hub to manage multi-agent conversation
-    async with MsgHub(
-        participants=[agent1, agent2, agent3],
-        announcement=Msg("Host", "Introduce yourselves.", "assistant")
-    ) as hub:
-        # Speak in a sequential manner
-        await sequential_pipeline([agent1, agent2, agent3])
-        # Dynamic manage the participants
-        hub.add(agent4)
-        hub.delete(agent3)
-        await hub.broadcast(Msg("Host", "Goodbye!", "assistant"))
-
-asyncio.run(multi_agent_conversation())
-```
-
-### 💻 AgentScope Studio
-
-Use the following command to install and start AgentScope Studio, to trace and visualize your agent application.
-
-```bash
-npm install -g @agentscope/studio
-
-as_studio
-```
-
-<p align="center">
-    <img
-        src="./assets/images/home.gif"
-        width="49%"
-        alt="home"
-    />
-    <img
-        src="./assets/images/projects.gif"
-        width="49%"
-        alt="projects"
-    />
-    <img
-        src="./assets/images/runtime.gif"
-        width="49%"
-        alt="runtime"
-    />
-    <img
-        src="./assets/images/friday.gif"
-        width="49%"
-        alt="friday"
-    />
-</p>
-
+AgentScope-easy follows a **modular, composable architecture** with clear separation between framework scaffolding and business logic.
 
 ## 📖 Documentation
 
-- Tutorial
-  - [Installation](https://doc.agentscope.io/tutorial/quickstart_installation.html)
-  - [Key Concepts](https://doc.agentscope.io/tutorial/quickstart_key_concept.html)
-  - [Create Message](https://doc.agentscope.io/tutorial/quickstart_message.html)
-  - [ReAct Agent](https://doc.agentscope.io/tutorial/quickstart_agent.html)
-- Workflow
-  - [Conversation](https://doc.agentscope.io/tutorial/workflow_conversation.html)
-  - [Multi-Agent Debate](https://doc.agentscope.io/tutorial/workflow_multiagent_debate.html)
-  - [Concurrent Agents](https://doc.agentscope.io/tutorial/workflow_concurrent_agents.html)
-  - [Routing](https://doc.agentscope.io/tutorial/workflow_routing.html)
-  - [Handoffs](https://doc.agentscope.io/tutorial/workflow_handoffs.html)
-- FAQ
-  - [FAQ](https://doc.agentscope.io/tutorial/faq.html)
-- Task Guides
-  - [Model](https://doc.agentscope.io/tutorial/task_model.html)
-  - [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html)
-  - [Tool](https://doc.agentscope.io/tutorial/task_tool.html)
-  - [Memory](https://doc.agentscope.io/tutorial/task_memory.html)
-  - [Long-Term Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html)
-  - [Agent](https://doc.agentscope.io/tutorial/task_agent.html)
-  - [Pipeline](https://doc.agentscope.io/tutorial/task_pipeline.html)
-  - [Plan](https://doc.agentscope.io/tutorial/task_plan.html)
-  - [State/Session Management](https://doc.agentscope.io/tutorial/task_state.html)
-  - [Agent Hooks](https://doc.agentscope.io/tutorial/task_hook.html)
-  - [MCP](https://doc.agentscope.io/tutorial/task_mcp.html)
-  - [AgentScope Studio](https://doc.agentscope.io/tutorial/task_studio.html)
-  - [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)
-  - [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)
-  - [Embedding](https://doc.agentscope.io/tutorial/task_embedding.html)
-  - [Token](https://doc.agentscope.io/tutorial/task_token.html)
-- API
-  - [API Docs](https://doc.agentscope.io/api/agentscope.html)
-- [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
-  - Functional
-    - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
-    - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
-    - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
-    - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)
-    - [Long-Term Memory](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory)
-    - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
-    - [Stream Printing Messages](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
-  - Agent
-    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
-    - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
-    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
-    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
-    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
-  - Game
-    - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
-  - Workflow
-    - [Multi-agent Debate](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_debate)
-    - [Multi-agent Conversation](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_conversation)
-    - [Multi-agent Concurrent](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
-  - Evaluation
-    - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
+- **Tutorials**: [Quick Start](https://doc.agentscope.io/tutorial/quickstart_message.html) | [Key Concepts](https://doc.agentscope.io/tutorial/quickstart_key_concept.html)
 
+## 🤝 Acknowledgment
 
-## ⚖️ License
+This project is built upon the foundation of the upstream project: 
+[AgentScope](https://github.com/agentscope-ai/agentscope).
 
-AgentScope is released under Apache License 2.0.
+---
 
-## 📚 Publications
+## 📄 License
 
-If you find our work helpful for your research or application, please cite our papers.
+AgentScope-easy is released under the **Apache License 2.0**.
 
-- [AgentScope 1.0: A Developer-Centric Framework for Building Agentic Applications](https://arxiv.org/abs/2508.16279)
+<p align="center">
+  <em>Special thanks to the original AgentScope authors and community for their invaluable contributions to the open-source AI ecosystem.</em>
+</p>
 
-- [AgentScope: A Flexible yet Robust Multi-Agent Platform](https://arxiv.org/abs/2402.14034)
+<p align="center">
+  <a href="https://www.apache.org/licenses/LICENSE-2.0">
+    <img src="./assets/images/agentscope_logo.png" alt="AgentScope-easy Logo" width="200" />
+  </a>
+</p>
 
-```
-@article{agentscope_v1,
-    author  = {
-        Dawei Gao,
-        Zitao Li,
-        Yuexiang Xie,
-        Weirui Kuang,
-        Liuyi Yao,
-        Bingchen Qian,
-        Zhijian Ma,
-        Yue Cui,
-        Haohao Luo,
-        Shen Li,
-        Lu Yi,
-        Yi Yu,
-        Shiqi He,
-        Zhiling Luo,
-        Wenmeng Zhou,
-        Zhicheng Zhang,
-        Xuguang He,
-        Ziqian Chen,
-        Weikai Liao,
-        Farruh Isakulovich Kushnazarov,
-        Yaliang Li,
-        Bolin Ding,
-        Jingren Zhou}
-    title   = {AgentScope 1.0: A Developer-Centric Framework for Building Agentic Applications},
-    journal = {CoRR},
-    volume  = {abs/2508.16279},
-    year    = {2025},
-}
+## 📞 Contact
 
-@article{agentscope,
-    author  = {
-        Dawei Gao,
-        Zitao Li,
-        Xuchen Pan,
-        Weirui Kuang,
-        Zhijian Ma,
-        Bingchen Qian,
-        Fei Wei,
-        Wenhao Zhang,
-        Yuexiang Xie,
-        Daoyuan Chen,
-        Liuyi Yao,
-        Hongyi Peng,
-        Zeyu Zhang,
-        Lin Zhu,
-        Chen Cheng,
-        Hongzhu Shi,
-        Yaliang Li,
-        Bolin Ding,
-        Jingren Zhou}
-    title   = {AgentScope: A Flexible yet Robust Multi-Agent Platform},
-    journal = {CoRR},
-    volume  = {abs/2402.14034},
-    year    = {2024},
-}
-```
-
-## ✨ Contributors
-
-All thanks to our contributors:
-
-<a href="https://github.com/agentscope-ai/agentscope/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=agentscope-ai/agentscope&max=999&columns=12&anon=1" />
-</a>
+Join our community to discuss development, share ideas, and contribute to the evolution of agent-oriented programming.

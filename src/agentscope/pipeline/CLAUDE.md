@@ -1,13 +1,13 @@
 # Pipeline Module
 
 **Location:** `src/agentscope/pipeline/`
-**Parent:** [AgentScope Root](../CLAUDE.md)
+**Parent:** [Project Root](../CLAUDE.md)
 
-## 🧩 Overview
+## Overview
 
 The pipeline module provides workflow orchestration capabilities for multi-agent systems, including sequential processing, concurrent execution, and dynamic message routing.
 
-## 📚 Key Components
+## Key Components
 
 ### Core Orchestration
 - **Message Hub (MsgHub)** - Central coordination for multi-agent conversations
@@ -22,13 +22,13 @@ The pipeline module provides workflow orchestration capabilities for multi-agent
 - **Dynamic participant management** - Add/remove agents during runtime
 - **Broadcast messaging** - Send messages to multiple agents concurrently
 
-## 🎯 Features
+## Features
 
 ### Coordination Patterns
 - **Message routing** - Intelligent message distribution based on agent capabilities
 - **Handoff mechanisms** - Seamless agent-to-agent transitions
 
-## 🚀 Usage Examples
+## Usage Examples
 
 ```python
 from agentscope.pipeline import MsgHub, sequential_pipeline
