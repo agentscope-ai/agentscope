@@ -67,6 +67,34 @@ class MCPClientBase:
                         ),
                     ),
                 )
+            elif isinstance(content, mcp.types.EmbeddedResource):
+                if isinstance(
+                    content.resource,
+                    mcp.types.TextResourceContents,
+                ):
+                    text = (
+                        f"Source: {content.resource.uri}\n\n"
+                        f"Content:\n{content.resource.text}"
+                    )
+                    as_content.append(
+                        TextBlock(
+                            type="text",
+                            text=text,
+                        ),
+                    )
+                else:
+                    # TODO: support the BlobResourceContents, which is a
+                    #  base64-encoded string representing the binary data
+                    as_content.append(
+                        TextBlock(
+                            type="text",
+                            text=(
+                                "This resource is a base64-encoded string "
+                                "representing the binary data, and it is "
+                                "no supported in the current version."
+                            ),
+                        ),
+                    )
             else:
                 logger.warning(
                     "Unsupported content type: %s. Skipping this content.",
