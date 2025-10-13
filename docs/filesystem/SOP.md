@@ -19,7 +19,7 @@
   - `_base.py`：`class FileSystemBase(StateModule)`，暴露 `create_handle`、`_snapshot_impl`、读写钩子。
   - `_handle.py`：`class FsHandle`，封装授权、索引字典与对外 API。
   - `_memory.py`：可选内存实现（示例）。
-  - `_builtin.py`：可选参考策略实现（例如三前缀布局）。
+  - `_builtin.py`：参考实现（授权配置示例，内置三前缀布局）。
   - `__init__.py`：统一导出骨架符号。
 
 > 具体实现可增加更多文件/模块；如有新模块或参考实现，需在此章节同步说明责任边界。
@@ -27,7 +27,7 @@
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 
 #### 1) 类型概览
-- `Path = str`：逻辑绝对路径，必须以实现注册的任一前缀开头；严格区分大小写与空白，`"/a"` 与 `"/a "` 视为不同。
+- `Path = str`：逻辑绝对路径，必须以实现注册的任一前缀开头；禁止 `..`、通配符、反斜杠、重复斜杠（`"//"`），严格区分大小写与空白，`"/a"` 与 `"/a "` 视为不同。
 - `Operation = Literal["list", "file", "read_binary", "read_file", "read_re", "write", "delete"]`：骨架支持的原子动作集合。
 - `Grant = TypedDict("Grant", {"prefix": Path, "ops": set[Operation]})`：授权条目，定义某前缀允许的动作集合。
 - `EntryMeta = TypedDict("EntryMeta", {"path": Path, "size": int, "updated_at": datetime | str | None})`：文件元信息（可扩展字段）。
@@ -255,6 +255,11 @@ def write(self, path: str, data: bytes|str, overwrite: bool=True) -> EntryMeta:
   - `/internal/`：建议仅授予受信调用者的 `list/read/write`，用于运行日志、调试、审计落盘。
   - `/userinput/`：只读前缀；通过 grants 不授予 `write/delete` 实现只读。
   - `/workspace/`：共享工作区；通常授予生产者/消费者 `list/read/write/delete`。
+- 参考实现（`_builtin.py`）：
+  - `BuiltinFileSystem.create_internal_handle()` → `/internal/`（`list/read/write`）。
+  - `BuiltinFileSystem.create_userinput_handle()` → `/userinput/`（只读）。
+  - `BuiltinFileSystem.create_workspace_handle()` → `/workspace/`（读/写/删）。
+  - `builtin_grants(*names)` → 返回授权配置示例，可组合出自定义句柄。
 
 - 授权配置（示例伪代码）：
 ```
