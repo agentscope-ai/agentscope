@@ -1,28 +1,25 @@
-allowed-tools: Bash(pytest:*), Bash(ruff check src*), Bash(mypy src*), Bash(git:*), Read
-description: Verify gates (pytest/ruff/mypy), then Review + Optimize. Branch GOOD/BAD; align with Docs-first & easy-only.
-argument-hint: [focus, e.g., 'pipeline stream_printing_messages end_signal']
+---
+allowed-tools: Bash(pytest:*), Bash(ruff:* or pylint:*), Bash(git:*), Edit, Read
+description: Full closed-loop: Verify func + vibe IF (VeriCode-inspired); Good: Optimize; Bad: Analyze causes (func + non-func).
+argument-hint: [focus, e.g., 'Async VLM changes']
+model: claude-3-5-sonnet-20241022
 ---
 
-# /verify-optimize: Verify → Review → Optimize (Closed Loop)
+# /verify-optimize: Vibe-Aligned Closed-Loop with VeriCode IF Eval
 
-**Preconditions**
-- Approved plan completed via `/take-action`; target branch is `easy`.
-- All relevant artifacts and summaries (Implementer/Tester/Documenter/Verifier/Reviewer) are available.
-- Reference `AGENTS.md`, `CLAUDE.md`, and relevant `docs/<module>/SOP.md`. `$ARGUMENTS` can narrow scope; default verifies all changes.
+IMPORTANT: Reference CLAUDE.md/plan.md/all *-md outputs. Focus: $ARGUMENTS (default: full). Embed VeriCode taxonomy (30 instructions: style/logic/docs/error/library) for vibe quality.
 
-## Workflow
-1. **Verify**
-   - Invoke the verifier sub-agent to run planned `pytest` commands and confirm `ruff check src` (no warnings) and `mypy src` results.
-2. **Branch on results**
-   - **GOOD CASE** (pytest, ruff, mypy all pass):
-     - Call the reviewer sub-agent to produce the PR summary for the `easy` branch.
-     - Call the optimizer sub-agent to capture lessons and recommend CLAUDE/SOP refinements and next-task seeds.
-     - Output format: `GOOD: Validated. PR ready; Optimized: <lessons>. Next: <seeds>.`
-   - **BAD CASE** (any gate fails):
-     - Use verifier analysis to map failures to specific contracts (ReAct, Toolkit, Formatter, Model, Pipeline, MsgHub, Tracing, Docs-first).
-     - Provide non-code remediation guidance (rollback points, minimal patches, extra tests/docs).
-     - Output format: `BAD: Causes analyzed. Propose fixes and re-run Take Action.`
-3. **Merge summary**
-   - In the main thread, consolidate conclusions and advise next steps (approve, iterate, or reopen `/plan-with-agents`).
+Workflow:
+1. Parallel Verify + Vibe Eval:
+   - Use verifier subagent for func tests (pytest cov>90%, async/VLM edges).
+   - In parallel, use judge subagent for LLM-eval (func score 0-100%).
+   - In parallel, embed VeriCode IF: Select 3-5 relevant instructions from taxonomy (e.g., style: E501 line_length=79; logic: PLR0912 max_branches=4; docs: D Google format; error: UP024 OSError; library: PTH pathlib). Run Bash "ruff check --select E501,PLR0912,D,UP024,PTH" or pylint on *-changes.md. Compute IF (instruction-level avg %, task-level binary pass). Composite vibe score: alpha=0.5 IF + 0.5 func (correlate human pref per LMArena).
+   - Output: vibe-report.md (table: Instruction | Pass/Fail | Evidence/Score; Overall vibe: X%; Regression: Y% drop).
 
-End with: `Branch: GOOD/BAD. Your input on fixes/next? (SOP-first, easy-only)`
+2. Branch on Results (func pass + vibe>80%):
+   - **GOOD CASE** (pass + high vibe/IF): Sequential - Use reviewer subagent for PR summary/diff (git diff, compliance incl. IF). Then use optimizer subagent to extract lessons (e.g., "IF strong: Add 'Max branches=4' to CLAUDE.md"), refine CLAUDE.md, outline next plan.md (multi-round refine if needed). Output: "GOOD Vibe: Score 92% (IF 88%, func 96%); PR ready; Optimized: [feedback]. Next: [outline]. Human pref: High alignment."
+   - **BAD CASE** (fail or vibe<80%): Sequential - Use debugger subagent (or verifier) for root causes (func + non-func, e.g., "Func cause: Timeout fail; Evidence: pytest log; Non-func: Style dev: Lines>79, evidence: Ruff E501; Vibe drop 15% - U-shape mid-pos low IF"). Explain fix path (e.g., "Refactor branches; Re-run ruff"). Output: "BAD Vibe: Causes explained (IF 62%); Re-take-action on Subtask X?"
+
+3. Merge: Final summary. "Vibe loop complete. Regression detected? Approve merge/loop?"
+
+End with: "Branch: GOOD/BAD. Tweak IF threshold?"

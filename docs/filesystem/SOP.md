@@ -12,7 +12,7 @@
 - 不接受任何 OS 级别调用（如 `cat /path`），唯一入口是接口函数，例如 `handle.read_file("/workspace/a.md")`。
 - 不支持相对路径、通配符、软链接、符号解析等；仅接收本模块定义的逻辑绝对路径。
 
-### 二、文件/类/函数/成员变量映射到 src 路径
+## 二、文件/类/函数/成员变量映射到 src 路径
 - 目录（骨架层，允许根据实现扩展）：`src/agentscope/filesystem/`
   - `_types.py`：基础类型、Grant、EntryMeta 等定义。
   - `_errors.py`：骨架使用的标准异常（`InvalidPathError` 等）。
@@ -24,10 +24,10 @@
 
 > 具体实现可增加更多文件/模块；如有新模块或参考实现，需在此章节同步说明责任边界。
 
-### 三、关键数据结构与对外接口（含类型/返回约束）
+## 三、关键数据结构与对外接口（含类型/返回约束）
 
 #### 1) 类型概览
-- `Path = str`：逻辑绝对路径，必须以实现注册的任一前缀开头；严格区分大小写与空白，`"/a"` 与 `"/a "` 視为不同。
+- `Path = str`：逻辑绝对路径，必须以实现注册的任一前缀开头；严格区分大小写与空白，`"/a"` 与 `"/a "` 视为不同。
 - `Operation = Literal["list", "file", "read_binary", "read_file", "read_re", "write", "delete"]`：骨架支持的原子动作集合。
 - `Grant = TypedDict("Grant", {"prefix": Path, "ops": set[Operation]})`：授权条目，定义某前缀允许的动作集合。
 - `EntryMeta = TypedDict("EntryMeta", {"path": Path, "size": int, "updated_at": datetime | str | None})`：文件元信息（可扩展字段）。
@@ -187,7 +187,7 @@ sequenceDiagram
 ### 6) 数据与接口约定（统一命名）
 - Base 提供：
   - `_snapshot_impl(grants: Sequence[Grant]) -> dict[Path, EntryMeta]`：按 grants 返回“当前可见全集”的字典视图（权威入口）。
-  - `_read_binary_impl(path) -> bytes`、`_read_file_impl(path, *, index, line) -> str`、`_read_re_impl(path, re_str, overlap) -> list[str]`。
+  - `_read_binary_impl(path) -> bytes`、`_read_file_impl(path, *, index, line) -> str`、`_read_re_impl(path, pattern, overlap) -> list[str]`。
   - `_write_impl(path, data, overwrite) -> EntryMeta`、`_delete_impl(path) -> None`。
 - FsHandle 仅通过 `_snapshot_impl` 判定存在性/获取元信息；除内容读取与变更外不直接调用其他查询钩子。
 
