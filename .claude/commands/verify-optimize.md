@@ -2,7 +2,6 @@
 allowed-tools: Bash(pytest:*), Bash(ruff:* or pylint:*), Bash(git:*), Edit, Read
 description: Full closed-loop: Verify func + vibe IF (VeriCode-inspired); Good: Optimize; Bad: Analyze causes (func + non-func).
 argument-hint: [focus, e.g., 'Async VLM changes']
-model: claude-3-5-sonnet-20241022
 ---
 
 # /verify-optimize: Vibe-Aligned Closed-Loop with VeriCode IF Eval
