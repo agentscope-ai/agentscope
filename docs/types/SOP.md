@@ -13,7 +13,7 @@ graph TD
     Tool --> Types
     Agent --> Types
     RAG --> Types
-    Types --> StaticChecker[mypy/IDE]
+    Types --> StaticChecker[IDE]
 ```
 
 ### 3. 核心组件逻辑
@@ -25,7 +25,7 @@ graph TD
 
 ### 4. 关键设计模式
 - **集中式类型定义**：通过单一模块暴露共享类型，避免在各模块重复声明。  
-- **静态检查友好**：联合类型与 Literal 提供 IDE 补全与 mypy 支持。
+- **静态检查友好**：联合类型与 Literal 提供 IDE 补全支持。
 
 ### 5. 其他组件的交互
 - **Toolkit/Agent**：使用 `ToolFunction` 与 Hook 类型校验输入。  

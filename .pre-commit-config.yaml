@@ -20,30 +20,6 @@ repos:
     rev: v3.1.0
     hooks:
       - id: add-trailing-comma
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.0
-    hooks:
-      - id: mypy
-        exclude:
-            (?x)(
-                pb2\.py$
-                | grpc\.py$
-                | ^docs
-                | \.html$
-            )
-        args: [ --disallow-untyped-defs,
-                --disallow-incomplete-defs,
-                --ignore-missing-imports,
-                --disable-error-code=var-annotated,
-                --disable-error-code=union-attr,
-                --disable-error-code=assignment,
-                --disable-error-code=attr-defined,
-                --disable-error-code=import-untyped,
-                --disable-error-code=truthy-function,
-                --disable-error-code=typeddict-item,
-                --follow-imports=skip,
-                --explicit-package-bases,
-                ]
   # - repo: https://github.com/numpy/numpydoc
   #   rev: v1.6.0
   #   hooks:

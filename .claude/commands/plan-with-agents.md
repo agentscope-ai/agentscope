@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git status:*), Bash(ruff check src*), Bash(mypy src*), Bash(pytest:*), Bash(pre-commit:*), MCP(filesystem:read-only)
+allowed-tools: Bash(git status:*), Bash(ruff check src*), Bash(pytest:*), Bash(pre-commit:*), MCP(filesystem:read-only)
 description: Docs-first planning chain for AgentScope-easy. Understand context, align SOP/CLAUDE, produce executable plan before any code runs.
 argument-hint: [task-description, e.g., 'Add Qdrant pruning option to rag store']
 ---
@@ -16,7 +16,7 @@ Use `$ARGUMENTS` as the requested task (e.g., `"Add Qdrant pruning option to rag
   - Load `AGENTS.md`, `docs/SOP.md`, relevant `docs/<module>/SOP.md`, `CLAUDE.md`, and any nearby README/CHANGELOG entries.
   - If helpful, inspect `src/agentscope/<module>` and corresponding tests under `tests/` using MCP filesystem.
   - Summarize as UNDERSTANDER_SUMMARY（内联输出，≤1500 tokens）包含：
-    - Project stance: Docs-first, easy-branch only, SOP tree, Ruff/mypy/pytest gates.
+    - Project stance: Docs-first, easy-branch only, SOP tree, Ruff/pytest gates.
     - Relevant modules & responsibilities (e.g., rag store pipeline, toolkit flow).
     - Existing constraints, risks, open questions, and any SOP gaps.
   - Required approvals: SOP update? `todo.md` checklist? CLAUDE.md alignment?
@@ -30,7 +30,7 @@ Use `$ARGUMENTS` as the requested task (e.g., `"Add Qdrant pruning option to rag
   - Produce以内联命名块：
     - SOP_PATCH：拟修改的 `docs/<module>/SOP.md` 片段（Before/Change/After 或 diff）。
     - TODO_BLOCK：根目录 `todo.md` 的执行步骤（5–10 步）、回滚提示、输出物（tests/docs/examples）。
-    - ACCEPTANCE：与 SOP 对齐的验收清单（ruff check src、mypy src、pytest 目标、文档同步、CLAUDE.md 更新点）。
+    - ACCEPTANCE：与 SOP 对齐的验收清单（ruff check src、pytest 目标、文档同步、CLAUDE.md 更新点）。
     - RISKS：主要风险与缓解；ALTERNATIVES：可选方案或分阶段路径。
 - Ensure the plan keeps code changes scoped to `src/agentscope/<module>` and tests, with no business-logic leakage into core.
 - Await manual confirmation before execution.

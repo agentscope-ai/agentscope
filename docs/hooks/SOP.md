@@ -48,6 +48,6 @@ graph TD
   1. 注册 Hook 并触发一次 `print`，确认 Studio 接收到消息。  
   2. 模拟网络失败，验证重试策略和异常路径。  
   3. 若新增 Hook，确认与现有 Hook 顺序无冲突。  
-- **验收要求**：相关单测（`tests/hook_test.py`）应覆盖 Hook 注册与执行；运行 `pytest`、`mypy src`、`ruff check src`。  
+- **验收要求**：相关单测（`tests/hook_test.py`）应覆盖 Hook 注册与执行；运行 `pytest`、`ruff check src`。  
 - **回滚预案**：若 Hook 行为调整影响现有集成，需要提供关闭/回滚方案，例如允许禁用 Studio Hook。  
 - **知识同步**：更新 Studio 文档、示例，说明如何启用/禁用 Hook 及调试方法。

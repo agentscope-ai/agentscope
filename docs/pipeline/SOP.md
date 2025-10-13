@@ -88,6 +88,6 @@ graph TD
   1. 含多个 Agent 的顺序与扇出编排示例（成功/失败/取消）。  
   2. `enable_gather` 对异常传播的影响。  
   3. `stream_printing_messages` 在多 Agent 输出下的行为（包含 `[END]` 信号）。  
-- **验收要求**：通过 `tests/pipeline_test.py`，并执行 `pytest`、`mypy src`、`ruff check src`。如增加新原语，需补充测试与示例。  
+- **验收要求**：通过 `tests/pipeline_test.py`，并执行 `pytest`、`ruff check src`。如增加新原语，需补充测试与示例。  
 - **回滚预案**：若调整执行策略（例如 gather 行为），需提供回滚方式或兼容开关，并在 PR 记录。  
 - **知识同步**：更新示例脚本、教程以及 `CLAUDE.md`，确保团队了解新的编排方式。

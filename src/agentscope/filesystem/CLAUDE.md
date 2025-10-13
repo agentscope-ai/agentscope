@@ -86,14 +86,14 @@ Call Graph (core operations)
 - Caller → `FsHandle.write` → `validate_path` → `_ensure_allowed` → `_refresh_index` (`FileSystemBase._snapshot_impl`) → `_write_impl` → `_refresh_index` → Caller.
 - Caller → `FsHandle.read_file` → `validate_path` → `_ensure_allowed` → `_refresh_index` → `_ensure_exists` → `_read_file_impl` → Caller.
 
-Type Safety Standards (Critical for mypy compliance)
-- **Generic Type Syntax**: Always use lowercase generics (`dict[Path, EntryMeta]`) not capitalized (`Dict[Path, EntryMeta]`)
-- **Union Types**: Use modern syntax (`bytes | str`) not legacy (`Union[bytes, str]`)
-- **Optional Parameters**: Explicit type annotations for all optional parameters (`index: int | None = None`)
-- **Return Annotations**: Every public method must have explicit return type
-- **Import Consistency**: Use `from typing import Sequence, List, Dict` consistently
-- **TYPE_CHECKING Patterns**: Keep local imports minimal and well-documented
-- **TypedDict Usage**: Ensure all TypedDict fields are properly typed and total= parameter used when needed
+Type Safety Standards
+- **Generic Type Syntax**: Prefer built-in generics (`dict[Path, EntryMeta]`) over legacy `Dict`
+- **Union Types**: Use modern syntax (`bytes | str`) rather than `Union`
+- **Optional Parameters**: Annotate explicitly (`index: int | None = None`)
+- **Return Annotations**: Every public method must declare its return type
+- **Imports**: Keep `typing` imports minimal; rely on built-in containers where possible
+- **TYPE_CHECKING Patterns**: Document why conditional imports are needed
+- **TypedDict Usage**: Ensure optional vs required fields are explicit (`total=False` helpers)
 
 Example Integration
 - Agent/Tool obtains handle via `FileSystemBase.create_handle(grants)`.
