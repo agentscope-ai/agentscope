@@ -7,7 +7,6 @@ from agentscope.filesystem import (
     BuiltinFileSystem,
     NotFoundError,
     builtin_grant,
-    builtin_grants,
 )
 
 
