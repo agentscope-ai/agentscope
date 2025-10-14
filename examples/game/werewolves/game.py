@@ -4,14 +4,6 @@
 
 import numpy as np
 
-from structured_model import (
-    DiscussionModel,
-    get_vote_model,
-    get_poison_model,
-    WitchResurrectModel,
-    get_seer_model,
-    get_hunter_model,
-)
 from utils import (
     majority_vote,
     names_to_str,
@@ -19,6 +11,14 @@ from utils import (
     MAX_GAME_ROUND,
     MAX_DISCUSSION_ROUND,
     Players,
+)
+from structured_model import (
+    DiscussionModel,
+    get_vote_model,
+    get_poison_model,
+    WitchResurrectModel,
+    get_seer_model,
+    get_hunter_model,
 )
 from prompt import EnglishPrompts as Prompts
 
