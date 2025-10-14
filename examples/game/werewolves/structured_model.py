@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""The structured output models for werewolf game."""
+"""The structured output models used in the werewolf game."""
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
 from agentscope.agent import AgentBase
 
 
