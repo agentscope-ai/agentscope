@@ -248,7 +248,67 @@ def write(self, path: str, data: bytes|str, overwrite: bool=True) -> EntryMeta:
   - `file(path)` 返回的 `EntryMeta` 字段最小保障与一致性。
   - 句柄是唯一入口：模拟 OS 级访问或跳过句柄的尝试应全部失败。
 
-## 参考实现：三前缀（只读/共享/内部）（可选，非规范）
+## 六、实际实现操作（内核/驱动/工具装配）
+
+本章给出工程实践的装配范式，严格区分“内核（Kernel）/驱动（Driver）/工具（Tools）”。
+
+1. 角色类比与边界
+   - FileSystemBase（含 `_snapshot_impl/_read_*_impl/_write_impl/_delete_impl`）≈ VFS 抽象接口；不关心具体介质。
+   - FsHandle ≈ 受限命名空间/能力令牌（chroot + 挂载选项）：对统一 API 施加“前缀 + 动作白名单”约束。
+   - 驱动程序（如 `DiskFileSystem`）≈ 具体文件系统实现（ext4/ramfs 类比）：完成“逻辑前缀 → OS 目录”的安全映射。
+   - 工具（Tools）≈ shell 命令（cat/ls/grep…）的一套通用接口：名称与语义稳定，禁止携带域前缀，隔离由路径与授权保证。
+
+2. 单工具集策略（重要）
+   - 项目只提供“一套通用工具名”，例如：
+     - `read_text_file(path, start_line?: int=1, read_lines?: int)`
+     - `read_multiple_files(paths: list[str])`
+     - `write_file(path: str, content: str)`（按域策略决定是否允许）
+     - `edit_file(path: str, edits: list[{oldText,newText}], dryRun?: bool=false)`
+     - `list_directory(path: str)`、`list_directory_with_sizes(path: str, sortBy?: "name"|"size"="name")`
+     - `search_files(path: str, pattern: str, excludePatterns?: list[str]=[])`
+     - `get_file_info(path: str)`、`list_allowed_directories()`
+   - 域隔离不通过工具名区分，而由“传入路径的逻辑前缀 + 句柄授权”共同决定：
+     - `/userinput/`：只读；拒绝写/编辑。
+     - `/internal/`：读写，默认禁删；默认脱敏输出；用于索引/缓存/向量库/会话快照/审计。
+     - `/workspace/`：读写删；面向对外交付（报告/可共享产物）。
+
+3. 推荐装配流程（示意）
+   - 驱动初始化（程序侧）：
+     - 采用磁盘驱动实现三前缀映射（例如 `src/agentscope/filesystem/_disk.py` 提供的 `DiskFileSystem`）。
+   - 句柄发放（程序侧，单句柄/联合授权）：
+     - 采用“一把句柄 + 联合授权 grants”覆盖多前缀，便于审计与统一控制；示例：
+       ```python
+       handle = fs.create_handle(grants=[
+         {"prefix": "/userinput/", "ops": {"list", "read"}},
+         {"prefix": "/workspace/", "ops": {"list", "read", "write", "delete"}},
+         # 可选：根据需要加入 /internal/ 的读/写（默认不删）权限
+         # {"prefix": "/internal/", "ops": {"list", "read", "write"}},
+       ])
+       ```
+       说明：是否允许写/删由 grants 与上层策略共同约束；对 `/userinput/` 写入会被自动拒绝。
+   - 服务层封装（强烈建议）：
+     - 在应用中定义单个 `IFileDomainService`，内部仅持“一把句柄（联合授权）”；依据传入路径前缀（/userinput|/internal|/workspace）路由并执行业务策略。
+     - 所有策略（域内只读、脱敏、禁止回显 OS 路径、强制 dry-run 等）在服务层统一执行；越权与跨域操作直接返回 `AccessDeniedError/InvalidPathError`。
+   - 工具注册（参数界面）：
+     - 工具函数只依赖 `IFileDomainService`，不捕获 `FsHandle/FileSystemBase`；用 `Toolkit.register_tool_function` 注册同名工具，即可在一个 Toolkit 内提供统一能力集。
+     - 若需要按域启停，可使用 Toolkit 分组功能激活/禁用某些工具或在服务层做域校验。
+   - Agent 使用：
+     - Agent 仅持有 `Toolkit`；通过路径与授权自然选择作用域，无需区分不同“域前缀版工具”。
+
+4. 安全与合规要点
+   - 工具输出只暴露逻辑路径，严禁回显 OS 真实路径。
+   - `/internal/` 默认返回摘要/统计/审计 ID，`full` 视上层策略在受控上下文放行。
+   - “向量库/索引/缓存/快照”一律进入 `/internal/`；`/workspace/` 仅承载可对外发布的交付物。
+   - 任何跨域路径或越权操作在 `FsHandle`/服务层直接失败（`InvalidPathError/AccessDeniedError`）。
+
+5. 反模式（禁止）
+   - 以工具名编码域（如 `ui_*`/`ws_*`）或在工具签名中直接传递/暴露 `FsHandle`。
+   - 工厂函数直接返回已装配好的 `Toolkit`（破坏单一职责与可审计装配）。
+   - 在 `/workspace/` 写入机密或可反推内部状态的文件；在工具输出中回显 `/internal/` 明文内容或内部路径。
+
+> 注：以上装配做法不改变本模块“内核即真相”的定位；`DiskFileSystem` 等驱动仅作为参考实现，应用可替换为任意符合 `FileSystemBase` 钩子契约的后端。
+
+## 参考实现：三前缀（只读/共享/内部）
 - 目的：提供一个与骨架解耦的参考实现，用于说明如何用最小授权组合验证本模块边界与能力。此实现不具备规范约束力，项目可自由替换或扩展。
 
 - 根前缀（示例）：
@@ -273,8 +333,6 @@ handle_b = fs.create_handle(grants=[
   {"prefix": "/userinput/", "ops": {"list","read"}},
   {"prefix": "/workspace/", "ops": {"list","read","write","delete"}},
 ])
-
-```
 ```
 
 - 典型流程（仅示例）：
