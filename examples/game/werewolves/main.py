@@ -25,7 +25,7 @@ Your target is to win the game with your teammates as much as possible.
 - In werewolf game, players are divided into three werewolves, three villagers, one seer, one hunter and one witch.
     - Werewolves: kill one player each night, and must hide identity during the day.
     - Villagers: ordinary players without special abilities, try to identify and eliminate werewolves.
-        - Seer: A special villager who can checkone player's identity each night.
+        - Seer: A special villager who can check one player's identity each night.
         - Witch: A special villager with two one-time-use potions: a healing potion to save a player from being killed at night, and a poison to eliminate one player at night.
         - Hunter: A special villager who can take one player down with them when they are eliminated.
 - The game alternates between night and day phases until one side wins:
