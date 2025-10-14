@@ -263,7 +263,7 @@ def write(self, path: str, data: bytes|str, overwrite: bool=True) -> EntryMeta:
      - `read_text_file(path, start_line?: int=1, read_lines?: int)`
      - `read_multiple_files(paths: list[str])`
      - `write_file(path: str, content: str)`（按域策略决定是否允许）
-     - `edit_file(path: str, edits: list[{oldText,newText}], dryRun?: bool=false)`
+     - `edit_file(path: str, edits: list[{oldText,newText}])`
      - `list_directory(path: str)`、`list_directory_with_sizes(path: str, sortBy?: "name"|"size"="name")`
      - `search_files(path: str, pattern: str, excludePatterns?: list[str]=[])`
      - `get_file_info(path: str)`、`list_allowed_directories()`
