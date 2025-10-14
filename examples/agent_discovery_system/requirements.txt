@@ -1,0 +1,19 @@
+# Core AgentScope dependencies (should already be installed)
+agentscope
+
+# Web server dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6
+
+# Gemini API integration
+google-generativeai>=0.3.0
+
+# Data validation and processing
+pydantic>=2.0.0
+
+# Optional: Enhanced functionality
+sentence-transformers  # For better embeddings
+faiss-cpu             # For fast similarity search
+networkx              # For graph analysis
