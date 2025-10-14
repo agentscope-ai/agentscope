@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches, too-many-statements
+# pylint: disable=too-many-branches, too-many-statements, no-name-in-module
 """A werewolf game implemented by agentscope."""
-
 import numpy as np
 
 from utils import (

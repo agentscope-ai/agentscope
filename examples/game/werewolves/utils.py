@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from prompt import ChinesePrompts as Prompts
+from prompt import EnglishPrompts as Prompts
 
 from agentscope.message import Msg
 from agentscope.agent import ReActAgent, AgentBase
