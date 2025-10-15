@@ -21,18 +21,6 @@ from ._builtin import (
     WORKSPACE_PREFIX,
 )
 from ._disk import DiskFileSystem
-from ._service import FileDomainService, DomainPolicy
-from ._tools import (
-    read_text_file,
-    read_multiple_files,
-    list_directory,
-    list_directory_with_sizes,
-    search_files,
-    get_file_info,
-    list_allowed_directories,
-    write_file,
-    edit_file,
-)
 
 __all__ = [
     "Path",
@@ -56,16 +44,4 @@ __all__ = [
     "USERINPUT_PREFIX",
     "WORKSPACE_PREFIX",
     "DiskFileSystem",
-    "FileDomainService",
-    "DomainPolicy",
-    # tools (register with preset_kwargs={"service": svc})
-    "read_text_file",
-    "read_multiple_files",
-    "list_directory",
-    "list_directory_with_sizes",
-    "search_files",
-    "get_file_info",
-    "list_allowed_directories",
-    "write_file",
-    "edit_file",
 ]

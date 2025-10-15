@@ -8,26 +8,33 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from ..message import TextBlock
-from ..tool._response import ToolResponse
-from ._service import FileDomainService
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # type hints only
+    from ..tool._response import ToolResponse  # pragma: no cover
+    from ..message import TextBlock  # pragma: no cover
+    from ._service import FileDomainService  # pragma: no cover
 
 
 # ------------------------------- read ops -----------------------------------
 async def read_text_file(
-    service: FileDomainService,
+    service: object,
     path: str,
     start_line: int | None = 1,
     read_lines: int | None = None,
-) -> ToolResponse:
+):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     text = service.read_text_file(path, start_line=start_line, read_lines=read_lines)
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
+    return _TR(content=[_TB(type="text", text=text)])
 
 
 async def read_multiple_files(
-    service: FileDomainService,
+    service: object,
     paths: list[str],
-) -> ToolResponse:
+):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     items = service.read_multiple_files(paths)
     lines = []
     for it in items:
@@ -36,62 +43,82 @@ async def read_multiple_files(
         else:
             lines.append(f"## {it['path']} (error)\n{it['error']}")
     text = "\n\n".join(lines) if lines else "<empty>"
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
+    return _TR(content=[_TB(type="text", text=text)])
 
 
 # ------------------------------ list/search ---------------------------------
-async def list_directory(service: FileDomainService, path: str) -> ToolResponse:
+async def list_directory(service: object, path: str):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     lines = service.list_directory(path)
-    return ToolResponse(content=[TextBlock(type="text", text="\n".join(lines) or "<empty>")])
+    return _TR(content=[_TB(type="text", text="\n".join(lines) or "<empty>")])
 
 
 async def list_directory_with_sizes(
-    service: FileDomainService,
+    service: object,
     path: str,
     sortBy: str | None = "name",
-) -> ToolResponse:
+):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     lines, summary = service.list_directory_with_sizes(path, sort_by=(sortBy or "name"))
     text = ("\n".join(lines) + ("\n" if lines else "")) + summary
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
+    return _TR(content=[_TB(type="text", text=text)])
 
 
 async def search_files(
-    service: FileDomainService,
+    service: object,
     path: str,
     pattern: str,
     excludePatterns: list[str] | None = None,
-) -> ToolResponse:
+):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     matches = service.search_files(path, pattern, exclude_patterns=excludePatterns)
-    return ToolResponse(content=[TextBlock(type="text", text="\n".join(matches) or "<empty>")])
+    return _TR(content=[_TB(type="text", text="\n".join(matches) or "<empty>")])
 
 
-async def get_file_info(service: FileDomainService, path: str) -> ToolResponse:
+async def get_file_info(service: object, path: str):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     meta = service.get_file_info(path)
     payload = "\n".join(f"{k}: {v}" for k, v in meta.items())
-    return ToolResponse(content=[TextBlock(type="text", text=payload)])
+    return _TR(content=[_TB(type="text", text=payload)])
 
 
-async def list_allowed_directories(service: FileDomainService) -> ToolResponse:
+async def list_allowed_directories(service: object):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     dirs = service.list_allowed_directories()
-    return ToolResponse(content=[TextBlock(type="text", text="\n".join(dirs))])
+    return _TR(content=[_TB(type="text", text="\n".join(dirs))])
 
 
 # ------------------------------- mutations ----------------------------------
-async def write_file(service: FileDomainService, path: str, content: str) -> ToolResponse:
+async def write_file(service: object, path: str, content: str):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
     meta = service.write_file(path, content)
     text = f"wrote {int(meta.get('size', 0))} bytes to {meta['path']}"
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
+    return _TR(content=[_TB(type="text", text=text)])
+
+
+async def delete_file(service: object, path: str):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
+    service.delete_file(path)
+    return _TR(content=[_TB(type="text", text=f"deleted {path}")])
 
 
 async def edit_file(
-    service: FileDomainService,
+    service: object,
     path: str,
     edits: list[dict],
-    dryRun: bool | None = False,
-) -> ToolResponse:
-    res, changed = service.edit_file(path, edits, dry_run=bool(dryRun))
-    return ToolResponse(content=[TextBlock(type="text", text=res)])
-
+):
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
+    meta = service.edit_file(path, edits)
+    text = f"edited {meta['path']} (size={int(meta.get('size', 0))})"
+    return _TR(content=[_TB(type="text", text=text)])
 
 __all__ = [
     "read_text_file",
@@ -102,6 +129,6 @@ __all__ = [
     "get_file_info",
     "list_allowed_directories",
     "write_file",
+    "delete_file",
     "edit_file",
 ]
-

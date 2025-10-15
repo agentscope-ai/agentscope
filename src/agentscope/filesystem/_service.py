@@ -4,13 +4,15 @@
 The service enforces domain policies based on logical path prefixes and
 delegates I/O to the underlying FsHandle. Tools should depend on this service
 instead of capturing FsHandle/FileSystemBase directly.
+
+Note: SOP limits atomic ops to list/file/read_binary/read_file/read_re/write/delete.
+This service does not provide 'dry-run' features.
 """
 from __future__ import annotations
 
-import difflib
 import fnmatch
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 from ._handle import FsHandle, validate_path
 from ._errors import AccessDeniedError, InvalidArgumentError, NotFoundError
@@ -24,18 +26,10 @@ INTERNAL_PREFIX = "/internal/"
 
 @dataclass
 class DomainPolicy:
-    """High-level behavioral switches per domain."""
+    """Behavioral switches per domain (minimal, no extras)."""
 
     allow_write_userinput: bool = False
-    allow_edit_userinput: bool = False
-
     allow_delete_internal: bool = False
-    internal_default_summary: bool = True  # for future extension
-
-    allow_delete_workspace: bool = True
-
-    max_lines: int | None = 5000
-    max_bytes: int | None = 1_000_000
 
 
 class FileDomainService:
@@ -46,11 +40,9 @@ class FileDomainService:
         handle: FsHandle,
         *,
         policy: DomainPolicy | None = None,
-        allowed_roots: Iterable[str] | None = None,
     ) -> None:
         self._handle = handle
         self._policy = policy or DomainPolicy()
-        self._allowed_roots = list(allowed_roots or [USERINPUT_PREFIX, WORKSPACE_PREFIX])
 
     # ------------------------------- helpers -------------------------------
     def _domain_of(self, path: str) -> str:
@@ -64,16 +56,7 @@ class FileDomainService:
         # Treat unknown as not found in current view
         raise NotFoundError(path)
 
-    def _enforce_read_limits(self, text: str) -> str:
-        if self._policy.max_bytes is not None and len(text.encode("utf-8")) > self._policy.max_bytes:
-            truncated = text.encode("utf-8")[: self._policy.max_bytes].decode("utf-8", errors="ignore")
-            return truncated + "\n[truncated due to max_bytes limit]"
-        if self._policy.max_lines is not None:
-            lines = text.splitlines()
-            if len(lines) > self._policy.max_lines:
-                head = "\n".join(lines[: self._policy.max_lines])
-                return head + "\n[truncated due to max_lines limit]"
-        return text
+    # (no read limits; SOP/todo: read_text_file does pure slicing only)
 
     # ------------------------------- queries -------------------------------
     def list_directory(self, path: str) -> List[str]:
@@ -136,19 +119,22 @@ class FileDomainService:
             f"[DIR] {n} (size={s})" if is_dir else f"[FILE] {n} (size={s})"
             for (n, is_dir, s) in listing
         ]
-        summary = f"total: {len(listing)} entries; files={sum(1 for _, d, _ in listing if not d)}, dirs={sum(1 for _, d, _ in listing if d)}"
+        total_size = sum(int(m.get("size", 0)) for m in lines)
+        summary = (
+            f"total: {len(listing)} entries; files={sum(1 for _, d, _ in listing if not d)}, "
+            f"dirs={sum(1 for _, d, _ in listing if d)}; total_size={total_size}"
+        )
         return rendered, summary
 
-    def search_files(self, path: str, pattern: str, exclude_patterns: Iterable[str] | None = None) -> List[str]:
+    def search_files(self, path: str, pattern: str, exclude_patterns: list[str] | None = None) -> List[str]:
         prefix = path if path.endswith("/") else path + "/"
         entries = self._handle.list(prefix)
         matches: List[str] = []
         excludes = list(exclude_patterns or [])
         for meta in entries:
             p = meta["path"]
-            name = p.split("/")[-1]
-            cond = fnmatch.fnmatch(name, pattern) or (pattern in name)
-            if cond and not any(fnmatch.fnmatch(name, ex) for ex in excludes):
+            cond = fnmatch.fnmatch(p, pattern) or (pattern in p)
+            if cond and not any(fnmatch.fnmatch(p, ex) for ex in excludes):
                 matches.append(p)
         return sorted(matches)
 
@@ -156,7 +142,8 @@ class FileDomainService:
         return self._handle.file(path)
 
     def list_allowed_directories(self) -> List[str]:
-        return list(self._allowed_roots)
+        # Fixed set as per SOP/todo; no dynamic exposure of internal
+        return [USERINPUT_PREFIX, WORKSPACE_PREFIX]
 
     # ------------------------------- reads ----------------------------------
     def read_text_file(self, path: str, start_line: int | None = 1, read_lines: int | None = None) -> str:
@@ -169,8 +156,7 @@ class FileDomainService:
         lines = text.splitlines()
         s = (start_line or 1) - 1
         e = s + read_lines if read_lines is not None else len(lines)
-        sliced = "\n".join(lines[s:e])
-        return self._enforce_read_limits(sliced)
+        return "\n".join(lines[s:e])
 
     def read_multiple_files(self, paths: Iterable[str]) -> List[dict]:
         out: List[dict] = []
@@ -195,34 +181,31 @@ class FileDomainService:
         self._assert_writable(path)
         return self._handle.write(path, content, overwrite=True)
 
-    def edit_file(self, path: str, edits: List[dict], dry_run: bool = False) -> Tuple[str, int]:
-        domain = self._domain_of(path)
-        if domain == USERINPUT_PREFIX and not self._policy.allow_edit_userinput:
-            raise AccessDeniedError(path, "write")
-        if not edits:
-            raise InvalidArgumentError("edits", value="empty")
+    def edit_file(self, path: str, edits: list[dict]) -> EntryMeta:
+        """Apply sequential textual edits and overwrite the file.
 
-        original = self._handle.read_file(path)
-        new_text = original
+        Edits are ordered replacements with keys: {"oldText": str, "newText": str}.
+        No dry-run or diff; exact substring replacement.
+        """
+        # treat as write operation on the target domain
+        self._assert_writable(path)
+        text = self._handle.read_file(path)
         for e in edits:
-            old = e.get("oldText", "")
-            new = e.get("newText", "")
-            if not isinstance(old, str) or not isinstance(new, str):
-                raise InvalidArgumentError("edits", value=e)
-            new_text = new_text.replace(old, new)
+            old = e["oldText"]
+            new = e["newText"]
+            text = text.replace(old, new)
+        return self._handle.write(path, text, overwrite=True)
 
-        if dry_run:
-            diff = difflib.unified_diff(
-                original.splitlines(),
-                new_text.splitlines(),
-                fromfile=path,
-                tofile=path,
-                lineterm="",
-            )
-            rendered = "\n".join(diff)
-            return rendered or "(no changes)", 0
+    def delete_file(self, path: str) -> None:
+        """Delete a file respecting domain policy.
 
-        meta = self._handle.write(path, new_text, overwrite=True)
-        changed = 0 if original == new_text else 1
-        return f"applied edits to {path}", changed
-
+        - `/userinput/`: always denied.
+        - `/internal/`: denied unless policy explicitly allows deletion.
+        - `/workspace/`: allowed when granted by handle.
+        """
+        domain = self._domain_of(path)
+        if domain == USERINPUT_PREFIX:
+            raise AccessDeniedError(path, "delete")
+        if domain == INTERNAL_PREFIX and not self._policy.allow_delete_internal:
+            raise AccessDeniedError(path, "delete")
+        self._handle.delete(path)

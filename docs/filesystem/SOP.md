@@ -271,6 +271,7 @@ def write(self, path: str, data: bytes|str, overwrite: bool=True) -> EntryMeta:
      - `/userinput/`：只读；拒绝写/编辑。
      - `/internal/`：读写，默认禁删；默认脱敏输出；用于索引/缓存/向量库/会话快照/审计。
      - `/workspace/`：读写删；面向对外交付（报告/可共享产物）。
+     - 统一由`DiskFileSystem.get_tools`提供
 
 3. 推荐装配流程（示意）
    - 驱动初始化（程序侧）：

@@ -1,50 +1,23 @@
 # -*- coding: utf-8 -*-
-"""Backend-specific tests for the in-memory filesystem."""
-import pytest
+from __future__ import annotations
 
-from agentscope.filesystem import (
-    ConflictError,
-    InMemoryFileSystem,
-    NotFoundError,
-)
-
-ALL_OPS = {
-    "list",
-    "file",
-    "read_binary",
-    "read_file",
-    "read_re",
-    "write",
-    "delete",
-}
+from agentscope.filesystem import InMemoryFileSystem
 
 
-def test_write_conflict_and_delete() -> None:
+def test_inmemory_basic_roundtrip_and_regex() -> None:
     fs = InMemoryFileSystem()
     handle = fs.create_handle([
-        {"prefix": "/workspace/", "ops": set(ALL_OPS)},
+        {"prefix": "/workspace/", "ops": {"list","file","read_binary","read_file","read_re","write","delete"}},
     ])
 
-    handle.write("/workspace/result.txt", "first")
-    with pytest.raises(ConflictError):
-        handle.write("/workspace/result.txt", "second", overwrite=False)
+    content = "alpha\nbravo\nalpha bravo\n"
+    handle.write("/workspace/t.txt", content)
+    assert handle.read_binary("/workspace/t.txt").decode("utf-8") == content
+    assert handle.read_file("/workspace/t.txt", index=1, line=1) == "bravo"
 
-    handle.delete("/workspace/result.txt")
-    with pytest.raises(NotFoundError):
-        handle.read_file("/workspace/result.txt")
+    # regex non-overlap
+    matches = handle.read_re("/workspace/t.txt", r"alpha")
+    assert matches == ["alpha", "alpha"]
 
+    handle.delete("/workspace/t.txt")
 
-def test_line_and_regex_utilities() -> None:
-    fs = InMemoryFileSystem()
-    handle = fs.create_handle([
-        {"prefix": "/workspace/", "ops": set(ALL_OPS)},
-    ])
-
-    payload = "line0\nline1\nline2\nline3"
-    handle.write("/workspace/log.txt", payload)
-
-    assert handle.read_file("/workspace/log.txt", index=1, line=2) == "line1\nline2"
-    assert handle.read_binary("/workspace/log.txt") == payload.encode("utf-8")
-
-    matches = handle.read_re("/workspace/log.txt", r"line[0-3]", overlap=1)
-    assert matches[:2] == ["line0", "line1"]

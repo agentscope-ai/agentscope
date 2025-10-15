@@ -135,3 +135,6 @@ docs/tutorial/zh_CN/build/
 # project helpers (do not version transient guides/working files)
 .spec-workflow
 todo.md
+
+# runtime outputs (logical filesystem runs)
+output/
