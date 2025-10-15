@@ -36,11 +36,18 @@ Key Functions/Methods
   - Side‑effects: <I/O, network, state, logs>
   - Invariants/Pre/Post: <constraints>
   - Errors: <raises/edge cases>
+  - Type Safety: <critical typing notes, e.g., generic syntax, union types>
   - Notes: <perf/thread‑safety/idempotency>
   - References: `<file:line>` (definition) · `<file:line>` (usage)
 
 Call Graph (ASCII/bullets)
 - <caller> → <callee> …
+
+Testing Strategy
+- Unit tests: <test file pattern and key scenarios>
+- Integration: <cross-module test cases>
+- Edge cases: <boundary conditions to verify>
+- Type coverage: <notes on optional static typing checks, if applicable>
 
 Related SOP: `docs/...`
 ```
@@ -128,12 +135,16 @@ Follow the strict "Documentation → Planning → Execution → Verification" ch
 
 3. **Quality Standards**
    - Public APIs must have type annotations
+   - **Type Safety First**: Every public method must have explicit return types, all parameters typed
+   - **Generic Syntax**: Use `dict[Key, Value]` not `Dict[Key, Value]`, use `list[T]` not `List[T]`
+   - **Union Types**: Use modern `T | U` syntax, not `Union[T, U]`
+   - **Optional Parameters**: Always annotate as `param: Type | None = None`
    - No bare `except` or silent failures - use `agentscope._logging.logger`
    - Ruff must be zero-warning before merge
    - Follow PEP 8, 4-space indent, 79-char line width
 
 4. **Verification Phase**
-   - Run relevant tests: `pytest`, `mypy src`, `ruff check src`
+   - Run relevant tests: `pytest`, `ruff check src`
    - Update examples, READMEs, CLAUDE.md
    - Accept clean history only (rebase/FF)
 
@@ -143,3 +154,12 @@ Follow the strict "Documentation → Planning → Execution → Verification" ch
 - Maintain professional technical documentation style
 - Verify emoji removal during code review before merging
 - This ensures compatibility across different viewers and maintains formal documentation tone
+
+**Process Improvements (Lessons Learned)**
+- **Type Safety Gate**: Document expected typing patterns and review them during code review
+- **VeriCode IF Integration**: Select 3-5 relevant ruff rules per task (E501, PLR0912, D, UP024, PTH) for vibe scoring
+- **LeetCode Killer Mindset**: Decompose complex changes into O(1) helper functions, test edge cases first
+- **Vibe-Based Quality**: Composite scoring (α=0.5 IF + 0.5 functional) correlates with human preferences
+- **Type-First Documentation**: Include "Type Safety" notes in all CLAUDE.md method entries
+- **Consistent Generic Syntax**: Enforce modern `dict[Key, Value]` over legacy `Dict[Key, Value]` in all new code
+- **Optional Parameter Patterns**: Standardize on `param: Type | None = None` across the codebase

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# mypy: disable-error-code="dict-item"
 """The Google Gemini model in agentscope."""
 from datetime import datetime
 from typing import (

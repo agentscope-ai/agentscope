@@ -120,11 +120,6 @@ venv.bak/
 # mkdocs documentation
 /site
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
 # Pyre type checker
 .pyre/
 
@@ -140,3 +135,6 @@ docs/tutorial/zh_CN/build/
 # project helpers (do not version transient guides/working files)
 .spec-workflow
 todo.md
+
+# runtime outputs (logical filesystem runs)
+output/

@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=not-an-iterable
-# mypy: disable-error-code="list-item"
 """ReAct agent class in agentscope."""
 import asyncio
 from typing import Type, Any, AsyncGenerator, Literal

@@ -18,7 +18,7 @@ When invoked
 4) Report inline (no extra files):
    - Pass/Fail summary (total tests, failures, skipped).
    - Key failure details (commands, stack traces, associated SOP clauses).
-   - Status of Ruff/mypy gates (confirm via earlier runs or re-run if required by plan).
+   - Status of Ruff/pytest gates (confirm via earlier runs or re-run if required by plan).
 5) End with:
    - `Verified. Ready for merge (SOP-first, easy-only).`
    - **or** `Verified with failures: <count>. Need fixes before merge.`

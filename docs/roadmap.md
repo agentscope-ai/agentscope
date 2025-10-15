@@ -1,49 +1,45 @@
-# Roadmap
+# 路线图
 
-## Long-term Goals
+本文件用于记录未来迭代的思考、设计取舍与验证思路，明确“先想清楚，再动手”。所有事项必须遵循《docs/SOP.md》的流程约束。
 
-Offering **agent-oriented programming (AOP)** as a new programming paradigm to organize the design and implementation of next-generation LLM-empowered applications.
+准备要完成的事情:
+```
+1. Agent 支持sub agent ，sub agent 具体可以翻看claude code的定义和实现
+2. 重新定义Agent的钩子函数，钩子函数是传入当前实例后，传出实例来进行的
+3. 增加FileSystem 模块，注意这里的File并不是指磁盘上的文件，而是**文件管理**系统，允许读取或者写入特定的文件
+4. 支持Tool的状态链接，也就是说多次调用Tool都能保持同一个状态上
+5. Agent 相关组件能够通过像似registy 的方式进行注册或者挂载，比如说一个Agent 实例化后，允许组件修改该实例的一些成员变量甚至是函数
+6. 钩子函数的执行应该是一个优先级排序的List才对，比如说日志记录的钩子的优先级是最低的
+7. 对话记录支持保存，断点继续，前提是完成了FileSystem 模块
+```
 
-## Short-term Goals
 
-### AgentScope V1.0.0 Roadmap
+## 优先事项（按阶段）
 
-We are deeply grateful for the continuous support from the open-source community that has witnessed AgentScope's
-growth. Throughout our journey, we have maintained **developer-centric transparency** as our core principle,
-which will continue to guide our future development.
+### 1. 逻辑文件系统（非操作系统文件）
+- **场景问题**：代码运行与由 LLM 驱动的 MCP 工具需要一个受控的文件读写接口，用来保存日志、上下文快照或执行结果。如果直接写本地磁盘，很难做权限隔离或审计。
+- **定义原则**：模块仅提供抽象定义（类似 `BaseAgent` 对 `ReActAgent`），真正的存储实现留给产品层去确定。接口只暴露最小能力：`write`、`read`、`delete`，文件夹仅作语义隔离。
+- **权限与可见性**：划分三类命名空间，每个命名空间都内嵌权限模型。
+  - `internal`：框架内部写入的运行数据（如日志、LLM 请求/响应 JSON）。只有代码逻辑可写，MCP 工具不可见。
+  - `userinput`：外部输入材料（由离线数据管道或运维预置，不通过在线 MCP 调用写入）。允许读取，不允许写入和删除。
+  - `workspace`：任务执行期间的共享空间，可以被 MCP 工具和代码自由读写删除，用于生成中间产物或最终结果。
+- **与现有组件的交互**：
+  - **Memory / Session**：短期记忆、长期记忆及会话快照需要持久化时，可以使用 `workspace` 保存可共享内容，或用 `internal` 保存仅供代码恢复的状态数据。
+  - **日志与诊断**：日志钩子、Tracing、LLM 调用信息统一写入 `internal`，避免泄露给 MCP 工具，同时支持后续调试或回放。
+- **价值**：
+  - 在多 Agent、工具协同的场景中，能够有序地管理中间文件和状态。
+  - 为后续的钩子改革、状态工具、断点续跑等能力提供可复用的底座。
+- **验证点**：
+  - 各命名空间的读写权限符合预期（代码可写 internal，MCP 工具只能读 userinput，workspace 双向开放）。
+  - Memory/Session 序列化到 FileSystem 后可以恢复；日志输出能够在 internal 中查询。
 
-As the AI agent ecosystem rapidly evolves, we recognize the need to adapt AgentScope to meet emerging trends and
-requirements. We are excited to announce the upcoming release of AgentScope v1.0.0, which marks a significant shift
-towards deployment-focused and secondary development direction. This new version will provide comprehensive support for agent developers
-with enhanced deployment capabilities and practical features. Specifically, the update will include:
 
-- ✨New Features
-  - 🛠️ Tool/MCP
-    - Support both sync/async tool functions
-    - Support streaming tool function
-    - Support parallel execution of tool functions
-    - Provide more flexible support for the MCP server
+## 里程碑与依赖关系
+- **M1**：逻辑文件系统 → 钩子优先级 → 实例变换钩子。
+- **M2**：组件注册/扩展 → 有状态工具会话。
+- **M3**：子 Agent 支持 → 对话持久化与断点续跑。
 
-  - 💾 Memory
-    - Enhance the existing short-term memory
-    - Support long-term memory
-
-  - 🤖 Agent
-    - Provide powerful ReAct-based out-of-the-box agents
-
-- 👨‍💻 Development
-  - Provide enhanced AgentScope Studio with visual components for developing, tracing and debugging
-  - Provide a built-in copilot for developing/drafting AgentScope applications
-
-- 🔍 Evaluation
-  - Provide built-in benchmarking and evaluation toolkit for agents
-  - Support result visualization
-
-- 🏗️ Deployment
-  - Support asynchronous agent execution
-  - Support session/state management
-  - Provide sandbox for tool execution
-
-Stay tuned for our detailed release notes and beta version, which will be available soon. Follow our GitHub
-repository and official channels for the latest updates. We look forward to your valuable feedback and continued
-support in shaping the future of AgentScope.
+## 验证方法（非代码层面）
+- **设计评审**：每项都需提交问题陈述、约束、模型、边界与失败场景分析。
+- **原型验证**：构建最小闭环场景，验证确定性与可观测性（日志、指标、Tracing）。
+- **文档优先**：在编码前更新对应模块的 `docs/<module>/SOP.md`，并给出验收项与测试策略。

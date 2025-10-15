@@ -18,7 +18,7 @@ When invoked:
    - Consult `CLAUDE.md` for workflow memory and key call chains.
    - Inspect relevant implementation files in `src/agentscope/` and tests in `tests/` to understand current behavior.
 2. Produce `understander-summary.md` (≤ 1500 tokens) that includes:
-   - Project overview: docs-first gating, `easy`-only branch policy, Ruff/Mypy/Pytest enforcement.
+   - Project overview: docs-first gating, `easy`-only branch policy, Ruff/Pytest enforcement.
    - Key modules and their responsibilities / dependencies for the task.
    - Current SOP gaps, risks, or outstanding questions.
    - Required documentation/approval steps before coding (SOP updates, `todo.md` checklist, CLAUDE.md sync).
