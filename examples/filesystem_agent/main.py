@@ -24,8 +24,8 @@ from dotenv import load_dotenv
 
 
 def build_toolkit() -> Toolkit:
-    root_dir = os.getenv("FS_ROOT_DIR")
-    fs = DiskFileSystem(root_dir=root_dir) if root_dir else DiskFileSystem()
+    # Always use default run-root: ./output/{mmddHHMM}/ (auto-created)
+    fs = DiskFileSystem()
     handle = fs.create_handle(
         [
             {"prefix": "/userinput/", "ops": {"list", "file", "read_file", "read_binary", "read_re"}},
