@@ -116,7 +116,7 @@ class Prompts:
 # 注意事项
 - 这是一个基于文本的游戏，使用逻辑与谎言进行对抗。
 - 通过 `generate_response` 函数生成你的回应。
-- 不要重复别人的发言。
+- 不要重复别人的发言，不要说一些与狼人杀游戏无关的内容。
 - 用中文进行游戏。
 """  # noqa
 
@@ -294,5 +294,6 @@ class Prompts:
     to_self_explode = "{}选择自爆，直接进入黑夜！"
 
     to_self_explode_announcement = "{}自爆了！游戏直接进入黑夜阶段。"
+
 
 
