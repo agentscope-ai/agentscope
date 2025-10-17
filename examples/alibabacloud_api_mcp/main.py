@@ -5,8 +5,17 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
-from mcp.client.auth import OAuthClientMetadata, OAuthClientProvider
+from mcp.client.auth import (
+    OAuthClientMetadata,
+    OAuthClientProvider,
+)
 from pydantic import AnyUrl
+
+from oauth_handler import (
+    InMemoryTokenStorage,
+    handle_callback,
+    handle_redirect,
+)
 
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
@@ -14,7 +23,6 @@ from agentscope.mcp import HttpStatelessClient
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
-from oauth_handler import handle_callback, handle_redirect, InMemoryTokenStorage
 
 load_dotenv()
 
@@ -65,8 +73,8 @@ async def main() -> None:
     agent = ReActAgent(
         name="AlibabaCloudOpsAgent",
         sys_prompt=(
-            "You are an Alibaba Cloud operations assistant. Use ECS, RDS, VPC, "
-            "and other services to satisfy user requests."
+            "You are an Alibaba Cloud operations assistant. "
+            "Use ECS, RDS, VPC, and other services to satisfy requests."
         ),
         model=DashScopeChatModel(
             api_key=require_env_var("DASHSCOPE_API_KEY"),

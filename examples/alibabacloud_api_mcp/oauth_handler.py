@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import threading
 import webbrowser
 from functools import partial
@@ -20,7 +21,6 @@ SUCCESS_PAGE = dedent(
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Authorization Complete</title>
     </head>
     <body>
@@ -29,7 +29,7 @@ SUCCESS_PAGE = dedent(
         <button onclick="window.close()">Close Window</button>
     </body>
     </html>
-    """
+    """,
 )
 
 ERROR_PAGE_TEMPLATE = dedent(
@@ -38,7 +38,6 @@ ERROR_PAGE_TEMPLATE = dedent(
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Authorization Error</title>
     </head>
     <body>
@@ -48,7 +47,7 @@ ERROR_PAGE_TEMPLATE = dedent(
         <button onclick="window.close()">Close Window</button>
     </body>
     </html>
-    """
+    """,
 )
 
 INTERNAL_ERROR_TEMPLATE = dedent(
@@ -57,7 +56,6 @@ INTERNAL_ERROR_TEMPLATE = dedent(
     <html lang="en">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Server Error</title>
     </head>
     <body>
@@ -67,7 +65,7 @@ INTERNAL_ERROR_TEMPLATE = dedent(
         <button onclick="window.close()">Close Window</button>
     </body>
     </html>
-    """
+    """,
 )
 
 
@@ -101,11 +99,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
     def __init__(
         self,
         callback_server: "CallbackServer",
-        *args: object,
-        **kwargs: object,
+        request: socket.socket,
+        client_address: tuple[str, int],
+        server: HTTPServer,
     ) -> None:
         self.callback_server: "CallbackServer" = callback_server
-        super().__init__(*args, **kwargs)
+        super().__init__(request, client_address, server)
 
     def do_GET(self) -> None:
         """Handle GET request for OAuth callback."""
@@ -150,10 +149,10 @@ class CallbackHandler(BaseHTTPRequestHandler):
             page = INTERNAL_ERROR_TEMPLATE.format(details=exc)
             self.wfile.write(page.encode("utf-8"))
 
-    def log_message(self, format_string: str, *args: object) -> None:  # noqa: D401
+    def log_message(self, format: str, *args: object) -> None:  # noqa: D401, A003
         """Suppress default HTTP server logging."""
         # BaseHTTPRequestHandler expects this signature.
-        del format_string, args
+        del format, args
 
 
 class CallbackServer:

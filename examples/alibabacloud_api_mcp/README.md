@@ -27,7 +27,7 @@ After adding the sample MCP, you can use queries similar to the following:
 **Edit main.py**
 
 ```python
-# openai base   
+# openai base
 # read from .env
 load_dotenv()
 
