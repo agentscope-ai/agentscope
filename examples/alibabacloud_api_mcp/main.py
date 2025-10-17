@@ -1,32 +1,28 @@
 # -*- coding: utf-8 -*-
 """The main entry point of the ReAct agent example."""
+
 import asyncio
 import os
 
+from dotenv import load_dotenv
+from mcp.client.auth import OAuthClientMetadata, OAuthClientProvider
+from pydantic import AnyUrl
+
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
+from agentscope.mcp import HttpStatelessClient
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
-from agentscope.tool import (
-    Toolkit,
-    execute_shell_command,
-    execute_python_code,
-    view_text_file,
-)
-from agentscope.mcp import HttpStatelessClient
+from agentscope.tool import Toolkit
+from oauth_handler import handle_callback, handle_redirect, InMemoryTokenStorage
 
-from mcp.client.auth import OAuthClientProvider, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
-from pydantic import AnyUrl
-from oauth_handler import InMemoryTokenStorage, handle_redirect, handle_callback
-from dotenv import load_dotenv
-
-
-# openai base   
-# read from .env
 load_dotenv()
 
-# Please get the connection address from https://api.aliyun.com/mcp after creation
-server_url = "https://openapi-mcp.cn-hangzhou.aliyuncs.com/accounts/14******/custom/****/id/KXy******/mcp"
+# Fetch the MCP endpoint from https://api.aliyun.com/mcp after provisioning.
+server_url = (
+    "https://openapi-mcp.cn-hangzhou.aliyuncs.com/accounts/14******/custom/"
+    "****/id/KXy******/mcp"
+)
 
 memory_token_storage = InMemoryTokenStorage()
 
@@ -52,6 +48,15 @@ stateless_client = HttpStatelessClient(
     auth=oauth_provider,
 )
 
+
+def require_env_var(name: str) -> str:
+    """Return the value of *name* or raise a helpful error."""
+    value = os.environ.get(name)
+    if value is None:
+        raise RuntimeError(f"Environment variable '{name}' must be set.")
+    return value
+
+
 async def main() -> None:
     """The main entry point for the ReAct agent example."""
     toolkit = Toolkit()
@@ -59,9 +64,12 @@ async def main() -> None:
 
     agent = ReActAgent(
         name="AlibabaCloudOpsAgent",
-        sys_prompt="You are an Alibaba Cloud operations assistant, skilled at using various Alibaba Cloud products such as ECS, RDS, VPC, etc., to fulfill my requirements.",
+        sys_prompt=(
+            "You are an Alibaba Cloud operations assistant. Use ECS, RDS, VPC, "
+            "and other services to satisfy user requests."
+        ),
         model=DashScopeChatModel(
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            api_key=require_env_var("DASHSCOPE_API_KEY"),
             model_name="qwen3-max-preview",
             enable_thinking=False,
             stream=True,
