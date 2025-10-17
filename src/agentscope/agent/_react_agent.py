@@ -8,6 +8,8 @@ import shortuuid
 from pydantic import BaseModel, ValidationError, Field
 
 from ._react_agent_base import ReActAgentBase
+from ._subagent_base import SubAgentBase
+from ._subagent_tool import SubAgentSpec, make_subagent_tool
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
@@ -246,6 +248,10 @@ class ReActAgent(ReActAgentBase):
         # We use an InMemoryMemory instance to store the hint messages
         self._reasoning_hint_msgs = InMemoryMemory()
 
+        # Registered subagent metadata
+        self._subagent_registry: dict[str, SubAgentSpec] = {}
+        self._subagent_ephemeral: dict[str, bool] = {}
+
         # Variables to record the intermediate state
 
         # If required structured output model is provided
@@ -266,6 +272,49 @@ class ReActAgent(ReActAgentBase):
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
         return self._sys_prompt
+
+    async def register_subagent(
+        self,
+        subagent_cls: type[SubAgentBase],
+        spec: SubAgentSpec,
+        *,
+        tool_name: str | None = None,
+        ephemeral_memory: bool = True,
+    ) -> str:
+        """Register a SubAgent skeleton as a toolkit tool."""
+        tool_func, register_kwargs = await make_subagent_tool(
+            subagent_cls,
+            spec,
+            host=self,
+            tool_name=tool_name,
+            ephemeral_memory=ephemeral_memory,
+        )
+
+        resolved_group = register_kwargs.pop("group_name", "subagents")
+        if resolved_group != "basic" and resolved_group not in self.toolkit.groups:
+            self.toolkit.create_tool_group(
+                resolved_group,
+                description=f"Delegated subagents for {self.name}",
+                active=True,
+            )
+
+        preset_kwargs = register_kwargs.get("preset_kwargs")
+        func_description = register_kwargs.get("func_description")
+        json_schema = register_kwargs.get("json_schema")
+
+        self.toolkit.register_tool_function(
+            tool_func,
+            group_name=resolved_group,
+            preset_kwargs=preset_kwargs,
+            func_description=func_description,
+            json_schema=json_schema,
+        )
+
+        registered_name = json_schema["function"]["name"] if json_schema else tool_func.__name__
+        self._subagent_registry[registered_name] = spec
+        self._subagent_ephemeral[registered_name] = ephemeral_memory
+
+        return registered_name
 
     @trace_reply
     async def reply(

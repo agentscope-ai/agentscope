@@ -18,7 +18,6 @@ import aioitertools
 from ._attributes import _serialize_to_str
 from .. import _config
 from ..embedding._embedding_base import EmbeddingModelBase
-from ..model._model_base import ChatModelBase
 from .._logging import logger
 from ._types import SpanKind, SpanAttributes
 
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
     )
     from ..embedding import EmbeddingResponse
     from ..model import ChatResponse
+    from ..model._model_base import ChatModelBase
     from opentelemetry.trace import Span
 else:
     Toolkit = "Toolkit"
@@ -629,7 +629,7 @@ def trace_llm(
 
     @wraps(func)
     async def async_wrapper(
-        self: ChatModelBase,
+        self: "ChatModelBase",
         *args: Any,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -637,7 +637,9 @@ def trace_llm(
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
 
-        if not isinstance(self, ChatModelBase):
+        from ..model._model_base import ChatModelBase as _ChatModelBase
+
+        if not isinstance(self, _ChatModelBase):
             logger.warning(
                 "Skipping tracing for %s as the first argument"
                 "is not an instance of ChatModelBase, but %s",

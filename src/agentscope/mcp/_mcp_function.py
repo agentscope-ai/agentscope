@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """The MCP tool function class in AgentScope."""
+from __future__ import annotations
 from contextlib import _AsyncGeneratorContextManager
-from typing import Any, Callable
+from typing import Any, Callable, TYPE_CHECKING
 
 import mcp
 from mcp import ClientSession
 
 from ._client_base import MCPClientBase
 from .._utils._common import _extract_json_schema_from_mcp_tool
-from ..tool import ToolResponse
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ..tool import ToolResponse
 
 
 class MCPToolFunction:
@@ -55,7 +58,7 @@ class MCPToolFunction:
     async def __call__(
         self,
         **kwargs: Any,
-    ) -> mcp.types.CallToolResult | ToolResponse:
+    ) -> mcp.types.CallToolResult | "ToolResponse":
         """Call the MCP tool function with the given arguments, and return
         the result."""
         if self.client_gen:
@@ -75,6 +78,7 @@ class MCPToolFunction:
             )
 
         if self.wrap_tool_result:
+            from ..tool import ToolResponse
             as_content = MCPClientBase._convert_mcp_content_to_as_blocks(
                 res.content,
             )
