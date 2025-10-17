@@ -6,14 +6,7 @@ so that `service` 不出现在 JSON-Schema（即不暴露给 LLM）。
 """
 from __future__ import annotations
 
-from typing import Iterable
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # type hints only
-    from ..tool._response import ToolResponse  # pragma: no cover
-    from ..message import TextBlock  # pragma: no cover
-    from ._service import FileDomainService  # pragma: no cover
 
 
 # ------------------------------- read ops -----------------------------------

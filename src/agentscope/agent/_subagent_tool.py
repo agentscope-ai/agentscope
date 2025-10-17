@@ -86,7 +86,6 @@ async def make_subagent_tool(
 
     async def _invoke_subagent(
         task_summary: str,
-        context_note: str | None = None,
         *,
         _host: AgentBase = host,
         _spec: SubAgentSpec = spec,
@@ -101,16 +100,6 @@ async def make_subagent_tool(
             parent_context,
             task_summary,
         )
-
-        if context_note:
-            delegation_context.recent_events.insert(
-                0,
-                {
-                    "preview": context_note[:200],
-                    "role": "system",
-                    "name": _spec.name,
-                },
-            )
 
         _annotate_latest_user_message(parent_context.conversation, delegation_context)
 
@@ -271,13 +260,6 @@ def _build_default_schema(
                         "description": (
                             "Concise summary of the delegated task for the "
                             "subagent to execute."
-                        ),
-                    },
-                    "context_note": {
-                        "type": "string",
-                        "description": (
-                            "Optional hints or constraints that should be "
-                            "highlighted for the subagent."
                         ),
                     },
                 },
