@@ -403,7 +403,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
     async def _mem0_record(
         self,
         messages: str | list[dict],
-        memory_type: str | None,
+        memory_type: str | None = None,
         infer: bool = True,
         **kwargs: Any,
     ) -> dict:

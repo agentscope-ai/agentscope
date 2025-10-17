@@ -22,13 +22,14 @@ AgentScope 内置支持以下 API：
     * - Gemini
       - ``GeminiTextEmbedding``
     * - DashScope
-      - ``DashScopeTextEmbedding``
+      - ``DashScopeTextEmbedding``, ``DashScopeMultiModalEmbedding``
     * - Ollama
       - ``OllamaTextEmbedding``
 
 所有类都继承自 ``EmbeddingModelBase``，实现了 ``__call__`` 方法并生成包含嵌入和使用信息的 ``EmbeddingResponse`` 对象。
+其中 ``DashScopeMultiModalEmbedding`` 支持文本，图像和视频的多模态嵌入。
 
-以 DashScope 嵌入类为例，您可以按如下方式使用：
+以 DashScope 嵌入类为例，可以按如下方式使用：
 """
 
 import asyncio

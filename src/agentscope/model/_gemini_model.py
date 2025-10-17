@@ -217,7 +217,7 @@ class GeminiChatModel(ChatModelBase):
 
         text = ""
         thinking = ""
-        metadata = None
+        metadata: dict | None = None
         async for chunk in response:
             content_block: list = []
 
@@ -315,7 +315,7 @@ class GeminiChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
         """
         content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
-        metadata = None
+        metadata: dict | None = None
 
         if (
             response.candidates

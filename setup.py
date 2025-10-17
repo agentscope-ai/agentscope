@@ -35,14 +35,21 @@ minimal_requires = [
 ]
 
 extra_requires = [
+    # Model
     "ollama",
     "google-genai",
     "Pillow",
     "transformers",
     "jinja2",
+    # Evaluator
     "ray",
+    # Long-term memory
     "mem0ai",
     "packaging",
+    # RAG
+    "pypdf",
+    "nltk",
+    "qdrant-client",
 ]
 
 dev_requires = [

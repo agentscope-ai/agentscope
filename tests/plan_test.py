@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """The plan module related tests."""
+import os
 from unittest import IsolatedAsyncioTestCase
 
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.model import DashScopeChatModel
 from agentscope.plan import SubTask, Plan, PlanNotebook
 
 
@@ -268,4 +272,81 @@ Subtask at index 2:
         self.assertEqual(
             plan_notebook.current_plan.subtasks[1].state,
             "in_progress",
+        )
+
+    async def test_serialization(self) -> None:
+        """Test the serialization and deserialization of plan and subtask."""
+        plan_notebook = PlanNotebook()
+        agent = ReActAgent(
+            name="Friday",
+            sys_prompt="You are a helpful assistant named Friday. ",
+            model=DashScopeChatModel(
+                model_name="qwen-max",
+                api_key=os.environ.get("DASH_API_KEY"),
+            ),
+            formatter=DashScopeChatFormatter(),
+            plan_notebook=plan_notebook,
+        )
+
+        await plan_notebook.create_plan(
+            name="text",
+            description="abc",
+            expected_outcome="edf",
+            subtasks=[
+                SubTask(
+                    name="1",
+                    description="1",
+                    expected_outcome="1",
+                ),
+                SubTask(
+                    name="2",
+                    description="2",
+                    expected_outcome="2",
+                ),
+            ],
+        )
+
+        self.assertIsNotNone(plan_notebook.current_plan)
+
+        state = agent.state_dict()
+        subtasks = plan_notebook.current_plan.subtasks
+        self.assertDictEqual(
+            state,
+            {
+                "memory": {"content": []},
+                "toolkit": {"active_groups": []},
+                "plan_notebook": {
+                    "storage": {},
+                    "current_plan": {
+                        "name": "text",
+                        "description": "abc",
+                        "expected_outcome": "edf",
+                        "subtasks": [
+                            {
+                                "name": "1",
+                                "description": "1",
+                                "expected_outcome": "1",
+                                "created_at": subtasks[0].created_at,
+                            },
+                            {
+                                "name": "2",
+                                "description": "2",
+                                "expected_outcome": "2",
+                                "created_at": subtasks[1].created_at,
+                            },
+                        ],
+                    },
+                },
+                "_reasoning_hint_msgs": {"content": []},
+                "name": "Friday",
+                "_sys_prompt": "You are a helpful assistant named Friday. ",
+            },
+        )
+        plan_notebook.current_plan = None
+        self.assertIsNone(
+            agent.plan_notebook.current_plan,
+        )
+        agent.load_state_dict(state)
+        self.assertIsNotNone(
+            agent.plan_notebook.current_plan,
         )
