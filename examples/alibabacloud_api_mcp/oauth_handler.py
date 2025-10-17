@@ -89,7 +89,8 @@ class InMemoryTokenStorage(TokenStorage):
         return self.client_info
 
     async def set_client_info(
-        self, client_info: OAuthClientInformationFull
+        self,
+        client_info: OAuthClientInformationFull,
     ) -> None:
         """Store client information."""
         self.client_info = client_info
@@ -130,7 +131,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
             elif "error" in params:
                 error = params["error"][0]
                 description = params.get(
-                    "error_description", ["Unknown error"]
+                    "error_description",
+                    ["Unknown error"],
                 )[0]
 
                 self.callback_server.auth_error = f"{error}: {description}"
@@ -140,7 +142,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-type", "text/html; charset=utf-8")
                 self.end_headers()
                 page = ERROR_PAGE_TEMPLATE.format(
-                    error=error, description=description
+                    error=error,
+                    description=description,
                 )
                 self.wfile.write(page.encode("utf-8"))
 
@@ -174,7 +177,8 @@ class CallbackServer:
         handler = partial(CallbackHandler, self)
         self.server = HTTPServer(("localhost", self.port), handler)
         self.thread = threading.Thread(
-            target=self.server.serve_forever, daemon=True
+            target=self.server.serve_forever,
+            daemon=True,
         )
         self.thread.start()
         print(f"OAuth callback server started, listening on port {self.port}")
@@ -189,7 +193,8 @@ class CallbackServer:
         print("OAuth callback server stopped")
 
     async def wait_for_callback(
-        self, timeout: float = 300
+        self,
+        timeout: float = 300,
     ) -> tuple[str, str | None]:
         """Wait for OAuth callback."""
 
@@ -203,12 +208,12 @@ class CallbackServer:
 
         if self.auth_error:
             raise RuntimeError(
-                f"OAuth authorization failed: {self.auth_error}"
+                f"OAuth authorization failed: {self.auth_error}",
             )
 
         if self.auth_code is None:
             raise RuntimeError(
-                "OAuth authorization failed: missing authorization code"
+                "OAuth authorization failed: missing authorization code",
             )
 
         return self.auth_code, self.auth_state
