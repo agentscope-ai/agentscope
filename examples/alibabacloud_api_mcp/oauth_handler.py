@@ -88,7 +88,9 @@ class InMemoryTokenStorage(TokenStorage):
         """Get stored client information."""
         return self.client_info
 
-    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+    async def set_client_info(
+        self, client_info: OAuthClientInformationFull
+    ) -> None:
         """Store client information."""
         self.client_info = client_info
 
@@ -127,7 +129,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
             elif "error" in params:
                 error = params["error"][0]
-                description = params.get("error_description", ["Unknown error"])[0]
+                description = params.get(
+                    "error_description", ["Unknown error"]
+                )[0]
 
                 self.callback_server.auth_error = f"{error}: {description}"
                 self.callback_server.auth_received = True
@@ -135,7 +139,9 @@ class CallbackHandler(BaseHTTPRequestHandler):
                 self.send_response(400)
                 self.send_header("Content-type", "text/html; charset=utf-8")
                 self.end_headers()
-                page = ERROR_PAGE_TEMPLATE.format(error=error, description=description)
+                page = ERROR_PAGE_TEMPLATE.format(
+                    error=error, description=description
+                )
                 self.wfile.write(page.encode("utf-8"))
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -167,7 +173,9 @@ class CallbackServer:
 
         handler = partial(CallbackHandler, self)
         self.server = HTTPServer(("localhost", self.port), handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True
+        )
         self.thread.start()
         print(f"OAuth callback server started, listening on port {self.port}")
 
@@ -180,7 +188,9 @@ class CallbackServer:
             self.thread.join(timeout=1)
         print("OAuth callback server stopped")
 
-    async def wait_for_callback(self, timeout: float = 300) -> tuple[str, str | None]:
+    async def wait_for_callback(
+        self, timeout: float = 300
+    ) -> tuple[str, str | None]:
         """Wait for OAuth callback."""
 
         loop = asyncio.get_running_loop()
@@ -192,10 +202,14 @@ class CallbackServer:
             await asyncio.sleep(0.1)
 
         if self.auth_error:
-            raise RuntimeError(f"OAuth authorization failed: {self.auth_error}")
+            raise RuntimeError(
+                f"OAuth authorization failed: {self.auth_error}"
+            )
 
         if self.auth_code is None:
-            raise RuntimeError("OAuth authorization failed: missing authorization code")
+            raise RuntimeError(
+                "OAuth authorization failed: missing authorization code"
+            )
 
         return self.auth_code, self.auth_state
 
