@@ -373,7 +373,8 @@ as_studio
     - [Multi-agent Concurrent](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - Evaluation
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
-
+  - Training
+    - [RL with Trinity-RFT](https://github.com/agentscope-ai/agentscope/tree/main/examples/agentic_rl/react_agent)
 
 ## ⚖️ License
 
