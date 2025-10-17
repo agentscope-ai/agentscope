@@ -18,13 +18,14 @@ from agentscope.mcp import HttpStatelessClient
 from mcp.client.auth import OAuthClientProvider, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 from oauth_handler import InMemoryTokenStorage, handle_redirect, handle_callback
+from dotenv import load_dotenv
 
 
 # openai base   
 # read from .env
 load_dotenv()
 
-# 请从https://api.aliyun.com/mcp 创建后获取连接地址
+# Please get the connection address from https://api.aliyun.com/mcp after creation
 server_url = "https://openapi-mcp.cn-hangzhou.aliyuncs.com/accounts/14******/custom/****/id/KXy******/mcp"
 
 memory_token_storage = InMemoryTokenStorage()
@@ -44,7 +45,7 @@ oauth_provider = OAuthClientProvider(
 )
 
 stateless_client = HttpStatelessClient(
-    # 用于标识 MCP 的名称
+    # Name used to identify the MCP
     name="mcp_services_stateless",
     transport="streamable_http",
     url=server_url,
@@ -54,14 +55,11 @@ stateless_client = HttpStatelessClient(
 async def main() -> None:
     """The main entry point for the ReAct agent example."""
     toolkit = Toolkit()
-    # toolkit.register_tool_function(execute_shell_command)
-    # toolkit.register_tool_function(execute_python_code)
-    # toolkit.register_tool_function(view_text_file)
     await toolkit.register_mcp_client(stateless_client)
 
     agent = ReActAgent(
         name="AlibabaCloudOpsAgent",
-        sys_prompt="你是阿里云运维助手，善于使用各种阿里云产品如 ECS、RDS、VPC 等，完成我的需求。",
+        sys_prompt="You are an Alibaba Cloud operations assistant, skilled at using various Alibaba Cloud products such as ECS, RDS, VPC, etc., to fulfill my requirements.",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
             model_name="qwen3-max-preview",
