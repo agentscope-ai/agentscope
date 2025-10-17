@@ -149,11 +149,6 @@ class CallbackHandler(BaseHTTPRequestHandler):
             page = INTERNAL_ERROR_TEMPLATE.format(details=exc)
             self.wfile.write(page.encode("utf-8"))
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: D401, A003
-        """Suppress default HTTP server logging."""
-        # BaseHTTPRequestHandler expects this signature.
-        del format, args
-
 
 class CallbackServer:
     """OAuth callback server."""
