@@ -2,6 +2,7 @@
 """The user agent class."""
 from typing import Type, Any
 
+import numpy as np
 from pydantic import BaseModel
 
 from ._agent_base import AgentBase
@@ -126,3 +127,47 @@ class UserAgent(AgentBase):
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         """Observe the message(s) from the other agents or the environment."""
+
+    def enable_audio_input(
+        self,
+        input_hint: str = "Ready to interact. "
+        "Press Enter for VOICE or type for TEXT: ",
+        sample_rate: int = 16000,
+        channels: int = 1,
+        dtype: np.dtype = np.int16,
+        chunk_size: int = 3200,
+    ) -> None:
+        """Enable audio input for this user agent
+
+        Args:
+            input_hint: The hint message for user input
+            sample_rate: Audio sampling rate
+            channels: Number of audio channels
+            dtype: Audio data type
+            chunk_size: Size of audio chunks for processing
+        """
+        from ._user_input import AudioUserInput
+
+        audio_input = AudioUserInput(
+            input_hint=input_hint,
+            sample_rate=sample_rate,
+            channels=channels,
+            dtype=dtype,
+            chunk_size=chunk_size,
+        )
+        self.override_instance_input_method(audio_input)
+
+    def disable_audio_input(self) -> None:
+        """Disable audio input and revert to terminal input"""
+        terminal_input = TerminalUserInput()
+        self.override_instance_input_method(terminal_input)
+
+    def is_audio_enabled(self) -> bool:
+        """Check if audio input is currently enabled
+
+        Returns:
+            bool: True if audio input is enabled, False otherwise
+        """
+        from ._user_input import AudioUserInput
+
+        return isinstance(self._input_method, AudioUserInput)
