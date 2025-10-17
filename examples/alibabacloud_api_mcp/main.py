@@ -6,8 +6,10 @@ import os
 
 from dotenv import load_dotenv
 from mcp.client.auth import (
-    OAuthClientMetadata,
     OAuthClientProvider,
+)
+from mcp.shared.auth import (
+    OAuthClientMetadata,
 )
 from pydantic import AnyUrl
 
