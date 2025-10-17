@@ -45,6 +45,7 @@ extra_requires = [
     "ray",
     # Long-term memory
     "mem0ai",
+    "zai-sdk",
     "packaging",
     # RAG
     "pypdf",
