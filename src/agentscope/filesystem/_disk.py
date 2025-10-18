@@ -48,7 +48,8 @@ class DiskFileSystem(FileSystemBase):
     ) -> None:
         super().__init__()
         if root_dir is None:
-            stamp = datetime.now().strftime("%m%d%H%M")
+            # Include seconds to avoid reusing the same minute bucket
+            stamp = datetime.now().strftime("%m%d%H%M%S")
             base = os.path.abspath(os.path.join(os.getcwd(), "output", stamp))
         else:
             base = os.path.abspath(root_dir)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 
 from ._handle import FsHandle, validate_path
 from ._errors import AccessDeniedError, InvalidArgumentError, NotFoundError
