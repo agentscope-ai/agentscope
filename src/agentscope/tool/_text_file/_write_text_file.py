@@ -1,10 +1,25 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: E501
 # pylint: disable=line-too-long
-"""The text file tools in agentscope."""
+"""Text file helpers that bypass the logical filesystem sandbox.
+
+Warning:
+    `insert_text_file` / `write_text_file` interact with the host operating
+    system directly through `open` and `os.path`. They are considered
+    "sealed" utilities: register them only when you intentionally need to
+    operate outside the sandboxed `FileDomainService` namespace and have
+    performed the appropriate risk review.
+
+Policy:
+    Controlled by env var ``AGENTSCOPE_DANGEROUS_TEXT_IO``:
+
+    - ``deny``  : block execution and return a warning message.
+    - ``warn``  : default; log a warning and proceed.
+    - ``allow`` : proceed silently (still mark ToolResponse.metadata).
+"""
 import os
 
-from ._utils import _calculate_view_ranges, _view_text_file
+from ._utils import _calculate_view_ranges, _view_text_file, _dangerous_text_io_guard
 from .._response import ToolResponse
 from ...message import TextBlock
 
@@ -14,7 +29,12 @@ async def insert_text_file(
     content: str,
     line_number: int,
 ) -> ToolResponse:
-    """Insert the content at the specified line number in a text file.
+    """Insert content at a given line number in a text file.
+
+    Warning:
+        Bypasses the logical filesystem sandbox and writes to the host path
+        directly. Use only when audited access to non-sandbox files is
+        required.
 
     Args:
         file_path (`str`):
@@ -30,6 +50,21 @@ async def insert_text_file(
         `ToolResponse`:
             The tool response containing the result of the insertion operation.
     """
+    proceed, meta = _dangerous_text_io_guard("insert_text_file", file_path)
+    if not proceed:
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=(
+                        "Blocked by policy: raw OS file access is disabled. "
+                        "Use FileSystem service tools instead."
+                    ),
+                ),
+            ],
+            metadata=meta,
+        )
+
     if line_number <= 0:
         return ToolResponse(
             content=[
@@ -39,6 +74,7 @@ async def insert_text_file(
                     f"The line number {line_number} is invalid. ",
                 ),
             ],
+            metadata=meta,
         )
 
     if not os.path.exists(file_path):
@@ -50,6 +86,7 @@ async def insert_text_file(
                     f"{file_path} does not exist. ",
                 ),
             ],
+            metadata=meta,
         )
 
     with open(file_path, "r", encoding="utf-8") as file:
@@ -101,6 +138,7 @@ async def insert_text_file(
                 f"```\n{show_content}```",
             ),
         ],
+        metadata=meta,
     )
 
 
@@ -109,7 +147,13 @@ async def write_text_file(
     content: str,
     ranges: None | list[int] = None,
 ) -> ToolResponse:
-    """Create/Replace/Overwrite content in a text file. When `ranges` is provided, the content will be replaced in the specified range. Otherwise, the entire file (if exists) will be overwritten.
+    """Create or overwrite content in a text file.
+
+    Warning:
+        Bypasses the logical filesystem sandbox and writes to the host path
+        directly. Use only when audited access to non-sandbox files is
+        required. When `ranges` is provided, only that slice is replaced;
+        otherwise the entire file is overwritten.
 
     Args:
         file_path (`str`):
@@ -124,6 +168,20 @@ async def write_text_file(
         `ToolResponse`:
             The tool response containing the result of the writing operation.
     """
+    proceed, meta = _dangerous_text_io_guard("write_text_file", file_path)
+    if not proceed:
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=(
+                        "Blocked by policy: raw OS file access is disabled. "
+                        "Use FileSystem service tools instead."
+                    ),
+                ),
+            ],
+            metadata=meta,
+        )
 
     if not os.path.exists(file_path):
         with open(file_path, "w", encoding="utf-8") as file:
@@ -139,6 +197,7 @@ async def write_text_file(
                         f"file does not exist.",
                     ),
                 ],
+                metadata=meta,
             )
 
         return ToolResponse(
@@ -148,6 +207,7 @@ async def write_text_file(
                     text=f"Create and write {file_path} successfully.",
                 ),
             ],
+            metadata=meta,
         )
 
     with open(file_path, "r", encoding="utf-8") as file:
@@ -171,6 +231,7 @@ async def write_text_file(
                             f"lines.",
                         ),
                     ],
+                    metadata=meta,
                 )
 
             new_content = (
@@ -214,6 +275,7 @@ async def write_text_file(
 {content}```""",
                     ),
                 ],
+                metadata=meta,
             )
 
         else:
@@ -225,6 +287,7 @@ async def write_text_file(
                         f"of two integers, but got {ranges}.",
                     ),
                 ],
+                metadata=meta,
             )
 
     with open(file_path, "w", encoding="utf-8") as file:
@@ -237,4 +300,5 @@ async def write_text_file(
                 text=f"Overwrite {file_path} successfully.",
             ),
         ],
+        metadata=meta,
     )

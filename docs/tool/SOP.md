@@ -64,6 +64,7 @@ graph TD
   - `_async_generator_wrapper` / `_sync_generator_wrapper` / `_object_wrapper`：将不同类型函数统一为异步生成器或单次输出。  
   - `_object_wrapper` 在同步函数返回单个 `ToolResponse` 时使用。
 - `src/agentscope/tool/_coding`、`_multi_modality`、`_text_file` 等目录  
+  - `_text_file`：提供 `view_text_file` / `write_text_file` / `insert_text_file` 三个示例工具。【封存警示】这些函数直接调用宿主操作系统 `open()` / `os.path.exists()`，不会经过 `FileDomainService` 或逻辑命名空间校验，默认 Toolkit 不得随意注册。仅在确认需要访问 sandbox 之外的路径、并已完成风险评估与审计记录时，方可由开发者显式启用。
   - 示例工具集合，可参考其注册方式。  
 - `src/agentscope/tool/__init__.py`  
   - 导出 `Toolkit`、常用工具函数、`execute_python_code` 等。  
@@ -111,3 +112,13 @@ graph TD
 ## 五、测试文件
 - 绑定文件：`tests/toolkit_test.py`、`tests/tool_test.py`、`tests/tool_openai_test.py`、`tests/tool_dashscope_test.py`
 - 覆盖点：注册（函数/partial/MCP）、JSON Schema 生成与清洗、结构化完成函数扩展模型、postprocess 行为、同步/异步/流式统一封装、分组启停、异常路径与错误提示。
+
+## 危险工具告示（Raw OS Text I/O）
+
+- 模块：`src/agentscope/tool/_text_file/` 下的 `view_text_file`、`write_text_file`、`insert_text_file` 为“原始 OS 文件访问”工具，直接通过 `open/os.path` 读写宿主机路径，绕过 FileSystem 命名空间与授权（如 `/userinput/`、`/workspace/`）。
+- 使用原则：默认不应注册到通用 Agent/子代理。仅在“明确需要访问沙箱外路径且完成风控/审计”的场景下按需启用。
+- 运行期护栏：环境变量 `AGENTSCOPE_DANGEROUS_TEXT_IO`（默认 `warn`）。
+  - `deny`：阻断调用，工具返回提示。
+  - `warn`：记录 WARNING 并继续执行。
+  - `allow`：允许执行（仍在 ToolResponse.metadata 标注 `dangerous_io`）。
+- 推荐替代：优先使用 `agentscope.filesystem._tools` 提供的受控工具（`read_text_file`、`write_file`、`edit_file`、`delete_file`、`list_directory` 等），通过 `DiskFileSystem.create_handle(...) + FileDomainService` 注入并以 `preset_kwargs` 注册到 Toolkit。
