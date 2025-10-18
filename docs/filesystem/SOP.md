@@ -24,6 +24,8 @@
 
 > 具体实现可增加更多文件/模块；如有新模块或参考实现，需在此章节同步说明责任边界。
 
+> 注意：`src/agentscope/tool/_text_file/` 模块中的 `view_text_file`/`write_text_file`/`insert_text_file` 为“原始 OS 文件访问”示例工具，不走本模块的授权与命名空间。默认不建议注册；仅在“明确需要访问沙箱外路径且完成风控/审计”的场景下按需启用，并通过 `AGENTSCOPE_DANGEROUS_TEXT_IO` 环境变量进行运行期控制（`deny|warn|allow`）。优先使用本模块导出的受控工具（见 `src/agentscope/filesystem/_tools.py`）。
+
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 
 #### 1) 类型概览
