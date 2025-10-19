@@ -92,6 +92,18 @@ class InMemoryMemory(MemoryBase):
         if memories is None:
             return
 
+        if isinstance(memories, str):
+            memories = Msg(
+                "system",
+                [
+                    TextBlock(
+                        type="text",
+                        text=memories,
+                    ),
+                ],
+                "user",
+            )
+
         if isinstance(memories, Msg):
             memories = [memories]
 
