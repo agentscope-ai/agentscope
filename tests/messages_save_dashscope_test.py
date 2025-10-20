@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for ChatModelSFTWrapper with DashScopeChatModel."""
+"""Tests for messages saving with DashScopeChatModel."""
 
 import json
 import os
@@ -10,64 +10,66 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import dashscope  # Ensure dashscope module is imported for patching
 from agentscope.model import DashScopeChatModel
-from agentscope.sft import SFTDataCollector, ChatModelSFTWrapper
 
 
-class TestSFTWrapperDashScope(IsolatedAsyncioTestCase):
-    """Verify wrapper writes JSONL and forwards results (non-streaming)."""
+class TestMessagesSaveDashScope(IsolatedAsyncioTestCase):
+    """Verify messages saving and forwarding (non-streaming)."""
 
     async def test_non_stream_collection(self) -> None:
         with patch("dashscope.aigc.generation.AioGeneration.call") as mock_call:
-            model = DashScopeChatModel(model_name="qwen-turbo", api_key="k", stream=False)
-
-            # Build a DashScope-like response object
-            response = Mock()
-            response.status_code = HTTPStatus.OK
-            response.output = Mock()
-            response.output.choices = [Mock()]
-            # Message must be dict-like supporting .get
-            response.output.choices[0].message = {
-                "content": "I'll check the weather for you.",
-                "reasoning_content": "Let me think about this...",
-                "tool_calls": [
-                    {
-                        "id": "call_123",
-                        "function": {
-                            "name": "get_weather",
-                            "arguments": "{\"location\": \"Beijing\"}",
-                        },
-                    },
-                ],
-            }
-            response.usage = Mock()
-            response.usage.input_tokens = 5
-            response.usage.output_tokens = 10
-            mock_call.return_value = response
-
-            messages = [{"role": "user", "content": "What's the weather in Beijing?"}]
-            tools = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "description": "Get weather information",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {"type": "string", "description": "City name"}
-                            },
-                            "required": ["location"]
-                        }
-                    }
-                }
-            ]
-
             with tempfile.TemporaryDirectory() as td:
                 out = os.path.join(td, "out.jsonl")
-                collector = SFTDataCollector(output_path=out, enable_collection=True)
-                wrapped = ChatModelSFTWrapper(base_model=model, collector=collector)
+                model = DashScopeChatModel(
+                    model_name="qwen-turbo",
+                    api_key="k",
+                    stream=False,
+                    save_messages=True,
+                    save_path=out,
+                )
 
-                await wrapped(messages, tools=tools, tool_choice="auto")
+                # Build a DashScope-like response object
+                response = Mock()
+                response.status_code = HTTPStatus.OK
+                response.output = Mock()
+                response.output.choices = [Mock()]
+                # Message must be dict-like supporting .get
+                response.output.choices[0].message = {
+                    "content": "I'll check the weather for you.",
+                    "reasoning_content": "Let me think about this...",
+                    "tool_calls": [
+                        {
+                            "id": "call_123",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\": \"Beijing\"}",
+                            },
+                        },
+                    ],
+                }
+                response.usage = Mock()
+                response.usage.input_tokens = 5
+                response.usage.output_tokens = 10
+                mock_call.return_value = response
+
+                messages = [{"role": "user", "content": "What's the weather in Beijing?"}]
+                tools = [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "description": "Get weather information",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "location": {"type": "string", "description": "City name"}
+                                },
+                                "required": ["location"]
+                            }
+                        }
+                    }
+                ]
+
+                await model(messages, tools=tools, tool_choice="auto")
 
                 # Verify JSONL written
                 self.assertTrue(os.path.exists(out))
@@ -99,12 +101,7 @@ class TestSFTWrapperDashScope(IsolatedAsyncioTestCase):
     async def test_streaming_with_thinking_collection(self) -> None:
         """Test streaming response with thinking content."""
         with patch("dashscope.aigc.generation.AioGeneration.call") as mock_call:
-            model = DashScopeChatModel(
-                model_name="qwen-turbo", 
-                api_key="k", 
-                stream=True,
-                enable_thinking=True
-            )
+            # Model will be instantiated inside tempdir to enable saving
             
             # Create mock streaming chunks
             chunks = [
@@ -124,11 +121,17 @@ class TestSFTWrapperDashScope(IsolatedAsyncioTestCase):
 
             with tempfile.TemporaryDirectory() as td:
                 out = os.path.join(td, "out.jsonl")
-                collector = SFTDataCollector(output_path=out, enable_collection=True)
-                wrapped = ChatModelSFTWrapper(base_model=model, collector=collector)
+                model = DashScopeChatModel(
+                    model_name="qwen-turbo", 
+                    api_key="k", 
+                    stream=True,
+                    enable_thinking=True,
+                    save_messages=True,
+                    save_path=out,
+                )
 
                 # Consume the streaming response
-                result = await wrapped(messages)
+                result = await model(messages)
                 responses = []
                 async for response in result:
                     responses.append(response)

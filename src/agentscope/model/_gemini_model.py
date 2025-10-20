@@ -40,6 +40,8 @@ class GeminiChatModel(ChatModelBase):
         thinking_config: dict | None = None,
         client_args: dict = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        save_messages: bool = False,
+        save_path: str | None = None,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -78,7 +80,7 @@ class GeminiChatModel(ChatModelBase):
                 "`pip install -q -U google-genai`",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(model_name, stream, save_messages, save_path)
 
         self.client = genai.Client(
             api_key=api_key,
@@ -167,11 +169,18 @@ class GeminiChatModel(ChatModelBase):
                 **kwargs,
             )
 
-            return self._parse_gemini_stream_generation_response(
-                start_datetime,
-                response,
-                structured_model,
-            )
+            async def _streaming_wrapper() -> AsyncGenerator[ChatResponse, None]:
+                final_resp: ChatResponse | None = None
+                async for chunk in self._parse_gemini_stream_generation_response(
+                    start_datetime, response, structured_model
+                ):
+                    final_resp = chunk
+                    yield chunk
+                if final_resp is not None:
+                    await self._save_messages_if_enabled(
+                        messages, final_resp, tools, tool_choice, stream=True
+                    )
+            return _streaming_wrapper()
 
         # non-streaming
         response = await self.client.aio.models.generate_content(
@@ -182,6 +191,10 @@ class GeminiChatModel(ChatModelBase):
             start_datetime,
             response,
             structured_model,
+        )
+
+        await self._save_messages_if_enabled(
+            messages, parsed_response, tools, tool_choice, stream=False
         )
 
         return parsed_response

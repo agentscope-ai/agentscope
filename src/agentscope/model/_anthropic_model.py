@@ -47,6 +47,8 @@ class AnthropicChatModel(ChatModelBase):
         thinking: dict | None = None,
         client_args: dict | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        save_messages: bool = False,
+        save_path: str | None = None,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -86,7 +88,7 @@ class AnthropicChatModel(ChatModelBase):
                 "`pip install anthropic`.",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(model_name, stream, save_messages, save_path)
 
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key,
@@ -214,11 +216,22 @@ class AnthropicChatModel(ChatModelBase):
         response = await self.client.messages.create(**kwargs)
 
         if self.stream:
-            return self._parse_anthropic_stream_completion_response(
-                start_datetime,
-                response,
-                structured_model,
-            )
+            # For streaming, we need to wrap the generator to save messages at the end
+            async def _streaming_wrapper():
+                final_response = None
+                async for chunk in self._parse_anthropic_stream_completion_response(
+                    start_datetime, response, structured_model
+                ):
+                    final_response = chunk
+                    yield chunk
+                
+                # Save messages after streaming is complete
+                if final_response:
+                    await self._save_messages_if_enabled(
+                        messages, final_response, tools, tool_choice, stream=True
+                    )
+            
+            return _streaming_wrapper()
 
         # Non-streaming response
         parsed_response = await self._parse_anthropic_completion_response(
@@ -306,6 +319,11 @@ class AnthropicChatModel(ChatModelBase):
             content=content_blocks,
             usage=usage,
             metadata=metadata,
+        )
+
+        # Save messages if enabled
+        await self._save_messages_if_enabled(
+            messages, parsed_response, tools, tool_choice, stream=False
         )
 
         return parsed_response
