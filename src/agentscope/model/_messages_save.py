@@ -58,18 +58,91 @@ class MessagesDataCollector:
         created if not present.
     enable_collection:
         Global switch to enable/disable writing.
+    normalize_for_hf:
+        Whether to normalize messages format for HuggingFace compatibility.
+        If True, converts list-based content to string format for pure text messages.
+        Default is True for better compatibility with HF tokenizers.
     """
 
     def __init__(
         self,
         output_path: str,
         enable_collection: bool = True,
+        normalize_for_hf: bool = True,
     ) -> None:
         self.output_path = output_path
         self.enable_collection = enable_collection
+        self.normalize_for_hf = normalize_for_hf
 
         # Ensure directory exists early to fail fast on permission issues
         os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
+
+    def _normalize_messages(self, messages: list[dict]) -> list[dict]:
+        """Normalize messages for HuggingFace compatibility.
+        
+        This method converts list-based content to string format for pure text messages,
+        making them compatible with HuggingFace tokenizers which expect string content.
+        
+        Args:
+            messages: List of message dictionaries to normalize
+            
+        Returns:
+            Normalized list of message dictionaries with string content for pure text
+            
+        Notes:
+            - Converts list content like [{"type": "text", "text": "Hi"}] to "Hi"
+            - Preserves other fields like tool_calls, reasoning_content
+            - Multi-modal content (with images/audio) is kept as-is
+            - Optionally removes the 'name' field for cleaner output
+        """
+        import copy
+        
+        normalized = []
+        for msg in messages:
+            # Deep copy to avoid modifying original
+            normalized_msg = copy.deepcopy(msg)
+            
+            content = normalized_msg.get("content")
+            
+            # Only process if content is a list
+            if isinstance(content, list):
+                # Extract all text content from the list
+                texts = []
+                has_non_text = False
+                
+                for item in content:
+                    if isinstance(item, dict):
+                        # Check for text content
+                        if item.get("type") == "text":
+                            text_val = item.get("text")
+                            if text_val is not None:
+                                texts.append(str(text_val))
+                        elif "text" in item:
+                            # DashScope format: {"text": "..."}
+                            text_val = item.get("text")
+                            if text_val is not None:
+                                texts.append(str(text_val))
+                        else:
+                            # Non-text content (image, audio, etc.)
+                            has_non_text = True
+                            break
+                
+                # Only convert to string if all items are text
+                if not has_non_text and texts:
+                    normalized_msg["content"] = "\n".join(texts)
+                elif not has_non_text and not texts:
+                    # Empty or all-None content
+                    normalized_msg["content"] = None
+                # else: keep as list (multi-modal content)
+            
+            # Optionally remove 'name' field for cleaner output
+            # Uncomment the next line if you want to remove it
+            # if "name" in normalized_msg:
+            #     del normalized_msg["name"]
+            
+            normalized.append(normalized_msg)
+        
+        return normalized
 
     async def collect(
         self,
@@ -82,9 +155,18 @@ class MessagesDataCollector:
         This function is async for ergonomic symmetry, but uses synchronous
         file IO for portability and simplicity (atomic append behavior on POSIX
         systems).
+        
+        Args:
+            messages: List of message dictionaries to save
+            tools: List of tool dictionaries, if any
+            metadata: Additional metadata to include in the record
         """
         if not self.enable_collection:
             return
+
+        # Normalize messages if enabled
+        if self.normalize_for_hf:
+            messages = self._normalize_messages(messages)
 
         record = MessagesRecord(
             messages=messages,
@@ -111,19 +193,27 @@ class MessagesSaveMixin:
         super().__init__(*args, **kwargs)
         self._messages_collector: MessagesDataCollector | None = None
 
-    def _setup_messages_save(self, save_messages: bool, save_path: str | None) -> None:
+    def _setup_messages_save(
+        self, 
+        save_messages: bool, 
+        save_path: str | None,
+    ) -> None:
         """Setup messages saving functionality.
         
         Args:
             save_messages: Whether to enable messages saving
             save_path: Path to save messages data (required if save_messages is True)
+            
+        Notes:
+            Messages are automatically normalized for HuggingFace compatibility.
         """
         if save_messages:
             if not save_path:
                 raise ValueError("save_path must be provided when save_messages is True")
             self._messages_collector = MessagesDataCollector(
                 output_path=save_path, 
-                enable_collection=True
+                enable_collection=True,
+                normalize_for_hf=True,  # Always enabled
             )
 
     def _build_complete_conversation(

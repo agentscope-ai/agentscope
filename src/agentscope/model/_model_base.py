@@ -36,18 +36,25 @@ class ChatModelBase:
                 Whether to save model conversations to file. Defaults to False.
             save_path (`str | None`, optional):
                 Path to save messages data. Required if save_messages is True.
+                
+        Notes:
+            Messages are automatically normalized for HuggingFace compatibility.
+            This converts list-based content to string format for pure text messages,
+            while preserving multi-modal content (images, audio, etc.) as lists.
         """
         self.model_name = model_name
         self.stream = stream
         
         # Setup messages saving if enabled
+        # Always normalize for HF compatibility (normalize_for_hf=True by default)
         if save_messages:
             if not save_path:
                 raise ValueError("save_path must be provided when save_messages is True")
             from ._messages_save import MessagesDataCollector
             self._messages_collector = MessagesDataCollector(
                 output_path=save_path, 
-                enable_collection=True
+                enable_collection=True,
+                normalize_for_hf=True,  # Always enabled for HF compatibility
             )
         else:
             self._messages_collector = None
