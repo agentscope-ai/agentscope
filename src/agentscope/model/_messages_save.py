@@ -91,6 +91,7 @@ class MessagesDataCollector:
             
         Notes:
             - Converts list content like [{"type": "text", "text": "Hi"}] to "Hi"
+            - Handles Gemini's "parts" field (converts to standard "content")
             - Preserves other fields like tool_calls, reasoning_content
             - Multi-modal content (with images/audio) is kept as-is
             - Optionally removes the 'name' field for cleaner output
@@ -102,6 +103,36 @@ class MessagesDataCollector:
             # Deep copy to avoid modifying original
             normalized_msg = copy.deepcopy(msg)
             
+            # Handle Gemini's "parts" field (convert to standard "content")
+            if "parts" in normalized_msg and "content" not in normalized_msg:
+                parts = normalized_msg.get("parts")
+                if parts and isinstance(parts, list):
+                    # Extract text from parts
+                    texts = []
+                    has_non_text = False
+                    
+                    for item in parts:
+                        if isinstance(item, dict):
+                            # Gemini format: {"text": "..."}
+                            if "text" in item:
+                                text_val = item.get("text")
+                                if text_val is not None:
+                                    texts.append(str(text_val))
+                            else:
+                                # Non-text content (function_call, function_response, etc.)
+                                has_non_text = True
+                                break
+                    
+                    # Convert parts to content (if pure text)
+                    if not has_non_text and texts:
+                        normalized_msg["content"] = "\n".join(texts)
+                        del normalized_msg["parts"]  # Remove parts field
+                    elif not has_non_text and not texts:
+                        normalized_msg["content"] = None
+                        del normalized_msg["parts"]
+                    # else: keep parts as-is (multi-modal or function calls)
+            
+            # Handle standard "content" field
             content = normalized_msg.get("content")
             
             # Only process if content is a list
@@ -118,7 +149,7 @@ class MessagesDataCollector:
                             if text_val is not None:
                                 texts.append(str(text_val))
                         elif "text" in item:
-                            # DashScope format: {"text": "..."}
+                            # DashScope/Gemini format: {"text": "..."}
                             text_val = item.get("text")
                             if text_val is not None:
                                 texts.append(str(text_val))
