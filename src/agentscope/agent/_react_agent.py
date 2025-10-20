@@ -98,6 +98,7 @@ class ReActAgent(ReActAgentBase):
         plan_notebook: PlanNotebook | None = None,
         print_hint_msg: bool = False,
         max_iters: int = 10,
+        agent_handle_tool_interruption: bool = True,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -155,6 +156,9 @@ class ReActAgent(ReActAgentBase):
                 the long-term memory and knowledge base(s).
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
+            agent_handle_tool_interruption (`bool`, defaults to `True`):
+                Whether let agent to handle the tool interruption or
+                directly break the ReAct loop in `reply`
         """
         super().__init__()
 
@@ -263,6 +267,8 @@ class ReActAgent(ReActAgentBase):
             finish_function_pre_print_hook,
         )
 
+        self.agent_handle_tool_interruption = agent_handle_tool_interruption
+
     @property
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
@@ -327,6 +333,14 @@ class ReActAgent(ReActAgentBase):
             # Find the first non-None replying message from the acting
             for acting_msg in acting_responses:
                 reply_msg = reply_msg or acting_msg
+                # raise when reply msg is with interruption
+                if (
+                    not self.agent_handle_tool_interruption
+                    and isinstance(reply_msg, Msg)
+                    and reply_msg.metadata
+                    and reply_msg.metadata.get("is_interrupted", False)
+                ):
+                    raise asyncio.CancelledError()
 
             if reply_msg:
                 break
@@ -494,6 +508,16 @@ class ReActAgent(ReActAgentBase):
                     )
                 ):
                     response_msg = chunk.metadata.get("response_msg")
+                elif (
+                    chunk.is_interrupted
+                    and not self.agent_handle_tool_interruption
+                ):
+                    # record interruption flag
+                    response_msg = tool_res_msg
+                    if response_msg.metadata is None:
+                        response_msg.metadata = {"is_interrupted": True}
+                    else:
+                        response_msg.metadata["is_interrupted"] = True
 
             return response_msg
 
