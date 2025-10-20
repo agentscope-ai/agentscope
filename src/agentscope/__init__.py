@@ -107,6 +107,15 @@ def init(
 
         setup_tracing(endpoint=endpoint)
 
+    # Optionally enable SFT collection globally when env is set
+    try:
+        from .sft import build_collector_from_env
+        from .model import ChatModelBase  # re-export type only
+        _ = build_collector_from_env  # avoid unused import in static analyzers
+    except Exception:
+        # SFT helpers are optional; ignore import errors in minimal builds
+        pass
+
 
 __all__ = [
     # modules

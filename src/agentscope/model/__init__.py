@@ -8,6 +8,7 @@ from ._openai_model import OpenAIChatModel
 from ._anthropic_model import AnthropicChatModel
 from ._ollama_model import OllamaChatModel
 from ._gemini_model import GeminiChatModel
+from ..sft import ChatModelSFTWrapper, wrap_model_with_sft
 
 __all__ = [
     "ChatModelBase",
@@ -17,4 +18,6 @@ __all__ = [
     "AnthropicChatModel",
     "OllamaChatModel",
     "GeminiChatModel",
+    "ChatModelSFTWrapper",
+    "wrap_model_with_sft",
 ]
