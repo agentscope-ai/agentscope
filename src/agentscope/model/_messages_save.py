@@ -62,6 +62,11 @@ class MessagesDataCollector:
         Whether to normalize messages format for HuggingFace compatibility.
         If True, converts list-based content to string format for pure text messages.
         Default is True for better compatibility with HF tokenizers.
+    convert_reasoning_to_tags:
+        Whether to convert reasoning_content to <think> tags format.
+        If False (default), keeps reasoning_content as a separate field for
+        downstream frameworks to handle. If True, converts to <think> tags. 
+        Default is False to preserve maximum flexibility.
     """
 
     def __init__(
@@ -69,10 +74,12 @@ class MessagesDataCollector:
         output_path: str,
         enable_collection: bool = True,
         normalize_for_hf: bool = True,
+        convert_reasoning_to_tags: bool = False,
     ) -> None:
         self.output_path = output_path
         self.enable_collection = enable_collection
         self.normalize_for_hf = normalize_for_hf
+        self.convert_reasoning_to_tags = convert_reasoning_to_tags
 
         # Ensure directory exists early to fail fast on permission issues
         os.makedirs(os.path.dirname(os.path.abspath(self.output_path)), exist_ok=True)
@@ -92,7 +99,8 @@ class MessagesDataCollector:
         Notes:
             - Converts list content like [{"type": "text", "text": "Hi"}] to "Hi"
             - Handles Gemini's "parts" field (converts to standard "content")
-            - Preserves other fields like tool_calls, reasoning_content
+            - Optionally converts reasoning_content to <think> tags (controlled by convert_reasoning_to_tags)
+            - Preserves other fields like tool_calls, reasoning_content (when not converted)
             - Multi-modal content (with images/audio) is kept as-is
             - Optionally removes the 'name' field for cleaner output
         """
@@ -166,6 +174,30 @@ class MessagesDataCollector:
                     normalized_msg["content"] = None
                 # else: keep as list (multi-modal content)
             
+            # Handle reasoning_content field
+            # Option 1 (default): Keep reasoning_content as separate field for downstream flexibility
+            # Option 2 (convert_reasoning_to_tags=True): Convert to <think> tags for LLaMA-Factory style
+            if "reasoning_content" in normalized_msg and normalized_msg.get("role") == "assistant":
+                if self.convert_reasoning_to_tags:
+                    # Convert to <think> tags format for direct training
+                    reasoning = normalized_msg.pop("reasoning_content")
+                    current_content = normalized_msg.get("content", "")
+                    
+                    # Build the formatted content with <think> tags
+                    if reasoning:
+                        # Ensure reasoning and content are strings
+                        reasoning_str = str(reasoning) if reasoning is not None else ""
+                        content_str = str(current_content) if current_content is not None else ""
+                        
+                        # Format: <think>\nreasoning\n</think>\ncontent
+                        # Note: We don't use <answer> tags to keep it simpler and more flexible
+                        if content_str:
+                            normalized_msg["content"] = f"<think>\n{reasoning_str}\n</think>\n{content_str}"
+                        else:
+                            # If no final content, just wrap reasoning
+                            normalized_msg["content"] = f"<think>\n{reasoning_str}\n</think>"
+                # else: keep reasoning_content as-is for downstream processing
+            
             # Optionally remove 'name' field for cleaner output
             # Uncomment the next line if you want to remove it
             # if "name" in normalized_msg:
@@ -228,12 +260,15 @@ class MessagesSaveMixin:
         self, 
         save_messages: bool, 
         save_path: str | None,
+        convert_reasoning_to_tags: bool = False,
     ) -> None:
         """Setup messages saving functionality.
         
         Args:
             save_messages: Whether to enable messages saving
             save_path: Path to save messages data (required if save_messages is True)
+            convert_reasoning_to_tags: Whether to convert reasoning_content to <think> tags.
+                Default False preserves reasoning_content field for downstream processing.
             
         Notes:
             Messages are automatically normalized for HuggingFace compatibility.
@@ -245,6 +280,7 @@ class MessagesSaveMixin:
                 output_path=save_path, 
                 enable_collection=True,
                 normalize_for_hf=True,  # Always enabled
+                convert_reasoning_to_tags=convert_reasoning_to_tags,
             )
 
     def _build_complete_conversation(
