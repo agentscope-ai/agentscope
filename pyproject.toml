@@ -67,6 +67,7 @@ dev = [
     "furo",
     "myst_parser",
     "matplotlib",
+    "pymilvus[milvus_lite]",
 ]
 
 [project.urls]
