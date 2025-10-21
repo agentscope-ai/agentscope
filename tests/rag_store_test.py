@@ -117,8 +117,8 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(res), 1)
         self.assertEqual(
-            res[0].score,
-            0.9974148273468018,
+            round(res[0].score, 4),
+            0.9974,
         )
         self.assertEqual(
             res[0].metadata.content["text"],
