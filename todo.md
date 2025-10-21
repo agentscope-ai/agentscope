@@ -63,6 +63,24 @@
 - [x] Schema 等价契约测试（tests/search/test_search_schema_contracts.py）
 - [ ] search_google（同页/无持久化约束下受 consent/反爬阻断，详见“已知阻塞”）
 
+### Search Agent（基于 SubAgentBase）
+
+目标：实现 `SearchAgent(SubAgentBase)`，允许在子代理内部仅使用搜索工具（bing/sogou/github/wiki）完成检索；对外作为“子代理工具”暴露时，仍遵守默认 JSON Schema `{task_summary}`。提供一个仅装配该子代理的 Host，用以端到端验证“Host → 子代理 → 搜索工具 → 返回结果”的完整链路。
+
+实施步骤
+1. 代码位置：`src/agentscope/agent/_search_agent.py`
+   - 定义 `class SearchAgent(SubAgentBase)`；在构造时创建独立 `Toolkit()` 并通过 `_hydrate_toolkit` 克隆并仅注册搜索工具（allowlist：`search_bing`、`search_sogou`、`search_github`、`search_wiki`；`search_google` 暂不包含）。
+   - 继承骨架约束：关闭对外流（console/msg queue 禁用），不修改 metadata，使用受控短期 memory（ephemeral）。
+2. 行为：
+   - `reply(...)` 中由模型产出的 `ToolUseBlock` 触发相应搜索工具调用，聚合工具结果为最终 `Msg`；`delegate(...)` 仍仅返回单个 `ToolResponse`（content 为文本），不写 `metadata`。
+3. Host 装配示例（测试内实现即可）：
+   - 使用 `ReActAgent` 作为 Host，`toolkit=Toolkit()`，不直接注册搜索工具。
+   - 通过 `make_subagent_tool(SearchAgent, spec)` 生成“子代理工具”，再用 `host.toolkit.register_tool_function(...)` 注册；此处开放全部搜索工具（`search_bing`、`search_sogou`、`search_github`、`search_wiki`）
+   满足 Toolkit.register_tool_function(make_subagent_tool(...)) 注册子代理工具 → Host/_acting 选择该子代理 → 包装器调用 SubAgentBase.export_agent → delegate → 返回单个 ToolResponse的要求(具体查看 docs/agent/SOP.md)。
+   - 使用静态/桩模型让 Host 生成包含该“子代理工具”名的 `ToolUseBlock`，从而在 `_acting` 内委派给 Search 子代理。
+4. 触发与输出：
+   - 发送用户消息（如“who is speed”）；打印 Host 返回的原样文本；调用SubAgent,然后SubAgent 会调用多个Tool来交叉验证搜索结果给出最棒的回复。
+
 不变量（验收）
 - JSON Schema 字段集合等价于 `{query}`；无额外字段/默认值。
 - `ToolResponse.content` 非空且为纯文本列表（title/url/snippet）；不触碰 `metadata`。
@@ -132,6 +150,9 @@
 
 不变量（验收）
 - schema 不暴露 `service`/句柄；content 非空；写操作仅在受控前缀；禁止原始 OS 文本 I/O。
+- FsHandle.describe_grants_markdown 渲染多前缀行。
+- FileDomainService.describe_permissions_markdown 与 handle 输出一致。
+- fs_describe_permissions_markdown 工具经 Toolkit 返回相同文本。
 
 ---
 

@@ -18,7 +18,7 @@ The agent module provides the core building blocks for creating and managing age
 ### Advanced Features
 - **`_agent_meta.py`** - Meta-programming capabilities for agent construction
 - **`_react_agent_base.py`** - Base ReAct agent functionality
-- **`_subagent_base.py`** - Delegation skeleton derived from `AgentBase`; injects shared resources, enforces filesystem namespace, loads delegation context, wraps errors.
+- **`_subagent_base.py`** - Delegation skeleton derived from `AgentBase`; injects shared resources, enforces filesystem namespace, loads delegation context, wraps errors; owns a fresh `Toolkit` and supports bulk registration of provided tools.
 - **`_subagent_tool.py`** - Factory helpers (`make_subagent_tool`, specs) that expose `SubAgentBase` subclasses as Toolkit tool functions.
 
 ## Dependencies
@@ -42,12 +42,12 @@ from agentscope.agent import AgentBase, ReActAgent, UserAgent
 
 ## SubAgent Skeleton (Framework Scope)
 
-- Responsibility: Provide a minimal `AgentBase` derivative that can be treated as a Toolkit tool while staying free of business logic. Shared resources (logger, tracing, filesystem, session, long-term memory) are injected during `export_agent`; filesystem access is restricted to `/workspace/subagents/<name>/`; short-term state, toolkit (allowlist clone), and hooks remain isolated per call.
+- Responsibility: Provide a minimal `AgentBase` derivative that can be treated as a Toolkit tool while staying free of business logic. Shared resources (logger, tracing, filesystem, session, long-term memory) are injected during `export_agent`; filesystem access is restricted to `/workspace/subagents/<name>/`; short-term state, a self‑owned toolkit (bulk‑registered from a provided tool list), and hooks remain isolated per call.
 - Key Methods:
-  - `SubAgentBase.export_agent(permissions, parent_context, task, *, delegation_context, run_healthcheck=False, tools_allowlist=None, host_toolkit=None)` → fresh subagent instance; only runs `healthcheck()` when explicitly requested (registration stage).
+  - `SubAgentBase.export_agent(permissions, parent_context, task, *, delegation_context, run_healthcheck=False, tools=None)` → fresh subagent instance; only runs `healthcheck()` when explicitly requested (registration stage). Tools are bulk‑registered into a fresh, self‑owned Toolkit.
   - `SubAgentBase._pre_context_compress(parent_context, task)` → normalized `DelegationContext` payload produced by the host before delegation.
   - `SubAgentBase.delegate(task_summary, delegation_context, **kwargs)` → loads delegation context, calls the subclass `reply`, folds outputs into a single `ToolResponse` with `is_last=True`, wraps failures using `metadata["unavailable"]=True` and audit fields (`subagent`, `supervisor`).
-  - `make_subagent_tool(cls, spec, tool_name)` → registers subagent tool functions; runs health check once at registration, clones allowlisted tools, injects permissions/context before each call.
+  - `make_subagent_tool(cls, spec, tool_name)` → registers subagent tool functions; runs health check once at registration, bulk‑registers `spec.tools` (if provided), injects permissions/context before each call.
 - Invariants: no live streaming toward parent queues, no implicit access to host toolkit or hooks, exceptions never leak raw stack traces.
 - Call Path: `ReActAgent._acting` (detect tool name) → `make_subagent_tool` wrapper → `SubAgentBase.export_agent(..., delegation_context=host_summary)` → `delegate` → `ToolResponse`.
 

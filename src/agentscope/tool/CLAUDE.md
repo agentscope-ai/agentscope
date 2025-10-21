@@ -1,63 +1,32 @@
-# Tool Module
+Module: `src/agentscope/tool/`
+Responsibility: Tool registry, execution engine, and MCP integration framework
+Key Functions/Methods
+- `Toolkit.register_tool_function(func, group_name="basic", name=None, description=None, presets=None) → None`
+  - Purpose: Register tool functions with schema inference and MCP integration
+  - Inputs: Function to register, optional group and metadata
+  - Returns: None
+  - Side-effects: Updates internal registry; generates JSON schema for function inputs/outputs
+  - References: `src/agentscope/tool/_toolkit.py:125`
+  - Type Safety: Param `func` has type hints; schemas preserve function signature types
 
-**Location:** `src/agentscope/tool/`
-**Parent:** [Project Root](../CLAUDE.md)
+- `Toolkit.call_tool_function(tool_call) → ToolResponse`
+  - Purpose: Execute tool calls with comprehensive safety and debugging support
+  - Inputs: `tool_call dict` with name, arguments, call_id
+  - Returns: `ToolResponse` with name, call_id, result, is_last flag
+  - Side-effects: May call external APIs, execute code, or perform I/O operations
+  - Errors: Raises `ToolExecutionError` for execution failures
+  - Type Safety: Input validated against registered schemas; structured outputs typed
 
-## Overview
+- `make_mcp_tool(server_name, tool_name, description=None) → Callable`
+  - Purpose: Create callable tool functions from MCP servers
+  - References: `src/agentscope/tool/_mcp_tool.py:78`
 
-The tool module provides a comprehensive framework for tool management, execution, and integration with agents.
+Call Graph
+- `ReActAgent._acting` → `Toolkit.call_tool_function` → tool execution → `ToolResponse` → agent memory update
 
-## Key Files
+## Testing Strategy
+- Unit tests: `tests/tool/test_toolkit.py`, `test_registered_tool_function.py`
+- Integration: Cross-module tool chains testing
+- Edge cases: Security boundary violations, resource cleanup, error propagation
 
-### Core Components
-- **Toolkit class** - Central registry for tool functions
-- **Execution engine** - Safe and controlled tool invocation
-- **MCP integration** - Model Context Protocol support
-
-### Advanced Capabilities
-- **Agentic tools management** - Tools that can manage other tools
-- **Meta tool support** - Tools that provide capabilities for tool management
-
-## Features
-
-### Tool Control
-- **Sync/async tool functions** - Flexible execution modes
-- **Streaming support** - Real-time tool execution handling
-- **Post-processing** - Results manipulation and formatting
-- **User interruption** - Configurable tool execution interruption handling
-
-### Tool Types
-- **Basic tools** - Simple function wrappers
-- **Complex tools** - Multi-step tool chains
-- **MCP tools** - External tool integration via MCP protocol
-
-## Usage Examples
-
-```python
-from agentscope.tool import Toolkit, execute_python_code, execute_shell_command
-
-# Create toolkit and register tools
-toolkit = Toolkit()
-toolkit.register_tool_function(execute_python_code)
-toolkit.register_tool_function(execute_shell_command)
-```
-
-## Dependencies
-
-- **MCP client** (`src/agentscope/mcp/`)
-
-### Fine-Grained Control
-"Developers can obtain the MCP tool as a **local callable function**, and use it anywhere (e.g. call directly, pass to agent, wrap into more complex tools)
-
-## ⚙️ Configuration
-
-Tool execution parameters and security settings for safe operation in multi-agent environments.
-
-## 🔗 Related Modules
-
-- **[Agent Framework](../agent/CLAUDE.md)**
-- **[MCP Integration](../mcp/CLAUDE.md)**
-
----
-
-[Back to Project Root](../CLAUDE.md)
+## Related SOP: `docs/tool/SOP.md`

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING, TypedDict, Callable
 
 from .._logging import logger
 from ..filesystem._base import FileSystemBase
@@ -93,6 +93,14 @@ class SubAgentUnavailable(RuntimeError):
     """Raised when the subagent skeleton cannot be exported."""
 
 
+class ToolSpec(TypedDict, total=False):
+    func: Callable[..., Any]
+    group: str
+    preset_kwargs: dict[str, Any]
+    func_description: str
+    json_schema: dict[str, Any]
+
+
 class SubAgentBase(AgentBase):
     """Skeleton agent dedicated to delegation-as-tool flows."""
 
@@ -105,8 +113,7 @@ class SubAgentBase(AgentBase):
         spec_name: str,
         toolkit: "Toolkit" | None = None,
         memory: "MemoryBase" | None = None,
-        host_toolkit: "Toolkit" | None = None,
-        tools_allowlist: list[str] | None = None,
+        tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
         ephemeral_memory: bool = True,
     ) -> None:
@@ -117,13 +124,9 @@ class SubAgentBase(AgentBase):
         self.model_override = model_override
         if toolkit is None:
             from ..tool import Toolkit as _Toolkit
-
             toolkit = _Toolkit()
-            self._hydrate_toolkit(
-                toolkit,
-                host_toolkit,
-                tools_allowlist,
-            )
+            if tools:
+                self._hydrate_toolkit(toolkit, tools)
         self.toolkit = toolkit
         if memory is None:
             from ..memory._in_memory_memory import InMemoryMemory
@@ -170,27 +173,23 @@ class SubAgentBase(AgentBase):
     def _hydrate_toolkit(
         self,
         toolkit: "Toolkit",
-        host_toolkit: "Toolkit" | None,
-        tools_allowlist: list[str] | None,
+        tools: list[Callable[..., Any] | ToolSpec],
     ) -> None:
-        """Populate the subagent toolkit according to the allowlist."""
-        if not host_toolkit or not tools_allowlist:
-            return
-
-        for tool_name in tools_allowlist:
-            registered = host_toolkit.tools.get(tool_name)
-            if not registered:
-                continue
-            toolkit.register_tool_function(
-                registered.original_func,
-                group_name=registered.group,
-                preset_kwargs=dict(registered.preset_kwargs),
-                func_description=registered.json_schema["function"].get(
-                    "description",
-                    "",
-                ),
-                json_schema=registered.json_schema,
-            )
+        """Batch-register provided tools into the subagent's own Toolkit."""
+        for entry in tools:
+            if callable(entry):
+                toolkit.register_tool_function(entry)
+            else:
+                func = entry.get("func")
+                if not callable(func):
+                    continue
+                toolkit.register_tool_function(
+                    func,  # type: ignore[arg-type]
+                    group_name=entry.get("group", "basic"),
+                    preset_kwargs=dict(entry.get("preset_kwargs", {})),
+                    func_description=entry.get("func_description", ""),
+                    json_schema=entry.get("json_schema"),
+                )
 
     @classmethod
     def _pre_context_compress(
@@ -225,9 +224,8 @@ class SubAgentBase(AgentBase):
         task: str,
         spec_name: str,
         ephemeral_memory: bool = True,
-        tools_allowlist: list[str] | None = None,
+        tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
-        host_toolkit: "Toolkit" | None = None,
         delegation_context: DelegationContext | None = None,
         run_healthcheck: bool = False,
     ) -> "SubAgentBase":
@@ -236,8 +234,7 @@ class SubAgentBase(AgentBase):
         instance = cls(
             permissions=permissions,
             spec_name=spec_name,
-            host_toolkit=host_toolkit,
-            tools_allowlist=tools_allowlist,
+            tools=tools,
             model_override=model_override,
             ephemeral_memory=ephemeral_memory,
         )

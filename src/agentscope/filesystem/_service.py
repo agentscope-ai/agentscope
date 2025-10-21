@@ -209,3 +209,12 @@ class FileDomainService:
         if domain == INTERNAL_PREFIX and not self._policy.allow_delete_internal:
             raise AccessDeniedError(path, "delete")
         self._handle.delete(path)
+
+    # ------------------------- diagnostics (optional) ------------------------
+    def describe_permissions_markdown(self) -> str:
+        """Return a human-readable markdown summary of this handle's grants.
+
+        Intended for agent diagnostics or logging; not registered as a tool
+        by default.
+        """
+        return self._handle.describe_grants_markdown()

@@ -8,7 +8,6 @@ from typing import Any, Awaitable, Callable, TYPE_CHECKING
 
 from .._logging import logger
 from ..message import Msg, TextBlock
-from ..model import ChatModelBase
 from ..types import ToolFunction
 from ._agent_base import AgentBase
 from ._subagent_base import (
@@ -25,16 +24,16 @@ if TYPE_CHECKING:  # pragma: no cover
 
 @dataclass(slots=True)
 class SubAgentSpec:
-    """Declarative configuration for a subagent registration."""
+    """Minimal declarative config for subagent registration.
+
+    Only two concerns remain by design:
+    - name: the outward tool name registered on the host Toolkit
+    - tools: the internal tool functions to batch-register into the subagent's
+      own Toolkit (not visible to the model)
+    """
 
     name: str
-    description: str
-    tools_allowlist: list[str] | None = None
-    model_override: ChatModelBase | None = None
-    tags: list[str] | None = None
-    healthcheck: Callable[[], Awaitable[bool]] | None = None
-    group_name: str = "subagents"
-    json_schema: dict[str, Any] | None = None
+    tools: list[Callable[..., Any]] | None = None
 
 
 async def make_subagent_tool(
@@ -59,30 +58,21 @@ async def make_subagent_tool(
 
     initial_permissions = permissions_builder()
 
+    # New contract: no external healthcheck; attempt a lightweight export
+    # (with run_healthcheck=False) only to validate construction path.
     try:
         await cls.export_agent(
             permissions=initial_permissions,
             parent_context=context_snapshot,
-            task="registration-healthcheck",
+            task="registration-probe",
             spec_name=spec.name,
             ephemeral_memory=ephemeral_memory,
-            tools_allowlist=spec.tools_allowlist,
-            model_override=spec.model_override,
-            host_toolkit=getattr(host, "toolkit", None),
+            tools=spec.tools,
             delegation_context=None,
-            run_healthcheck=True,
+            run_healthcheck=False,
         )
-    except SubAgentUnavailable:
-        raise
     except Exception as error:  # pylint: disable=broad-except
         raise SubAgentUnavailable(str(error)) from error
-
-    if spec.healthcheck is not None:
-        ok = await _ensure_async(spec.healthcheck)
-        if not ok:
-            raise SubAgentUnavailable(
-                f"Spec healthcheck rejected subagent `{spec.name}`.",
-            )
 
     async def _invoke_subagent(
         task_summary: str,
@@ -110,9 +100,7 @@ async def make_subagent_tool(
                 task=task_summary,
                 spec_name=_spec.name,
                 ephemeral_memory=_ephemeral_memory,
-                tools_allowlist=_spec.tools_allowlist,
-                model_override=_spec.model_override,
-                host_toolkit=getattr(_host, "toolkit", None),
+                tools=_spec.tools,
                 delegation_context=delegation_context,
                 run_healthcheck=False,
             )
@@ -144,16 +132,14 @@ async def make_subagent_tool(
             delegation_context=delegation_context,
         )
 
-    json_schema = spec.json_schema or _build_default_schema(
-        resolved_name,
-        spec.description,
-    )
+    # Outward schema is always the minimal {task_summary}; description empty.
+    json_schema = _build_default_schema(resolved_name, "")
 
     register_kwargs = {
-        "func_description": spec.description,
+        "func_description": "",
         "json_schema": json_schema,
         "preset_kwargs": {},
-        "group_name": spec.group_name,
+        "group_name": "subagents",
     }
 
     _invoke_subagent.__name__ = resolved_name
