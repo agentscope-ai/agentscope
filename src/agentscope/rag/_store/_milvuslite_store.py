@@ -64,7 +64,7 @@ class MilvusLiteStore(VDBStoreBase):
         except ImportError as e:
             raise ImportError(
                 "Milvus client is not installed. Please install it with "
-                "`pip install pymilvus`.",
+                "`pip install pymilvus[milvus_lite]`.",
             ) from e
 
         client_kwargs = client_kwargs or {}

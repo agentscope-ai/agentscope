@@ -59,6 +59,7 @@ dev_requires = [
     "furo",
     "myst_parser",
     "matplotlib",
+    "pymilvus[milvus_lite]",
 ]
 
 with open("README.md", "r", encoding="UTF-8") as fh:
