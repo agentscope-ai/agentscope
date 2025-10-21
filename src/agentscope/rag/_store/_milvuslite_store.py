@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """The Milvus Lite vector store implementation."""
+import json
 from typing import Any, Literal, TYPE_CHECKING
 
 from .._reader import Document
 from ._store_base import VDBStoreBase
 from .._document import DocMetadata
 
-# from ..._utils._common import _map_text_to_uuid
+from ..._utils._common import _map_text_to_uuid
 from ...types import Embedding
 
 if TYPE_CHECKING:
@@ -27,29 +28,29 @@ class MilvusLiteStore(VDBStoreBase):
 
     def __init__(
         self,
-        uri: str = "./milvus_demo.db",
-        collection_name: str = "demo_collection",
-        dimensions: int = 768,
+        uri: str,
+        collection_name: str,
+        dimensions: int,
         distance: Literal["COSINE", "L2", "IP"] = "COSINE",
-        token: str | None = None,
+        token: str = "",
         client_kwargs: dict[str, Any] | None = None,
         collection_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Milvus Lite vector store.
 
         Args:
-            uri (`str`, default to "./milvus_demo.db"):
+            uri (`str`):
                 The URI of the Milvus instance. For Milvus Lite, use a local
                 file path like "./milvus_demo.db". For remote Milvus server,
                 use URI like "http://localhost:19530".
-            collection_name (`str`, default to "demo_collection"):
+            collection_name (`str`):
                 The name of the collection to store the embeddings.
-            dimensions (`int`, default to 768):
+            dimensions (`int`):
                 The dimension of the embeddings.
             distance (`Literal["COSINE", "L2", "IP"]`, default to "COSINE"):
                 The distance metric to use for the collection. Can be one of
                 "COSINE", "L2", or "IP". Defaults to "COSINE".
-            token (`str | None`, optional):
+            token (`str`, defaults to ""):
                 The token for authentication when connecting to remote Milvus.
                 Format: "username:password". Not needed for Milvus Lite.
             client_kwargs (`dict[str, Any] | None`, optional):
@@ -70,7 +71,7 @@ class MilvusLiteStore(VDBStoreBase):
 
         # Initialize MilvusClient with uri and optional token
         init_params = {"uri": uri, **client_kwargs}
-        if token is not None:
+        if token:
             init_params["token"] = token
 
         self._client = MilvusClient(**init_params)
@@ -85,12 +86,14 @@ class MilvusLiteStore(VDBStoreBase):
         if not self._client.has_collection(self.collection_name):
             # Create collection with the new MilvusClient API
             # By default, it creates an auto-incrementing integer ID field
-            self._client.create_collection(
-                collection_name=self.collection_name,
-                dimension=self.dimensions,
-                metric_type=self.distance,
+            kwargs = {
+                "collection_name": self.collection_name,
+                "dimension": self.dimensions,
+                "metric_type": self.distance,
                 **self.collection_kwargs,
-            )
+            }
+
+            self._client.create_collection(**kwargs)
 
     async def add(self, documents: list[Document], **kwargs: Any) -> None:
         """Add embeddings to the Milvus vector store.
@@ -107,19 +110,31 @@ class MilvusLiteStore(VDBStoreBase):
         data = []
         for doc in documents:
             # Generate a unique integer ID based on hash
-            # Use hash of doc_id + chunk_id to create a stable integer ID
-            id_str = f"{doc.metadata.doc_id}_{doc.metadata.chunk_id}"
-            unique_id = abs(hash(id_str)) % (
-                10**10
-            )  # Keep it within reasonable range
+            unique_string = json.dumps(
+                {
+                    "doc_id": doc.metadata.doc_id,
+                    "chunk_id": doc.metadata.chunk_id,
+                    "content": doc.metadata.content,
+                },
+                ensure_ascii=False,
+            )
+
+            id_type = self.collection_kwargs.get("id_type", "int")
+            if id_type == "string":
+                unique_id = _map_text_to_uuid(unique_string)[:6]
+            else:
+                unique_id = abs(hash(unique_string)) % (10**10)
 
             # Prepare data entry with vector and metadata
             entry = {
+                # Fixed fields for Milvus
                 "id": unique_id,
                 "vector": doc.embedding,
+                # fields that will be returned in the "entity" field during
+                #  search
                 "doc_id": doc.metadata.doc_id,
                 "chunk_id": doc.metadata.chunk_id,
-                "content": str(doc.metadata.content),
+                "content": doc.metadata.content,
                 "total_chunks": doc.metadata.total_chunks,
             }
             data.append(entry)
@@ -151,22 +166,22 @@ class MilvusLiteStore(VDBStoreBase):
                 - filter (`str`): Expression to filter the search results.
                 - output_fields (`list[str]`): Fields to include in results.
         """
-        # Get filter expression if specified
-        filter_expr = kwargs.get("filter", None)
 
         # Get output fields if specified
-        output_fields = kwargs.get(
-            "output_fields",
-            ["doc_id", "chunk_id", "content", "total_chunks"],
-        )
+        if "output_fields" not in kwargs:
+            kwargs["output_fields"] = [
+                "doc_id",
+                "chunk_id",
+                "content",
+                "total_chunks",
+            ]
 
         # Execute search using MilvusClient
         results = self._client.search(
             collection_name=self.collection_name,
             data=[query_embedding],
             limit=limit,
-            filter=filter_expr,
-            output_fields=output_fields,
+            **kwargs,
         )
 
         # Process results
@@ -182,10 +197,9 @@ class MilvusLiteStore(VDBStoreBase):
 
                 # Get metadata from entity
                 entity = hit["entity"]
-                from ...message import TextBlock
 
                 doc_metadata = DocMetadata(
-                    content=TextBlock(text=entity.get("content", "")),
+                    content=entity.get("content", ""),
                     doc_id=entity.get("doc_id", ""),
                     chunk_id=entity.get("chunk_id", 0),
                     total_chunks=entity.get("total_chunks", 0),
@@ -205,7 +219,7 @@ class MilvusLiteStore(VDBStoreBase):
     async def delete(
         self,
         ids: list[str] | None = None,
-        filter_expr: str | None = None,
+        filter: str | None = None,  # pylint: disable=redefined-builtin
         **kwargs: Any,
     ) -> None:
         """Delete documents from the Milvus vector store.
@@ -213,12 +227,12 @@ class MilvusLiteStore(VDBStoreBase):
         Args:
             ids (`list[str] | None`, optional):
                 List of entity IDs to delete.
-            filter_expr (`str | None`, optional):
+            filter (`str | None`, optional):
                 Expression to filter documents to delete.
             **kwargs (`Any`):
                 Additional arguments for the delete operation.
         """
-        if ids is None and filter_expr is None:
+        if ids is None and filter is None:
             raise ValueError(
                 "Either ids or filter_expr must be provided for deletion.",
             )
@@ -227,7 +241,7 @@ class MilvusLiteStore(VDBStoreBase):
         self._client.delete(
             collection_name=self.collection_name,
             ids=ids,
-            filter=filter_expr,
+            filter=filter,
         )
 
     def get_client(self) -> MilvusClient:

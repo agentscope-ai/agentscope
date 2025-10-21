@@ -1,21 +1,12 @@
 # -*- coding: utf-8 -*-
 """Example of using MilvusLiteStore in AgentScope RAG system."""
 import asyncio
-import sys
-from pathlib import Path
-
-# Add the src directory to sys.path to import from local development code
-src_path = Path(__file__).resolve().parent.parent.parent.parent / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
-
-# pylint: disable=wrong-import-position
-from agentscope.rag import (  # noqa: E402
+from agentscope.rag import (
     MilvusLiteStore,
     Document,
     DocMetadata,
 )
-from agentscope.message import TextBlock  # noqa: E402
+from agentscope.message import TextBlock
 
 
 async def example_basic_operations() -> None:
@@ -94,7 +85,7 @@ async def example_basic_operations() -> None:
 
     # Test delete operation
     # Note: We need to use filter expression to delete by doc_id
-    await store.delete(filter_expr='doc_id == "doc_2"')
+    await store.delete(filter='doc_id == "doc_2"')
     print("\n✓ Deleted document with doc_id='doc_2'")
 
     # Verify deletion
