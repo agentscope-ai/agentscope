@@ -9,6 +9,7 @@ import asyncio
 import os
 
 from dotenv import load_dotenv
+from mem0.vector_stores.configs import VectorStoreConfig
 
 from agentscope.memory import Mem0LongTermMemory
 from agentscope.agent import ReActAgent
@@ -18,6 +19,7 @@ from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
+
 
 load_dotenv()
 
@@ -34,10 +36,18 @@ async def main() -> None:
             stream=False,
         ),
         embedding_model=DashScopeTextEmbedding(
-            model_name="text-embedding-v2",
+            model_name="text-embedding-v3",
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            dimensions=1024,
         ),
-        on_disk=False,
+        vector_store_config=VectorStoreConfig(
+            provider="qdrant",
+            config={
+                "on_disk": True,
+                "path": "../memory/qdrant_data",  # Specify custom path
+                "embedding_model_dims": 1024,
+            },
+        ),
     )
 
     print("=== Long Term Memory Examples with mem0 ===\n")
