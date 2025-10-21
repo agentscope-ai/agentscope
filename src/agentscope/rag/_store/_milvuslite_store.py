@@ -24,6 +24,8 @@ class MilvusLiteStore(VDBStoreBase):
     including the document ID, chunk ID, and original content. The new
     MilvusClient API is used for simplified operations.
 
+    .. note:: Milvus Lite is not supported on Windows OS for now (2025-10-21).
+
     """
 
     def __init__(
