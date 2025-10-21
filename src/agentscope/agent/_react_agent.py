@@ -717,7 +717,8 @@ class ReActAgent(ReActAgentBase):
                 # retrieve the user input query
                 docs.extend(
                     await kb.retrieve(
-                        query=query, search_filter=self.knowledge_filter
+                        query=query,
+                        search_filter=self.knowledge_filter,
                     ),
                 )
             if docs:

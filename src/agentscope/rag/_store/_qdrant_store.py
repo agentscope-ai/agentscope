@@ -146,7 +146,7 @@ class QdrantStore(VDBStoreBase):
             query=query_embedding,
             limit=limit,
             score_threshold=score_threshold,
-            query_filter=self._format_filters(self, filter),
+            query_filter=self._format_filters(filter),
             **kwargs,
         )
 
@@ -178,7 +178,8 @@ class QdrantStore(VDBStoreBase):
         return self._client
 
     def _format_filters(
-        self, filters: Optional[Dict[str, Any]]
+        self,
+        filters: Optional[Dict[str, Any]],
     ) -> Optional[models.Filter]:
         if filters:
             filter_conditions = []
