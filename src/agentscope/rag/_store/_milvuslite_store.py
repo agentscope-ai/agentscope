@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The Milvus Lite vector store implementation."""
 import json
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Dict, Literal, TYPE_CHECKING, Optional
 
 from .._reader import Document
 from ._store_base import VDBStoreBase
@@ -152,6 +152,7 @@ class MilvusLiteStore(VDBStoreBase):
         query_embedding: Embedding,
         limit: int,
         score_threshold: float | None = None,
+        filter: dict | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Search relevant documents from the Milvus vector store.
@@ -163,6 +164,8 @@ class MilvusLiteStore(VDBStoreBase):
                 The number of relevant documents to retrieve.
             score_threshold (`float | None`, optional):
                 The threshold of the score to filter the results.
+            filter (`dict | None`, optional):
+                The filter to apply when searching the vector database.
             **kwargs (`Any`):
                 Additional arguments for the Milvus client search API.
                 - filter (`str`): Expression to filter the search results.
@@ -183,6 +186,7 @@ class MilvusLiteStore(VDBStoreBase):
             collection_name=self.collection_name,
             data=[query_embedding],
             limit=limit,
+            filter=self._build_expr(filter),
             **kwargs,
         )
 
@@ -255,3 +259,36 @@ class MilvusLiteStore(VDBStoreBase):
                 The underlying Milvus client.
         """
         return self._client
+
+    def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Build Milvus expression from filters."""
+        if not filters:
+            return None
+
+        expressions = []
+        for k, v in filters.items():
+            if isinstance(v, (list, tuple)):
+                # For array values, use json_contains_any
+                values_str = json.dumps(v)
+                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+            elif isinstance(v, str):
+                # For string values
+                expr = f'meta_data["{k}"] == "{v}"'
+            elif isinstance(v, bool):
+                # For boolean values
+                expr = f'meta_data["{k}"] == {str(v).lower()}'
+            elif isinstance(v, (int, float)):
+                # For numeric values
+                expr = f'meta_data["{k}"] == {v}'
+            elif v is None:
+                # For null values
+                expr = f'meta_data["{k}"] is null'
+            else:
+                # For other types, convert to string
+                expr = f'meta_data["{k}"] == "{str(v)}"'
+
+            expressions.append(expr)
+
+        if expressions:
+            return " and ".join(expressions)
+        return None
