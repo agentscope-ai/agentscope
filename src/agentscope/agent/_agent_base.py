@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent base class in agentscope."""
 import asyncio
+import io
 import json
 from asyncio import Task, Queue
 from collections import OrderedDict
@@ -267,8 +268,33 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             )
 
         if audio_block["source"]["type"] == "url":
-            # TODO: maybe download and play the audio from the URL?
-            print(json.dumps(audio_block, indent=4, ensure_ascii=False))
+            import urllib.request
+            import wave
+            import sounddevice as sd
+
+            url = audio_block["source"]["url"]
+            try:
+                with urllib.request.urlopen(url) as response:
+                    audio_data = response.read()
+
+                with wave.open(io.BytesIO(audio_data), "rb") as wf:
+                    samplerate = wf.getframerate()
+                    n_frames = wf.getnframes()
+                    audio_frames = wf.readframes(n_frames)
+
+                    # Convert byte data to numpy array
+                    audio_np = np.frombuffer(audio_frames, dtype=np.int16)
+
+                    # Play audio
+                    sd.play(audio_np, samplerate)
+                    sd.wait()
+
+            except Exception as e:
+                logger.error(
+                    "Failed to play audio from url %s: %s",
+                    url,
+                    str(e),
+                )
 
         elif audio_block["source"]["type"] == "base64":
             data = audio_block["source"]["data"]

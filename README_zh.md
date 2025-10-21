@@ -129,6 +129,7 @@ AgentScope v1.0 新功能概览:
 - [🚀 快速开始](#-%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B)
   - [💻 安装](#-%E5%AE%89%E8%A3%85)
     - [🛠️ 从源码安装](#-%E4%BB%8E%E6%BA%90%E7%A0%81%E5%AE%89%E8%A3%85)
+    - [🔄 使用 uv 安装（推荐，安装更快）](#-%E4%BD%BF%E7%94%A8-uv-%E5%AE%89%E8%A3%85%E6%8E%A8%E8%8D%90%E5%AE%89%E8%A3%85%E6%9B%B4%E5%BF%AB)
     - [📦 从PyPi安装](#-%E4%BB%8Epypi%E5%AE%89%E8%A3%85)
 - [📝 样例](#-%E6%A0%B7%E4%BE%8B)
   - [👋 Hello AgentScope！](#-hello-agentscope)
@@ -160,10 +161,29 @@ cd agentscope
 pip install -e .
 ```
 
+#### 🔄 使用 uv 安装（推荐，安装更快）
+
+[uv](https://github.com/astral-sh/uv) 是一个用 Rust 编写的快速 Python 包安装程序和解析器。
+
+```bash
+# 克隆仓库
+git clone -b main https://github.com/agentscope-ai/agentscope.git
+cd agentscope
+
+# 使用 uv 安装
+uv pip install -e .
+```
+
 #### 📦 从PyPi安装
 
 ```bash
 pip install agentscope
+```
+
+或者使用 uv：
+
+```bash
+uv pip install agentscope
 ```
 
 ## 📝 样例

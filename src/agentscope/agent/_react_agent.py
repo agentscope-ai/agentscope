@@ -391,8 +391,6 @@ class ReActAgent(ReActAgentBase):
                 msg = Msg(self.name, list(res.content), "assistant")
                 await self.print(msg, True)
 
-            return msg
-
         except asyncio.CancelledError as e:
             interrupted_by_user = True
             raise e from None
@@ -401,6 +399,7 @@ class ReActAgent(ReActAgentBase):
             if msg and not msg.has_content_blocks("tool_use"):
                 # Turn plain text response into a tool call of the finish
                 # function
+                msg = Msg.from_dict(msg.to_dict())
                 msg.content = [
                     ToolUseBlock(
                         id=shortuuid.uuid(),
@@ -435,6 +434,7 @@ class ReActAgent(ReActAgentBase):
                     )
                     await self.memory.add(msg_res)
                     await self.print(msg_res, True)
+        return msg
 
     async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
         """Perform the acting process.

@@ -322,7 +322,7 @@ class BrowserAgent(ReActAgent):
         )
 
         # Format the prompt for the model
-        prompt = self.formatter.format(
+        prompt = await self.formatter.format(
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
                 *memory_msgs,

@@ -2,7 +2,13 @@
     display: none;
 }
 
-.sphx-glr-download {
+.sphx-glr-footer {
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+}
+
+.sphx-glr-download-zip {
     display: none;
 }
 

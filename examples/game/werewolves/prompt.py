@@ -1,71 +1,20 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=line-too-long
-"""Related prompts"""
+"""Default prompts"""
 
 
-class Prompts:
-    """Related prompts"""
+class EnglishPrompts:
+    """English prompts used to guide the werewolf game."""
 
-    system_prompt = """You're a werewolf game player named {player_name}.
+    to_dead_player = (
+        "{}, you're eliminated now. Now you can make a final statement to "
+        "all alive players before you leave the game."
+    )
 
-# YOUR TARGET
-Your target is to win the game with your teammates as much as possible.
-
-# GAME RULES
-- In werewolf game, players are divided into three werewolves, three villagers, one seer, one hunter and one witch.
-    - Werewolves: kill one player each night, and must hide identity during the day.
-    - Villagers: ordinary players without special abilities, try to identify and eliminate werewolves.
-        - Seer: A special villager who can checkone player's identity each night.
-        - Witch: A special villager with two one-time-use potions: a healing potion to save a player from being killed at night, and a poison to eliminate one player at night.
-        - Hunter: A special villager who can take one player down with them when they are eliminated.
-- The game alternates between night and day phases until one side wins:
-    - Night Phase
-        - Werewolves choose one victim
-        - Seer checks one player's identity
-        - Witch decides whether to use potions
-        - Moderator announces who died during the night
-    - Day Phase
-        - All players discuss and vote to eliminate one suspected player
-
-# GAME GUIDANCE
-- Try your best to win the game with your teammates, tricks, lies, and deception are all allowed, e.g. pretending to be a different role.
-- During discussion, don't be political, be direct and to the point.
-- The day phase voting provides important clues. For example, the werewolves may vote together, attack the seer, etc.
-{guidance}
-
-# NOTE
-- [IMPORTANT] DO NOT make up any information that is not provided by the moderator or other players.
-- This is a TEXT-based game, so DO NOT use or make up any non-textual information.
-- Always critically reflect on whether your evidence exist, and avoid making assumptions.
-- Your response should be specific and concise, provide clear reason and avoid unnecessary elaboration.
-- Generate your one-line response by using the `generate_response` function.
-- Don't repeat the others' speeches.
-- Play the game in English.
-"""  # noqa
-
-    notes_werewolf = """## GAME GUIDANCE FOR WEREWOLF
-- Seer is your greatest threat, who can check one player's identity each night. Analyze players' speeches, find out the seer and eliminate him/her will greatly increase your chances of winning.
-- In the first night, making random choices is common for werewolves since no information is available.
-- Pretending to be other roles (seer, witch or villager) is a common strategy to hide your identity and mislead other villagers in the day phase.
-- The outcome of the night phase provides important clues. For example, if witch uses the healing or poison potion, if the dead player is hunter, etc. Use this information to adjust your strategy."""  # noqa
-
-    notes_seer = """## GAME GUIDANCE FOR SEER
-- Seer is very important to villagers, exposing yourself too early may lead to being targeted by werewolves.
-- Your ability to check one player's identity is crucial.
-- The outcome of the night phase provides important clues. For example, if witch uses the healing or poison potion, if the dead player is hunter, etc. Use this information to adjust your strategy."""  # noqa
-
-    notes_witch = """## GAME GUIDANCE FOR WITCH
-- Witch has two powerful potions, use them wisely to protect key villagers or eliminate suspected werewolves.
-- The outcome of the night phase provides important clues. For example, if the dead player is hunter, etc. Use this information to adjust your strategy."""  # noqa
-
-    notes_hunter = """## GAME GUIDANCE FOR HUNTER
-- Using your ability in day phase will expose your role (since only hunter can take one player down)
-- The outcome of the night phase provides important clues. For example, if witch uses the healing or poison potion, etc. Use this information to adjust your strategy."""  # noqa
-
-    notes_villager = """## GAME GUIDANCE FOR VILLAGER
-- Protecting special villagers, especially the seer, is crucial for your team's success.
-- Werewolves may pretend to be the seer. Be cautious and don't trust anyone easily.
-- The outcome of the night phase provides important clues. For example, if witch uses the healing or poison potion, if the dead player is hunter, etc. Use this information to adjust your strategy."""  # noqa
+    to_all_new_game = (
+        "A new game is starting, the players are: {}. Now we randomly "
+        "reassign the roles to each player and inform them of their roles "
+        "privately."
+    )
 
     to_all_night = (
         "Night has fallen, everyone close your eyes. Werewolves open your "
@@ -87,7 +36,7 @@ Your target is to win the game with your teammates as much as possible.
     )
 
     to_all_witch_turn = (
-        "Witch's turn, witch open your eyes and decide your action tonight."
+        "Witch's turn, witch open your eyes and decide your action tonight..."
     )
     to_witch_resurrect = (
         "[WITCH ONLY] {witch_name}, you're the witch, and tonight {dead_name} "
@@ -112,7 +61,7 @@ Your target is to win the game with your teammates as much as possible.
 
     to_all_seer_turn = (
         "Seer's turn, seer open your eyes and check one player's identity "
-        "tonight."
+        "tonight..."
     )
 
     to_seer = (
@@ -158,14 +107,85 @@ Your target is to win the game with your teammates as much as possible.
     to_all_res = "The voting result is {}. So {} has been voted out."
 
     to_all_wolf_win = (
-        "There're {n_werewolves} werewolves alive and {n_villagers} villagers "
-        "alive.\n"
-        "The game is over and werewolves win!🐺🏆"
+        "There are {n_alive} players alive, and {n_werewolves} of them are "
+        "werewolves. "
+        "The game is over and werewolves win🐺🎉!"
+        "In this game, the true roles of all players are: {true_roles}"
     )
 
     to_all_village_win = (
-        "All the werewolves have been eliminated.\n"
-        "The game is over and villagers win!🏘️🎉"
+        "All the werewolves have been eliminated."
+        "The game is over and villagers win🏘️🎉!"
+        "In this game, the true roles of all players are: {true_roles}"
     )
 
     to_all_continue = "The game goes on."
+
+    to_all_reflect = (
+        "The game is over. Now each player can reflect on their performance. "
+        "Note each player only has one chance to speak and the reflection is "
+        "only visible to themselves."
+    )
+
+
+class ChinesePrompts:
+    """Chinese prompts used to guide the werewolf game."""
+
+    to_dead_player = "{}, 你已被淘汰。现在你可以向所有存活玩家发表最后的遗言。"
+
+    to_all_new_game = "新的一局游戏开始，参与玩家包括：{}。现在为每位玩家重新随机分配身份，并私下告知各自身份。"
+
+    to_all_night = "天黑了，请所有人闭眼。狼人请睁眼，选择今晚要淘汰的一名玩家..."
+
+    to_wolves_discussion = (
+        "[仅狼人可见] {}, 你们可以讨论并决定今晚要淘汰的玩家。当前存活玩家有：{}。"
+        "如果达成一致，请将 `reach_agreement` 设为 True。"
+    )
+
+    to_wolves_vote = "[仅狼人可见] 你投票要杀死哪位玩家？"
+
+    to_wolves_res = "[仅狼人可见] 投票结果为 {}，你们选择淘汰 {}。"
+
+    to_all_witch_turn = "轮到女巫行动，女巫请睁眼并决定今晚的操作..."
+    to_witch_resurrect = (
+        "[仅女巫可见] {witch_name}，你是女巫，今晚{dead_name}被淘汰。"
+        "你可以用解药救他/她，注意解药全局只能用一次。你要救{dead_name}吗？"
+        "请给出理由和决定。"
+    )
+
+    to_witch_resurrect_no = "[仅女巫可见] 女巫选择不救该玩家。"
+    to_witch_resurrect_yes = "[仅女巫可见] 女巫选择救活该玩家。"
+
+    to_witch_poison = "[仅女巫可见] {witch_name}，你有一瓶一次性毒药，今晚要使用吗？请给出理由和决定。"
+
+    to_all_seer_turn = "轮到预言家行动，预言家请睁眼并查验一名玩家身份..."
+
+    to_seer = "[仅预言家可见] {}, 你是预言家，今晚可以查验一名玩家身份。你要查谁？请给出理由和决定。"
+
+    to_seer_result = "[仅预言家可见] 你查验了{agent_name}，结果是：{role}。"
+
+    to_hunter = "[仅猎人可见] {name}，你是猎人，今晚被淘汰。你可以选择带走一名玩家，也可以选择不带走。请给出理由和决定。"
+
+    to_all_hunter_shoot = "猎人选择带走 {} 一起出局。"
+
+    to_all_day = "天亮了，请所有玩家睁眼。昨晚被淘汰的玩家有：{}。"
+
+    to_all_peace = "天亮了，请所有玩家睁眼。昨晚平安夜，无人被淘汰。"
+
+    to_all_discuss = "现在存活玩家有：{names}。游戏继续，大家开始讨论并投票淘汰一名玩家。请按顺序（{names}）依次发言。"
+
+    to_all_vote = "讨论结束。请大家从存活玩家中投票淘汰一人：{}。"
+
+    to_all_res = "投票结果为 {}，{} 被淘汰。"
+
+    to_all_wolf_win = (
+        "当前存活玩家共{n_alive}人，其中{n_werewolves}人为狼人。"
+        "游戏结束，狼人获胜🐺🎉！"
+        "本局所有玩家真实身份为：{true_roles}"
+    )
+
+    to_all_village_win = "所有狼人已被淘汰。游戏结束，村民获胜🏘️🎉！本局所有玩家真实身份为：{true_roles}"
+
+    to_all_continue = "游戏继续。"
+
+    to_all_reflect = "游戏结束。现在每位玩家可以对自己的表现进行反思。注意每位玩家只有一次发言机会，且反思内容仅自己可见。"
