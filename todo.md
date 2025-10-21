@@ -4,7 +4,7 @@
 - 零偏差契约：工具参数集合与文档完全等价（一个不能少、一个不能多）。
 - schema 不含密钥/cookie/会话；外部客户端以 `preset_kwargs`/环境注入。
 - 业务结果只写入 `ToolResponse.content`；`metadata` 属于框架保留集合，禁止增加/变更业务字段（保持缺省）。
-- 全部写操作走受控 FileDomainService；路径限制在 `/workspace/subagents/<name>/`。
+- 全部写操作走受控 FileDomainService；写入仅限 Host 授权的可写前缀（由 FsHandle grants 决定）。
 - 子代理执行期静默：不向控制台/MsgHub 直接输出；Host 统一广播。
 
 ---
@@ -102,7 +102,7 @@
 ### A) Viewer（不操控浏览器）
 工具与参数
 - `viewer_fetch(url: str, query: str | None)`
-- `http_download(url: str, save_path: str)`（写入 `/workspace/subagents/<name>/downloads/` 前缀）
+- `http_download(url: str, save_path: str)`（写入 Host 授权的可写前缀；具体路径由 grants 决定）
 
 实施步骤
 1. http 客户端注入：`preset_kwargs={"http": http_client}`；工具内实现抓取与字符集/压缩处理。
@@ -146,13 +146,17 @@
 实施步骤
 1. 受控句柄：以 `DiskFileSystem.create_handle(grants)` + `FileDomainService` 注入服务对象，所有新工具以 `preset_kwargs={"service": svc}` 注册；禁止直触 OS 路径。
 2. 第三方库封装：按需注入 `pdf_reader/xlsx/pptx/vlm` 客户端，均通过 `preset_kwargs`；返回预览/回执文本至 content。
-3. 路径校验：所有入参 path 必须在授权命名空间，写入仅 `/workspace/subagents/<name>/`。
+3. 路径校验：所有入参 path 必须在授权命名空间；写入仅限 Host 授权的可写前缀（由 FsHandle grants 决定）。
+
+补充说明（继承与自动装配）
+- 若子代理继承到 `filesystem_service`，骨架在构造/导出时会自动装配受控文件工具全集（通过 `preset_kwargs={"service": …}` 注入），无需在 `spec.tools` 中逐一列出。
 
 不变量（验收）
 - schema 不暴露 `service`/句柄；content 非空；写操作仅在受控前缀；禁止原始 OS 文本 I/O。
 - FsHandle.describe_grants_markdown 渲染多前缀行。
 - FileDomainService.describe_permissions_markdown 与 handle 输出一致。
 - fs_describe_permissions_markdown 工具经 Toolkit 返回相同文本。
+- 继承到 `filesystem_service` 时，子代理 Toolkit 自动包含受控 FS 工具（如 list_directory/get_file_info/read_text_file/write_file/edit_file/delete_file），且 schema 无 `service` 字段。
 
 ---
 

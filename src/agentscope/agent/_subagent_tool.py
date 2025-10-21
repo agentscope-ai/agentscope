@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """Factory helpers for registering SubAgent skeletons as toolkit tools."""
 from __future__ import annotations
-
-import asyncio
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 from .._logging import logger
 from ..message import Msg, TextBlock
@@ -47,7 +45,7 @@ async def make_subagent_tool(
     """Create a toolkit-ready wrapper for a SubAgentBase subclass.
 
     Raises:
-        SubAgentUnavailable: if registration-time healthcheck fails.
+        SubAgentUnavailable: if registration-time construction probe fails.
     """
     resolved_name = tool_name or f"{spec.name}_tool"
 
@@ -58,8 +56,7 @@ async def make_subagent_tool(
 
     initial_permissions = permissions_builder()
 
-    # New contract: no external healthcheck; attempt a lightweight export
-    # (with run_healthcheck=False) only to validate construction path.
+    # Registration-time probe: construct once to gate tool exposure.
     try:
         await cls.export_agent(
             permissions=initial_permissions,
@@ -69,7 +66,6 @@ async def make_subagent_tool(
             ephemeral_memory=ephemeral_memory,
             tools=spec.tools,
             delegation_context=None,
-            run_healthcheck=False,
         )
     except Exception as error:  # pylint: disable=broad-except
         raise SubAgentUnavailable(str(error)) from error
@@ -102,7 +98,6 @@ async def make_subagent_tool(
                 ephemeral_memory=_ephemeral_memory,
                 tools=_spec.tools,
                 delegation_context=delegation_context,
-                run_healthcheck=False,
             )
         except SubAgentUnavailable as error:
             from ..tool import ToolResponse as _ToolResponse
@@ -147,12 +142,7 @@ async def make_subagent_tool(
     return _invoke_subagent, register_kwargs
 
 
-async def _ensure_async(func: Callable[[], Awaitable[bool]]) -> bool:
-    """Await healthcheck callables regardless of sync/async style."""
-    result = func()
-    if asyncio.iscoroutine(result):
-        return await result
-    return bool(result)
+# no healthcheck helper needed
 
 
 async def _build_context_bundle(host: AgentBase) -> ContextBundle:
@@ -198,7 +188,7 @@ async def _build_context_bundle(host: AgentBase) -> ContextBundle:
 
 def _build_permissions(host: AgentBase) -> PermissionBundle:
     """Copy host-level shared resources into a bundle."""
-    filesystem = getattr(host, "filesystem", None)
+    filesystem_service = getattr(host, "filesystem_service", None)
     session = getattr(host, "session", None)
     long_term_memory = getattr(host, "long_term_memory", None)
     safety_limits = dict(getattr(host, "safety_limits", {}))
@@ -207,7 +197,7 @@ def _build_permissions(host: AgentBase) -> PermissionBundle:
     return PermissionBundle(
         logger=logger,
         tracer=tracer,
-        filesystem=filesystem,
+        filesystem_service=filesystem_service,
         session=session,
         long_term_memory=long_term_memory,
         safety_limits=safety_limits,

@@ -7,7 +7,6 @@ import logging
 from typing import Any, ClassVar, TYPE_CHECKING, TypedDict, Callable
 
 from .._logging import logger
-from ..filesystem._base import FileSystemBase
 from ..message import Msg, TextBlock
 from ..session import SessionBase
 from ..types import JSONSerializableObject
@@ -27,11 +26,15 @@ else:  # pragma: no cover
 
 @dataclass(slots=True)
 class PermissionBundle:
-    """Shared resources copied from the host agent."""
+    """Shared resources copied from the host agent.
+
+    Filesystem policy is provided via a FileDomainService instance owned by
+    the host. The subagent skeleton must not create or widen policy.
+    """
 
     logger: logging.Logger
     tracer: Tracer | None = None
-    filesystem: FileSystemBase | None = None
+    filesystem_service: "object | None" = None  # FileDomainService at runtime
     session: SessionBase | None = None
     long_term_memory: "LongTermMemoryBase" | None = None
     safety_limits: dict[str, JSONSerializableObject] = field(
@@ -128,6 +131,20 @@ class SubAgentBase(AgentBase):
             if tools:
                 self._hydrate_toolkit(toolkit, tools)
         self.toolkit = toolkit
+        # Auto-inherit full filesystem toolset when a service is provided.
+        svc = permissions.filesystem_service
+        if svc is not None and hasattr(svc, "tools"):
+            try:
+                for func, bound in svc.tools():
+                    name = getattr(func, "__name__", None)
+                    if name and name in self.toolkit.tools:
+                        continue
+                    self.toolkit.register_tool_function(
+                        func,
+                        preset_kwargs={"service": bound},
+                    )
+            except Exception:
+                pass
         if memory is None:
             from ..memory._in_memory_memory import InMemoryMemory
 
@@ -136,36 +153,8 @@ class SubAgentBase(AgentBase):
         self._delegation_context: DelegationContext | None = None
         self._ephemeral_memory = ephemeral_memory
 
-        self._filesystem_root = f"/workspace/subagents/{self.spec_name}"
-        self.filesystem = None
-        if permissions.filesystem:
-            grants = [
-                {
-                    "prefix": f"{self._filesystem_root}",
-                    "ops": {
-                        "list",
-                        "file",
-                        "read_binary",
-                        "read_file",
-                        "read_re",
-                        "write",
-                        "delete",
-                    },
-                },
-                {
-                    "prefix": f"{self._filesystem_root}/",
-                    "ops": {
-                        "list",
-                        "file",
-                        "read_binary",
-                        "read_file",
-                        "read_re",
-                        "write",
-                        "delete",
-                    },
-                },
-            ]
-            self.filesystem = permissions.filesystem.create_handle(grants)
+        # Inherit host-provided FileDomainService as-is; no hardcoded namespace.
+        self.filesystem_service = permissions.filesystem_service
 
         self.set_console_output_enabled(False)
         self.set_msg_queue_enabled(False)
@@ -227,9 +216,8 @@ class SubAgentBase(AgentBase):
         tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
         delegation_context: DelegationContext | None = None,
-        run_healthcheck: bool = False,
     ) -> "SubAgentBase":
-        """Construct a fresh subagent instance and run health checks."""
+        """Construct a fresh subagent instance (no healthcheck)."""
         _ = (parent_context, task)
         instance = cls(
             permissions=permissions,
@@ -242,18 +230,7 @@ class SubAgentBase(AgentBase):
         if delegation_context is not None:
             instance.load_delegation_context(delegation_context)
 
-        if run_healthcheck:
-            healthy = await instance.healthcheck()
-            if not healthy:
-                raise SubAgentUnavailable(
-                    f"Subagent `{spec_name}` failed healthcheck.",
-                )
-
         return instance
-
-    async def healthcheck(self) -> bool:
-        """Override to validate runtime dependencies."""
-        return True
 
     def load_delegation_context(
         self,

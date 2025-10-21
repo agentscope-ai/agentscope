@@ -17,6 +17,7 @@ from agentscope.model import ChatModelBase, ChatResponse
 from agentscope.tool import Toolkit
 from agentscope.filesystem._memory import InMemoryFileSystem
 from agentscope.filesystem._errors import AccessDeniedError
+from agentscope.filesystem._service import FileDomainService
 
 if TYPE_CHECKING:  # pragma: no cover
     from agentscope.tool import ToolResponse
@@ -53,8 +54,29 @@ def build_host_agent(*, parallel: bool = False) -> ReActAgent:
 
 
 def attach_filesystem(agent: ReActAgent) -> None:
-    """Attach an in-memory filesystem to the host agent."""
-    agent.filesystem = InMemoryFileSystem()
+    """Attach a policy-bound FileDomainService to the host agent.
+
+    Grants only the subagent-specific workspace: /workspace/subagents/fs/
+    (used by NamespaceSubAgent test). No broader /workspace/ access.
+    """
+    fs = InMemoryFileSystem()
+    handle = fs.create_handle(
+        [
+            {
+                "prefix": "/workspace/subagents/fs/",
+                "ops": {
+                    "list",
+                    "file",
+                    "read_binary",
+                    "read_file",
+                    "read_re",
+                    "write",
+                    "delete",
+                },
+            },
+        ]
+    )
+    agent.filesystem_service = FileDomainService(handle)
 
 
 class EchoSubAgent(SubAgentBase):
@@ -94,8 +116,7 @@ class EchoSubAgent(SubAgentBase):
         if context:
             self.__class__.delegation_payloads.append(context.to_payload())
 
-        if self.filesystem:
-            self.__class__.filesystem_roots.append(self._filesystem_root)
+        # No hardcoded filesystem root under new policy; keep placeholder list.
 
         text = msg.get_text_content() or ""
         return Msg(
@@ -139,11 +160,7 @@ class FailingSubAgent(EchoSubAgent):
         raise RuntimeError("delegation failed")
 
 
-class UnhealthySubAgent(EchoSubAgent):
-    """Healthcheck-negative subagent."""
-
-    async def healthcheck(self) -> bool:
-        return False
+# Removed legacy healthcheck-based stub; constructor probe is used instead.
 
 
 class CountingSubAgent(EchoSubAgent):
@@ -205,15 +222,15 @@ class NamespaceSubAgent(SubAgentBase):
         msg: Msg | list[Msg] | None = None,
         **_,
     ) -> Msg:
-        if self.filesystem is None:
-            raise AssertionError("filesystem handle not injected")
+        if self.filesystem_service is None:
+            raise AssertionError("filesystem service not injected")
 
-        allowed_path = f"{self._filesystem_root}/artifact.txt"
-        self.filesystem.write(allowed_path, "ok")
+        allowed_path = "/workspace/subagents/fs/artifact.txt"
+        self.filesystem_service.write_file(allowed_path, "ok")
         self.__class__.writes.append(allowed_path)
 
         try:
-            self.filesystem.write("/workspace/forbidden.txt", "nope")
+            self.filesystem_service.write_file("/workspace/forbidden.txt", "nope")
         except AccessDeniedError as exc:
             self.__class__.errors.append(type(exc).__name__)
 
