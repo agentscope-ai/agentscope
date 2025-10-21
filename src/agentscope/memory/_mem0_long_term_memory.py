@@ -268,15 +268,21 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         try:
             if thinking:
                 content = [thinking] + content
+                
+            if self.user_id is not None:
+                message_role = "user"
+            else:
+                message_role = "assistant"  
 
             results = await self._mem0_record(
                 [
                     {
-                        "role": "assistant",
+                        "role": message_role,
                         "content": "\n".join(content),
-                        "name": "assistant",
+                        "name": message_role,
                     },
                 ],
+                infer=False,
                 **kwargs,
             )
             return ToolResponse(
