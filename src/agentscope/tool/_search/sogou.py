@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import List
-from urllib.parse import quote_plus, urlparse, parse_qs, unquote
+from urllib.parse import quote_plus, parse_qs, unquote
 
 from .._response import ToolResponse
 from ...message import TextBlock

@@ -7,7 +7,7 @@ when registering the tool; keep that one concise and model-facing.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, List
+from typing import List
 from urllib.parse import quote_plus
 
 from .._response import ToolResponse

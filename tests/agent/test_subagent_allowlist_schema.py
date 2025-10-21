@@ -57,7 +57,11 @@ def test_subagent_allowlist_schema() -> None:
         agent.toolkit.register_tool_function(_forbidden_tool)
 
         spec = build_spec("allowlist")
-        spec.tools_allowlist = ["_allowed_tool"]
+        # new API: pass tool functions directly
+        from agentscope.tool._toolkit import Toolkit
+        # use host toolkit registrations to fetch the original function
+        allowed = host.toolkit.tools["_allowed_tool"].original_func
+        spec.tools = [allowed]
 
         tool_name = await agent.register_subagent(
             AllowlistSubAgent,

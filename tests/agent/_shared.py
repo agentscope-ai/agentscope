@@ -298,11 +298,7 @@ async def invoke_tool(agent: ReActAgent, tool_call: ToolUseBlock) -> "ToolRespon
 
 def build_spec(name: str) -> SubAgentSpec:
     """Factory for common spec configuration."""
-    return SubAgentSpec(
-        name=name,
-        description=f"{name} subagent skeleton",
-        group_name="subagents",
-    )
+    return SubAgentSpec(name=name)
 
 
 def _parse_summary(summary: str) -> tuple[float, str]:

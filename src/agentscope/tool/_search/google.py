@@ -6,7 +6,6 @@ when registering；保持简洁且面向模型的说明。
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any, List
 from urllib.parse import quote_plus
 
