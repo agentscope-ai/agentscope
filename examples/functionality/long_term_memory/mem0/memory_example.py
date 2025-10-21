@@ -92,7 +92,14 @@ async def main() -> None:
     toolkit = Toolkit()
     agent = ReActAgent(
         name="Friday",
-        sys_prompt="You are a helpful assistant named Friday.",
+        sys_prompt=(
+            "You are a helpful assistant named Friday. "
+            "If you think there is relevent information about "
+            "user's preference, you can record it to the long term "
+            "memory by tool call `record_to_memory`. "
+            "If you need to retrieve information from the long term "
+            "memory, you can use the tool call `retrieve_from_memory`."
+        ),
         model=DashScopeChatModel(
             model_name="qwen-max-latest",
             api_key=os.environ.get("DASHSCOPE_API_KEY"),

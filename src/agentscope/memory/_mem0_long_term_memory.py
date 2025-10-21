@@ -268,12 +268,15 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         try:
             if thinking:
                 content = [thinking] + content
-                
+
+            # Set the message role based on the user_id:
+            # when user_id is not None, the message role is user,
+            # otherwise it is assistant
             if self.user_id is not None:
                 message_role = "user"
             else:
-                message_role = "assistant"  
-
+                message_role = "assistant"
+            # here set infer to False to force the memory to be recorded as is
             results = await self._mem0_record(
                 [
                     {
