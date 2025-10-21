@@ -285,7 +285,6 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                         "name": message_role,
                     },
                 ],
-                infer=False,
                 **kwargs,
             )
             return ToolResponse(
