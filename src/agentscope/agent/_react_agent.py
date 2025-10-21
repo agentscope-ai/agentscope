@@ -716,7 +716,9 @@ class ReActAgent(ReActAgentBase):
             for kb in self.knowledge:
                 # retrieve the user input query
                 docs.extend(
-                    await kb.retrieve(query=query, search_filter=self.knowledge_filter),
+                    await kb.retrieve(
+                        query=query, search_filter=self.knowledge_filter
+                    ),
                 )
             if docs:
                 # Rerank by the relevance score

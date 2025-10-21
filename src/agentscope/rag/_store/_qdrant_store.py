@@ -177,7 +177,9 @@ class QdrantStore(VDBStoreBase):
         """
         return self._client
 
-    def _format_filters(self, filters: Optional[Dict[str, Any]]) -> Optional[models.Filter]:
+    def _format_filters(
+        self, filters: Optional[Dict[str, Any]]
+    ) -> Optional[models.Filter]:
         if filters:
             filter_conditions = []
             for key, value in filters.items():
@@ -186,12 +188,18 @@ class QdrantStore(VDBStoreBase):
                     for sub_key, sub_value in value.items():
                         filter_conditions.append(
                             models.FieldCondition(
-                                key=f"{key}.{sub_key}", match=models.MatchValue(value=sub_value))
+                                key=f"{key}.{sub_key}",
+                                match=models.MatchValue(value=sub_value),
+                            ),
                         )
                 else:
                     # Handle direct key-value pairs
-                    filter_conditions.append(models.FieldCondition(
-                        key=key, match=models.MatchValue(value=value)))
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key=key,
+                            match=models.MatchValue(value=value),
+                        ),
+                    )
 
             if filter_conditions:
                 return models.Filter(must=filter_conditions)  # type: ignore
