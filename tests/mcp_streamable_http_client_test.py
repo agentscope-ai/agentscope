@@ -173,10 +173,12 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
                 content=[
                     TextBlock(
                         type="text",
-                        text=(
-                            "Source: file://tmp.txt/\n\n"
-                            "Content:\ntest content"
-                        ),
+                        text="""{
+  "uri": "file://tmp.txt/",
+  "mimeType": "text/plain",
+  "meta": null,
+  "text": "test content"
+}""",
                     ),
                 ],
             ),

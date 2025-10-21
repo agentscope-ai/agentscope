@@ -75,7 +75,7 @@ class MCPClientBase:
                     as_content.append(
                         TextBlock(
                             type="text",
-                            text=content.resource.model_dump_json(),
+                            text=content.resource.model_dump_json(indent=2),
                         ),
                     )
                 else:
