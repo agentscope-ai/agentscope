@@ -99,11 +99,10 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                required.
             2. During memory recording, these parameters become metadata
                for the stored memories.
-            3. **Important**: The `agent_name` parameter determines which
-               message roles are processed for memory extraction. When
-               provided, mem0 extracts memories from "assistant" role
-               messages; when omitted, it defaults to extracting memories
-               from "user" role messages.
+            3. **Important**: mem0 will extract memories from messages
+               containing role of "user" by default. If you want to
+               extract memories from messages containing role of
+               "assistant", you need to provide `agent_name`.
             4. During memory retrieval, only memories with matching
                metadata values will be returned.
 
