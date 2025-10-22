@@ -99,8 +99,14 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                required.
             2. During memory recording, these parameters become metadata
                for the stored memories.
-            3. During memory retrieval, only memories with matching
+            3. **Important**: The `agent_name` parameter determines which
+               message roles are processed for memory extraction. When
+               provided, mem0 extracts memories from "assistant" role
+               messages; when omitted, it defaults to extracting memories
+               from "user" role messages.
+            4. During memory retrieval, only memories with matching
                metadata values will be returned.
+
 
             model (`ChatModelBase | None`, optional):
                 The chat model to use for the long-term memory. If
@@ -265,28 +271,86 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             content (`list[str]`):
                 The content to remember, which is a list of strings.
         """
+        # Multi-strategy recording approach to ensure content persistence:
+        #
+        # This method employs a three-tier fallback strategy to maximize
+        # successful memory recording:
+        #
+        # 1. Primary: Record as "user" role message
+        #    - This is the default approach for capturing user-related
+        #      content
+        #    - Mem0 extracts and infers memories from messages containing
+        #      role of "user"
+        #
+        # 2. Fallback (if agent_id exists): Record as "assistant" role
+        #    message
+        #    - Triggered when primary recording yields no results
+        #    - Requires agent_id to be set (enables mem0 to extract
+        #      memories from messages containing role of "assistant")
+        #
+        # 3. Last resort: Record as "assistant" with infer=False
+        #    - Used when both previous attempts yield no results
+        #    - Bypasses mem0's inference mechanism, which means no
+        #      inference is performed, mem0 will only record the content
+        #      as is.
+        #
+        # This graduated approach ensures that even if mem0's inference fails
+        # to extract meaningful memories, the raw content is still preserved.
+
         try:
             if thinking:
                 content = [thinking] + content
 
-            # Set the message role based on the user_id:
-            # when user_id is not None, the message role is user,
-            # otherwise it is assistant
-            if self.user_id is not None:
-                message_role = "user"
-            else:
-                message_role = "assistant"
-            # here set infer to False to force the memory to be recorded as is
+            # Strategy 1: Record as user message first
             results = await self._mem0_record(
                 [
                     {
-                        "role": message_role,
+                        "role": "user",
                         "content": "\n".join(content),
-                        "name": message_role,
+                        "name": "user",
                     },
                 ],
                 **kwargs,
             )
+
+            # Strategy 2: Fallback to assistant message (requires agent_id)
+            if (
+                results
+                and isinstance(results, dict)
+                and "results" in results
+                and len(results["results"]) == 0
+                and self.agent_id is not None
+            ):
+                results = await self._mem0_record(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": "\n".join(content),
+                            "name": "assistant",
+                        },
+                    ],
+                    **kwargs,
+                )
+
+            # Strategy 3: Last resort - direct recording without inference
+            if (
+                results
+                and isinstance(results, dict)
+                and "results" in results
+                and len(results["results"]) == 0
+            ):
+                results = await self._mem0_record(
+                    [
+                        {
+                            "role": "assistant",
+                            "content": "\n".join(content),
+                            "name": "assistant",
+                        },
+                    ],
+                    infer=False,
+                    **kwargs,
+                )
+
             return ToolResponse(
                 content=[
                     TextBlock(

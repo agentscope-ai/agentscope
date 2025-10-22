@@ -104,7 +104,7 @@ async def main() -> None:
         name="Friday",
         sys_prompt=(
             "You are a helpful assistant named Friday. "
-            "If you think there is relevent information about "
+            "If you think there is relevant information about "
             "user's preference, you can record it to the long term "
             "memory by tool call `record_to_memory`. "
             "If you need to retrieve information from the long term "
@@ -132,6 +132,13 @@ async def main() -> None:
     print(f"ReActAgent response: {msg.get_text_content()}\n")
 
     msg = Msg(role="user", content="what preference do I have?", name="user")
+    msg = await agent(msg)
+    print(f"ReActAgent response: {msg.get_text_content()}\n")
+    msg = Msg(
+        role="user",
+        content="I prefer to visit the West Lake",
+        name="user",
+    )
     msg = await agent(msg)
     print(f"ReActAgent response: {msg.get_text_content()}\n")
 

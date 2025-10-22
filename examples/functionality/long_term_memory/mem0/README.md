@@ -12,21 +12,6 @@ This example demonstrates how to
 - Python 3.10 or higher
 - DashScope API key from Alibaba Cloud
 
-## Installation
-
-### Install AgentScope
-
-```bash
-# Install from source
-cd {PATH_TO_AGENTSCOPE}
-pip install -e .
-```
-
-### Install Dependencies
-
-```bash
-pip install mem0ai
-```
 
 ## QuickStart
 
@@ -36,7 +21,11 @@ Install agentscope and ensure you have a valid DashScope API key in your environ
 > modify the model initialization in the example code accordingly.
 
 ```bash
-pip install agentscope
+# Install agentscope from source
+cd {PATH_TO_AGENTSCOPE}
+pip install -e .
+# Install dependencies
+pip install mem0ai
 ```
 
 Set up your API key:
@@ -122,7 +111,7 @@ agent = ReActAgent(
     ),
     model=DashScopeChatModel(
         model_name="qwen-max-latest",
-        api_key="your_api_key"
+        api_key=os.environ.get("DASHSCOPE_API_KEY")
     ),
     formatter=DashScopeChatFormatter(),
     toolkit=toolkit,
