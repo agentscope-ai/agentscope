@@ -58,6 +58,7 @@ The example will:
 ### Initialize Memory
 
 ```python
+import os
 from agentscope.memory import Mem0LongTermMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.embedding import DashScopeTextEmbedding
@@ -69,11 +70,11 @@ long_term_memory = Mem0LongTermMemory(
     user_name="user_123",
     model=DashScopeChatModel(
         model_name="qwen-max-latest",
-        api_key="your_api_key"
+        api_key=os.environ.get("DASHSCOPE_API_KEY")
     ),
     embedding_model=DashScopeTextEmbedding(
         model_name="text-embedding-v3",
-        api_key="your_api_key",
+        api_key=os.environ.get("DASHSCOPE_API_KEY"),
         dimensions=1024
     ),
     vector_store_config=VectorStoreConfig(
