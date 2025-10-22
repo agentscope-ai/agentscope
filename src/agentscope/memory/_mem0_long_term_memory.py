@@ -284,8 +284,12 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         # 2. Fallback (if agent_id exists): Record as "assistant" role
         #    message
         #    - Triggered when primary recording yields no results
-        #    - Requires agent_id to be set (enables mem0 to extract
-        #      memories from messages containing role of "assistant")
+        #    - In this case, mem0 will use the AGENT_MEMORY_EXTRACTION_PROMPT
+        #      in mem0/mem0/configs/prompts.py to extract memories from
+        #      messages containing role of "assistant", if agent_id is
+        #      provided, otherwise it will use the
+        #      USER_MEMORY_EXTRACTION_PROMPT in mem0/mem0/configs/prompts.py
+        #      to extract memories.
         #
         # 3. Last resort: Record as "assistant" with infer=False
         #    - Used when both previous attempts yield no results
@@ -312,13 +316,18 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 **kwargs,
             )
 
-            # Strategy 2: Fallback to assistant message (requires agent_id)
+            # Strategy 2: Fallback to assistant message. In this case, if
+            # agent_id is provided, mem0 will use the
+            # AGENT_MEMORY_EXTRACTION_PROMPT in mem0/mem0/configs/prompts.py
+            # to extract memories from messages containing role of
+            # "assistant". If agent_id is not provided, mem0 will still use
+            # the USER_MEMORY_EXTRACTION_PROMPT in
+            # mem0/mem0/configs/prompts.py to extract memories.
             if (
                 results
                 and isinstance(results, dict)
                 and "results" in results
                 and len(results["results"]) == 0
-                and self.agent_id is not None
             ):
                 results = await self._mem0_record(
                     [
@@ -331,7 +340,9 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                     **kwargs,
                 )
 
-            # Strategy 3: Last resort - direct recording without inference
+            # Strategy 3: Last resort - direct recording without inference.
+            # In this case, mem0 will not use any prompts to extract
+            # memories, it will only record the content as is.
             if (
                 results
                 and isinstance(results, dict)
