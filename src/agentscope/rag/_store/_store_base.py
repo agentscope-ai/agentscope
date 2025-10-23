@@ -25,6 +25,7 @@ class VDBStoreBase:
         query_embedding: Embedding,
         limit: int,
         score_threshold: float | None = None,
+        filter: dict | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve relevant texts for the given queries.
@@ -36,6 +37,8 @@ class VDBStoreBase:
                 The number of relevant documents to retrieve.
             score_threshold (`float | None`, optional):
                 The threshold of the score to filter the results.
+            filter (`dict | None`, optional):
+                The filter to apply when searching the vector database.
             **kwargs (`Any`):
                 Other keyword arguments for the vector database search API.
         """

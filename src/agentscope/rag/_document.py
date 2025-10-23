@@ -2,6 +2,7 @@
 """The document data structure used in RAG as the data chunk and
 retrieval result."""
 from dataclasses import dataclass, field
+from typing import Any
 
 import shortuuid
 from dashscope.api_entities.dashscope_response import DictMixin
@@ -14,7 +15,7 @@ from ..message import (
 from ..types import Embedding
 
 
-@dataclass
+@dataclass(init=False)
 class DocMetadata(DictMixin):
     """The metadata of the document."""
 
@@ -29,6 +30,24 @@ class DocMetadata(DictMixin):
 
     total_chunks: int
     """The total number of chunks."""
+
+    def __init__(
+        self,
+        content: TextBlock,
+        doc_id: str,
+        chunk_id: int,
+        total_chunks: int,
+        **kwargs: Any,
+    ):
+        all_data = {
+            "content": content,
+            "doc_id": doc_id,
+            "chunk_id": chunk_id,
+            "total_chunks": total_chunks,
+        }
+        all_data.update(kwargs)
+
+        super().__init__(all_data)
 
 
 @dataclass
