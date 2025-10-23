@@ -43,6 +43,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_agent
    tutorial/task_pipeline
    tutorial/task_plan
+   tutorial/task_rag
    tutorial/task_state
    tutorial/task_hook
    tutorial/task_mcp
@@ -66,6 +67,10 @@ Welcome to AgentScope's documentation!
    api/agentscope.memory
    api/agentscope.tool
    api/agentscope.mcp
+   api/agentscope.embedding
+   api/agentscope.evaluate
+   api/agentscope.plan
+   api/agentscope.rag
    api/agentscope.token
    api/agentscope.tracing
    api/agentscope.session

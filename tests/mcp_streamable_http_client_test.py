@@ -6,6 +6,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 import mcp.types
 from mcp.server import FastMCP
+from mcp.types import EmbeddedResource, TextResourceContents
 
 from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
 from agentscope.message import TextBlock
@@ -24,10 +25,29 @@ async def tool_1(arg1: str, arg2: list[int]) -> str:
     return f"arg1: {arg1}, arg2: {arg2}"
 
 
+async def tool_2() -> list:
+    """
+    A test tool function return the EmbeddedResource type
+    """
+    return [
+        EmbeddedResource(
+            type="resource",
+            resource=TextResourceContents(
+                uri="file://tmp.txt",
+                mimeType="text/plain",
+                text="test content",
+            ),
+        ),
+    ]
+
+
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("StreamableHTTP", port=8002)
     sse_server.tool(description="A test tool function.")(tool_1)
+    sse_server.tool(
+        description="A test tool function with embedded resource.",
+    )(tool_2)
     sse_server.run(transport="streamable-http")
 
 
@@ -132,3 +152,34 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
 
         await client.close()
         self.assertFalse(client.is_connected)
+
+    async def test_embedded_content(self) -> None:
+        """Test the EmbeddedContent functionality."""
+        client = HttpStatelessClient(
+            name="test_embedded_content",
+            transport="streamable_http",
+            url=f"http://127.0.0.1:{self.port}/mcp",
+        )
+
+        func_3 = await client.get_callable_function(
+            "tool_2",
+            wrap_tool_result=True,
+        )
+        res: ToolResponse = await func_3()
+        self.assertEqual(
+            res,
+            ToolResponse(
+                id=res.id,
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="""{
+  "uri": "file://tmp.txt/",
+  "mimeType": "text/plain",
+  "meta": null,
+  "text": "test content"
+}""",
+                    ),
+                ],
+            ),
+        )

@@ -10,6 +10,14 @@ Specifically, this game is consisted of
 - one witch 🧙‍♀️ and
 - one hunter 🏹.
 
+## ✨Changelog
+
+- 2025-10: We update the example to support more features:
+    - Allow the dead players to leave messages.
+    - Support Chinese now.
+    - Support **continuous gaming** by loading and saving session states, so the same agents can play multiple games and continue learning and optimizing their strategies.
+
+
 ## QuickStart
 
 Run the following command to start the game, ensuring you have set up your DashScope API key as an environment variable.
@@ -39,8 +47,23 @@ control the game flow and interactions.
 We also use the ``MsgHub`` and pipelines in AgentScope to manage the complex interactions like discussion and voting.
 It's very interesting to see how agents play the werewolf game with different roles and objectives.
 
-Additionally, you can use the ``UserAgent`` to replace one of the agents to play with AI agents!
+# Advanced Usage
 
+## Change Language
+
+The game is played in English by default. Just uncomment the following line in `game.py` to switch to Chinese.
+
+```python
+# from prompt import ChinesePrompts as Prompts
+```
+
+## Play with Agents
+
+You can replace one of the agents with a `UserAgent` to play with AI agents.
+
+## Change Models
+
+Just modify the `model` parameter in `main.py` to try different models. Note you need to change the formatter at the same time to match the model's output format.
 
 ## Further Reading
 

@@ -101,7 +101,7 @@ repos:
           --disable=C3001,
         ]
   - repo: https://github.com/regebro/pyroma
-    rev: "4.0"
+    rev: "5.0"
     hooks:
       - id: pyroma
         args: [--min=10, .]

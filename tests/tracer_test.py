@@ -360,7 +360,7 @@ class TracingTest(IsolatedAsyncioTestCase):
 
             def __init__(self) -> None:
                 """Initialize embedding model"""
-                super().__init__("test_embedding")
+                super().__init__("test_embedding", 3)
 
             @trace_embedding
             async def __call__(self, raise_error: bool) -> list[list[float]]:

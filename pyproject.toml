@@ -1,0 +1,86 @@
+
+[project]
+name = "agentscope"
+dynamic = ["version"]
+description = "AgentScope: A Flexible yet Robust Multi-Agent Platform."
+readme = "README.md"
+authors = [
+    { name = "SysML team of Alibaba Tongyi Lab", email = "gaodawei.gdw@alibaba-inc.com" }
+]
+license = "Apache-2.0"
+keywords = ["deep-learning", "multi agents", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "aioitertools",
+    "anthropic",
+    "dashscope",
+    "docstring_parser",
+    "json5",
+    "json_repair",
+    "mcp>=1.13",
+    "numpy",
+    "openai",
+    "python-datauri",
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp",
+    "python-socketio",
+    "shortuuid",
+    "tiktoken",
+    "sounddevice",
+]
+
+[project.optional-dependencies]
+full = [
+    # Model
+    "ollama",
+    "google-genai",
+    "Pillow",
+    "transformers",
+    "jinja2",
+    # Evaluator
+    "ray",
+    # Long-term memory
+    "mem0ai",
+    "packaging",
+    # RAG
+    "pypdf",
+    "nltk",
+    "qdrant-client",
+]
+dev = [
+    # Include full dependencies from local package
+    "agentscope[full]",
+    # Development tools
+    "pre-commit",
+    "pytest",
+    "sphinx-gallery",
+    "furo",
+    "myst_parser",
+    "matplotlib",
+    "pymilvus[milvus_lite]",
+]
+
+[project.urls]
+Homepage = "https://github.com/agentscope-ai/agentscope"
+Documentation = "https://doc.agentscope.io/"
+Repository = "https://github.com/agentscope-ai/agentscope"
+
+[tool.setuptools]
+packages = { find = { where = ["src"] } }
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "agentscope._version.__version__"}

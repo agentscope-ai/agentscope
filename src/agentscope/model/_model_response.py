@@ -36,7 +36,7 @@ class ChatResponse(DictMixin):
     usage: ChatUsage | None = field(default_factory=lambda: None)
     """The usage information of the chat response, if available."""
 
-    metadata: JSONSerializableObject | None = field(
+    metadata: dict[str, JSONSerializableObject] | None = field(
         default_factory=lambda: None,
     )
     """The metadata of the chat response"""

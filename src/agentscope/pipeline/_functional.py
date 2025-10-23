@@ -2,7 +2,7 @@
 """Functional counterpart for Pipeline"""
 import asyncio
 from copy import deepcopy
-from typing import Any
+from typing import Any, AsyncGenerator, Tuple, Coroutine
 from ..agent import AgentBase
 from ..message import Msg
 
@@ -102,3 +102,68 @@ async def fanout_pipeline(
         return await asyncio.gather(*tasks)
     else:
         return [await agent(deepcopy(msg), **kwargs) for agent in agents]
+
+
+async def stream_printing_messages(
+    agents: list[AgentBase],
+    coroutine_task: Coroutine,
+    end_signal: str = "[END]",
+) -> AsyncGenerator[Tuple[Msg, bool], None]:
+    """This pipeline will gather the printing messages from agents when
+    execute the given coroutine task, and yield them one by one.
+    Only the messages that are printed by `await self.print(msg)` in the agent
+    will be forwarded to the message queue and yielded by this pipeline.
+
+    .. note:: The boolean in the yielded tuple indicates whether the message
+     is the last **chunk** for a streaming message, not the last message
+     returned by the agent. That means, there'll be multiple tuples with
+     `is_last_chunk=True` if the agent prints multiple messages.
+
+    .. note:: The messages with the same ``id`` is considered as the same
+     message, e.g., the chunks of a streaming message.
+
+    Args:
+        agents (`list[AgentBase]`):
+            A list of agents whose printing messages will be gathered and
+            yielded.
+        coroutine_task (`Coroutine`):
+            The coroutine task to be executed. This task should involve the
+            execution of the provided agents, so that their printing messages
+            can be captured and yielded.
+        end_signal (`str`, defaults to `"[END]"`):
+            A special signal to indicate the end of message streaming. When
+            this signal is received from the message queue, the generator will
+            stop yielding messages and exit the loop.
+
+    Returns:
+        `AsyncGenerator[Tuple[Msg, bool], None]`:
+            An async generator that yields tuples of (message, is_last_chunk).
+            The `is_last_chunk` boolean indicates whether the message is the
+            last chunk in a streaming message.
+    """
+
+    # Enable the message queue to get the intermediate messages
+    queue = asyncio.Queue()
+    for agent in agents:
+        # Use one queue to gather messages from all agents
+        agent.set_msg_queue_enabled(True, queue)
+
+    # Execute the agent asynchronously
+    task = asyncio.create_task(coroutine_task)
+
+    if task.done():
+        await queue.put(end_signal)
+    else:
+        task.add_done_callback(lambda _: queue.put_nowait(end_signal))
+
+    # Receive the messages from the agent's message queue
+    while True:
+        # The message obj, and a boolean indicating whether it's the last chunk
+        # in a streaming message
+        printing_msg = await queue.get()
+
+        # End the loop when the message is None
+        if isinstance(printing_msg, str) and printing_msg == end_signal:
+            break
+
+        yield printing_msg

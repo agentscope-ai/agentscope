@@ -18,12 +18,12 @@ from . import token
 from . import evaluate
 from . import pipeline
 from . import tracing
+from . import rag
 
 from ._logging import (
     logger,
     setup_logger,
 )
-from .agent import UserAgent, StudioUserInput
 from .hooks import _equip_as_studio_hooks
 from ._version import __version__
 
@@ -85,6 +85,8 @@ def init(
         )
         response.raise_for_status()
 
+        from .agent import UserAgent, StudioUserInput
+
         UserAgent.override_class_input_method(
             StudioUserInput(
                 studio_url=studio_url,
@@ -123,6 +125,7 @@ __all__ = [
     "evaluate",
     "pipeline",
     "tracing",
+    "rag",
     # functions
     "init",
     "setup_logger",
