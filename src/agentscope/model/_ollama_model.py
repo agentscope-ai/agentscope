@@ -40,8 +40,6 @@ class OllamaChatModel(ChatModelBase):
         keep_alive: str = "5m",
         enable_thinking: bool | None = None,
         host: str | None = None,
-        save_messages: bool = False,
-        save_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama chat model.
@@ -78,7 +76,7 @@ class OllamaChatModel(ChatModelBase):
                 'running command `pip install "ollama>=0.1.7"`',
             ) from e
 
-        super().__init__(model_name, stream, save_messages, save_path)
+        super().__init__(model_name, stream)
 
         self.client = ollama.AsyncClient(
             host=host,
@@ -151,27 +149,16 @@ class OllamaChatModel(ChatModelBase):
         response = await self.client.chat(**kwargs)
 
         if self.stream:
-            async def _streaming_wrapper() -> AsyncGenerator[ChatResponse, None]:
-                final_resp: ChatResponse | None = None
-                async for chunk in self._parse_ollama_stream_completion_response(
-                    start_datetime, response, structured_model
-                ):
-                    final_resp = chunk
-                    yield chunk
-                if final_resp is not None:
-                    await self._save_messages_if_enabled(
-                        messages, final_resp, tools, tool_choice, stream=True
-                    )
-            return _streaming_wrapper()
+            return self._parse_ollama_stream_completion_response(
+                start_datetime,
+                response,
+                structured_model,
+            )
 
         parsed_response = await self._parse_ollama_completion_response(
             start_datetime,
             response,
             structured_model,
-        )
-
-        await self._save_messages_if_enabled(
-            messages, parsed_response, tools, tool_choice, stream=False
         )
 
         return parsed_response

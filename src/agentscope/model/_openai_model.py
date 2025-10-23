@@ -48,8 +48,6 @@ class OpenAIChatModel(ChatModelBase):
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         organization: str = None,
         client_args: dict = None,
-        save_messages: bool = False,
-        save_path: str | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
         """Initialize the openai client.
@@ -79,7 +77,7 @@ class OpenAIChatModel(ChatModelBase):
                 e.g. `temperature`, `seed`.
         """
 
-        super().__init__(model_name, stream, save_messages, save_path)
+        super().__init__(model_name, stream)
 
         import openai
 
@@ -203,33 +201,17 @@ class OpenAIChatModel(ChatModelBase):
             response = await self.client.chat.completions.create(**kwargs)
 
         if self.stream:
-            # For streaming, we need to wrap the generator to save messages at the end
-            async def _streaming_wrapper():
-                final_response = None
-                async for chunk in self._parse_openai_stream_response(
-                    start_datetime, response, structured_model
-                ):
-                    final_response = chunk
-                    yield chunk
-                
-                # Save messages after streaming is complete
-                if final_response:
-                    await self._save_messages_if_enabled(
-                        messages, final_response, tools, tool_choice, stream=True
-                    )
-            
-            return _streaming_wrapper()
+            return self._parse_openai_stream_response(
+                start_datetime,
+                response,
+                structured_model,
+            )
 
         # Non-streaming response
         parsed_response = self._parse_openai_completion_response(
             start_datetime,
             response,
             structured_model,
-        )
-
-        # Save messages if enabled (non-streaming)
-        await self._save_messages_if_enabled(
-            messages, parsed_response, tools, tool_choice, stream=False
         )
 
         return parsed_response
