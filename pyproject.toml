@@ -54,6 +54,7 @@ full = [
     "packaging",
     # RAG
     "pypdf",
+    "python-docx",
     "nltk",
     "qdrant-client",
 ]
