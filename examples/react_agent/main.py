@@ -7,6 +7,7 @@ from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.model import DashScopeChatModel
+from agentscope.plan import PlanNotebook
 from agentscope.tool import (
     Toolkit,
     execute_shell_command,
@@ -34,6 +35,7 @@ async def main() -> None:
         formatter=DashScopeChatFormatter(),
         toolkit=toolkit,
         memory=InMemoryMemory(),
+        plan_notebook=PlanNotebook(),
     )
     user = UserAgent("User")
 
