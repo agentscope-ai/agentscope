@@ -107,6 +107,9 @@ def init(
 
         setup_tracing(endpoint=endpoint)
 
+    # Messages saving functionality is now integrated into model module
+    # No additional setup needed - users can enable it via model parameters
+
 
 __all__ = [
     # modules
