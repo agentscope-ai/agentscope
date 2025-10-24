@@ -24,6 +24,10 @@ from ._ace_benchmark import (
     ACEProcessAccuracy,
     ACEPhone,
 )
+from ._gaia_benchmark import (
+    GAIABenchmark,
+    GAIAAccuracy,
+)
 
 __all__ = [
     "BenchmarkBase",
@@ -41,4 +45,6 @@ __all__ = [
     "ACEAccuracy",
     "ACEProcessAccuracy",
     "ACEPhone",
+    "GAIABenchmark",
+    "GAIAAccuracy",
 ]
