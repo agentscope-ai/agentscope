@@ -97,16 +97,20 @@ graph TD
   - `tools: list[ToolFunction | ToolSpec] | None`：批量注册到子代理“自有”Toolkit 的工具列表；不传则为空 Toolkit。  
 - `make_subagent_tool(cls, spec, *, tool_name) -> tuple[ToolFunction, dict]`：  
   1. 返回符合 `Toolkit.register_tool_function` 协议的可调用对象；运行时每次调用都会重新实例化子代理（`export_agent(..., tools=spec.tools)`）并调用 `delegate(...)`，保证短期状态隔离；  
-  2. 对外 JSON Schema 恒为最小 `{task_summary}`，description 可留空；注册分组固定为 `subagents`；注册期执行一次“构造探测”（仅实例化一次，不含 healthcheck），失败则不注册。
+  2. 读取子类定义的 `InputModel`（Pydantic `BaseModel` 子类）作为唯一输入契约，使用 `model_json_schema()` 生成注册所需 JSON Schema，并在注册期执行一次“构造探测”：验证模型存在、schema 可生成、必要字段满足默认值要求；任一步骤失败即拒绝注册并抛出 `SubAgentUnavailable`。
 
 #### 4.3 `SubAgentBase` 接口与生命周期
 
-- `@classmethod export_agent(cls, *, permissions: PermissionBundle, parent_context: ContextBundle, task: str, ephemeral_memory: bool = True, tools: list[ToolFunction | ToolSpec] | None = None) -> SubAgentBase`  
+- `InputModel: type[BaseModel] | None`  
+  - 类属性；默认值为 `None`。任何面向真实委派的子代理必须显式覆写为 Pydantic `BaseModel` 子类，用于声明入参结构。
+- `@classmethod get_input_model(cls) -> type[BaseModel]`  
+  - 返回有效的输入模型；若 `InputModel` 未设置则抛出 `NotImplementedError`，彻底禁止退回单字段输入的旧约定。
+- `@classmethod export_agent(cls, *, permissions: PermissionBundle, parent_context: ContextBundle, input_obj: BaseModel, ephemeral_memory: bool = True, tools: list[ToolFunction | ToolSpec] | None = None, delegation_context: dict | None = None) -> SubAgentBase`  
   - 复制堆资源 → 返回全新子代理实例（无 healthcheck）。骨架不得在此阶段做任何业务推理，只能完成依赖注入与安全校验。
-- `@classmethod _pre_context_compress(cls, parent_context: ContextBundle, task: str) -> dict`  
-  - 默认实现产出 `delegation_context`：`task_summary`、`recent_events<=4`、`long_term_refs`、`workspace_pointers`、`safety_flags`。Host 可覆写或扩展。骨架负责保证结构稳定。
-- `async delegate(task_summary: str, context_bundle: dict, **kwargs) -> ToolResponse`  
-  - 将上下文写入短期 memory → 调用 `await self.reply(...)`（仍由子类实现具体行为）→ 聚合所有输出为单个 `ToolResponse`。异常统一包装，`metadata["unavailable"]=True`。
+- `@classmethod _pre_context_compress(cls, parent_context: ContextBundle, input_obj: BaseModel) -> dict`  
+  - 默认实现产出 `delegation_context`：`input_payload`（`input_obj.model_dump()`）、`recent_events<=4`、`long_term_refs`、`workspace_pointers`、`safety_flags`。Host 可覆写或扩展；若需要可读摘要，由子类基于 `input_obj` 自行生成并写入 `delegation_context` 的自定义字段。
+- `async delegate(input_obj: BaseModel, *, delegation_context: dict | None = None, **kwargs) -> ToolResponse`  
+  - 将输入模型与上下文写入短期 memory → 调用 `await self.reply(input_obj, **kwargs)`（由子类实现具体行为）→ 聚合所有输出为单个 `ToolResponse`。异常统一包装，`metadata["unavailable"]=True`。
 - `def load_delegation_context(metadata: dict) -> None`  
   - 默认策略：把 `delegation_context` 写入 memory/state。骨架允许子类覆写，但必须保持幂等。
 （healthcheck 已移除）
@@ -156,6 +160,11 @@ graph TD
 - **`ReActAgent`**：完整 ReAct 循环、结构化输出、并行工具、计划/RAG/长期记忆集成等；关键方法 `_reasoning`、`_acting`、`_summarizing`、`generate_response`。
 - 内部使用 `_json_schema`、`Toolkit.set_extended_model` 等配置结构化输出。
 
+#### `src/agentscope/agent/_search_agent.py`
+
+- **`SearchQuery`**：定义搜索子代理的 Pydantic 输入模型，字段包括 `query: str` 与可选 `context: str | None`。
+- **`SearchAgent`**：子代理实现，遍历注册的搜索工具，根据 `query` 收集结果并在可用时写入受控文件系统，返回聚合文本和 `artifact_path` 元数据。
+
 #### `src/agentscope/agent/_user_agent.py`
 
 - **`UserAgent`**：面向命令行/Studio 的用户代理，实现最小 `reply` 与 `observe`。
@@ -181,7 +190,7 @@ graph TD
   - 骨架不提供任何领域 `reply` 实现；仓库内不会内置业务化子类，所有业务示例放在 `examples/` 或文档中。
   - 提供 `@classmethod export_agent(cls, *, permissions: PermissionBundle, parent_context: ContextBundle, task: str, delegation_context: DelegationContext | None, tools: list[ToolFunction | ToolSpec] | None = None) -> SubAgentBase`：复制共享句柄；不执行 healthcheck；上下文压缩由主代理在进入子代理前调用 `_pre_context_compress` 并通过 `delegation_context` 传入；当提供 `tools` 时，骨架将把这些工具批量注册到“自有”Toolkit 中。  
   - `_pre_context_compress(parent_context: ContextBundle, task: str) -> dict`：默认实现按 `delegation_context` 结构提取摘要，允许子类覆盖。
-  - 核心统一入口：`async delegate(task_summary: str, context_bundle: dict, **kwargs) -> ToolResponse`，内部负责调用 `reply` 并聚合为最终 `ToolResponse`，且把 `delegation_context` 写入自身 `memory`（便于可追溯调试）。
+- 核心统一入口：`async delegate(input_obj: BaseModel, *, delegation_context: dict | None, **kwargs) -> ToolResponse`，内部负责调用 `reply(input_obj, **kwargs)` 并聚合为最终 `ToolResponse`，且把 `delegation_context` 写入自身 `memory`（便于可追溯调试）。
 - `src/agentscope/agent/_subagent_tool.py`（或工厂同名文件）：
   - `make_subagent_tool(cls: type[SubAgentBase], spec: SubAgentSpec, *, tool_name: str) -> tuple[ToolFunction, dict]` 接受子代理类；注册阶段调用 `cls.export_agent(...)` 进行一次性健康检查，失败则跳过注册；运行时每次工具调用都会重新执行 `export_agent` 创建新实例后再调用 `delegate(...)`。
 
@@ -215,47 +224,35 @@ graph TD
 - 消息结构
   - 代理处理的 `Msg` 来自 `src/agentscope/message/_message_base.py`，支持文本、多媒体、工具调用等块；Agent 负责将输出块写入 `print`。
 
-### 子 Agent（SubAgentBase）接口草案
-- `SubAgentSpec`（拟）  
+### 子 Agent（SubAgentBase）统一输入契约
+- `SubAgentSpec`  
   - 字段：
-    - `name: str`（唯一名，亦用于工具名后缀）
-    - `description: str`（任务匹配提示，要求尽可能具体）
-    - `tools_allowlist: list[str] | None`（工具组/函数白名单，最小权限）
-    - `model_override: ChatModelBase | None`（可选模型覆盖；缺省继承子代理现有设置）
-    - `tags: list[str] | None`（匹配提示用）
-    （healthcheck 字段已移除）
-  - 不变量：  
-    - 任何一次子代理调用不得修改主代理内部状态；只允许通过 `ToolResponse` 回传结果。  
-    - 工具白名单只增不减时需要重新注册；动态切换需走 `Toolkit.update_tool_groups` 或重建工具。
+    - `name: str`（注册到 Host Toolkit 的唯一名称）
+    - `tools: list[ToolFunction | ToolSpec] | None`（批量注册到子代理内部 Toolkit 的最小权限工具集）
+    - 其余元数据（如描述、tags、模型覆盖）如需扩展，必须在对应模块 SOP 中备案。  
+  - 不变量：子代理调用不得修改主代理内部状态；所有结果通过 `ToolResponse` 回传；扩大工具白名单需重新注册或显式更新。
 - `PermissionBundle`
-  - `logger: logging.Logger`（与主代理保持一致，统一日志输出）
-  - `trace_provider: opentelemetry.trace.Tracer | None`（复用 OpenTelemetry pipeline，保持同一 span 链路）
-  - `filesystem_service: FileDomainService | None`（继承 Host 提供的文件域服务实例；骨架不创建/不裁剪策略）
-  - `session: SessionBase | None`（共享状态持久化入口，命名空间隔离）
-  - `long_term_memory: LongTermMemoryBase | None`（共享长期记忆句柄）
-  - `safety_limits: dict[str, JSONSerializableObject]`（预算、禁用工具等约束）
-  - `supervisor_name: str`（当前主代理标识，写入 `ToolResponse.metadata`）
-- `ContextBundle`（拟）
-  - `conversation: list[Msg]`（主代理短期消息序列，用于 `_pre_context_compress` 生成摘要）
-  - `recent_tool_results: list[Msg]`（最近工具执行结果，便于过滤噪声）
-  - `long_term_refs: list[dict[str, JSONSerializableObject]]`（来自共享长记忆/RAG 的引用）
-  - `workspace: FileSystemBase | None`（用于生成可共享的 artifact 路径）
-- `DelegationContext`（拟）
-  - 标准字段：`task_summary`、`recent_events`、`long_term_refs`、`workspace_pointers`、`safety_flags`
+  - `logger: logging.Logger`、`trace_provider: opentelemetry.trace.Tracer | None`、`filesystem_service: FileDomainService | None`、`session: SessionBase | None`、`long_term_memory: LongTermMemoryBase | None`、`safety_limits: dict[str, JSONSerializableObject]`、`supervisor_name: str` —— 一次性复制共享堆资源，骨架禁止扩权。
+- `ContextBundle`
+  - `conversation: list[Msg]`、`recent_tool_results: list[Msg]`、`long_term_refs: list[dict[str, JSONSerializableObject]]`、`workspace_handles: list[str]`、`safety_flags: dict[str, JSONSerializableObject]` —— 用于 `_pre_context_compress` 生成委派上下文。
+- `DelegationContext`
+  - 标准字段：`input_payload`（`BaseModel.model_dump()`）、`recent_events`、`long_term_refs`、`workspace_pointers`、`safety_flags`；子代理可扩展 `input_preview` 等便于调试的字段。  
   - 由 `_pre_context_compress` 输出，写入最新 user `Msg.metadata["delegation_context"]`，供 `delegate` 复原短期 memory。
-- 工具函数签名（拟）  
-  - `async invoke_subagent(query: str, context: dict[str, JSONSerializableObject] | None = None) -> ToolResponse`（在注册时可根据 `tool_name` 重命名）  
-    - 行为：构造 `Msg("user", query, "user", metadata=context)`，转换为 `delegation_context` 后调用 `SubAgentBase.delegate(...)`；收束其输出为单个 `ToolResponse`（`is_last=True`），不透出中间流式块。异常时返回“静默失败”响应（文本提示 + `metadata={"unavailable": true}`），并写入日志/Tracing。
+- 工具包装函数  
+  - `async invoke_subagent(input_data: dict[str, Any], /, *, _host: AgentBase, ...) -> ToolResponse`（注册时根据 `tool_name` 重命名）  
+    - 行为：`InputModel.model_validate(input_data)` → 若校验失败，立即返回 `ToolResponse(is_last=True, metadata={"unavailable": True, "error": ...})` 并给出错误详情；  
+      校验成功后构造 `input_obj`，结合 `_pre_context_compress` 输出的 `delegation_context` 调用 `SubAgentBase.delegate(input_obj=input_obj, ...)`，将返回 `Msg` 折叠为单个 `ToolResponse`。
 
-#### SubAgentBase 接口与生命周期（新增）
+#### SubAgentBase 接口与生命周期
 - `class SubAgentBase(AgentBase)`：
-  - `reply`/`observe` 仍需子类实现或覆写，骨架仅提供委派入口与资源注入，不内置业务逻辑。
-  - `@classmethod export_agent(cls, *, permissions: PermissionBundle, parent_context: ContextBundle, task: str, delegation_context: DelegationContext | None, tools: list[ToolFunction | ToolSpec] | None = None, model_override: ChatModelBase | None = None, ephemeral_memory: bool = True) -> SubAgentBase`：创建全新子代理实例并注入共享句柄（无 healthcheck）；上下文压缩产物由 Host 通过 `delegation_context` 传入；当提供 `tools` 时，子代理“自有”Toolkit 将批量注册这些工具。
-  - `@classmethod _pre_context_compress(cls, parent_context: ContextBundle, task: str) -> dict`：默认实现按 `delegation_context` 五段结构返回摘要，至少包含 `task_summary`、`recent_events`、`long_term_refs`、`workspace_pointers`、`safety_flags`；供主代理在进入子代理之前调用；子类可覆盖以引入更复杂压缩策略。
-  - `async delegate(task_summary: str, delegation_context: DelegationContext | None, **kwargs) -> ToolResponse`：统一代理入口，供主代理 `_acting` 使用。实现要求：① 调用 `load_delegation_context` 把摘要写入短期 `memory`；② 运行自身 `reply` 循环并折叠为单个 `ToolResponse`；③ 禁止广播/写父级队列；④ 异常（超时、最大迭代等）返回 `ToolResponse(is_last=True, metadata={"unavailable": True, "error": ...})` 并记录日志、Tracing。
-  - `def load_delegation_context(metadata: dict) -> None`：将封装上下文落入本地短期 `memory`（或专用 state）以维持可观测与可追溯。
-  （已移除 healthcheck；由注册期的一次性“构造探测”代替。）
-- 权限注入：通过 `permissions: PermissionBundle` 一次性复制必要句柄；文件系统通过 Host 提供的 `FileDomainService` 直接继承，骨架不做硬编码前缀与策略裁剪；如需收紧由 Host 构造更窄的 service；Toolkit 由子代理自建并通过传入的 `tools` 列表批量注册最小权限工具集；`ephemeral_memory=True` 时调用完成后重置短期 memory；Hook 链默认独立于父 Agent。
+  - `InputModel: type[BaseModel] | None` —— 类属性，默认 `None`；所有可导出子代理必须显式覆写。
+  - `@classmethod get_input_model(cls) -> type[BaseModel]`：返回有效的 Pydantic 模型；若未设置则抛出 `NotImplementedError`。
+  - `@classmethod export_agent(cls, *, permissions: PermissionBundle, parent_context: ContextBundle, input_obj: BaseModel, delegation_context: dict | None, tools: list[ToolFunction | ToolSpec] | None = None, model_override: ChatModelBase | None = None, ephemeral_memory: bool = True) -> SubAgentBase`：创建全新子代理实例并注入共享句柄；调用方保证 `input_obj` 已通过模型校验。
+  - `@classmethod _pre_context_compress(cls, parent_context: ContextBundle, input_obj: BaseModel) -> dict`：默认写入 `input_payload` 与引用集合；子类可基于 `input_obj` 注入 `input_preview` 等自定义字段。
+  - `async delegate(self, input_obj: BaseModel, *, delegation_context: dict | None, **kwargs) -> ToolResponse`：统一代理入口；要求：① 调用 `load_delegation_context` 恢复短期 memory；② 缓存 `input_obj`（如 `self._current_input`）；③ 执行 `await self.reply(input_obj, **kwargs)` 并折叠为单个 `ToolResponse`；④ 异常统一包装为 `metadata["unavailable"]=True` 并记录日志/Tracing。
+  - `async def reply(self, input_obj: BaseModel, **kwargs) -> Msg`：子类必须实现的核心逻辑，直接消费 Pydantic 模型。
+  - `def load_delegation_context(metadata: dict) -> None`：将上下文落入本地状态，保持幂等。
+  - 权限注入：通过 `permissions: PermissionBundle` 一次性复制必要句柄；文件系统通过 Host 提供的 `FileDomainService` 继承；Toolkit 由子代理自建并根据 `spec.tools` 注册；`ephemeral_memory=True` 时调用完成后重置短期 memory，Hook 链默认独立于父 Agent。
 
 ## 四、与其他模块交互（调用链与责任边界）
 - **推理-执行链路**：  
@@ -267,24 +264,23 @@ graph TD
 - **Session & Persistence**：继承 `StateModule`，`AgentBase` 的属性可通过 `JSONSession` 保存；若新增状态需调用 `register_state`。  
 - **责任边界**：Agent 不持久化业务数据，不负责具体工具实现；Hook 中应避免阻塞操作，必要时改为异步。
 
-### 子 Agent（SubAgentBase）交互与链路
-- 调用链（显式统一）：  
-`ReActAgent._reasoning → Toolkit.get_json_schemas()（含子代理工具） → Model 选择 tool_use → Toolkit.call_tool_function(<subagent_tool_name>) → SubAgentBase.export_agent(...) → 子代理实例.delegate(...) → ToolResponse（聚合后返回） → ReActAgent.generate_response/print`
+-### 子 Agent（SubAgentBase）交互与链路
+- 调用链：  
+`ReActAgent._reasoning → Toolkit.get_json_schemas()（含子代理工具） → Model 生成 tool_use 参数 → Toolkit.call_tool_function(<subagent_tool_name>) → InputModel.model_validate(...) → SubAgentBase.export_agent(..., input_obj=...) → 子代理实例.delegate(...) → ToolResponse → ReActAgent.generate_response/print`
 - 生命周期（单次调用）：  
-  1. Toolkit 注册阶段：调用 `SubAgentBase.export_agent(...)` 进行健康检查，通过后生成工具描述并注册；若抛出 `SubAgentUnavailable`，该子代理不被注册。  
-  2. 主代理 `_acting`：识别工具 → 再次调用 `SubAgentBase.export_agent(...)` 构建实际实例。  
-  3. 子代理执行：`delegate` 写入短期 memory → 运行 `reply` → 返回 `ToolResponse`。  
-  4. 资源回收：若 `ephemeral_memory=True`，调用结束后清空短期 memory；实例可直接销毁或交由对象池复用。
+  1. Toolkit 注册阶段：执行一次 `SubAgentBase.export_agent(..., input_obj=InputModel())` 构造探测，生成工具描述；若抛出 `SubAgentUnavailable`，该子代理不注册。  
+  2. 主代理 `_acting`：识别工具 → 校验参数生成 `input_obj` → `_pre_context_compress` 生成 `delegation_context` → `export_agent` 构造实例。  
+  3. 子代理执行：`delegate` 写入短期 memory → 运行 `reply(input_obj)` → 返回 `ToolResponse(is_last=True)`。  
+  4. 资源回收：若 `ephemeral_memory=True`，调用结束后清空短期 memory；实例随即释放。
 - 隔离策略：  
-  - `memory`：子代理持有独立短期 `MemoryBase` 实例；初始化由 `delegation_context` 填充，调用结束后可按需清理；长期记忆允许共享主代理的 `LongTermMemoryBase` 句柄（通过 `PermissionBundle` 注入），以便统一读写长久知识。  
-  - `memory 入参`：主代理在 `_acting` 进入子代理分支前必须按上述 `delegation_context` 结构完成压缩与标注，禁止直接拷贝完整对话历史。  
-  - `toolkit`：按 `tools_allowlist`/组名创建或裁剪；主代理不可直接调用子代理工具。  
-  - `model`：若 `model_override` 提供，则以覆盖模型执行本次调用；否则沿用子代理默认。  
-  - `权限句柄复制`：子代理作为 `AgentBase` 子类需从主代理复制必须的权限句柄（如 FileSystem、Tracing、Session/StateModule 引用）；复制后仍遵循子代理自身白名单策略，禁止继承/访问 MsgHub（防止广播泄漏）、主代理 `toolkit` 内部状态、主代理 `memory` 对象本体。
-  - 文件系统（可选）：子代理写入 `/workspace/subagents/<name>/` 命名空间；避免 `/internal` 暴露给子代理工具。
+  - `memory`：子代理持有独立短期 `MemoryBase` 实例；初始化由 `delegation_context` 填充，调用结束后按需清理；长期记忆共享主代理的 `LongTermMemoryBase` 句柄（通过 `PermissionBundle` 注入）。  
+  - `toolkit`：仅包含 `spec.tools` 声明的最小集合；主代理不可直接调用子代理内部工具。  
+  - `model`：若 `model_override` 提供，则覆盖默认模型执行当前调用；否则沿用子代理默认。  
+  - `权限句柄`：复制 FileSystem/Tracing/Session 等引用，但禁止继承 MsgHub、主代理 `toolkit` 或短期 `memory` 实例，避免广播与状态污染。  
+  - 产物交付（建议）：当输出较长/需追溯/可复用时，优先写为受控文件工件；是否落盘由场景决定；路径策略由宿主的 FileDomainService 授权决定（本文不固定前缀）。
 - 健康检查与故障语义：  
-- 注册阶段仅进行一次性“构造探测”；失败则取消该子代理工具注册（记录 warning 与 tracing），后续不再尝试调用。  
-  - 运行期异常（超时/最大迭代等）不向上抛出，统一由 `delegate` 返回标记 `metadata.unavailable=True` 的 `ToolResponse`，主代理可继续后续推理或改选其他工具。
+  - 注册阶段仅进行一次构造探测；失败则取消该子代理工具注册（记录 warning 与 tracing），后续不再尝试调用。  
+  - 运行期异常（超时/最大迭代等）统一由 `delegate` 返回 `metadata.unavailable=True` 的 `ToolResponse`，主代理可继续后续推理或择其它工具。
 
 #### 与 AgentBase 的平衡（新增）
 - `AgentBase` 保持通用与无分支：不混入子代理特化分支。
@@ -336,15 +332,8 @@ graph TD
 
 ### 3. 上下文压缩与短期记忆
 
-- 新增 _pre_context_compress(parent_context: ContextBundle,task:str) -> SubAgent：根据传入的`task`任务目标，负责把父 Agent
-的对话历史、工具结果等压缩成必需信息。默认
-  处理：
-    - 摘要当前任务（task_summary）；
-    - 列出与任务相关的最近若干条事件（recent_events，默认 ≤4 条）；
-    - 提供可继续检索的长期记忆引用（long_term_refs，含 id 和简短说明）；
-    - 列出可访问的 artifact／workspace 路径；
-    - 携带安全限制（safety_flags）。
-- 子代理实例化后，在 load_delegation_context 中把这些信息写入自己的短期 memory，构成本轮任务的“栈帧”。
+- `_pre_context_compress(parent_context: ContextBundle, input_obj: BaseModel) -> dict`：负责把父 Agent 的对话历史、工具结果等压缩成子代理最小所需信息。默认实现写入 `input_payload`（模型 dump）、`recent_events`（默认 ≤4 条）、`long_term_refs`、`workspace_pointers`、`safety_flags`；如需额外摘要由子类扩展字段。
+- 子代理实例化后，在 `load_delegation_context` 中把这些信息写入自身短期 memory/state，形成本轮任务的“栈帧”。阅读型摘要可在 `reply` 内基于 `self._current_input` 或自定义缓存生成。
 
 ### 4. 调用与异常语义
 
@@ -385,7 +374,7 @@ graph TD
 | 子代理以工具形态暴露，调用路径必须是 `_acting` → `export_agent` → `delegate` | 主体 `toolkit` 为空，所有工具调用均通过子代理 `ToolResponse` 返回 | `tests/agent/test_subagent_tool.py::test_host_without_direct_tools` | 步骤 2/4 中，`ResearchSupervisor` 仅触发子代理工具 | `src/agentscope/agent/_subagent_tool.py` |
 | 共享“堆”资源，但短期 memory 与 Hook 独立 | `delegation_context` 写入子代理短期 memory，长记忆指针引用同一 RAG | `tests/agent/test_subagent_memory_isolation.py::test_subagent_memory_isolation` | 步骤 1/3 中（Host 预先 `_pre_context_compress` 并写入“最新的 user 消息”）短期 memory 每轮重建 | `src/agentscope/agent/_react_agent.py::_acting` |
 | 内部工具集合与 Schema | 子代理仅能看到 `tools` 列表内的工具，Host JSON Schema 含子代理条目 | `tests/agent/test_subagent_allowlist_schema.py::test_subagent_allowlist_schema` | 文档步骤 2 | `src/agentscope/agent/_subagent_base.py::_hydrate_toolkit` |
-| 文件系统命名空间隔离 | 子代理写入限定在 `/workspace/subagents/<name>/` | `tests/agent/test_subagent_fs_namespace.py::test_subagent_filesystem_namespace` | 文档步骤 2/3 | `src/agentscope/agent/_subagent_base.py::__init__` |
+| 文件系统命名空间隔离 | 若产生文件：必须通过受控 FileDomainService 写入授权命名空间并返回逻辑路径；亦可不落盘，直接返回简明文本预览 | `tests/agent/test_subagent_fs_namespace.py::test_subagent_filesystem_namespace` | 文档步骤 2/3 | `src/agentscope/agent/_subagent_base.py::__init__` |
 | 并行调用互不污染 | 并行 gather 时短期 memory 与顺序可控 | `tests/agent/test_subagent_parallel.py::test_subagent_parallel_calls` | 文档步骤 2/4 | `src/agentscope/agent/_subagent_tool.py::_invoke_subagent` |
 | 异常需封装成 `ToolResponse(metadata.unavailable=True)` | 超时/工具缺失不得泄漏堆栈 | `tests/agent/test_subagent_error_propagation.py::test_subagent_error_propagation` | 文档步骤 5 | `src/agentscope/agent/_subagent_base.py::delegate` |
 

@@ -41,7 +41,7 @@
 
 ## 1) agent_search（多来源，一源一工具）
 
-目标：根据 `query:str` 返回入口 URL 与摘要（仅 content 输出）。
+目标：根据 `query:str` 聚合多源搜索结果，并将详细文本写入受控文件后返回逻辑路径。
 
 必备工具（参数契约）
 - `search_google(query: str)`
@@ -50,10 +50,10 @@
 - 私域：`search_github(query: str)`、`search_wiki(query: str)`
 
 实施步骤
-1. 工具草案与 schema：为上述 5 个函数生成 JSON Schema（parameters.properties == {query}；required == ["query"]).
-2. 运行期就地初始化：工具内部按调用创建并关闭所需运行时（如 Playwright WebKit 或 HTTP 客户端）；不通过 preset_kwargs 注入任何依赖；schema 仅暴露 `{query}`。
-3. 结果整形与截断：在工具内将搜索结果转为纯文本列表（title/url/snippet）；大文本按词数截断；使用单个 TextBlock 作为 content。
-4. 注册与分组：Toolkit.register_tool_function；置入 `search` 组或直接 basic（按 subagent allowlist）。
+1. 工具草案与 schema：为上述 5 个函数生成 JSON Schema（`properties` 仅含 `query`；`required == ["query"]`），并保持 docstring 简洁明确。
+2. 运行期就地初始化：工具内部按调用创建并关闭所需运行时（如 Playwright WebKit 或 HTTP 客户端）；不通过 `preset_kwargs` 注入外部依赖；schema 仅暴露 `query`。
+3. 结果整形与截断：在工具内将搜索结果转为纯文本列表（title/url/snippet）；大文本按词数截断；文件写入保持纯文本。
+4. 注册与分组：`Toolkit.register_tool_function`；置入 `search` 组或直接 `basic`（按子代理 allowlist）。
 
 状态（Search 工具与测试）
 - [x] search_bing 工具实现与 E2E（tests/search/test_bing_e2e.py）
@@ -61,30 +61,38 @@
 - [x] search_github 工具实现与 E2E（tests/search/test_github_e2e.py）
 - [x] search_wiki 工具实现与 E2E（tests/search/test_wiki_e2e.py）
 - [x] Schema 等价契约测试（tests/search/test_search_schema_contracts.py）
+- [x] SearchAgent 子代理输出工件或聚合文本 & Host 读取反馈（tests/agent/test_search_agent_integration.py）
+- [ ] SearchAgent InputModel 契约测试（验证 `model_json_schema` 与参数校验一致）
 - [ ] search_google（同页/无持久化约束下受 consent/反爬阻断，详见“已知阻塞”）
 
 ### Search Agent（基于 SubAgentBase）
 
-目标：实现 `SearchAgent(SubAgentBase)`，允许在子代理内部仅使用搜索工具（bing/sogou/github/wiki）完成检索；对外作为“子代理工具”暴露时，仍遵守默认 JSON Schema `{task_summary}`。提供一个仅装配该子代理的 Host，用以端到端验证“Host → 子代理 → 搜索工具 → 返回结果”的完整链路。
+目标：实现 `SearchAgent(SubAgentBase)`，允许在子代理内部使用搜索工具（bing/sogou/github/wiki）交叉检索，并通过继承的 FileDomainService 在授权命名空间内落地工件（如适用），或直接返回文本摘要；子代理对外通过 Pydantic `InputModel` 定义请求契约。提供一个仅装配该子代理的 Host，用以端到端验证“Host → 子代理 → 搜索工具 → 返回文件路径 → Host 读取”的完整链路。
 
 实施步骤
 1. 代码位置：`src/agentscope/agent/_search_agent.py`
-   - 定义 `class SearchAgent(SubAgentBase)`；在构造时创建独立 `Toolkit()` 并通过 `_hydrate_toolkit` 克隆并仅注册搜索工具（allowlist：`search_bing`、`search_sogou`、`search_github`、`search_wiki`；`search_google` 暂不包含）。
+   - 定义 `class SearchAgent(SubAgentBase)` 并显式覆写 `InputModel = SearchQuery`
+     ```python
+     class SearchQuery(BaseModel):
+         query: str
+         context: str | None = None
+     ```
+   - 在构造时创建独立 `Toolkit()` 并批量注册传入的搜索工具（`spec.tools`），例如：`search_bing`、`search_sogou`、`search_github`、`search_wiki`（暂不包含 google）。
    - 继承骨架约束：关闭对外流（console/msg queue 禁用），不修改 metadata，使用受控短期 memory（ephemeral）。
 2. 行为：
-   - `reply(...)` 中由模型产出的 `ToolUseBlock` 触发相应搜索工具调用，聚合工具结果为最终 `Msg`；`delegate(...)` 仍仅返回单个 `ToolResponse`（content 为文本），不写 `metadata`。
+   - `reply(self, input_obj: SearchQuery, ...)` 中根据 `input_obj.query` 调度所有 `search_*` 工具，结合 `input_obj.context` 追加到文件头或结果摘要；如宿主授权写入，则将内容保存为受控工件（例如 `result_<timestamp>.txt`）并返回其逻辑路径；若无法落盘，则退化为返回聚合文本。
 3. Host 装配示例（测试内实现即可）：
-   - 使用 `ReActAgent` 作为 Host，`toolkit=Toolkit()`，不直接注册搜索工具。
-   - 通过 `make_subagent_tool(SearchAgent, spec)` 生成“子代理工具”，再用 `host.toolkit.register_tool_function(...)` 注册；此处开放全部搜索工具（`search_bing`、`search_sogou`、`search_github`、`search_wiki`）
-   满足 Toolkit.register_tool_function(make_subagent_tool(...)) 注册子代理工具 → Host/_acting 选择该子代理 → 包装器调用 SubAgentBase.export_agent → delegate → 返回单个 ToolResponse的要求(具体查看 docs/agent/SOP.md)。
-   - 使用静态/桩模型让 Host 生成包含该“子代理工具”名的 `ToolUseBlock`，从而在 `_acting` 内委派给 Search 子代理。
-4. 触发与输出：
-   - 发送用户消息（如“who is speed”）；打印 Host 返回的原样文本；调用SubAgent,然后SubAgent 会调用多个Tool来交叉验证搜索结果给出最棒的回复。
+   - 使用 `ReActAgent` 作为 Host，注入 FileDomainService（`DiskFileSystem.create_handle` + `FileDomainService`），并注册受控文件工具（`svc.tools()`）。
+   - 通过 `make_subagent_tool(SearchAgent, spec)` 注册子代理工具，`spec.tools` 指定 `search_bing`、`search_sogou`、`search_github`、`search_wiki`；注册时校验 `SearchQuery.model_json_schema()` 与工具描述一致。
+   - Host system prompt 提醒“委派搜索并读取返回的文件路径”；SearchAgent system prompt 提醒“汇总结果写入文件，仅返回路径”。
+4. 触发与输出：发送用户消息（如“搜索谁是 speed … 多维度结果”）；子代理调用各搜索工具写文件，Host 使用 `read_text_file` 读取路径并完成总结。
 
 不变量（验收）
-- JSON Schema 字段集合等价于 `{query}`；无额外字段/默认值。
-- `ToolResponse.content` 非空且为纯文本列表（title/url/snippet）；不触碰 `metadata`。
-- 工具白名单仅包含上述名称；执行时不读写文件。
+- SearchAgent 必须通过 `InputModel` 声明入参，`delegate`/`reply` 仅接受模型实例；禁止回退到 dict 或任何单字段临时契约。
+   - `model_json_schema()` 显式列出字段（`query`、`context`），并由 `make_subagent_tool` 注册；测试需断言 schema 与 InputModel 等价。
+- `ToolResponse.content` 仅返回文本块；metadata 保持缺省。
+- 若产生文件：必须通过受控 FileDomainService 写入授权命名空间并返回逻辑路径；亦可不落盘，直接返回简明文本预览。
+- 多个 `search_*` 工具均需尝试执行；成功结果按工具名分节记录在文件内容中，保障“多维度”视角；单源失败不得影响整体流程。
 
 已知阻塞（Google 搜索，当前阶段暂缓）
 - 约束前提：同页完成（不可多页跳转）、不持久化状态/同意（不得写入 storage_state/cookie 文件）、优先 headless 移动端。

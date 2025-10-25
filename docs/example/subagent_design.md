@@ -15,14 +15,14 @@
 - 密钥仅以环境变量或进程配置被客户端读取；绝不写入工具参数面。
 
 ## 通用约束（FS / MsgHub / 结构化完成）
-- 文件写入路径：一律限制在 `/workspace/subagents/<name>/` 前缀下。
+- 文件写入（建议）：适合时将复杂结果沉淀为受控工件；具体前缀由宿主授权控制。
 - 子代理执行期默认静默：不向控制台或 MsgHub 输出；Host 将 ToolResponse 统一转换为 Msg 并广播。
 - 需要确定性收束时，由 Host 在完成函数上 `set_extended_model(...)` 绑定结构化模型。
 - 所有工具统一返回 `ToolResponse`：`metadata` 为框架保留的固定集合（不得增删业务字段）；业务结果一律写入 `content`（可为 Markdown/纯文本或 JSON 文本）。
 
 ## 总体协作
 - 拓扑建议：Search → Browser → File → Generate，通过 Host 的 MsgHub 广播联动；子代理仅返回单个 ToolResponse，流控与广播在 Host 层完成。
-- 命名空间：所有文件写入限定在 `/workspace/subagents/<name>/`；读取优先使用受控 FileDomainService。
+- 命名空间：具体写入位置由宿主的 FileDomainService 授权；读取和写入均应通过受控接口完成。
 - 契约：零偏差；子代理对外工具参数只含必要字段，不夹带“便利”参数。
 
 ---
@@ -78,7 +78,7 @@ async def search_google(query: str) -> ToolResponse:
   - `viewer_fetch(url: str, query: str | None)`：
     - 当 `query` 为空：抓取页面并转换为 Markdown（可落盘至受控路径）。
     - 当 `query` 存在：基于抓取的正文交由 LLM 做定向抽取后返回（answer + evidence[{url, span}]）。
-  - `http_download(url: str, save_path: str)`：下载资源到 `/workspace/subagents/<name>/downloads/`。
+  - `http_download(url: str, save_path: str)`：下载资源到授权的工件路径（示例：`<artifact_path>/downloads/`）。
 
 - 参数 JSON Schema（viewer_fetch）
 ```json
@@ -137,7 +137,7 @@ async def search_google(query: str) -> ToolResponse:
 ```json
 {
   "content": [
-    {"type": "text", "text": "Downloaded: /workspace/subagents/a/downloads/file.pdf"}
+    {"type": "text", "text": "Downloaded: <artifact_path>/downloads/file.pdf"}
   ]
 }
 ```
@@ -166,7 +166,7 @@ async def search_google(query: str) -> ToolResponse:
 fs = DiskFileSystem()
 handle = fs.create_handle([
   {"prefix": "/userinput/", "ops": {"list","file","read_file","read_re","read_binary"}},
-  {"prefix": "/workspace/", "ops": {"list","file","read_file","read_re","read_binary","write","delete"}},
+  {"prefix": "<write-namespace>/", "ops": {"list","file","read_file","read_re","read_binary","write","delete"}},
 ])
 svc = FileDomainService(handle)
 
@@ -186,7 +186,7 @@ for func, svc2 in fs.get_tools(svc):
 { "content": [{"type": "text", "text": "...extracted text preview... (pages:1,2,3)"}] }
 
 // xlsx_write_cells（操作回执）
-{ "content": [{"type": "text", "text": "wrote cells to A1:B2 @ /workspace/subagents/a/book.xlsx"}] }
+{ "content": [{"type": "text", "text": "wrote cells to A1:B2 @ <artifact_path>/book.xlsx"}] }
 
 // image_qa（回答）
 { "content": [{"type": "text", "text": "There are 3 people"}] }
@@ -236,7 +236,7 @@ for func, svc2 in fs.get_tools(svc):
   - 工具：`viewer_fetch(url: string, query?: string)`、`http_download(url: string, save_path: string)`。
   - 行为：
     - `viewer_fetch`：`query` 为空 → HTML→Markdown；有值 → LLM 抽取，返回 `ToolResponse`（answer 文本置于 `content`、`metadata.evidence=[{url,span}]`）。
-    - `http_download`：保存到 `/workspace/subagents/<name>/downloads/`。
+    - `http_download`：保存到受控工件路径（示例：`<artifact_path>/downloads/`）。
 - 不变量
   - `viewer_fetch` Schema：`required == ["url"]`，`query` 可选；返回类型与分支一致。
   - `http_download` 非前缀写入必须失败。
@@ -268,9 +268,9 @@ for func, svc2 in fs.get_tools(svc):
     - PPTX：`pptx_read_outline(path)`/`pptx_write(path, slides_spec)`；返回 `metadata.slides`/目标路径。
     - IMG‑VLM：`image_qa(img_path, query?)`；答案置于 `content`，请求与路径在 `metadata`。
 - 不变量
-  - Schema 不暴露 `service`/句柄；写操作仅在 `/workspace/subagents/<name>/`；`/userinput/` 写入/删除必失败。
+  - Schema 不暴露 `service`/句柄；写操作必须通过受控 FileDomainService 落地到授权命名空间；`/userinput/` 写入/删除必失败。
 - 示例
-  - `csv_read("/userinput/data.csv")`；`xlsx_write_cells("/workspace/subagents/a/book.xlsx", "A1:B2", [["H","I"],["J","K"]])`。
+  - `csv_read("/userinput/data.csv")`；`xlsx_write_cells("<artifact_path>/book.xlsx", "A1:B2", [["H","I"],["J","K"]])`。
 - 测试要点
   - 前缀授权与白名单路径；写删策略；类型化返回结构（rows/cells/text 等）。
 
@@ -283,17 +283,17 @@ for func, svc2 in fs.get_tools(svc):
     - `generate_pdf(requirements, out_path, from_paths?)`
   - 行为：基于“前序总结 + 受控文件(from_paths 可选)”生成产物；仅写入受控路径。
 - 不变量
-  - Schema 字段集合等价于 `{requirements, out_path, from_paths?}`；写入只能在 `/workspace/subagents/<name>/`；成功后目标文件存在。
+  - Schema 字段集合等价于 `{requirements, out_path, from_paths?}`；写入必须走受控 FileDomainService，确保输出位于授权命名空间；成功后目标文件存在。
 - 示例
-  - `generate_markdown("总结 X", "/workspace/subagents/a/report.md", ["/workspace/subagents/a/notes.txt"])`。
+  - `generate_markdown("总结 X", "<artifact_path>/report.md", ["<artifact_path>/notes.txt"])`。
 - 测试要点
   - Schema 等价；写入前缀；from_paths 均能读取；产物存在性检查。
 
 - ToolResponse 示例（generate_markdown）
 ```json
 {
-  "content": [{"type": "text", "text": "written: /workspace/subagents/a/report.md"}],
-  "metadata": {"artifact_path": "/workspace/subagents/a/report.md", "from_paths": ["/workspace/subagents/a/notes.txt"]}
+  "content": [{"type": "text", "text": "written: <artifact_path>/report.md"}],
+  "metadata": {"artifact_path": "<artifact_path>/report.md", "from_paths": ["<artifact_path>/notes.txt"]}
 }
 ```
 
@@ -311,8 +311,8 @@ for func, svc2 in fs.get_tools(svc):
 
 ### B. FileSystem Agent（examples/filesystem_agent）
 - 沙箱化文件系统：`DiskFileSystem.create_handle(grants)` + `FileDomainService` 强制命名空间与操作权限；工具以 `preset_kwargs={"service": svc}` 方式注册。
-- 提示与策略：在系统提示中明确 `/userinput`（只读）与 `/workspace`（可写），并要求不明确路径先澄清。
-- 稳定 I/O：将输入材料放入 `/userinput/`，所有写入只发生在 `/workspace/`；演示使用 `fs.get_tools(service)` 批量注册。
+- 提示与策略：在系统提示中明确“哪些命名空间只读、哪些可写”（由宿主授权），并要求路径不明确时先澄清。
+- 稳定 I/O：将输入材料置于授权的只读命名空间，所有写入仅发生在可写命名空间（均由宿主授权）；演示使用 `fs.get_tools(service)` 批量注册。
 
 ### C. Browser Agent（examples/agent_browser）
 - 生命周期钩子：`pre_reply`（首次导航）、`pre_reasoning`（快照），`post_reasoning`（清理观测）、`post_acting`（规范化输出）。
@@ -353,8 +353,8 @@ for func, svc2 in fs.get_tools(svc):
 
 来自 FileSystem Agent（examples/filesystem_agent）
 - 受控文件系统：`DiskFileSystem` + `create_handle(grants)` + `FileDomainService`；以 `preset_kwargs={service}` 注册工具。
-- 路径策略入 Prompt：明确 `/userinput` 只读、`/workspace` 可写；在 File/Generate 代理复用。
-- 可重复 I/O：将输入固定放入 `/userinput/`，仅在 `/workspace/` 写出。
+- 路径策略入 Prompt：说明哪些命名空间只读、哪些可写（均由宿主授权）；在 File/Generate 代理复用。
+- 可重复 I/O：将输入固定放入授权的只读空间，仅在授权可写空间写出。
 - 工具批量导出：`fs.get_tools(service)` 一键注册，正好满足 File 代理需求。
 
 来自 Browser Agent（examples/agent_browser）
@@ -369,7 +369,7 @@ for func, svc2 in fs.get_tools(svc):
   - Viewer：实现 `viewer_fetch(url, query|None)`；`query` 存在时走 LLM 抽取；提供 `http_download(url, save_path)`，下载到受控前缀。
   - Automation：沿用 BrowserAgent 的导航/快照/交互最小集合与 Hook。
 - agent_file：仅用 FileDomainService 工具；为 csv/pdf/xlsx/pptx/img-VLM 增最小读写/问答；通过服务句柄注册；执行路径策略。
-- agent_generate：简单生成器（markdown/html/pptx/pdf），参数包含 `requirements` 与 `from_paths`；仅写入 `/workspace/subagents/<name>/`。
+- agent_generate：简单生成器（markdown/html/pptx/pdf），参数包含 `requirements` 与 `from_paths`；输出写入由宿主授权的受控命名空间。
 
 护栏与注意事项
 - 禁止在 Schema 暴露 key/cookie；统一注入客户端或用环境变量。
