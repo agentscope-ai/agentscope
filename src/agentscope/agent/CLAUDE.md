@@ -20,7 +20,6 @@ The agent module provides the core building blocks for creating and managing age
 - **`_react_agent_base.py`** - Base ReAct agent functionality
 - **`_subagent_base.py`** - Delegation skeleton derived from `AgentBase`; injects shared resources, enforces filesystem namespace, loads delegation context, wraps errors; owns a fresh `Toolkit` and supports bulk registration of provided tools.
 - **`_subagent_tool.py`** - Factory helpers (`make_subagent_tool`, specs) that expose `SubAgentBase` subclasses as Toolkit tool functions.
-- **`_search_agent.py`** - Implements `SearchQuery` (query/context) and `SearchAgent`, which aggregates registered search tools, writes optional markdown artifacts under `/workspace/subagents/<name>/`, and surfaces artifact paths through message metadata.
 
 ## Dependencies
 

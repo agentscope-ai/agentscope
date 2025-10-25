@@ -160,11 +160,6 @@ graph TD
 - **`ReActAgent`**：完整 ReAct 循环、结构化输出、并行工具、计划/RAG/长期记忆集成等；关键方法 `_reasoning`、`_acting`、`_summarizing`、`generate_response`。
 - 内部使用 `_json_schema`、`Toolkit.set_extended_model` 等配置结构化输出。
 
-#### `src/agentscope/agent/_search_agent.py`
-
-- **`SearchQuery`**：定义搜索子代理的 Pydantic 输入模型，字段包括 `query: str` 与可选 `context: str | None`。
-- **`SearchAgent`**：子代理实现，遍历注册的搜索工具，根据 `query` 收集结果并在可用时写入受控文件系统，返回聚合文本和 `artifact_path` 元数据。
-
 #### `src/agentscope/agent/_user_agent.py`
 
 - **`UserAgent`**：面向命令行/Studio 的用户代理，实现最小 `reply` 与 `observe`。
@@ -295,8 +290,8 @@ graph TD
 
 ### 子 Agent（SubAgentBase）测试计划（证明义务）
 - 注册与 Schema：使用最小 Mock 子类注册两个子代理工具，断言 `Toolkit.get_json_schemas()` 含正确函数名；子代理“自有”Toolkit 仅包含通过 `tools` 提供的工具集合。
-- 自动匹配：构造假模型输出 `tool_use(name="agent_search", arguments={...})`，验证最终 `ToolResponse` 聚合、且不出现子代理流式块；Mock 子类仅返回固定响应，确认骨架行为。
-- 显式调用：在提示中强制 LLM 选择特定工具（如 `agent_search`），验证路由到目标子代理，而不引入实际领域逻辑。
+- 自动匹配：构造假模型输出 `tool_use(name="example_subagent", arguments={...})`，验证最终 `ToolResponse` 聚合、且不出现子代理流式块；Mock 子类仅返回固定响应，确认骨架行为。
+- 显式调用：在提示中强制 LLM 选择特定工具（如 `example_subagent`），验证路由到目标子代理，而不引入实际领域逻辑。
 - 隔离不变量：子代理 `memory.size()` 递增，主代理内存不变；主代理 `toolkit` 中不可见子代理内部工具。
 - 异常与静默失败：运行期模拟异常（超时等）需返回 `metadata.unavailable=True` 且不中断主代理循环；注册期仅执行“构造探测”（失败则不注册）。
 - 并行调用：当主代理并行执行多个子代理工具，验证互不干扰、结果顺序与 `gather` 行为一致。
@@ -345,7 +340,7 @@ graph TD
 - 异常处理：无论是运行时异常、超时、超过最大迭代次数，都不抛到主 Agent；而是返回一条带错误说明的 ToolResponse，例如：
 
   ToolResponse(
-      content=[TextBlock(type="text", text="[subagent_timeout] agent_search 超时，请稍后再试")],
+      content=[TextBlock(type="text", text="[subagent_timeout] example_subagent 超时，请稍后再试")],
       metadata={"unavailable": True, "error": "timeout"},
       is_last=True,
   )

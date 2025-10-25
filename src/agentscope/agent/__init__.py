@@ -11,7 +11,6 @@ from ._subagent_base import (
     SubAgentUnavailable,
 )
 from ._subagent_tool import SubAgentSpec, make_subagent_tool
-from ._search_agent import SearchAgent, SearchQuery
 from ._user_input import (
     UserInputBase,
     UserInputData,
@@ -32,8 +31,6 @@ __all__ = [
     "SubAgentUnavailable",
     "SubAgentSpec",
     "make_subagent_tool",
-    "SearchAgent",
-    "SearchQuery",
     "UserInputData",
     "UserInputBase",
     "TerminalUserInput",

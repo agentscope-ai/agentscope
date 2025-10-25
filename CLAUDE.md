@@ -105,14 +105,6 @@ Responsibility: Store tool metadata and post‑processing hooks.
 Module: `src/agentscope/mcp/_http_stateless_client.py`
 Responsibility: Disposable MCP HTTP/SSE client listing tools and wrapping call functions.
 
-Module: `src/agentscope/agent/_search_agent.py`
-Responsibility: Pydantic-driven search subagent that aggregates tool outputs and writes optional artifacts.
-Key Types: `SearchQuery`.
-Key Methods
-- `reply(input_obj: SearchQuery, **kwargs)` — iterates registered search tools (via toolkit), executes each with `_execute_async_or_sync_func`, aggregates text blocks, writes a markdown artifact when a filesystem service is present, and returns a Msg with metadata (`query`, `context`, optional `artifact_path`).
-- `_compose_result_path(query)` — generates stable `/workspace/subagents/<name>/` artifact paths.
-- `_format_tool_result(tool_name, ToolResponse)` — extracts text or metadata for inclusion in the aggregated transcript.
-
 Module: `src/agentscope/agent/_subagent_base.py`
 Responsibility: Agent-as-Tool skeleton with Pydantic input contracts.
 

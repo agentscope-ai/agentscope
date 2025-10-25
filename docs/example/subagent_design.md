@@ -27,48 +27,6 @@
 
 ---
 
-## 1) Agent Search（多来源搜索）
-- 目标：面向公开/私域的检索，只负责“查到入口 URL 与摘要”。不负责抓取详情与页面下载。
-- 最小工具面（每个来源一个工具，仅暴露 `query: str`）：
-  - `search_google(query: str)`
-  - `search_bing(query: str)`
-  - `search_sogou(query: str)`
-  - 私域：`search_github(query: str)`、`search_wiki(query: str)`（可扩展更多私域源）
-- 约束：
-  - 不出现任何密钥字段；运行期依赖（如 Playwright/WebKit 或 HTTP 客户端）由工具在每次调用内自行创建与关闭，不通过 preset_kwargs 注入，且不进入 schema。
-  - 返回仅写入 `ToolResponse.content` 的纯文本列表，每条包含 `title`/`url`/`snippet`；不修改 `metadata`。
-
-- 最小 JSON Schema（示例：search_google）
-```json
-{
-  "type": "function",
-  "function": {
-    "name": "search_google",
-    "description": "Search Google and return top results.",
-    "parameters": {
-      "type": "object",
-      "properties": {"query": {"type": "string"}},
-      "required": ["query"]
-    }
-  }
-}
-```
-
-- 运行期（伪代码，按调用就地初始化）：
-```python
-async def search_google(query: str) -> ToolResponse:
-    # create ephemeral runtime here (e.g., launch web client per call)
-    rows = await do_google_search(query)
-    rows = truncate_rows(rows)
-    text = render_text_list(rows)  # plain text: title/url/snippet
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
-```
-
-- ToolResponse 示例（search_google）
-```json
-{ "content": [{"type": "text", "text": "- title: ...\n  url: https://...\n  snippet: ..."}] }
-```
-
 ## 2) Agent Browser（网页查看器 / 自动化）
 分为两类：
 
@@ -215,22 +173,6 @@ for func, svc2 in fs.get_tools(svc):
 
 ## 验收映射（规范 → 不变量 → 示例 → 测试要点）
 
-### A. Agent Search
-- 规范
-  - 工具：`search_google`/`search_bing`/`search_sogou`/`search_github`/`search_wiki`。
-  - 入参：仅 `query: string`；Schema 字段集合等价于 `{query}`。
-  - 返回：统一 `ToolResponse`；业务结果写入 `content`（可为 JSON 文本）；`metadata` 不增删。
-  - 运行期：按调用就地初始化依赖（不注入），密钥不入 schema。
-  - 后处理：对 `snippet` 做长度/词数截断，保持总输出可控。
-- 不变量
-  - JSON Schema 等价检查：`parameters.properties == {query}`，`required == ["query"]`。
-  - 结果元素包含四字段，类型正确；`source` == 工具名。
-  - 子代理静默（无 console/MsgHub 外泄）。
-- 示例
-  - `search_google({"query": "site:example.com roadmap"})` → 3–5 条结果。
-- 测试要点
-  - Schema 等价断言；输出结构断言；`source` 一致性；截断生效；工具白名单仅含上述 5 名称。
-
 ### B. Agent Browser — Viewer
 - 规范
   - 工具：`viewer_fetch(url: string, query?: string)`、`http_download(url: string, save_path: string)`。
@@ -363,9 +305,8 @@ for func, svc2 in fs.get_tools(svc):
 - 内容清洗：去除执行痕迹/噪声再入记忆；Markdown 转换也需清洗。
 - MCP 浏览器工具：`navigate/snapshot/click/type/wait` 最小集合适用于 Automation 模式。
 
-应用到四类子代理
-- agent_search：每来源一个工具（google/bing/sogou/github/wiki），签名固定 `query:str`；复用 DeepResearch 的 MCP 接线与截断策略。
-- agent_browser：
+应用到三类子代理（示例）
+ - agent_browser：
   - Viewer：实现 `viewer_fetch(url, query|None)`；`query` 存在时走 LLM 抽取；提供 `http_download(url, save_path)`，下载到受控前缀。
   - Automation：沿用 BrowserAgent 的导航/快照/交互最小集合与 Hook。
 - agent_file：仅用 FileDomainService 工具；为 csv/pdf/xlsx/pptx/img-VLM 增最小读写/问答；通过服务句柄注册；执行路径策略。
