@@ -20,6 +20,7 @@ The agent module provides the core building blocks for creating and managing age
 - **`_react_agent_base.py`** - Base ReAct agent functionality
 - **`_subagent_base.py`** - Delegation skeleton derived from `AgentBase`; injects shared resources, enforces filesystem namespace, loads delegation context, wraps errors; owns a fresh `Toolkit` and supports bulk registration of provided tools.
 - **`_subagent_tool.py`** - Factory helpers (`make_subagent_tool`, specs) that expose `SubAgentBase` subclasses as Toolkit tool functions.
+- **`_search_agent.py`** - Implements `SearchQuery` (query/context) and `SearchAgent`, which aggregates registered search tools, writes optional markdown artifacts under `/workspace/subagents/<name>/`, and surfaces artifact paths through message metadata.
 
 ## Dependencies
 
@@ -44,12 +45,13 @@ from agentscope.agent import AgentBase, ReActAgent, UserAgent
 
 - Responsibility: Provide a minimal `AgentBase` derivative that can be treated as a Toolkit tool while staying free of business logic. Shared resources (logger, tracing, filesystem, session, long-term memory) are injected during `export_agent`; filesystem access is restricted to `/workspace/subagents/<name>/`; short-term state, a self‑owned toolkit (bulk‑registered from a provided tool list), and hooks remain isolated per call.
 - Key Methods:
-  - `SubAgentBase.export_agent(permissions, parent_context, task, *, delegation_context, tools=None)` → fresh subagent instance. No healthcheck; registration uses a one‑time construction probe.
-  - `SubAgentBase._pre_context_compress(parent_context, task)` → normalized `DelegationContext` payload produced by the host before delegation.
-  - `SubAgentBase.delegate(task_summary, delegation_context, **kwargs)` → loads delegation context, calls the subclass `reply`, folds outputs into a single `ToolResponse` with `is_last=True`, wraps failures using `metadata["unavailable"]=True` and audit fields (`subagent`, `supervisor`).
-  - `make_subagent_tool(cls, spec, tool_name)` → registers subagent tool functions; performs a constructor probe once at registration; bulk‑registers `spec.tools` (if provided); injects permissions/context before each call.
+  - `SubAgentBase.get_input_model()` → returns the Pydantic model declaring the tool's input contract (required; raises if absent).
+  - `SubAgentBase._pre_context_compress(parent_context, input_obj)` → normalizes host context into `DelegationContext` with `input_payload`, recent events, workspace pointers, safety flags, and optional preview text.
+  - `SubAgentBase.export_agent(permissions, parent_context, input_obj, *, delegation_context=None, tools=None)` → fresh subagent instance with shared resources injected; used for registration probe and every invocation.
+  - `SubAgentBase.delegate(input_obj, *, delegation_context)` → restores context, caches the validated model (`self._current_input`), calls the subclass `reply(input_obj, **kwargs)`, folds its `Msg` into a single `ToolResponse(is_last=True)`, marks failures with `metadata["unavailable"]=True`.
+  - `make_subagent_tool(cls, spec, tool_name)` → loads `InputModel`, generates OpenAI function schema via `model_json_schema()`, runs a zero-arg registration probe (requires defaults), validates runtime payloads with `model_validate`, annotates host messages, and orchestrates export/delegate per call.
 - Invariants: no live streaming toward parent queues, no implicit access to host toolkit or hooks, exceptions never leak raw stack traces.
-- Call Path: `ReActAgent._acting` (detect tool name) → `make_subagent_tool` wrapper → `SubAgentBase.export_agent(..., delegation_context=host_summary)` → `delegate` → `ToolResponse`.
+- Call Path: `ReActAgent._acting` (detect tool name) → `make_subagent_tool` wrapper → `InputModel.model_validate(arguments)` → `_pre_context_compress` → `SubAgentBase.export_agent(..., input_obj=payload)` → `delegate` → `ToolResponse`.
 
 ## Testing
 

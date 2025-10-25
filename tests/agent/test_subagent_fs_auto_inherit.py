@@ -33,7 +33,7 @@ def test_subagent_fs_auto_inherit() -> None:
             type="tool_use",
             id="fs-auto-1",
             name=tool_name,
-            input={"task_summary": "tag=fsauto"},
+            input={"message": "check fs tools", "tag": "fsauto"},
         )
         await invoke_tool(agent, tool_call)
 
@@ -46,4 +46,3 @@ def test_subagent_fs_auto_inherit() -> None:
         assert "delete_file" in seen
 
     asyncio.run(_run())
-

@@ -36,7 +36,7 @@ def test_subagent_error_propagation() -> None:
             type="tool_use",
             id="call-3",
             name=tool_name,
-            input={"task_summary": "Do the impossible."},
+            input={"message": "Do the impossible."},
         )
 
         response = await invoke_tool(agent, tool_call)

@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 import asyncio
-import contextlib
-
 import pytest
 
 
 def test_bing_mobile_search_e2e_returns_results() -> None:
     try:
-        from playwright.async_api import async_playwright  # type: ignore
+        from playwright.async_api import async_playwright  # type: ignore  # noqa: F401
     except Exception as e:  # pragma: no cover - env dependent
         pytest.skip(f"Playwright not available: {e}")
 

@@ -10,7 +10,7 @@ import pytest
 
 try:  # pragma: no cover - env dependent
     import playwright  # type: ignore
-except Exception as e:  # noqa: BLE001
+except Exception:  # noqa: BLE001
     playwright = None
 
 from agentscope.tool import search_github, ToolResponse  # type: ignore

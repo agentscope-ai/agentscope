@@ -2,11 +2,16 @@
 """Factory helpers for registering SubAgent skeletons as toolkit tools."""
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Callable, TYPE_CHECKING
+import json
+from typing import Any, Callable, TYPE_CHECKING, Union, get_args, get_origin
+
+from pydantic import BaseModel, ValidationError
+from pydantic.fields import PydanticUndefined
 
 from .._logging import logger
 from ..message import Msg, TextBlock
 from ..types import ToolFunction
+from .._utils._common import _remove_title_field
 from ._agent_base import AgentBase
 from ._subagent_base import (
     ContextBundle,
@@ -49,6 +54,15 @@ async def make_subagent_tool(
     """
     resolved_name = tool_name or f"{spec.name}_tool"
 
+    try:
+        input_model = cls.get_input_model()
+    except NotImplementedError as error:
+        raise SubAgentUnavailable(str(error)) from error
+
+    sample_payload = _build_sample_input(input_model)
+
+    json_schema = _build_model_schema(resolved_name, "", input_model)
+
     def permissions_builder() -> PermissionBundle:
         return _build_permissions(host)
 
@@ -58,33 +72,66 @@ async def make_subagent_tool(
 
     # Registration-time probe: construct once to gate tool exposure.
     try:
+        probe_context = cls._pre_context_compress(
+            context_snapshot,
+            sample_payload,
+        )
         await cls.export_agent(
             permissions=initial_permissions,
             parent_context=context_snapshot,
-            task="registration-probe",
             spec_name=spec.name,
             ephemeral_memory=ephemeral_memory,
             tools=spec.tools,
-            delegation_context=None,
+            input_obj=sample_payload,
+            delegation_context=probe_context,
         )
     except Exception as error:  # pylint: disable=broad-except
         raise SubAgentUnavailable(str(error)) from error
 
     async def _invoke_subagent(
-        task_summary: str,
         *,
         _host: AgentBase = host,
         _spec: SubAgentSpec = spec,
         _cls: type[SubAgentBase] = cls,
         _ephemeral_memory: bool = ephemeral_memory,
         _permissions_builder: Callable[[], PermissionBundle] = permissions_builder,
+        **raw_input: Any,
     ) -> ToolResponse:
+        from ..tool import ToolResponse as _ToolResponse
+
+        try:
+            input_obj = input_model.model_validate(raw_input)
+        except ValidationError as error:
+            logger.warning(
+                "Validation error for subagent `%s`: %s",
+                _spec.name,
+                error,
+            )
+            error_details = json.loads(error.json())
+            return _ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=(
+                            "Subagent input validation failed. "
+                            f"Details: {error}"
+                        ),
+                    ),
+                ],
+                metadata={
+                    "unavailable": True,
+                    "error": error_details,
+                    "subagent": _spec.name,
+                    "supervisor": getattr(host, "name", "host"),
+                },
+            )
+
         parent_context = await _build_context_bundle(_host)
         permissions = _permissions_builder()
 
         delegation_context = _cls._pre_context_compress(
             parent_context,
-            task_summary,
+            input_obj,
         )
 
         _annotate_latest_user_message(parent_context.conversation, delegation_context)
@@ -93,15 +140,13 @@ async def make_subagent_tool(
             subagent = await _cls.export_agent(
                 permissions=permissions,
                 parent_context=parent_context,
-                task=task_summary,
                 spec_name=_spec.name,
                 ephemeral_memory=_ephemeral_memory,
                 tools=_spec.tools,
                 delegation_context=delegation_context,
+                input_obj=input_obj,
             )
         except SubAgentUnavailable as error:
-            from ..tool import ToolResponse as _ToolResponse
-
             logger.warning(
                 "Subagent `%s` unavailable during export: %s",
                 _spec.name,
@@ -123,12 +168,9 @@ async def make_subagent_tool(
             )
 
         return await subagent.delegate(
-            task_summary=task_summary,
+            input_obj=input_obj,
             delegation_context=delegation_context,
         )
-
-    # Outward schema is always the minimal {task_summary}; description empty.
-    json_schema = _build_default_schema(resolved_name, "")
 
     register_kwargs = {
         "func_description": "",
@@ -218,28 +260,83 @@ def _annotate_latest_user_message(
             break
 
 
-def _build_default_schema(
+def _build_model_schema(
     tool_name: str,
     description: str,
+    input_model: type[BaseModel],
 ) -> dict[str, Any]:
-    """Construct a minimal JSON schema for the subagent tool."""
+    """Construct an OpenAI function schema from the subagent's Pydantic model."""
+    schema = input_model.model_json_schema()
+    _remove_title_field(schema)
+    if "type" not in schema:
+        schema["type"] = "object"
+    schema.setdefault("properties", {})
     return {
         "type": "function",
         "function": {
             "name": tool_name,
             "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_summary": {
-                        "type": "string",
-                        "description": (
-                            "Concise summary of the delegated task for the "
-                            "subagent to execute."
-                        ),
-                    },
-                },
-                "required": ["task_summary"],
-            },
+            "parameters": schema,
         },
     }
+
+
+def _build_sample_input(model: type[BaseModel]) -> BaseModel:
+    """Construct a best-effort sample payload for registration probes."""
+    values: dict[str, Any] = {}
+    for name, field in model.model_fields.items():
+        if field.default is not PydanticUndefined:
+            values[name] = field.default
+            continue
+        default_factory = getattr(field, "default_factory", PydanticUndefined)
+        if default_factory is not PydanticUndefined and default_factory is not None:
+            values[name] = default_factory()
+            continue
+        values[name] = _placeholder_value(field.annotation)
+    return model.model_construct(**values)
+
+
+def _placeholder_value(annotation: Any) -> Any:
+    """Return a neutral placeholder for the given field annotation."""
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    if annotation is Any:
+        return None
+
+    if origin is None:
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return _build_sample_input(annotation)
+        if annotation is str:
+            return ""
+        if annotation is int:
+            return 0
+        if annotation is float:
+            return 0.0
+        if annotation is bool:
+            return False
+        if annotation in (list, tuple):
+            return []
+        if annotation is set:
+            return set()
+        if annotation is dict:
+            return {}
+        return None
+
+    if origin in (list, tuple, set):
+        return origin() if origin is not tuple else ()
+
+    if origin is dict:
+        return {}
+
+    if origin is type(None):  # pragma: no cover
+        return None
+
+    # Handle Optional / Union types
+    if origin is Union:
+        non_none = [arg for arg in args if arg is not type(None)]
+        if not non_none:
+            return None
+        return _placeholder_value(non_none[0])
+
+    return None

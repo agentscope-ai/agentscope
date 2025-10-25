@@ -80,7 +80,9 @@ def test_subagent_allowlist_schema() -> None:
             id="allow-1",
             name=tool_name,
             input={
-                "task_summary": "tag=allow;delay=0",
+                "message": "Use the allowlisted helper.",
+                "tag": "allow",
+                "delay": 0.0,
             },
         )
 
@@ -92,5 +94,13 @@ def test_subagent_allowlist_schema() -> None:
             schema["function"]["name"] for schema in agent.toolkit.get_json_schemas()
         }
         assert tool_name in schema_names
+
+        registered_schema = next(
+            schema
+            for schema in agent.toolkit.get_json_schemas()
+            if schema["function"]["name"] == tool_name
+        )
+        params = registered_schema["function"]["parameters"]
+        assert "message" in params.get("properties", {})
 
     asyncio.run(_run())

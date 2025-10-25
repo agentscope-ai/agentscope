@@ -39,7 +39,7 @@ def test_subagent_filesystem_namespace() -> None:
             type="tool_use",
             id="fs-1",
             name=tool_name,
-            input={"task_summary": "tag=fs"},
+            input={"message": "Write diagnostics to disk.", "tag": "fs"},
         )
 
         await invoke_tool(agent, tool_call)

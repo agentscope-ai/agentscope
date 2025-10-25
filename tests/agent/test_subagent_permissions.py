@@ -40,7 +40,7 @@ def test_permission_handles_copied_from_host() -> None:
             type="tool_use",
             id="perm-1",
             name=tool_name,
-            input={"task_summary": "tag=perm"},
+            input={"message": "Check permission bundle", "tag": "perm"},
         )
 
         await invoke_tool(agent, tool_call)

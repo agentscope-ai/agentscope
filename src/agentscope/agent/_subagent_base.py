@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import logging
 from typing import Any, ClassVar, TYPE_CHECKING, TypedDict, Callable
+
+from pydantic import BaseModel
 
 from .._logging import logger
 from ..message import Msg, TextBlock
@@ -62,33 +65,39 @@ class ContextBundle:
 class DelegationContext:
     """Normalized payload shared with subagents."""
 
-    task_summary: str
+    input_payload: dict[str, JSONSerializableObject]
     recent_events: list[dict[str, JSONSerializableObject]]
     long_term_refs: list[dict[str, JSONSerializableObject]]
     workspace_pointers: list[str]
     safety_flags: dict[str, JSONSerializableObject]
+    input_preview: str | None = None
 
     def to_payload(self) -> dict[str, JSONSerializableObject]:
         """Convert to metadata payload."""
-        return {
-            "task_summary": self.task_summary,
+        payload: dict[str, JSONSerializableObject] = {
+            "input_payload": self.input_payload,
             "recent_events": self.recent_events,
             "long_term_refs": self.long_term_refs,
             "workspace_pointers": self.workspace_pointers,
             "safety_flags": self.safety_flags,
         }
+        if self.input_preview is not None:
+            payload["input_preview"] = self.input_preview
+        return payload
 
     @classmethod
     def from_payload(cls, payload: dict[str, JSONSerializableObject]) -> (
         "DelegationContext"
     ):
         """Hydrate from metadata payload."""
+        preview = payload.get("input_preview")
         return cls(
-            task_summary=str(payload.get("task_summary", "")),
+            input_payload=dict(payload.get("input_payload", {})),
             recent_events=list(payload.get("recent_events", [])),
             long_term_refs=list(payload.get("long_term_refs", [])),
             workspace_pointers=list(payload.get("workspace_pointers", [])),
             safety_flags=dict(payload.get("safety_flags", {})),
+            input_preview=str(preview) if preview is not None else None,
         )
 
 
@@ -108,6 +117,7 @@ class SubAgentBase(AgentBase):
     """Skeleton agent dedicated to delegation-as-tool flows."""
 
     spec_name: ClassVar[str] = "subagent"
+    InputModel: ClassVar[type[BaseModel] | None] = None
 
     def __init__(
         self,
@@ -152,6 +162,7 @@ class SubAgentBase(AgentBase):
         self.memory = memory
         self._delegation_context: DelegationContext | None = None
         self._ephemeral_memory = ephemeral_memory
+        self._current_input: BaseModel | None = None
 
         # Inherit host-provided FileDomainService as-is; no hardcoded namespace.
         self.filesystem_service = permissions.filesystem_service
@@ -181,10 +192,19 @@ class SubAgentBase(AgentBase):
                 )
 
     @classmethod
+    def get_input_model(cls) -> type[BaseModel]:
+        """Return the declared Pydantic input model."""
+        if cls.InputModel is None:
+            raise NotImplementedError(
+                f"{cls.__name__} must set `InputModel` to a Pydantic BaseModel subclass.",
+            )
+        return cls.InputModel
+
+    @classmethod
     def _pre_context_compress(
         cls,
         parent_context: ContextBundle,
-        task: str,
+        input_obj: BaseModel,
     ) -> DelegationContext:
         """Build a normalized delegation payload."""
         recent_events = [
@@ -196,12 +216,20 @@ class SubAgentBase(AgentBase):
                 _summarize_msg(parent_context.conversation[-1]),
             ]
 
+        payload = input_obj.model_dump()
+        try:
+            preview = json.dumps(payload, ensure_ascii=False)
+        except TypeError:
+            preview = str(payload)
+        preview = preview[:200]
+
         return DelegationContext(
-            task_summary=task,
+            input_payload=payload,
             recent_events=recent_events,
             long_term_refs=list(parent_context.long_term_refs),
             workspace_pointers=list(parent_context.workspace_handles),
             safety_flags=dict(parent_context.safety_flags),
+            input_preview=preview,
         )
 
     @classmethod
@@ -210,15 +238,14 @@ class SubAgentBase(AgentBase):
         *,
         permissions: PermissionBundle,
         parent_context: ContextBundle,
-        task: str,
         spec_name: str,
         ephemeral_memory: bool = True,
         tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
+        input_obj: BaseModel,
         delegation_context: DelegationContext | None = None,
     ) -> "SubAgentBase":
         """Construct a fresh subagent instance (no healthcheck)."""
-        _ = (parent_context, task)
         instance = cls(
             permissions=permissions,
             spec_name=spec_name,
@@ -229,20 +256,24 @@ class SubAgentBase(AgentBase):
 
         if delegation_context is not None:
             instance.load_delegation_context(delegation_context)
+        else:
+            instance._delegation_context = None
 
         return instance
 
     def load_delegation_context(
         self,
-        context: DelegationContext,
+        context: DelegationContext | dict[str, JSONSerializableObject],
     ) -> None:
         """Store the delegation context for later retrieval."""
+        if isinstance(context, dict):
+            context = DelegationContext.from_payload(context)
         self._delegation_context = context
 
     async def delegate(
         self,
+        input_obj: BaseModel,
         *,
-        task_summary: str,
         delegation_context: DelegationContext | None = None,
         **kwargs: Any,
     ) -> "ToolResponse":
@@ -251,18 +282,26 @@ class SubAgentBase(AgentBase):
 
         if context is None:
             context = DelegationContext(
-                task_summary=task_summary,
+                input_payload=input_obj.model_dump(),
                 recent_events=[],
                 long_term_refs=[],
                 workspace_pointers=[],
                 safety_flags={},
+                input_preview=json.dumps(
+                    input_obj.model_dump(),
+                    ensure_ascii=False,
+                )[:200],
             )
 
         self.load_delegation_context(context)
+        self._current_input = input_obj
 
         synthetic_msg = Msg(
             name=self.permissions.supervisor_name,
-            content=task_summary,
+            content=json.dumps(
+                context.input_payload,
+                ensure_ascii=False,
+            ),
             role="user",
             metadata={
                 "delegation_context": context.to_payload(),
@@ -272,7 +311,7 @@ class SubAgentBase(AgentBase):
         await self.memory.add(synthetic_msg)
 
         try:
-            reply_msg = await self.reply(synthetic_msg, **kwargs)
+            reply_msg = await self.reply(input_obj, **kwargs)
         except Exception as error:  # pylint: disable=broad-except
             logger.warning(
                 "Subagent `%s` failed: %s",

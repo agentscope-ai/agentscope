@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel
+
 from agentscope.agent import (
     ReActAgent,
     SubAgentBase,
@@ -79,6 +81,12 @@ def attach_filesystem(agent: ReActAgent) -> None:
     agent.filesystem_service = FileDomainService(handle)
 
 
+class SubAgentInput(BaseModel):
+    message: str = "placeholder"
+    tag: str | None = None
+    delay: float = 0.0
+
+
 class EchoSubAgent(SubAgentBase):
     """Minimal subagent implementation used for skeleton verification."""
 
@@ -88,27 +96,19 @@ class EchoSubAgent(SubAgentBase):
     delegation_payloads: list[dict] = []
     filesystem_roots: list[str] = []
 
+    InputModel = SubAgentInput
+
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         await self.memory.add(msg)
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **_,
     ) -> Msg:
         self.__class__.console_states.append(self._disable_console_output)
         self.__class__.queue_states.append(self._disable_msg_queue)
 
-        if isinstance(msg, list):
-            msg = msg[-1] if msg else None
-        if msg is None:
-            msg = Msg(
-                name=self.spec_name,
-                content="",
-                role="user",
-            )
-
-        await self.memory.add(msg)
         size = await self.memory.size()
         self.__class__.memory_events.append(size)
 
@@ -118,7 +118,7 @@ class EchoSubAgent(SubAgentBase):
 
         # No hardcoded filesystem root under new policy; keep placeholder list.
 
-        text = msg.get_text_content() or ""
+        text = input_obj.message
         return Msg(
             name=self.spec_name,
             content=f"echo:{text}",
@@ -139,10 +139,10 @@ class RecordingSubAgent(EchoSubAgent):
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **kwargs,
     ) -> Msg:
-        response = await super().reply(msg, **kwargs)
+        response = await super().reply(input_obj, **kwargs)
         context = getattr(self, "_delegation_context", None)
         payload = context.to_payload() if context else {}
         response.metadata = {"delegation_context": payload}
@@ -154,7 +154,7 @@ class FailingSubAgent(EchoSubAgent):
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **kwargs,
     ) -> Msg:
         raise RuntimeError("delegation failed")
@@ -172,10 +172,10 @@ class CountingSubAgent(EchoSubAgent):
     def _pre_context_compress(
         cls,
         parent_context,
-        task: str,
+        input_obj: SubAgentInput,
     ):
         cls.compress_calls += 1
-        return super()._pre_context_compress(parent_context, task)
+        return super()._pre_context_compress(parent_context, input_obj)
 
     @classmethod
     def reset(cls) -> None:
@@ -187,13 +187,14 @@ class AllowlistSubAgent(SubAgentBase):
     """Records tools visible to the subagent toolkit."""
 
     seen_tools: list[set[str]] = []
+    InputModel = SubAgentInput
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         await self.memory.add(msg)
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **_,
     ) -> Msg:
         self.__class__.seen_tools.append(set(self.toolkit.tools.keys()))
@@ -213,13 +214,14 @@ class NamespaceSubAgent(SubAgentBase):
 
     writes: list[str] = []
     errors: list[str] = []
+    InputModel = SubAgentInput
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         await self.memory.add(msg)
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **_,
     ) -> Msg:
         if self.filesystem_service is None:
@@ -251,17 +253,17 @@ class ParallelSubAgent(SubAgentBase):
 
     memory_sizes: list[int] = []
     order: list[str] = []
+    InputModel = SubAgentInput
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         await self.memory.add(msg)
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **kwargs,
     ) -> Msg:
-        summary = (msg.get_text_content() if isinstance(msg, Msg) else "") or ""
-        delay, tag = _parse_summary(summary)
+        delay, tag = input_obj.delay, input_obj.tag or "unknown"
         await asyncio.sleep(delay)
         size = await self.memory.size()
         self.__class__.memory_sizes.append(size)
@@ -282,13 +284,14 @@ class PermissionSubAgent(SubAgentBase):
     """Captures injected permission bundle for verification."""
 
     permissions_snapshot = None
+    InputModel = SubAgentInput
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         await self.memory.add(msg)
 
     async def reply(
         self,
-        msg: Msg | list[Msg] | None = None,
+        input_obj: SubAgentInput,
         **_,
     ) -> Msg:
         self.__class__.permissions_snapshot = self.permissions
@@ -316,21 +319,3 @@ async def invoke_tool(agent: ReActAgent, tool_call: ToolUseBlock) -> "ToolRespon
 def build_spec(name: str) -> SubAgentSpec:
     """Factory for common spec configuration."""
     return SubAgentSpec(name=name)
-
-
-def _parse_summary(summary: str) -> tuple[float, str]:
-    """Extract delay and tag information from task summary."""
-    delay = 0.0
-    tag = "unknown"
-    for segment in summary.split(";"):
-        segment = segment.strip()
-        if not segment:
-            continue
-        if segment.startswith("delay="):
-            try:
-                delay = float(segment.split("=", 1)[1])
-            except ValueError:
-                delay = 0.0
-        if segment.startswith("tag="):
-            tag = segment.split("=", 1)[1]
-    return delay, tag

@@ -42,7 +42,7 @@ def test_subagent_parallel_calls() -> None:
                 type="tool_use",
                 id=f"parallel-{tag}",
                 name=tool_name,
-                input={"task_summary": f"tag={tag};delay={delay}"},
+                input={"message": f"run {tag}", "tag": tag, "delay": delay},
             )
             await invoke_tool(agent, tool_call)
 
