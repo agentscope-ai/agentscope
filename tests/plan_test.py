@@ -326,7 +326,7 @@ Subtask at index 2:
                                 "name": "1",
                                 "description": "1",
                                 "expected_outcome": "1",
-                                "state":"todo",
+                                "state": "todo",
                                 "created_at": subtasks[0].created_at,
                             },
                             {
