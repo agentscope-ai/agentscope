@@ -387,6 +387,10 @@ class ReActAgent(ReActAgentBase):
                     await self.print(msg, False)
                 await self.print(msg, True)
 
+                # Add a tiny sleep to yield the last message object in the
+                # message queue
+                await asyncio.sleep(0.001)
+
             else:
                 msg = Msg(self.name, list(res.content), "assistant")
                 await self.print(msg, True)
