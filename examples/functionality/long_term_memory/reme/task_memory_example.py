@@ -70,7 +70,6 @@ async def test_retrieve_from_memory(memory: ReMeTaskMemory) -> None:
 
     result = await memory.retrieve_from_memory(
         keywords=["project planning", "development phase"],
-        # top_k defaults to 5
     )
     retrieved_text = " ".join(
         block.get("text", "")
@@ -140,7 +139,6 @@ async def test_retrieve_direct(memory: ReMeTaskMemory) -> None:
             content="How should I approach debugging API errors in my application?",
             name="user",
         ),
-        # top_k defaults to 5
     )
     print("✓ Retrieved experiences:")
     print(f"{memories if memories else 'No experiences found'}")
