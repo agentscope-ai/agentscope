@@ -51,7 +51,7 @@ full = [
     "ray",
     # Long-term memory
     "mem0ai",
-    "reme_ai",
+    "reme-ai; python_full_version >= '3.12'",
     "packaging",
     # RAG
     "pypdf",
