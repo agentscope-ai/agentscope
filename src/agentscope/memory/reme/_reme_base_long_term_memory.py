@@ -68,8 +68,8 @@ class ReMeBaseLongTermMemory(LongTermMemoryBase):
             embedding_api_key = embedding_model.api_key
 
         elif isinstance(embedding_model, OpenAITextEmbedding):
-            embedding_api_base = str(getattr(embedding_model.client, "base_url", None))
-            embedding_api_key = str(getattr(embedding_model.client, "api_key", None))
+            embedding_api_base = getattr(embedding_model.client, "base_url", None)
+            embedding_api_key = getattr(embedding_model.client, "api_key", None)
 
         else:
             raise ValueError("embedding_model must be a DashScopeTextEmbedding or OpenAITextEmbedding "
@@ -82,15 +82,13 @@ class ReMeBaseLongTermMemory(LongTermMemoryBase):
             config_args.append(f"embedding_model.default.model_name={embedding_model_name}")
 
         from reme_ai import ReMeApp
-        self.app = ReMeApp(
-            llm_api_key=llm_api_key,
-            llm_api_base=llm_api_base,
-            embedding_api_key=embedding_api_key,
-            embedding_api_base=embedding_api_base,
-            config_path=reme_config_path,
-            *config_args,
-            **kwargs,
-        )
+        self.app = ReMeApp(*config_args,
+                           llm_api_key=llm_api_key,
+                           llm_api_base=llm_api_base,
+                           embedding_api_key=embedding_api_key,
+                           embedding_api_base=embedding_api_base,
+                           config_path=reme_config_path,
+                           **kwargs)
 
         # Track if the app context is active
         self._app_started = False
