@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
+# flake8: noqa: E501
 """Personal memory implementation using ReMe library.
 
 This module provides a personal memory implementation that integrates
-with the ReMe library to provide persistent personal memory storage and 
+with the ReMe library to provide persistent personal memory storage and
 retrieval capabilities for AgentScope agents.
 """
 from typing import Any
+
+from loguru import logger
 
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
@@ -16,10 +19,10 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
     """Personal memory implementation using ReMe library."""
 
     async def record_to_memory(
-            self,
-            thinking: str,
-            content: list[str],
-            **kwargs: Any,
+        self,
+        thinking: str,
+        content: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
         """Use this function to record important information that you may
         need later. The target content should be specific and concise, e.g.
@@ -43,7 +46,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
@@ -54,24 +57,29 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
 
             # Add thinking as a user message if provided
             if thinking:
-                messages.append({
-                    "role": "user",
-                    "content": thinking,
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": thinking,
+                    },
+                )
 
             # Add content items as user messages
             for item in content:
-                messages.append({
-                    "role": "user",
-                    "content": item,
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": item,
+                    },
+                )
                 # Add a simple assistant acknowledgment
-                messages.append({
-                    "role": "assistant",
-                    "content": f"I understand and will remember this information.",
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "I understand and will remember this information.",
+                    },
+                )
 
-            # Call ReMe's summary_personal_memory flow
             result = await self.app.async_execute(
                 name="summary_personal_memory",
                 workspace_id=self.workspace_id,
@@ -106,6 +114,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
+            logger.exception(f"Error recording memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -116,10 +125,9 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
     async def retrieve_from_memory(
-            self,
-            keywords: list[str],
-            limit: int = 5,
-            **kwargs: Any,
+        self,
+        keywords: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
         """Retrieve the memory based on the given keywords.
 
@@ -128,9 +136,6 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 The keywords to search for in the memory, which should be
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
-            limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
-                Default is 5.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -144,7 +149,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
@@ -153,6 +158,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             results = []
 
             # Search for each keyword
+            limit = kwargs.get("limit", 3)
             for keyword in keywords:
                 result = await self.app.async_execute(
                     name="retrieve_personal_memory",
@@ -183,6 +189,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
+            logger.exception(f"Error retrieving memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -193,9 +200,9 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
     async def record(
-            self,
-            msgs: list[Msg | None],
-            **kwargs: Any,
+        self,
+        msgs: list[Msg | None],
+        **kwargs: Any,
     ) -> None:
         """Record the content to the long-term memory.
 
@@ -246,12 +253,13 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 else:
                     content_str = str(msg.content)
 
-                messages.append({
-                    "role": msg.role,
-                    "content": content_str,
-                })
+                messages.append(
+                    {
+                        "role": msg.role,
+                        "content": content_str,
+                    },
+                )
 
-            # Call ReMe's summary_personal_memory flow
             await self.app.async_execute(
                 name="summary_personal_memory",
                 workspace_id=self.workspace_id,
@@ -265,14 +273,15 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
 
         except Exception as e:
             # Log the error but don't raise to maintain compatibility
+            logger.exception(f"Error recording messages to memory: {str(e)}")
             import warnings
+
             warnings.warn(f"Error recording messages to memory: {str(e)}")
 
     async def retrieve(
-            self,
-            msg: Msg | list[Msg] | None,
-            limit: int = 5,
-            **kwargs: Any,
+        self,
+        msg: Msg | list[Msg] | None,
+        **kwargs: Any,
     ) -> str:
         """Retrieve the content from the long-term memory.
 
@@ -281,9 +290,6 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 The message to search for in the memory, which should be
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
-            limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
-                Default is 5.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -298,7 +304,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             msg = [msg]
 
         if not isinstance(msg, list) or not all(
-                isinstance(_, Msg) for _ in msg
+            isinstance(_, Msg) for _ in msg
         ):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
@@ -331,17 +337,21 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 return ""
 
             # Retrieve using the query from the last message
+            # Extract top_k from kwargs if available, default to 3
+            top_k = kwargs.get("top_k", 3)
             result = await self.app.async_execute(
                 name="retrieve_personal_memory",
                 workspace_id=self.workspace_id,
                 query=query,
-                top_k=limit,
+                top_k=top_k,
                 **kwargs,
             )
 
             return result.get("answer", "")
 
         except Exception as e:
+            logger.exception(f"Error retrieving memory: {str(e)}")
             import warnings
+
             warnings.warn(f"Error retrieving memory: {str(e)}")
             return ""

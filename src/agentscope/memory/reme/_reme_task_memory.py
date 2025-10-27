@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# flake8: noqa: E501
 """Task memory implementation using ReMe library.
 
 This module provides a task memory implementation that integrates
@@ -7,6 +8,8 @@ retrieve relevant task experiences.
 """
 from typing import Any
 
+from loguru import logger
+
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
@@ -14,26 +17,27 @@ from ...tool import ToolResponse
 
 class ReMeTaskMemory(ReMeBaseLongTermMemory):
     """Task memory implementation using ReMe library.
-    
+
     Task memory learns from execution trajectories and provides
     retrieval of relevant task experiences.
     """
 
     async def record_to_memory(
-            self,
-            trajectories: list[dict[str, Any]],
-            **kwargs: Any,
+        self,
+        thinking: str,
+        content: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
-        """Record task execution trajectories to memory.
-        
-        Each trajectory should contain:
-        - messages: List of message dictionaries with 'role' and 'content'
-        - score: Optional float score for the trajectory (default 1.0)
+        """Use this function to record important task execution information
+        that you may need later. The target content should be specific and
+        concise, e.g. task description, execution steps, results, etc.
 
         Args:
-            trajectories (`list[dict[str, Any]]`):
-                List of execution trajectories to record. Each trajectory
-                should have 'messages' and optionally 'score'.
+            thinking (`str`):
+                Your thinking and reasoning about what to record.
+            content (`list[str]`):
+                The content to remember, which is a list of strings representing
+                task execution information.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
@@ -47,24 +51,56 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
 
         try:
-            # Call ReMe's summary_task_memory flow
+            # Prepare messages for task memory recording
+            messages = []
+
+            # Add thinking as a user message if provided
+            if thinking:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": thinking,
+                    },
+                )
+
+            # Add content items as user-assistant pairs
+            for item in content:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": item,
+                    },
+                )
+                # Add a simple assistant acknowledgment
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "Task information recorded.",
+                    },
+                )
+
             result = await self.app.async_execute(
                 name="summary_task_memory",
                 workspace_id=self.workspace_id,
-                trajectories=trajectories,
+                trajectories=[
+                    {
+                        "messages": messages,
+                        "score": kwargs.pop("score", 1.0),
+                    },
+                ],
                 **kwargs,
             )
 
             # Extract metadata if available
-            # metadata = result.get("metadata", {})
-
-            summary_text = f"Successfully recorded {len(trajectories)} trajectory/trajectories to task memory."
+            summary_text = (
+                f"Successfully recorded {len(content)} task memory/memories."
+            )
 
             return ToolResponse(
                 content=[
@@ -77,6 +113,7 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
+            logger.exception(f"Error recording task memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -87,19 +124,16 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             )
 
     async def retrieve_from_memory(
-            self,
-            query: str,
-            top_k: int = 5,
-            **kwargs: Any,
+        self,
+        keywords: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
-        """Retrieve relevant task experiences from memory.
+        """Retrieve the memory based on the given keywords.
 
         Args:
-            query (`str`):
-                The query to search for relevant task experiences.
-            top_k (`int`, optional):
-                The maximum number of experiences to retrieve.
-                Default is 5.
+            keywords (`list[str]`):
+                The keywords to search for in the memory, which should be
+                specific and concise, e.g. task name, execution context, etc.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -113,27 +147,37 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
 
         try:
-            result = await self.app.async_execute(
-                name="retrieve_task_memory",
-                workspace_id=self.workspace_id,
-                query=query,
-                top_k=top_k,
-                **kwargs,
-            )
+            results = []
 
-            # Extract the answer from the result
-            answer = result.get("answer", "")
+            # Search for each keyword
+            top_k = kwargs.get("top_k", 5)
+            for keyword in keywords:
+                result = await self.app.async_execute(
+                    name="retrieve_task_memory",
+                    workspace_id=self.workspace_id,
+                    query=keyword,
+                    top_k=top_k,
+                    **kwargs,
+                )
 
-            if answer:
-                combined_text = f"Task Experiences for '{query}':\n{answer}"
+                # Extract the answer from the result
+                answer = result.get("answer", "")
+                if answer:
+                    results.append(f"Keyword '{keyword}':\n{answer}")
+
+            # Combine all results
+            if results:
+                combined_text = "\n\n".join(results)
             else:
-                combined_text = "No relevant task experiences found."
+                combined_text = (
+                    "No task experiences found for the given keywords."
+                )
 
             return ToolResponse(
                 content=[
@@ -142,10 +186,10 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                         text=combined_text,
                     ),
                 ],
-                metadata={"result": result},
             )
 
         except Exception as e:
+            logger.exception(f"Error retrieving task memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -156,10 +200,9 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             )
 
     async def record(
-            self,
-            msgs: list[Msg | None],
-            score: float = 1.0,
-            **kwargs: Any,
+        self,
+        msgs: list[Msg | None],
+        **kwargs: Any,
     ) -> None:
         """Record the content to the task memory.
 
@@ -169,10 +212,9 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
         Args:
             msgs (`list[Msg | None]`):
                 The messages to record to memory.
-            score (`float`, optional):
-                The score for this trajectory. Default is 1.0.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording.
+                Can include 'score' (float) for trajectory scoring (default: 1.0).
         """
         if isinstance(msgs, Msg):
             msgs = [msgs]
@@ -212,12 +254,16 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                 else:
                     content_str = str(msg.content)
 
-                messages.append({
-                    "role": msg.role,
-                    "content": content_str,
-                })
+                messages.append(
+                    {
+                        "role": msg.role,
+                        "content": content_str,
+                    },
+                )
 
-            # Call ReMe's summary_task_memory flow
+            # Extract score from kwargs if provided, default to 1.0
+            score = kwargs.pop("score", 1.0)
+
             await self.app.async_execute(
                 name="summary_task_memory",
                 workspace_id=self.workspace_id,
@@ -232,23 +278,23 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
 
         except Exception as e:
             # Log the error but don't raise to maintain compatibility
+            logger.exception(
+                f"Error recording messages to task memory: {str(e)}",
+            )
             import warnings
+
             warnings.warn(f"Error recording messages to task memory: {str(e)}")
 
     async def retrieve(
-            self,
-            msg: Msg | list[Msg] | None,
-            top_k: int = 5,
-            **kwargs: Any,
+        self,
+        msg: Msg | list[Msg] | None,
+        **kwargs: Any,
     ) -> str:
         """Retrieve relevant task experiences from memory.
 
         Args:
             msg (`Msg | list[Msg] | None`):
                 The message to search for relevant task experiences.
-            top_k (`int`, optional):
-                The maximum number of experiences to retrieve.
-                Default is 5.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -263,7 +309,7 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             msg = [msg]
 
         if not isinstance(msg, list) or not all(
-                isinstance(_, Msg) for _ in msg
+            isinstance(_, Msg) for _ in msg
         ):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
@@ -296,6 +342,8 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                 return ""
 
             # Retrieve using the query from the last message
+            # Extract top_k from kwargs if available, default to 5
+            top_k = kwargs.get("top_k", 5)
             result = await self.app.async_execute(
                 name="retrieve_task_memory",
                 workspace_id=self.workspace_id,
@@ -307,6 +355,8 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             return result.get("answer", "")
 
         except Exception as e:
+            logger.exception(f"Error retrieving task memory: {str(e)}")
             import warnings
+
             warnings.warn(f"Error retrieving task memory: {str(e)}")
             return ""

@@ -17,7 +17,7 @@ ReMe (Reflection Memory) provides three types of long-term memory:
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - DashScope API key from Alibaba Cloud
 
 ## QuickStart
@@ -107,11 +107,10 @@ async with long_term_memory:
             "I like to visit the West Lake in the morning",
         ],
     )
-    
-    # Retrieve memories
+
+    # Retrieve memories (limit defaults to 3)
     result = await long_term_memory.retrieve_from_memory(
         keywords=["Hangzhou travel"],
-        limit=3,
     )
 ```
 
@@ -125,7 +124,7 @@ from agentscope.memory.reme import ReMeTaskMemory
 # Initialize task memory
 long_term_memory = ReMeTaskMemory(
     agent_name="TaskAssistant",
-    workspace_id="task_workspace_123",
+    user_name="task_workspace_123",  # This serves as workspace_id in ReMe
     model=DashScopeChatModel(
         model_name="qwen3-max",
         api_key=os.environ.get("DASHSCOPE_API_KEY"),
@@ -140,38 +139,36 @@ long_term_memory = ReMeTaskMemory(
 
 # Use async context manager
 async with long_term_memory:
-    # Record execution trajectories with scores
+    # Record task execution information
     await long_term_memory.record_to_memory(
-        trajectories=[
-            {
-                "messages": [
-                    {"role": "user", "content": "Help me create a project plan"},
-                    {"role": "assistant", "content": "Let's break it down into phases..."},
-                ],
-                "score": 0.9  # Success score (0.0 to 1.0)
-            }
+        thinking="Recording project planning best practices",
+        content=[
+            "Break down into phases: Requirements, Design, Development, Testing, Deployment",
+            "Use Agile methodology with 2-week sprints",
         ],
+        score=0.9,  # Optional: score for this trajectory (default is 1.0)
     )
-    
-    # Retrieve relevant experiences
+
+    # Retrieve relevant experiences using keywords
     result = await long_term_memory.retrieve_from_memory(
-        query="What are best practices for project planning?",
-        top_k=3,
+        keywords=["project planning", "best practices"],
+        # top_k defaults to 5
     )
 ```
 
 ### 3. Tool Memory
 
-Record tool execution results and generate usage guidelines.
+Record tool execution results and retrieve usage guidelines.
 
 ```python
+import json
 from agentscope.memory.reme import ReMeToolMemory
 from datetime import datetime
 
 # Initialize tool memory
 long_term_memory = ReMeToolMemory(
     agent_name="ToolAssistant",
-    workspace_id="tool_workspace_123",
+    user_name="tool_workspace_123",  # This serves as workspace_id in ReMe
     model=DashScopeChatModel(
         model_name="qwen3-max",
         api_key=os.environ.get("DASHSCOPE_API_KEY"),
@@ -186,29 +183,25 @@ long_term_memory = ReMeToolMemory(
 
 # Use async context manager
 async with long_term_memory:
-    # Record tool execution results
-    await long_term_memory.add_tool_call_result(
-        tool_call_results=[
-            {
-                "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "tool_name": "web_search",
-                "input": {"query": "Python asyncio", "max_results": 10},
-                "output": "Found 10 relevant articles...",
-                "token_cost": 150,
-                "success": True,
-                "time_cost": 2.3
-            }
-        ],
+    # Record tool execution results (content must be JSON strings)
+    tool_result = {
+        "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "tool_name": "web_search",
+        "input": {"query": "Python asyncio", "max_results": 10},
+        "output": "Found 10 relevant articles...",
+        "token_cost": 150,
+        "success": True,
+        "time_cost": 2.3
+    }
+
+    await long_term_memory.record_to_memory(
+        thinking="Recording web_search tool execution to learn usage patterns",
+        content=[json.dumps(tool_result)],
     )
-    
-    # Generate usage guidelines
-    result = await long_term_memory.summary_tool_memory(
-        tool_names="web_search",
-    )
-    
-    # Retrieve tool guidelines
-    guidelines = await long_term_memory.retrieve_tool_memory(
-        tool_names="web_search",
+
+    # Retrieve tool guidelines (automatically includes summarization)
+    result = await long_term_memory.retrieve_from_memory(
+        keywords=["web_search"],
     )
 ```
 
@@ -216,15 +209,67 @@ async with long_term_memory:
 
 ### Memory Interfaces
 
-Each memory type provides two types of interfaces:
+#### Personal Memory Interfaces
 
 **Tool Functions** (for agent tool calling):
-- `record_to_memory()` - Returns `ToolResponse` objects for agent integration
-- `retrieve_from_memory()` - Returns formatted text output for agents
+
+- `record_to_memory(thinking: str, content: list[str], **kwargs)` - Returns `ToolResponse` objects for agent integration
+    - `thinking`: Your reasoning about what to record
+    - `content`: List of strings to remember
+- `retrieve_from_memory(keywords: list[str], **kwargs)` - Returns `ToolResponse` with formatted text output
+    - `keywords`: List of keywords to search for
+    - Optional `limit`: Number of results per keyword (defaults to 3)
 
 **Direct Methods** (for programmatic use):
-- `record()` - Returns simple types (None, str) for flexible workflows
-- `retrieve()` - Direct retrieval without tool response wrapping
+
+- `record(msgs: list[Msg | None], **kwargs)` - Records message conversations, returns None
+- `retrieve(msg: Msg | list[Msg] | None, **kwargs)` - Returns retrieved memories as string
+    - Optional `top_k`: Number of results to retrieve (defaults to 3)
+
+#### Task Memory Interfaces
+
+**Tool Functions** (for agent tool calling):
+
+- `record_to_memory(thinking: str, content: list[str], **kwargs)` - Returns `ToolResponse` objects for agent integration
+    - `thinking`: Your reasoning about what to record
+    - `content`: List of strings representing task execution information
+    - Optional `score`: Score for this trajectory (defaults to 1.0)
+- `retrieve_from_memory(keywords: list[str], **kwargs)` - Returns `ToolResponse` with formatted text output
+    - `keywords`: List of keywords to search for (e.g., task name, execution context)
+    - Optional `top_k`: Number of results to retrieve (defaults to 5)
+
+**Direct Methods** (for programmatic use):
+
+- `record(msgs: list[Msg | None], **kwargs)` - Records message conversations, returns None
+    - Optional `score` in kwargs: Score for this trajectory (defaults to 1.0)
+- `retrieve(msg: Msg | list[Msg] | None, **kwargs)` - Returns retrieved task experiences as string
+    - Optional `top_k`: Number of results to retrieve (defaults to 5)
+
+#### Tool Memory Interfaces
+
+**Tool Functions** (for agent tool calling):
+
+- `record_to_memory(thinking: str, content: list[str], **kwargs)` - Returns `ToolResponse` objects for agent integration
+    - `thinking`: Your reasoning about what to record
+    - `content`: List of JSON strings, each representing a tool_call_result with fields:
+        - `create_time`: Timestamp in format "%Y-%m-%d %H:%M:%S"
+        - `tool_name`: Name of the tool
+        - `input`: Input parameters (dict)
+        - `output`: Tool output (string)
+        - `token_cost`: Token cost (int)
+        - `success`: Success status (bool)
+        - `time_cost`: Execution time in seconds (float)
+    - Note: Automatically triggers summarization for affected tools
+- `retrieve_from_memory(keywords: list[str], **kwargs)` - Returns `ToolResponse` with tool usage guidelines
+    - `keywords`: List of tool names to retrieve guidelines for
+
+**Direct Methods** (for programmatic use):
+
+- `record(msgs: list[Msg | None], **kwargs)` - Records messages containing JSON-formatted tool results, returns None
+    - Message content should be JSON strings with tool_call_result format
+    - Automatically triggers summarization for affected tools
+- `retrieve(msg: Msg | list[Msg] | None, **kwargs)` - Returns retrieved tool guidelines as string
+    - Message content should contain tool names (comma-separated if multiple)
 
 ### Using Async Context Manager
 
@@ -262,16 +307,20 @@ The example files demonstrate:
 4. **Query-based Retrieval**: Finding relevant memories using natural language queries
 
 ### `task_memory_example.py`
-1. **4 Core Interfaces**: Recording and retrieving task execution trajectories
-2. **Trajectory Learning**: Learning from successful and failed task attempts
-3. **Score-based Recording**: Associating success scores (0.0-1.0) with trajectories
-4. **Experience Retrieval**: Finding relevant past experiences for new tasks
+
+1. **4 Core Interfaces**: Tool functions (`record_to_memory`, `retrieve_from_memory`) and direct methods (`record`,
+   `retrieve`)
+2. **Task Information Recording**: Recording task execution information with thinking and content
+3. **Score-based Recording**: Associating success scores (0.0-1.0) with trajectories (defaults to 1.0)
+4. **Keyword-based Retrieval**: Finding relevant past experiences using keywords (defaults to top_k=5)
 
 ### `tool_memory_example.py`
-1. **5 Core Interfaces**: Complete tool memory management system
-2. **Execution Recording**: Tracking tool inputs, outputs, costs, and success rates
-3. **Guideline Generation**: Automatically generating usage guidelines from history
-4. **Pattern Learning**: Helping agents learn optimal tool usage patterns
+
+1. **4 Core Interfaces**: Tool functions (`record_to_memory`, `retrieve_from_memory`) and direct methods (`record`,
+   `retrieve`)
+2. **JSON-formatted Recording**: Recording tool execution results as JSON strings with detailed metadata
+3. **Automatic Summarization**: Guidelines are automatically generated when recording tool results
+4. **Multi-tool Retrieval**: Retrieving guidelines for single or multiple tools at once
 
 ## Architecture Notes
 

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# flake8: noqa: E501
 """Tool memory implementation using ReMe library.
 
 This module provides a tool memory implementation that integrates
@@ -7,6 +8,8 @@ tool usage guidelines.
 """
 from typing import Any
 
+from loguru import logger
+
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
@@ -14,36 +17,34 @@ from ...tool import ToolResponse
 
 class ReMeToolMemory(ReMeBaseLongTermMemory):
     """Tool memory implementation using ReMe library.
-    
-    Tool memory records tool execution results and provides
-    retrieval of tool usage guidelines and best practices.
+
+    Tool memory records tool execution results and generates usage
+    guidelines from the execution history.
     """
 
-    async def add_tool_call_result(
-            self,
-            tool_call_results: list[dict[str, Any]],
-            **kwargs: Any,
+    async def record_to_memory(
+        self,
+        thinking: str,
+        content: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
-        """Add tool call results to memory.
-        
-        Each tool call result should contain:
-        - create_time: Timestamp of the execution
-        - tool_name: Name of the tool
-        - input: Input parameters as a dictionary
-        - output: Output result as a string
-        - token_cost: Token cost (optional)
-        - success: Whether the call was successful
-        - time_cost: Time cost in seconds (optional)
+        """Use this function to record important tool execution results that
+        you may need later. Each content item should be a JSON string that can
+        be parsed into a tool_call_result.
 
         Args:
-            tool_call_results (`list[dict[str, Any]]`):
-                List of tool call results to record.
+            thinking (`str`):
+                Your thinking and reasoning about what to record.
+            content (`list[str]`):
+                The content to remember, which is a list of JSON strings. Each
+                string should be parseable into a tool_call_result with fields:
+                create_time, tool_name, input, output, token_cost, success, time_cost.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the result of the recording.
+                A ToolResponse containing the result of the memory recording.
         """
         if not self._app_started:
             return ToolResponse(
@@ -51,21 +52,71 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
 
         try:
-            # Call ReMe's add_tool_call_result flow
-            result = await self.app.async_execute(
+            import json
+
+            # Parse each content item as a tool_call_result
+            tool_call_results = []
+            tool_names_set = set()
+
+            for item in content:
+                try:
+                    # Parse JSON string to dict
+                    tool_call_result = json.loads(item)
+                    tool_call_results.append(tool_call_result)
+
+                    # Track tool names for summary
+                    if "tool_name" in tool_call_result:
+                        tool_names_set.add(tool_call_result["tool_name"])
+
+                except json.JSONDecodeError as e:
+                    # Skip invalid JSON items
+                    import warnings
+
+                    warnings.warn(
+                        f"Failed to parse tool call result JSON: {item}. "
+                        f"Error: {str(e)}",
+                    )
+                    continue
+
+            if not tool_call_results:
+                return ToolResponse(
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text="No valid tool call results to record.",
+                        ),
+                    ],
+                )
+
+            # First, add the tool call results
+            await self.app.async_execute(
                 name="add_tool_call_result",
                 workspace_id=self.workspace_id,
                 tool_call_results=tool_call_results,
                 **kwargs,
             )
 
-            summary_text = f"Successfully recorded {len(tool_call_results)} tool call result(s)."
+            # Then, summarize the tool memory for the affected tools
+            if tool_names_set:
+                tool_names_list = list(tool_names_set)
+                await self.app.async_execute(
+                    name="summary_tool_memory",
+                    workspace_id=self.workspace_id,
+                    tool_names=tool_names_list,
+                    **kwargs,
+                )
+
+            num_results = len(tool_call_results)
+            summary_text = (
+                f"Successfully recorded {num_results} tool execution "
+                f"result{'s' if num_results > 1 else ''} and generated usage guidelines."
+            )
 
             return ToolResponse(
                 content=[
@@ -74,103 +125,36 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                         text=summary_text,
                     ),
                 ],
-                metadata={"result": result},
             )
 
         except Exception as e:
+            logger.exception(f"Error recording tool memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
-                        text=f"Error adding tool call result: {str(e)}",
+                        text=f"Error recording tool memory: {str(e)}",
                     ),
                 ],
             )
 
-    async def summary_tool_memory(
-            self,
-            tool_names: str | list[str],
-            **kwargs: Any,
+    async def retrieve_from_memory(
+        self,
+        keywords: list[str],
+        **kwargs: Any,
     ) -> ToolResponse:
-        """Generate usage guidelines from tool execution history.
+        """Retrieve the memory based on the given keywords.
 
         Args:
-            tool_names (`str | list[str]`):
-                Name(s) of the tool(s) to summarize.
-            **kwargs (`Any`):
-                Additional keyword arguments for the summary operation.
-
-        Returns:
-            `ToolResponse`:
-                A ToolResponse containing the generated guidelines.
-        """
-        if not self._app_started:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
-                    ),
-                ],
-            )
-
-        try:
-            # Convert list to comma-separated string if needed
-            if isinstance(tool_names, list):
-                tool_names = ",".join(tool_names)
-
-            result = await self.app.async_execute(
-                name="summary_tool_memory",
-                workspace_id=self.workspace_id,
-                tool_names=tool_names,
-                **kwargs,
-            )
-
-            # Extract the answer from the result
-            answer = result.get("answer", "")
-
-            if answer:
-                combined_text = f"Tool Usage Guidelines:\n{answer}"
-            else:
-                combined_text = "Tool memory summary completed."
-
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=combined_text,
-                    ),
-                ],
-                metadata={"result": result},
-            )
-
-        except Exception as e:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error summarizing tool memory: {str(e)}",
-                    ),
-                ],
-            )
-
-    async def retrieve_tool_memory(
-            self,
-            tool_names: str | list[str],
-            **kwargs: Any,
-    ) -> ToolResponse:
-        """Retrieve tool usage guidelines before use.
-
-        Args:
-            tool_names (`str | list[str]`):
-                Name(s) of the tool(s) to retrieve guidelines for.
+            keywords (`list[str]`):
+                The keywords to search for in the memory, which should be
+                a list of tool names.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the tool usage guidelines.
+                A ToolResponse containing the retrieved tool guidelines.
         """
         if not self._app_started:
             return ToolResponse(
@@ -178,16 +162,16 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                     TextBlock(
                         type="text",
                         text="Error: ReMeApp context not started. "
-                             "Please use 'async with' to initialize the app.",
+                        "Please use 'async with' to initialize the app.",
                     ),
                 ],
             )
 
         try:
-            # Convert list to comma-separated string if needed
-            if isinstance(tool_names, list):
-                tool_names = ",".join(tool_names)
+            # Join all tool names with comma
+            tool_names = ",".join(keywords)
 
+            # Retrieve tool guidelines for all tools at once
             result = await self.app.async_execute(
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
@@ -197,11 +181,10 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
 
             # Extract the answer from the result
             answer = result.get("answer", "")
-
             if answer:
-                combined_text = f"Tool Guidelines for '{tool_names}':\n{answer}"
+                combined_text = answer
             else:
-                combined_text = "No tool guidelines found."
+                combined_text = f"No tool guidelines found for: {tool_names}"
 
             return ToolResponse(
                 content=[
@@ -210,10 +193,10 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                         text=combined_text,
                     ),
                 ],
-                metadata={"result": result},
             )
 
         except Exception as e:
+            logger.exception(f"Error retrieving tool memory: {str(e)}")
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -223,19 +206,94 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                 ],
             )
 
+    def _extract_content_from_messages(self, msg_list: list[Msg]) -> list[str]:
+        """Extract content strings from messages.
+
+        Args:
+            msg_list (`list[Msg]`):
+                List of messages to extract content from.
+
+        Returns:
+            `list[str]`:
+                List of extracted content strings.
+        """
+        content_list = []
+        for msg in msg_list:
+            if isinstance(msg.content, str):
+                content_list.append(msg.content)
+            elif isinstance(msg.content, list):
+                content_list.extend(
+                    self._extract_text_from_blocks(msg.content),
+                )
+        return content_list
+
+    def _extract_text_from_blocks(self, blocks: list) -> list[str]:
+        """Extract text from content blocks.
+
+        Args:
+            blocks (`list`):
+                List of content blocks.
+
+        Returns:
+            `list[str]`:
+                List of extracted text strings.
+        """
+        texts = []
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                texts.append(block)
+        return texts
+
+    def _parse_tool_call_results(
+        self,
+        content_list: list[str],
+    ) -> tuple[list[dict], set[str]]:
+        """Parse JSON content strings into tool call results.
+
+        Args:
+            content_list (`list[str]`):
+                List of JSON strings to parse.
+
+        Returns:
+            `tuple[list[dict], set[str]]`:
+                Tuple of (tool_call_results, tool_names_set).
+        """
+        import json
+        import warnings
+
+        tool_call_results = []
+        tool_names_set = set()
+
+        for item in content_list:
+            try:
+                tool_call_result = json.loads(item)
+                tool_call_results.append(tool_call_result)
+                if "tool_name" in tool_call_result:
+                    tool_names_set.add(tool_call_result["tool_name"])
+            except json.JSONDecodeError as e:
+                warnings.warn(
+                    f"Failed to parse tool call result JSON: {item}. "
+                    f"Error: {str(e)}",
+                )
+
+        return tool_call_results, tool_names_set
+
     async def record(
-            self,
-            msgs: list[Msg | None],
-            **kwargs: Any,
+        self,
+        msgs: list[Msg | None],
+        **kwargs: Any,
     ) -> None:
-        """Record tool-related messages to memory.
-        
-        Note: This is a simplified implementation. For proper tool memory
-        recording, use add_tool_call_result() with structured tool data.
+        """Record the content to the tool memory.
+
+        This method extracts content from messages and treats them as JSON strings
+        representing tool_call_results, similar to record_to_memory.
 
         Args:
             msgs (`list[Msg | None]`):
-                The messages to record to memory.
+                The messages to record to memory. Each message's content should be
+                a JSON string or list of JSON strings representing tool_call_results.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording.
         """
@@ -258,24 +316,97 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                 "Please use 'async with' to initialize the app.",
             )
 
-        # Tool memory recording requires structured data
-        # This is a placeholder implementation
-        import warnings
-        warnings.warn(
-            "Tool memory recording from messages is not directly supported. "
-            "Please use add_tool_call_result() with structured tool data."
-        )
+        try:
+            # Extract content from messages and parse as tool_call_results
+            content_list = self._extract_content_from_messages(msg_list)
+            if not content_list:
+                return
+
+            # Parse each content item as a tool_call_result
+            tool_call_results, tool_names_set = self._parse_tool_call_results(
+                content_list,
+            )
+            if not tool_call_results:
+                return
+
+            # First, add the tool call results
+            await self.app.async_execute(
+                name="add_tool_call_result",
+                workspace_id=self.workspace_id,
+                tool_call_results=tool_call_results,
+                **kwargs,
+            )
+
+            # Then, summarize the tool memory for the affected tools
+            if tool_names_set:
+                tool_names_list = list(tool_names_set)
+                await self.app.async_execute(
+                    name="summary_tool_memory",
+                    workspace_id=self.workspace_id,
+                    tool_names=tool_names_list,
+                    **kwargs,
+                )
+
+        except Exception as e:
+            # Log the error but don't raise to maintain compatibility
+            logger.exception(
+                f"Error recording tool messages to memory: {str(e)}",
+            )
+            import warnings
+
+            warnings.warn(f"Error recording tool messages to memory: {str(e)}")
+
+    def _extract_tool_names_from_message(self, msg: Msg) -> str:
+        """Extract tool names from a message.
+
+        Args:
+            msg (`Msg`):
+                Message to extract tool names from.
+
+        Returns:
+            `str`:
+                Extracted tool names as a string.
+        """
+        if isinstance(msg.content, str):
+            return msg.content
+
+        if isinstance(msg.content, list):
+            content_parts = []
+            for block in msg.content:
+                if isinstance(block, dict) and "text" in block:
+                    content_parts.append(block["text"])
+            return " ".join(content_parts)
+
+        return ""
+
+    def _format_retrieve_result(self, result: Any) -> str:
+        """Format the retrieve result into a string.
+
+        Args:
+            result (`Any`):
+                Result from the retrieve operation.
+
+        Returns:
+            `str`:
+                Formatted result string.
+        """
+        if isinstance(result, dict) and "answer" in result:
+            return result["answer"]
+        if isinstance(result, str):
+            return result
+        return str(result)
 
     async def retrieve(
-            self,
-            msg: Msg | list[Msg] | None,
-            **kwargs: Any,
+        self,
+        msg: Msg | list[Msg] | None,
+        **kwargs: Any,
     ) -> str:
-        """Retrieve tool guidelines based on message content.
+        """Retrieve tool guidelines from memory based on message content.
 
         Args:
             msg (`Msg | list[Msg] | None`):
-                The message to extract tool names from.
+                The message containing tool names or queries to retrieve
+                guidelines for.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -290,7 +421,7 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             msg = [msg]
 
         if not isinstance(msg, list) or not all(
-                isinstance(_, Msg) for _ in msg
+            isinstance(_, Msg) for _ in msg
         ):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
@@ -304,28 +435,25 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
 
         try:
             # Extract tool names from the last message
-            # This is a simplified implementation
             last_msg = msg[-1]
+            tool_names = self._extract_tool_names_from_message(last_msg)
 
-            # Try to extract tool name from content
-            # In practice, you may want to parse this more carefully
-            if isinstance(last_msg.content, str):
-                content = last_msg.content
-            else:
+            if not tool_names:
                 return ""
 
-            # For now, just use the content as tool name
-            # In production, you'd want better extraction logic
+            # Retrieve tool guidelines
             result = await self.app.async_execute(
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
-                tool_names=content,
+                tool_names=tool_names,
                 **kwargs,
             )
 
-            return result.get("answer", "")
+            return self._format_retrieve_result(result)
 
         except Exception as e:
+            logger.exception(f"Error retrieving tool guidelines: {str(e)}")
             import warnings
-            warnings.warn(f"Error retrieving tool memory: {str(e)}")
+
+            warnings.warn(f"Error retrieving tool guidelines: {str(e)}")
             return ""
