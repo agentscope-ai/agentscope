@@ -164,3 +164,11 @@ td .highlight-python.notranslate {
     border-radius: 6px;
     fill: rgb(238, 235, 238);
 }
+
+/* Custom style for console output blocks with yellow background */
+.highlight-console .highlight pre {
+    background-color: #fffacd !important;
+    border-left: 4px solid #ffd700 !important;
+    padding: 12px !important;
+    border-radius: 4px !important;
+}
