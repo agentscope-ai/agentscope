@@ -3,26 +3,42 @@
 # pylint: disable=C0301,W0212
 """Unit tests for ReMeMemory classes (Personal, Tool, Task)."""
 import os
+import sys
+import unittest
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch, AsyncMock, MagicMock
 
-from agentscope.embedding import DashScopeTextEmbedding
-from agentscope.memory.reme import (
-    ReMePersonalMemory,
-    ReMeToolMemory,
-    ReMeTaskMemory,
-)
-from agentscope.message import Msg
-from agentscope.model import DashScopeChatModel
-from agentscope.tool import ToolResponse
+# Check Python version before importing reme dependencies
+PYTHON_VERSION = sys.version_info
+SKIP_REME_TESTS = PYTHON_VERSION < (3, 12)
+
+if not SKIP_REME_TESTS:
+    from agentscope.embedding import DashScopeTextEmbedding
+    from agentscope.memory.reme import (
+        ReMePersonalMemory,
+        ReMeToolMemory,
+        ReMeTaskMemory,
+    )
+    from agentscope.message import Msg
+    from agentscope.model import DashScopeChatModel
+    from agentscope.tool import ToolResponse
 
 # Get memory type from environment variable or command line argument
 # Options: "personal", "tool", "task"
 MEMORY_TYPE = os.environ.get("REME_MEMORY_TYPE", "personal").lower()
-print(f"MEMORY_TYPE: {MEMORY_TYPE}")
+if not SKIP_REME_TESTS:
+    print(f"MEMORY_TYPE: {MEMORY_TYPE}")
+else:
+    print(
+        f"Skipping ReMeMemory tests: Python {PYTHON_VERSION.major}.{PYTHON_VERSION.minor} < 3.12",
+    )
 
 
+@unittest.skipIf(
+    SKIP_REME_TESTS,
+    f"ReMeMemory requires Python 3.12+, current version is {PYTHON_VERSION.major}.{PYTHON_VERSION.minor}",
+)
 class TestReMeMemory(IsolatedAsyncioTestCase):
     """Test cases for ReMeMemory (dynamically tests Personal, Tool, or Task memory)."""
 
@@ -232,7 +248,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         # Mock the app.async_execute response based on memory type
         if self.memory_type == "tool":
             # Tool memory expects tool_names parameter and returns tool guidelines
-            def mock_retrieve(_name: str, **kwargs: Any) -> dict:
+            def mock_retrieve(**kwargs: Any) -> dict:
                 tool_names = kwargs.get("tool_names", "")
                 if "search_web" in tool_names or "book_hotel" in tool_names:
                     return {
@@ -257,7 +273,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
 
         elif self.memory_type == "task":
             # Task memory expects query parameter and returns task experiences
-            def mock_retrieve(_name: str, **kwargs: Any) -> dict:
+            def mock_retrieve(**kwargs: Any) -> dict:
                 query = kwargs.get("query", "")
                 if "Hangzhou" in query:
                     return {
@@ -287,7 +303,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
 
         else:  # personal
             # Personal memory expects query parameter and returns personal preferences
-            def mock_retrieve(_name: str, **kwargs: Any) -> dict:
+            def mock_retrieve(**kwargs: Any) -> dict:
                 keyword = kwargs.get("query", "")
                 if "Hangzhou" in keyword:
                     return {
@@ -747,6 +763,4 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
 
 
 if __name__ == "__main__":
-    import unittest
-
     unittest.main()
