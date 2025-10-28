@@ -24,22 +24,41 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Use this function to record important information that you may
-        need later. The target content should be specific and concise, e.g.
-        who, when, where, do what, why, how, etc.
+        """Record important user information to long-term memory for future reference.
+
+        Use this function to save user's personal information, preferences, habits,
+        and facts that you may need in future conversations. This enables you to
+        provide personalized and contextually relevant responses.
+
+        When to record:
+        - User shares personal preferences (e.g., "I prefer homestays when traveling")
+        - User mentions habits or routines (e.g., "I start work at 9 AM")
+        - User states likes/dislikes (e.g., "I enjoy drinking green tea")
+        - User provides personal facts (e.g., "I work as a software engineer")
+
+        What to record: Be specific and structured. Include who, when, where, what,
+        why, and how when relevant.
 
         Args:
             thinking (`str`):
-                Your thinking and reasoning about what to record.
+                Your reasoning about why this information is worth recording and
+                how it might be useful later.
             content (`list[str]`):
-                The content to remember, which is a list of strings.
+                List of specific facts to remember. Each string should be a clear,
+                standalone piece of information. Examples: ["User prefers homestays
+                in Hangzhou", "User likes visiting West Lake in the morning"].
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the result of the memory recording.
+                Confirmation message indicating successful memory recording.
         """
+        logger.info(
+            f"[ReMePersonalMemory] Entering record_to_memory - "
+            f"thinking: {thinking}, content: {content}, kwargs: {kwargs}",
+        )
+
         if not self._app_started:
             return ToolResponse(
                 content=[
@@ -129,20 +148,38 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
         keywords: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Retrieve the memory based on the given keywords.
+        """Search and retrieve relevant information from long-term memory.
+
+        IMPORTANT: You should call this function BEFORE answering questions
+        about the user's preferences, past information, or personal details.
+        This ensures you provide accurate information based on stored memories
+        rather than guessing.
+
+        Use this when:
+        - User asks "what do I like?", "what are my preferences?", "what do you know about me?"
+        - User asks about their past behaviors, habits, or stated preferences
+        - User refers to information they shared in previous conversations
+        - You need to personalize responses based on user's history
 
         Args:
             keywords (`list[str]`):
-                The keywords to search for in the memory, which should be
-                specific and concise, e.g. the person's name, the date, the
-                location, etc.
+                Keywords to search for in memory. Be specific and use multiple
+                keywords for better results. Examples: ["travel preferences",
+                "Hangzhou"], ["work habits", "morning routine"], ["food preferences",
+                "tea"].
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the retrieved memories as text.
+                Retrieved memories matching the keywords. If no memories found,
+                you'll receive a message indicating that.
         """
+        logger.info(
+            f"[ReMePersonalMemory] Entering retrieve_from_memory - "
+            f"keywords: {keywords}, kwargs: {kwargs}",
+        )
+
         if not self._app_started:
             return ToolResponse(
                 content=[

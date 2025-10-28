@@ -28,24 +28,50 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Use this function to record important tool execution results that
-        you may need later. Each content item should be a JSON string that can
-        be parsed into a tool_call_result.
+        """Record tool execution results to build a knowledge base of tool usage patterns.
+
+        Use this function after successfully using tools to capture execution details,
+        results, and performance metrics. Over time, this builds comprehensive usage
+        guidelines and best practices for each tool.
+
+        When to record:
+        - After successfully executing any tool
+        - After tool failures (to learn what doesn't work)
+        - When discovering effective parameter combinations
+        - After noteworthy tool usage patterns
+
+        What to record: Each tool execution should include complete execution details.
 
         Args:
             thinking (`str`):
-                Your thinking and reasoning about what to record.
+                Your reasoning about why this tool execution is worth recording.
+                Mention what worked well, what could be improved, or lessons learned.
             content (`list[str]`):
-                The content to remember, which is a list of JSON strings. Each
-                string should be parseable into a tool_call_result with fields:
-                create_time, tool_name, input, output, token_cost, success, time_cost.
+                List of JSON strings, each representing a tool execution. Each JSON
+                must have these fields:
+                - create_time: Timestamp in format "YYYY-MM-DD HH:MM:SS"
+                - tool_name: Name of the tool executed
+                - input: Input parameters as a dict
+                - output: Tool's output as a string
+                - token_cost: Token cost (integer)
+                - success: Whether execution succeeded (boolean)
+                - time_cost: Execution time in seconds (float)
+
+                Example: '{"create_time": "2024-01-01 10:00:00", "tool_name": "search",
+                "input": {"query": "Python"}, "output": "Found 10 results",
+                "token_cost": 100, "success": true, "time_cost": 1.2}'
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the result of the memory recording.
+                Confirmation message with number of executions recorded and guidelines generated.
         """
+        logger.info(
+            f"[ReMeToolMemory] Entering record_to_memory - "
+            f"thinking: {thinking}, content: {content}, kwargs: {kwargs}",
+        )
+
         if not self._app_started:
             return ToolResponse(
                 content=[
@@ -143,19 +169,46 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
         keywords: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Retrieve the memory based on the given keywords.
+        """Retrieve usage guidelines and best practices for specific tools.
+
+        IMPORTANT: You should call this function BEFORE using a tool, especially
+        if you're uncertain about its proper usage or want to follow established
+        best practices. This retrieves synthesized guidelines based on past tool
+        executions.
+
+        Use this when:
+        - About to use a tool and want to know the best practices
+        - Uncertain about tool parameters or usage patterns
+        - Want to learn from past successful/failed tool executions
+        - User asks "how should I use this tool?" or "what's the best way to..."
+        - Need to understand tool performance characteristics or limitations
+
+        Benefits of retrieving first:
+        - Learn from accumulated tool usage experience
+        - Avoid common mistakes and pitfalls
+        - Use optimal parameter combinations
+        - Understand tool performance and cost characteristics
+        - Follow established best practices
 
         Args:
             keywords (`list[str]`):
-                The keywords to search for in the memory, which should be
-                a list of tool names.
+                List of tool names to retrieve guidelines for. Use the exact
+                tool names. Examples: ["search"], ["database_query", "cache_get"],
+                ["api_call"].
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
         Returns:
             `ToolResponse`:
-                A ToolResponse containing the retrieved tool guidelines.
+                Retrieved usage guidelines and best practices for the specified
+                tools. If no guidelines exist yet, you'll receive a message
+                indicating that.
         """
+        logger.info(
+            f"[ReMeToolMemory] Entering retrieve_from_memory - "
+            f"keywords: {keywords}, kwargs: {kwargs}",
+        )
+
         if not self._app_started:
             return ToolResponse(
                 content=[
