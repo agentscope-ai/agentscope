@@ -88,6 +88,7 @@
 
 ## 模块索引（按 src/agentscope/ 映射）
 - agent → docs/agent/SOP.md
+  - subagent → docs/agent/subagent/SOP.md
 - model → docs/model/SOP.md
 - formatter → docs/formatter/SOP.md
 - tool → docs/tool/SOP.md

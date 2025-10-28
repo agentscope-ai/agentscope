@@ -75,11 +75,67 @@ user = UserAgent(name="Human")
 
 Subagent business implementations (e.g., research or retrieval assistants) must live in `examples/` or downstream projects; the core module only ships the delegation skeleton described above.
 
+### Search SubAgent Implementation
+
+**Location:** `examples/agent_search_subagent/`
+**Status:** Production-ready example of SubAgent pattern
+
+#### Overview
+The Search SubAgent provides intelligent multi-provider search capabilities with automatic fallback mechanisms. It aggregates Google, Bing, Sogou, Wikipedia, and GitHub search engines into a unified interface, demonstrating full SubAgent pattern compliance.
+
+#### Key Components
+
+**Input Model (`SearchSubAgentInput`)**
+- **Zero-Deviation Compliance**: Strictly `{query: str}` parameter only
+- **Context Handling**: Via simple concatenation (`query + " " + context`)
+- **Validation**: Length limits, whitespace normalization
+- **Reference**: `examples/agent_search_subagent/search_input.py:15`
+
+**Main Class (`SearchSubAgent`)**
+- **Intelligent Routing**: Code→GitHub, Academic→Wiki, General→Google/Bing
+- **Fallback Chain**: Automatic degradation to next available provider
+- **Result Processing**: Deduplication, aggregation, format standardization
+- **Reference**: `examples/agent_search_subagent/search_subagent.py:85`
+
+**Tool Integration (`tools.py`)**
+- **Provider Management**: Centralized search tool registration
+- **Query Classification**: Automatic provider selection based on query type
+- **Result Formatting**: Unified output across different providers
+- **Reference**: `examples/agent_search_subagent/tools.py:35`
+
+#### Call Graph
+```
+HostAgent._acting → make_subagent_tool → InputModel.model_validate → SearchSubAgent.delegate → SearchSubAgent.reply → _execute_intelligent_search → format_search_results → ToolResponse → HostAgent
+```
+
+#### Testing Coverage
+- **Unit Tests**: `tests/agent/test_search_subagent.py` (input validation, tool integration)
+- **Integration Tests**: `tests/agent/test_search_subagent_integration.py` (delegation flow, memory isolation)
+- **Demo Script**: `examples/agent_search_subagent/demo.py` (end-to-end usage examples)
+
+#### Usage Example
+```python
+from examples.agent_search_subagent import SearchSubAgent
+from src.agentscope.tool._subagent_tool import make_subagent_tool, SubAgentSpec
+
+# Register with host agent (minimal tool set since intelligence moved to tool layer)
+search_spec = SubAgentSpec(name="search_web", tools=[])
+tool_func, schema = make_subagent_tool(SearchSubAgent, search_spec, "search_web")
+host_agent.toolkit.register_tool_function(tool_func, json_schema=schema)
+```
+
+#### Architecture Correction
+Original implementation violated SubAgent patterns - corrected to proper minimal wrapper:
+- **Before**: Complex routing logic in agent layer (wrong)
+- **After**: Simple delegation to intelligent search tool (correct)
+- **Code size**: From 300+ lines to ~30 lines (Linus style)
+
 ## Related Modules
 
 - **[Model Integration](../model/CLAUDE.md)**
 - **[Memory Management](../memory/CLAUDE.md)**
 - **[Tool Management](../tool/CLAUDE.md)**
+- **[Search Tools](../tool/_search/CLAUDE.md)**
 
 ---
 

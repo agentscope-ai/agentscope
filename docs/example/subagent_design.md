@@ -2,6 +2,71 @@
 
 本文件给出四类子代理（SubAgent）的正确设计思路与最小工具面，作为实现与验收的参考。所有工具 JSON Schema 严禁暴露密钥/令牌；如需外部会话或驱动，通过 host 注入句柄（preset_kwargs）或进程环境变量解决。
 
+---
+
+## 1) Agent Search（网页搜索工具聚合）
+
+### 目标
+聚合所有搜索工具（Google/Bing/Sogou/Wiki/GitHub）提供统一搜索接口，通过智能降级策略保证搜索成功率。
+
+### 最小工具面
+- `search_web(query: str)`：
+  - **零偏差契约**: 严格仅接受 `{query}` 参数，符合项目设计原则
+  - **智能路由**: 根据查询类型优选搜索引擎（技术类→GitHub，学术类→Wiki，通用类→Google/Bing）
+  - **降级处理**: Google→Bing→Sogou→Wiki→GitHub 链式降级，确保搜索成功率
+  - **结果聚合**: 多源结果智能去重和相关性排序
+  - **返回格式**: 统一 plain text 格式，便于后续处理
+
+### 参数 JSON Schema
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "search_web",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {"type": "string"}
+      },
+      "required": ["query"]
+    }
+  }
+}
+```
+
+### ToolResponse 示例
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Google: [结果1摘要]\n\nBing: [结果2摘要]\n\nGitHub: [相关代码仓库]"
+    }
+  ],
+  "metadata": {"search_providers_used": ["google", "bing", "github"]}
+}
+```
+
+### 实现约束
+- **生命周期管理**: Playwright 实例按需创建并确保在所有代码路径中正确清理
+- **网络异常处理**: 任一搜索源失败时自动降级到下一可用源
+- **结果去重**: 相同URL或重复标题的内容自动合并
+- **Token 控制**: 长结果自动截断，保持在合理长度内
+
+### Context 处理策略
+由于零偏差契约约束，context 信息通过简单拼接模式处理：
+- 实现时将 context 直接拼接到 query: `effective_query = f"{query} {context}"`
+- 保持对外接口简洁，同时满足功能需求
+
+### 架构修正说明（重要）
+原始实现违反了SubAgent基本原则，已修正：
+- **错误模式**: SubAgent包含复杂的业务逻辑和工具编排
+- **正确模式**: SubAgent是最小化包装器，核心智能在Tool层
+- **实现**: `search_intelligent(query: str)` Tool负责所有智能逻辑
+- **使用**: SubAgent简单调用Tool并转换响应格式
+
+---
+
 ## Scope / 非目标
 - 仅定义四类子代理的最小工具面与协作方式；不包含具体业务提示词与 UI。
 - 不在子代理内开启对外广播与打印；由 Host+MsgHub 统一协调。
