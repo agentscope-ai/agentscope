@@ -8,8 +8,7 @@ retrieval capabilities for AgentScope agents.
 """
 from typing import Any
 
-from loguru import logger
-
+from ..._logging import logger
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
@@ -55,8 +54,11 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 Confirmation message indicating successful memory recording.
         """
         logger.info(
-            f"[ReMePersonalMemory] Entering record_to_memory - "
-            f"thinking: {thinking}, content: {content}, kwargs: {kwargs}",
+            "[ReMePersonalMemory] Entering record_to_memory - "
+            "thinking: %s, content: %s, kwargs: %s",
+            thinking,
+            content,
+            kwargs,
         )
 
         if not self._app_started:
@@ -133,7 +135,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error recording memory: {str(e)}")
+            logger.exception("Error recording memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -176,8 +178,10 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
                 you'll receive a message indicating that.
         """
         logger.info(
-            f"[ReMePersonalMemory] Entering retrieve_from_memory - "
-            f"keywords: {keywords}, kwargs: {kwargs}",
+            "[ReMePersonalMemory] Entering retrieve_from_memory - "
+            "keywords: %s, kwargs: %s",
+            keywords,
+            kwargs,
         )
 
         if not self._app_started:
@@ -226,7 +230,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error retrieving memory: {str(e)}")
+            logger.exception("Error retrieving memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -310,7 +314,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
 
         except Exception as e:
             # Log the error but don't raise to maintain compatibility
-            logger.exception(f"Error recording messages to memory: {str(e)}")
+            logger.exception("Error recording messages to memory: %s", str(e))
             import warnings
 
             warnings.warn(f"Error recording messages to memory: {str(e)}")
@@ -387,7 +391,7 @@ class ReMePersonalMemory(ReMeBaseLongTermMemory):
             return result.get("answer", "")
 
         except Exception as e:
-            logger.exception(f"Error retrieving memory: {str(e)}")
+            logger.exception("Error retrieving memory: %s", str(e))
             import warnings
 
             warnings.warn(f"Error retrieving memory: {str(e)}")

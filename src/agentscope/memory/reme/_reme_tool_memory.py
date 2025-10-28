@@ -8,8 +8,7 @@ tool usage guidelines.
 """
 from typing import Any
 
-from loguru import logger
-
+from ..._logging import logger
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
@@ -68,8 +67,11 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                 Confirmation message with number of executions recorded and guidelines generated.
         """
         logger.info(
-            f"[ReMeToolMemory] Entering record_to_memory - "
-            f"thinking: {thinking}, content: {content}, kwargs: {kwargs}",
+            "[ReMeToolMemory] Entering record_to_memory - "
+            "thinking: %s, content: %s, kwargs: %s",
+            thinking,
+            content,
+            kwargs,
         )
 
         if not self._app_started:
@@ -154,7 +156,7 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error recording tool memory: {str(e)}")
+            logger.exception("Error recording tool memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -205,8 +207,10 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                 indicating that.
         """
         logger.info(
-            f"[ReMeToolMemory] Entering retrieve_from_memory - "
-            f"keywords: {keywords}, kwargs: {kwargs}",
+            "[ReMeToolMemory] Entering retrieve_from_memory - "
+            "keywords: %s, kwargs: %s",
+            keywords,
+            kwargs,
         )
 
         if not self._app_started:
@@ -249,7 +253,7 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error retrieving tool memory: {str(e)}")
+            logger.exception("Error retrieving tool memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -403,7 +407,8 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
         except Exception as e:
             # Log the error but don't raise to maintain compatibility
             logger.exception(
-                f"Error recording tool messages to memory: {str(e)}",
+                "Error recording tool messages to memory: %s",
+                str(e),
             )
             import warnings
 
@@ -505,7 +510,7 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             return self._format_retrieve_result(result)
 
         except Exception as e:
-            logger.exception(f"Error retrieving tool guidelines: {str(e)}")
+            logger.exception("Error retrieving tool guidelines: %s", str(e))
             import warnings
 
             warnings.warn(f"Error retrieving tool guidelines: {str(e)}")

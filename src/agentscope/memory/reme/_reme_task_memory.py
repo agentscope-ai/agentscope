@@ -8,8 +8,7 @@ retrieve relevant task experiences.
 """
 from typing import Any
 
-from loguru import logger
-
+from ..._logging import logger
 from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
@@ -65,8 +64,11 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                 Confirmation message indicating successful memory recording.
         """
         logger.info(
-            f"[ReMeTaskMemory] Entering record_to_memory - "
-            f"thinking: {thinking}, content: {content}, kwargs: {kwargs}",
+            "[ReMeTaskMemory] Entering record_to_memory - "
+            "thinking: %s, content: %s, kwargs: %s",
+            thinking,
+            content,
+            kwargs,
         )
 
         if not self._app_started:
@@ -137,7 +139,7 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error recording task memory: {str(e)}")
+            logger.exception("Error recording task memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -187,8 +189,10 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
                 experiences found, you'll receive a message indicating that.
         """
         logger.info(
-            f"[ReMeTaskMemory] Entering retrieve_from_memory - "
-            f"keywords: {keywords}, kwargs: {kwargs}",
+            "[ReMeTaskMemory] Entering retrieve_from_memory - "
+            "keywords: %s, kwargs: %s",
+            keywords,
+            kwargs,
         )
 
         if not self._app_started:
@@ -239,7 +243,7 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             )
 
         except Exception as e:
-            logger.exception(f"Error retrieving task memory: {str(e)}")
+            logger.exception("Error retrieving task memory: %s", str(e))
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -329,7 +333,8 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
         except Exception as e:
             # Log the error but don't raise to maintain compatibility
             logger.exception(
-                f"Error recording messages to task memory: {str(e)}",
+                "Error recording messages to task memory: %s",
+                str(e),
             )
             import warnings
 
@@ -404,7 +409,7 @@ class ReMeTaskMemory(ReMeBaseLongTermMemory):
             return result.get("answer", "")
 
         except Exception as e:
-            logger.exception(f"Error retrieving task memory: {str(e)}")
+            logger.exception("Error retrieving task memory: %s", str(e))
             import warnings
 
             warnings.warn(f"Error retrieving task memory: {str(e)}")
