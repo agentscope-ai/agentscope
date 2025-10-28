@@ -37,7 +37,6 @@ async def test_record_to_memory(
     print("Interface 1: record_to_memory (Tool Function)")
     print("-" * 70)
     print("Purpose: Explicit memory recording with structured content")
-    print()
     print("Test case: Recording user's travel preferences...")
 
     result: ToolResponse = await memory.record_to_memory(
