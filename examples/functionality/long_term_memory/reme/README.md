@@ -11,13 +11,13 @@ This example demonstrates how to:
 
 ReMe (Reflection Memory) provides three types of long-term memory for intelligent agents:
 
-1. **Personal Memory** (`ReMePersonalMemory`) - Records and retrieves persistent personal information, preferences, and facts about users
-2. **Task Memory** (`ReMeTaskMemory`) - Learns from task execution trajectories and retrieves relevant past experiences for similar tasks
-3. **Tool Memory** (`ReMeToolMemory`) - Records tool execution results and generates usage guidelines to improve tool calling
+1. **Personal Memory** (`ReMePersonalLongTermMemory`) - Records and retrieves persistent personal information, preferences, and facts about users
+2. **Task Memory** (`ReMeTaskLongTermMemory`) - Learns from task execution trajectories and retrieves relevant past experiences for similar tasks
+3. **Tool Memory** (`ReMeToolLongTermMemory`) - Records tool execution results and generates usage guidelines to improve tool calling
 
 ## Prerequisites
 
-- Python 3.9 or higher
+- Python 3.12 or higher
 - DashScope API key from Alibaba Cloud (for the examples)
 
 ## QuickStart
@@ -83,13 +83,18 @@ python tool_memory_example.py
 
 ### Interface Design
 
-Each memory type provides **5 core interfaces**:
+**Personal Memory** and **Task Memory** provide **5 core interfaces**:
 
 1. **`record_to_memory()`** - Tool function for agents to record memories (returns `ToolResponse`)
 2. **`retrieve_from_memory()`** - Tool function for agents to retrieve memories (returns `ToolResponse`)
 3. **`record()`** - Direct method for programmatic recording (returns `None`)
 4. **`retrieve()`** - Direct method for programmatic retrieval (returns `str`)
 5. **ReActAgent Integration** - Use memory with `long_term_memory` and `long_term_memory_mode` parameters
+
+**Tool Memory** provides **2 core interfaces** (no tool functions):
+
+1. **`record()`** - Direct method for recording tool execution results (returns `None`)
+2. **`retrieve()`** - Direct method for retrieving tool usage guidelines (returns `str`)
 
 ## Usage Examples
 
@@ -100,14 +105,15 @@ Each memory type provides **5 core interfaces**:
 ```python
 import asyncio
 import os
-from agentscope.memory.reme import ReMePersonalMemory
+from agentscope.memory import ReMePersonalLongTermMemory
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 
+
 async def main():
     # Initialize personal memory
-    personal_memory = ReMePersonalMemory(
+    personal_memory = ReMePersonalLongTermMemory(
         agent_name="Friday",
         user_name="user_123",
         model=DashScopeChatModel(
@@ -153,6 +159,7 @@ async def main():
         )
         print(memories)
 
+
 asyncio.run(main())
 ```
 
@@ -165,7 +172,7 @@ from agentscope.memory import InMemoryMemory
 from agentscope.tool import Toolkit
 
 async def use_with_agent():
-    personal_memory = ReMePersonalMemory(...)
+    personal_memory = ReMePersonalLongTermMemory(...)
 
     async with personal_memory:
         agent = ReActAgent(
@@ -189,13 +196,14 @@ async def use_with_agent():
 **Use Case**: Learn from task execution trajectories and retrieve relevant experiences.
 
 ```python
-from agentscope.memory.reme import ReMeTaskMemory
+from agentscope.memory import ReMeTaskLongTermMemory
+
 
 async def main():
     # Initialize task memory
-    task_memory = ReMeTaskMemory(
+    task_memory = ReMeTaskLongTermMemory(
         agent_name="TaskAssistant",
-        user_name="workspace_123",  # Acts as workspace_id
+        user_name="task_workspace_123",  # Acts as workspace_id
         model=DashScopeChatModel(...),
         embedding_model=DashScopeTextEmbedding(...),
     )
@@ -232,6 +240,7 @@ async def main():
         )
         print(experiences)
 
+
 asyncio.run(main())
 ```
 
@@ -239,7 +248,7 @@ asyncio.run(main())
 
 ```python
 async def use_with_agent():
-    task_memory = ReMeTaskMemory(...)
+    task_memory = ReMeTaskLongTermMemory(...)
 
     async with task_memory:
         agent = ReActAgent(
@@ -267,9 +276,10 @@ async def use_with_agent():
 ```python
 import json
 from datetime import datetime
-from agentscope.memory.reme import ReMeToolMemory
+from agentscope.memory import ReMeToolLongTermMemory
 from agentscope.tool import Toolkit, ToolResponse
-from agentscope.message import TextBlock
+from agentscope.message import Msg, TextBlock
+
 
 # Step 1: Define tools
 async def web_search(query: str, max_results: int = 5) -> ToolResponse:
@@ -277,17 +287,18 @@ async def web_search(query: str, max_results: int = 5) -> ToolResponse:
     result = f"Found {max_results} results for query: '{query}'"
     return ToolResponse(content=[TextBlock(type="text", text=result)])
 
+
 async def main():
     # Initialize tool memory
-    tool_memory = ReMeToolMemory(
+    tool_memory = ReMeToolLongTermMemory(
         agent_name="ToolBot",
-        user_name="workspace_demo",
+        user_name="tool_workspace_demo",
         model=DashScopeChatModel(...),
         embedding_model=DashScopeTextEmbedding(...),
     )
 
     async with tool_memory:
-        # Step 2: Record tool execution history
+        # Step 2: Record tool execution history (accepts JSON strings in msgs)
         tool_result = {
             "create_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "tool_name": "web_search",
@@ -298,13 +309,13 @@ async def main():
             "time_cost": 2.3
         }
 
-        # Interface 3: record (accepts JSON strings)
+        # Interface 1: record (accepts JSON strings in message content)
         await tool_memory.record(
             msgs=[Msg(role="assistant", content=json.dumps(tool_result), name="assistant")],
         )
 
         # Step 3: Retrieve tool guidelines
-        # Interface 4: retrieve returns summarized guidelines
+        # Interface 2: retrieve returns summarized guidelines
         guidelines = await tool_memory.retrieve(
             msg=Msg(role="user", content="web_search", name="user"),
         )
@@ -329,8 +340,11 @@ async def main():
         msg = Msg(role="user", content="Search for Python design patterns", name="user")
         response = await agent(msg)
 
+
 asyncio.run(main())
 ```
+
+> **Note**: Tool Memory does NOT provide `record_to_memory()` and `retrieve_from_memory()` tool functions. It only provides direct `record()` and `retrieve()` methods. Tool Memory is designed to be used programmatically to enhance agent system prompts, not as agent-callable tools.
 
 ## API Reference
 
@@ -339,7 +353,7 @@ asyncio.run(main())
 All memory types share these initialization parameters:
 
 ```python
-ReMePersonalMemory(
+ReMePersonalLongTermMemory(
     agent_name: str,           # Name of the agent using this memory
     user_name: str,            # User identifier (acts as workspace_id in ReMe)
     model: ModelWrapper,       # LLM for summarization and processing
@@ -386,14 +400,11 @@ ReMePersonalMemory(
 
 | Interface | Type | Signature | Returns | Description |
 |-----------|------|-----------|---------|-------------|
-| `record_to_memory` | Tool Function | `(thinking: str, content: list[str])` | `ToolResponse` | Record tool execution (JSON format) |
-| `retrieve_from_memory` | Tool Function | `(keywords: list[str])` | `ToolResponse` | Retrieve tool usage guidelines |
-| `record` | Direct Method | `(msgs: list[Msg])` | `None` | Record tool results as messages |
+| `record` | Direct Method | `(msgs: list[Msg])` | `None` | Record tool results as messages (JSON format) |
 | `retrieve` | Direct Method | `(msg: Msg)` | `str` | Retrieve guidelines for tools |
 
 **Parameters**:
-- `thinking`: Reasoning about tool usage
-- `content`: List of JSON strings with tool execution metadata:
+- `msgs`: List of messages where `content` contains JSON strings with tool execution metadata:
   - `create_time`: Timestamp (`"%Y-%m-%d %H:%M:%S"`)
   - `tool_name`: Tool identifier
   - `input`: Parameters used (dict)
@@ -401,17 +412,17 @@ ReMePersonalMemory(
   - `token_cost`: Token usage (int)
   - `success`: Execution status (bool)
   - `time_cost`: Duration in seconds (float)
-- `keywords`: Tool names to retrieve guidelines for
-- **Note**: Recording automatically triggers guideline summarization
+- `msg`: Message containing tool name to retrieve guidelines for
+- **Note**: Tool Memory does NOT provide tool functions (`record_to_memory` and `retrieve_from_memory`). It only provides direct methods for programmatic use.
 
 ### ReActAgent Integration Modes
 
-When attaching memory to ReActAgent, use the `long_term_memory_mode` parameter:
+When attaching **Personal Memory** or **Task Memory** to ReActAgent, use the `long_term_memory_mode` parameter:
 
 ```python
 agent = ReActAgent(
     name="Assistant",
-    long_term_memory=memory,
+    long_term_memory=memory,  # ReMePersonalLongTermMemory or ReMeTaskLongTermMemory
     long_term_memory_mode="both",  # Options: "record", "retrieve", "both"
     # ... other parameters
 )
@@ -421,6 +432,8 @@ agent = ReActAgent(
 - `"record"`: Only adds `record_to_memory` tool to agent
 - `"retrieve"`: Only adds `retrieve_from_memory` tool to agent
 - `"both"`: Adds both tools (recommended for most use cases)
+
+> **Note**: Tool Memory does NOT support ReActAgent integration with tool functions. Use Tool Memory programmatically to enhance system prompts as shown in the Tool Memory example.
 
 ### Async Context Manager (Required!)
 
@@ -441,15 +454,15 @@ This ensures:
 ### Custom Configuration
 
 ```python
-from agentscope.memory.reme import ReMePersonalMemory
+from agentscope.memory import ReMePersonalLongTermMemory
 
 # Custom storage location and models
-memory = ReMePersonalMemory(
+memory = ReMePersonalLongTermMemory(
     agent_name="Friday",
     user_name="user_123",
-    model=your_custom_model,           # Any AgentScope-compatible LLM
-    embedding_model=your_embedding,     # Any AgentScope-compatible embedding model
-    vector_store_dir="./custom_path",   # Custom storage directory
+    model=your_custom_model,  # Any AgentScope-compatible LLM
+    embedding_model=your_embedding,  # Any AgentScope-compatible embedding model
+    vector_store_dir="./custom_path",  # Custom storage directory
 )
 ```
 
@@ -492,29 +505,30 @@ Demonstrates **5 core interfaces** for task memory:
 Demonstrates the **complete workflow** for tool memory:
 
 1. **Mock tools** - Define and register tools to Toolkit
-2. **Record tool history** - Store execution results with metadata
-3. **Retrieve guidelines** - Get summarized usage guidelines
+2. **Record tool history** - Store execution results with metadata using `record()`
+3. **Retrieve guidelines** - Get summarized usage guidelines using `retrieve()`
 4. **Enhance agent prompt** - Inject guidelines into system prompt
 5. **Use ReActAgent** - Agent uses tools with learned guidelines
 
 **Key Features**:
-- JSON-formatted tool execution recording
+- JSON-formatted tool execution recording via direct `record()` method
 - Automatic guideline generation through summarization
-- Multi-tool guideline retrieval
+- Multi-tool guideline retrieval via direct `retrieve()` method
 - System prompt enhancement for better tool usage
+- **Note**: Tool Memory does NOT provide agent-callable tool functions
 
 ## Architecture
 
 ### Inheritance Hierarchy
 
 ```
-ReMeBaseLongTermMemory (abstract base)
-├── ReMePersonalMemory
-├── ReMeTaskMemory
-└── ReMeToolMemory
+ReMeLongTermMemoryBase (abstract base)
+├── ReMePersonalLongTermMemory
+├── ReMeTaskLongTermMemory
+└── ReMeToolLongTermMemory
 ```
 
-**`ReMeBaseLongTermMemory`** provides:
+**`ReMeLongTermMemoryBase`** provides:
 - Integration with ReMe library's `ReMeApp`
 - Async context manager implementation
 - Common interface definitions

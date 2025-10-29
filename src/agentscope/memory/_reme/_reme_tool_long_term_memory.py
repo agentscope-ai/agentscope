@@ -5,20 +5,26 @@
 This module provides a tool memory implementation that integrates
 with the ReMe library to record tool execution results and retrieve
 tool usage guidelines.
+
+Requirements:
+    Python 3.12 or greater is required to use ReMe.
 """
 from typing import Any
 
+from ._reme_long_term_memory_base import ReMeLongTermMemoryBase
 from ..._logging import logger
-from ._reme_base_long_term_memory import ReMeBaseLongTermMemory
 from ...message import Msg, TextBlock
 from ...tool import ToolResponse
 
 
-class ReMeToolMemory(ReMeBaseLongTermMemory):
+class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     """Tool memory implementation using ReMe library.
 
     Tool memory records tool execution results and generates usage
     guidelines from the execution history.
+
+    Requirements:
+        Python 3.12 or greater is required to use ReMe.
     """
 
     async def record_to_memory(
@@ -74,15 +80,12 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             kwargs,
         )
 
+        self._check_app_available()
+
         if not self._app_started:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="Error: ReMeApp context not started. "
-                        "Please use 'async with' to initialize the app.",
-                    ),
-                ],
+            raise RuntimeError(
+                "ReMeApp context not started. "
+                "Please use 'async with' to initialize the app.",
             )
 
         try:
@@ -213,15 +216,12 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             kwargs,
         )
 
+        self._check_app_available()
+
         if not self._app_started:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="Error: ReMeApp context not started. "
-                        "Please use 'async with' to initialize the app.",
-                    ),
-                ],
+            raise RuntimeError(
+                "ReMeApp context not started. "
+                "Please use 'async with' to initialize the app.",
             )
 
         try:
@@ -367,6 +367,8 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
                 "The input messages must be a list of Msg objects.",
             )
 
+        self._check_app_available()
+
         if not self._app_started:
             raise RuntimeError(
                 "ReMeApp context not started. "
@@ -484,6 +486,8 @@ class ReMeToolMemory(ReMeBaseLongTermMemory):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
             )
+
+        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(

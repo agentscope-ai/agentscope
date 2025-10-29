@@ -16,14 +16,13 @@ The example demonstrates 5 core interfaces:
 
 import asyncio
 import os
-
 from dotenv import load_dotenv
 
 from agentscope.agent import ReActAgent
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.memory.reme import ReMeTaskMemory
+from agentscope.memory import ReMeTaskLongTermMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import ToolResponse, Toolkit
@@ -31,7 +30,7 @@ from agentscope.tool import ToolResponse, Toolkit
 load_dotenv()
 
 
-async def test_record_to_memory(memory: ReMeTaskMemory) -> None:
+async def test_record_to_memory(memory: ReMeTaskLongTermMemory) -> None:
     """Test the record_to_memory tool function interface."""
     print("Interface 1: record_to_memory (Tool Function)")
     print("-" * 70)
@@ -62,7 +61,9 @@ async def test_record_to_memory(memory: ReMeTaskMemory) -> None:
     print()
 
 
-async def test_retrieve_from_memory(memory: ReMeTaskMemory) -> None:
+async def test_retrieve_from_memory(
+    memory: ReMeTaskLongTermMemory,
+) -> None:
     """Test the retrieve_from_memory tool function interface."""
     print("Interface 2: retrieve_from_memory (Tool Function)")
     print("-" * 70)
@@ -88,7 +89,7 @@ async def test_retrieve_from_memory(memory: ReMeTaskMemory) -> None:
     print()
 
 
-async def test_record_direct(memory: ReMeTaskMemory) -> None:
+async def test_record_direct(memory: ReMeTaskLongTermMemory) -> None:
     """Test the direct record method interface."""
     print("Interface 3: record (Direct Recording)")
     print("-" * 70)
@@ -129,7 +130,7 @@ async def test_record_direct(memory: ReMeTaskMemory) -> None:
     print()
 
 
-async def test_retrieve_direct(memory: ReMeTaskMemory) -> None:
+async def test_retrieve_direct(memory: ReMeTaskLongTermMemory) -> None:
     """Test the direct retrieve method interface."""
     print("Interface 4: retrieve (Direct Retrieval)")
     print("-" * 70)
@@ -152,7 +153,9 @@ async def test_retrieve_direct(memory: ReMeTaskMemory) -> None:
     print()
 
 
-async def test_react_agent_with_memory(memory: ReMeTaskMemory) -> None:
+async def test_react_agent_with_memory(
+    memory: ReMeTaskLongTermMemory,
+) -> None:
     """Test ReActAgent integration with task memory."""
     print("Interface 5: ReActAgent with Task Memory")
     print("-" * 70)
@@ -239,7 +242,7 @@ async def main() -> None:
     4. retrieve - Direct method for retrieving task experiences
     5. ReActAgent integration - Using task memory with ReActAgent
     """
-    long_term_memory = ReMeTaskMemory(
+    long_term_memory = ReMeTaskLongTermMemory(
         agent_name="TaskAssistant",
         user_name="task_workspace_123",
         model=DashScopeChatModel(

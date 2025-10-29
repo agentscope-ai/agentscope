@@ -148,10 +148,10 @@ asyncio.run(retrieve_preferences())
 # .. note:: We provide an example of using ReMe long-term memory in the GitHub repository under the ``examples/long_term_memory/reme`` directory.
 #
 
-from agentscope.memory.reme import ReMePersonalMemory
+from agentscope.memory import ReMePersonalLongTermMemory
 
 # Create ReMe personal long-term memory instance
-reme_long_term_memory = ReMePersonalMemory(
+reme_long_term_memory = ReMePersonalLongTermMemory(
     agent_name="Friday",
     user_name="user_123",
     model=DashScopeChatModel(
@@ -167,7 +167,7 @@ reme_long_term_memory = ReMePersonalMemory(
 )
 
 # %%
-# The ``ReMePersonalMemory`` class provides four main methods for long-term memory operations.
+# The ``ReMePersonalLongTermMemory`` class provides four main methods for long-term memory operations.
 # They include ``record_to_memory`` and ``retrieve_from_memory`` for tool calls,
 # as well as ``record`` and ``retrieve`` for direct calls.
 #
@@ -490,7 +490,7 @@ async def retrieve_reme_preferences():
 #         | ``record_to_memory``
 #         | ``retrieve_from_memory``
 #       - Long-term memory implementation based on the mem0 library, supporting vector storage and retrieval.
-#     * - ``ReMePersonalMemory``
+#     * - ``ReMePersonalLongTermMemory``
 #       - | ``record``
 #         | ``retrieve``
 #         | ``record_to_memory``

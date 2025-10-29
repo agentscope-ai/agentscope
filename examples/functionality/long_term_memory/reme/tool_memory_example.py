@@ -18,18 +18,17 @@ import asyncio
 import json
 import os
 from datetime import datetime
-
 from dotenv import load_dotenv
 
 from agentscope.agent import ReActAgent
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.memory.reme import ReMeToolMemory
+from agentscope.memory import ReMeToolLongTermMemory
 from agentscope.message import Msg
+from agentscope.message import TextBlock
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit, ToolResponse
-from agentscope.message import TextBlock
 
 load_dotenv()
 
@@ -97,7 +96,7 @@ async def calculate(expression: str) -> ToolResponse:
 # ============================================================================
 
 
-async def record_tool_history(tool_memory: ReMeToolMemory) -> None:
+async def record_tool_history(tool_memory: ReMeToolLongTermMemory) -> None:
     """Record some historical tool execution results to tool memory.
 
     This simulates past tool usage that the agent can learn from.
@@ -201,7 +200,7 @@ async def record_tool_history(tool_memory: ReMeToolMemory) -> None:
 
 
 async def retrieve_tool_guidelines(
-    tool_memory: ReMeToolMemory,
+    tool_memory: ReMeToolLongTermMemory,
     tool_names: list[str],
 ) -> str:
     """Retrieve tool usage guidelines from memory.
@@ -355,7 +354,7 @@ async def main() -> None:
     print()
 
     # Initialize tool memory
-    tool_memory = ReMeToolMemory(
+    tool_memory = ReMeToolLongTermMemory(
         agent_name="ToolBot",
         user_name="tool_workspace_demo",
         model=DashScopeChatModel(

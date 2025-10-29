@@ -15,14 +15,13 @@ The example demonstrates 5 core interfaces:
 
 import asyncio
 import os
-
 from dotenv import load_dotenv
 
 from agentscope.agent import ReActAgent
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.memory.reme import ReMePersonalMemory
+from agentscope.memory import ReMePersonalLongTermMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import ToolResponse, Toolkit
@@ -31,7 +30,7 @@ load_dotenv()
 
 
 async def test_record_to_memory(
-    memory: ReMePersonalMemory,
+    memory: ReMePersonalLongTermMemory,
 ) -> None:
     """Test the record_to_memory tool function interface."""
     print("Interface 1: record_to_memory (Tool Function)")
@@ -60,7 +59,7 @@ async def test_record_to_memory(
 
 
 async def test_retrieve_from_memory(
-    memory: ReMePersonalMemory,
+    memory: ReMePersonalLongTermMemory,
 ) -> None:
     """Test the retrieve_from_memory tool function interface."""
     print("Interface 2: retrieve_from_memory (Tool Function)")
@@ -84,7 +83,7 @@ async def test_retrieve_from_memory(
     print()
 
 
-async def test_record_direct(memory: ReMePersonalMemory) -> None:
+async def test_record_direct(memory: ReMePersonalLongTermMemory) -> None:
     """Test the direct record method interface."""
     print("Interface 3: record (Direct Recording)")
     print("-" * 70)
@@ -119,7 +118,7 @@ async def test_record_direct(memory: ReMePersonalMemory) -> None:
     print()
 
 
-async def test_retrieve_direct(memory: ReMePersonalMemory) -> None:
+async def test_retrieve_direct(memory: ReMePersonalLongTermMemory) -> None:
     """Test the direct retrieve method interface."""
     print("Interface 4: retrieve (Direct Retrieval)")
     print("-" * 70)
@@ -144,7 +143,9 @@ async def test_retrieve_direct(memory: ReMePersonalMemory) -> None:
     print()
 
 
-async def test_react_agent_with_memory(memory: ReMePersonalMemory) -> None:
+async def test_react_agent_with_memory(
+    memory: ReMePersonalLongTermMemory,
+) -> None:
     """Test ReActAgent integration with personal memory."""
     print("Interface 5: ReActAgent with Personal Memory")
     print("-" * 70)
@@ -219,7 +220,7 @@ async def main() -> None:
     4. retrieve - Direct method for query-based retrieval
     5. ReActAgent integration - Using personal memory with ReActAgent
     """
-    long_term_memory = ReMePersonalMemory(
+    long_term_memory = ReMePersonalLongTermMemory(
         agent_name="Friday",
         user_name="user_123",
         model=DashScopeChatModel(

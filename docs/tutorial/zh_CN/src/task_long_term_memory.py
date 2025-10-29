@@ -136,10 +136,10 @@ asyncio.run(retrieve_preferences())
 # .. note:: 在 GitHub 仓库的 ``examples/long_term_memory/reme`` 目录下我们提供了 ReMe 长期记忆的使用示例。
 #
 
-from agentscope.memory.reme import ReMePersonalMemory
+from agentscope.memory import ReMePersonalLongTermMemory
 
 # 创建 ReMe 个人长期记忆实例
-reme_long_term_memory = ReMePersonalMemory(
+reme_long_term_memory = ReMePersonalLongTermMemory(
     agent_name="Friday",
     user_name="user_123",
     model=DashScopeChatModel(
@@ -155,7 +155,7 @@ reme_long_term_memory = ReMePersonalMemory(
 )
 
 # %%
-# ``ReMePersonalMemory`` 类提供了四个操作长期记忆的方法。
+# ``ReMePersonalLongTermMemory`` 类提供了四个操作长期记忆的方法。
 # 它们分别是用于工具调用的 ``record_to_memory`` 和 ``retrieve_from_memory``，
 # 以及用于直接调用的 ``record`` 和 ``retrieve``。
 #
@@ -466,7 +466,7 @@ async def retrieve_reme_preferences():
 #         | ``record_to_memory``
 #         | ``retrieve_from_memory``
 #       - 基于 mem0 库的长期记忆实现，支持向量存储和检索。
-#     * - ``ReMePersonalMemory``
+#     * - ``ReMePersonalLongTermMemory``
 #       - | ``record``
 #         | ``retrieve``
 #         | ``record_to_memory``

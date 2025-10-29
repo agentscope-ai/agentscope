@@ -15,10 +15,10 @@ SKIP_REME_TESTS = PYTHON_VERSION < (3, 12)
 
 if not SKIP_REME_TESTS:
     from agentscope.embedding import DashScopeTextEmbedding
-    from agentscope.memory.reme import (
-        ReMePersonalMemory,
-        ReMeToolMemory,
-        ReMeTaskMemory,
+    from agentscope.memory import (
+        ReMePersonalLongTermMemory,
+        ReMeToolLongTermMemory,
+        ReMeTaskLongTermMemory,
     )
     from agentscope.message import Msg
     from agentscope.model import DashScopeChatModel
@@ -56,13 +56,13 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         # Set the memory class based on MEMORY_TYPE
         self.memory_type = MEMORY_TYPE
         if self.memory_type == "tool":
-            self.memory_class = ReMeToolMemory
+            self.memory_class = ReMeToolLongTermMemory
             self.summary_operation = "add_tool_call_result"
         elif self.memory_type == "task":
-            self.memory_class = ReMeTaskMemory
+            self.memory_class = ReMeTaskLongTermMemory
             self.summary_operation = "summary_task_memory"
         else:  # default to personal
-            self.memory_class = ReMePersonalMemory
+            self.memory_class = ReMePersonalLongTermMemory
             self.summary_operation = "summary_personal_memory"
 
         print(f"\n=== Testing {self.memory_class.__name__} ===")
@@ -168,7 +168,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
 
         # Verify result
         self.assertIsInstance(result, ToolResponse)
-        self.assertTrue(len(result.content) > 0)
+        self.assertGreater(len(result.content), 0)
         text_content = result.content[0].get("text", "")
 
         # Verify success message contains the expected count
@@ -184,7 +184,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
             )
 
         # Verify app.async_execute was called
-        self.assertTrue(memory.app.async_execute.called)
+        memory.app.async_execute.assert_called()
         self.assertEqual(
             memory.app.async_execute.call_args[1]["workspace_id"],
             "test_workspace_123",
@@ -195,14 +195,14 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         memory = self._create_memory_instance()
         memory._app_started = False
 
-        result = await memory.record_to_memory(
-            thinking="Test thinking",
-            content=["Test content"],
-        )
+        # Should raise RuntimeError when app is not started
+        with self.assertRaises(RuntimeError) as context:
+            await memory.record_to_memory(
+                thinking="Test thinking",
+                content=["Test content"],
+            )
 
-        self.assertIsInstance(result, ToolResponse)
-        text_content = result.content[0].get("text", "")
-        self.assertIn("Error: ReMeApp context not started", text_content)
+        self.assertIn("ReMeApp context not started", str(context.exception))
 
     async def test_record_to_memory_error_handling(self) -> None:
         """Test error handling in record_to_memory."""
@@ -360,13 +360,13 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         memory = self._create_memory_instance()
         memory._app_started = False
 
-        result = await memory.retrieve_from_memory(
-            keywords=["test"],
-        )
+        # Should raise RuntimeError when app is not started
+        with self.assertRaises(RuntimeError) as context:
+            await memory.retrieve_from_memory(
+                keywords=["test"],
+            )
 
-        self.assertIsInstance(result, ToolResponse)
-        text_content = result.content[0].get("text", "")
-        self.assertIn("Error: ReMeApp context not started", text_content)
+        self.assertIn("ReMeApp context not started", str(context.exception))
 
     async def test_record_direct_method_success(self) -> None:
         """Test direct record method with message list."""
@@ -423,7 +423,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         await memory.record(msgs)
 
         # Verify app.async_execute was called
-        self.assertTrue(memory.app.async_execute.called)
+        memory.app.async_execute.assert_called()
         call_args = memory.app.async_execute.call_args[1]
         self.assertEqual(call_args["workspace_id"], "test_workspace_123")
 
