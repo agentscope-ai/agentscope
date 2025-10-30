@@ -7,13 +7,13 @@
 ## 1) Agent Search（网页搜索工具聚合）
 
 ### 目标
-聚合所有搜索工具（Google/Bing/Sogou/Wiki/GitHub）提供统一搜索接口，通过智能降级策略保证搜索成功率。
+聚合稳定的搜索工具（Bing/Sogou/Wiki/GitHub）提供统一搜索接口，通过智能降级策略保证搜索成功率。
 
 ### 最小工具面
 - `search_web(query: str)`：
   - **零偏差契约**: 严格仅接受 `{query}` 参数，符合项目设计原则
-  - **智能路由**: 根据查询类型优选搜索引擎（技术类→GitHub，学术类→Wiki，通用类→Google/Bing）
-  - **降级处理**: Google→Bing→Sogou→Wiki→GitHub 链式降级，确保搜索成功率
+  - **智能路由**: 根据查询类型优选搜索引擎（技术类→GitHub，学术类→Wiki，通用类→Bing/Sogou）
+  - **降级处理**: Bing→Sogou→Wiki→GitHub 链式降级，确保搜索成功率
   - **结果聚合**: 多源结果智能去重和相关性排序
   - **返回格式**: 统一 plain text 格式，便于后续处理
 
@@ -40,10 +40,10 @@
   "content": [
     {
       "type": "text",
-      "text": "Google: [结果1摘要]\n\nBing: [结果2摘要]\n\nGitHub: [相关代码仓库]"
+      "text": "Bing: [结果1摘要]\n\nSogou: [结果2摘要]\n\nGitHub: [相关代码仓库]"
     }
   ],
-  "metadata": {"search_providers_used": ["google", "bing", "github"]}
+  "metadata": {"search_providers_used": ["bing", "sogou", "github"]}
 }
 ```
 

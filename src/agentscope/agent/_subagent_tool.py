@@ -46,6 +46,7 @@ async def make_subagent_tool(
     host: AgentBase,
     tool_name: str | None = None,
     ephemeral_memory: bool = True,
+    override_model: "ChatModelBase" | None = None,
 ) -> tuple[ToolFunction, dict[str, Any]]:
     """Create a toolkit-ready wrapper for a SubAgentBase subclass.
 
@@ -70,6 +71,14 @@ async def make_subagent_tool(
 
     initial_permissions = permissions_builder()
 
+    # Resolve model for subagent: explicit override > host.model (fail-fast if none)
+    model_for_subagent = override_model if override_model is not None else getattr(host, "model", None)
+    if model_for_subagent is None:
+        raise SubAgentUnavailable(
+            "Host does not provide a ChatModel; make_subagent_tool requires a model "
+            "to be propagated to the subagent via model_override.",
+        )
+
     # Registration-time probe: construct once to gate tool exposure.
     try:
         probe_context = cls._pre_context_compress(
@@ -82,6 +91,7 @@ async def make_subagent_tool(
             spec_name=spec.name,
             ephemeral_memory=ephemeral_memory,
             tools=spec.tools,
+            model_override=model_for_subagent,
             input_obj=sample_payload,
             delegation_context=probe_context,
         )
@@ -143,6 +153,7 @@ async def make_subagent_tool(
                 spec_name=_spec.name,
                 ephemeral_memory=_ephemeral_memory,
                 tools=_spec.tools,
+                model_override=model_for_subagent,
                 delegation_context=delegation_context,
                 input_obj=input_obj,
             )

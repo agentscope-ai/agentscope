@@ -14,6 +14,11 @@
 - 资源注入：子代理不得自行扩大权限或创建独立策略，必须使用 `export_agent` 注入的共享资源。
 - 静默执行：子代理默认关闭控制台与 MsgHub 外泄，避免中间态噪声；Host 负责广播。
 
+- 模型继承（铁律）
+  - 子代理默认复用 Host 的 ChatModel 实例（同一对象/同一配置）；禁止在子代理内部自建“默认模型”或隐式更换提供商/密钥。
+  - 如确需特殊模型，Host 必须在注册/导出时以 `model_override` 显式传入，并在 SOP 与 `todo.md` 备案（动机/影响/回滚）。
+  - 覆盖优先级：`model_override`（显式） > `Host.model`（继承）；子代理内部严禁再构造任何默认模型。
+
 ### 2. 架构设计
 为了凸显“子代理仍是完整 Agent”，架构可以理解为三层：
 1. **封装层**：Host 通过 `make_subagent_tool` 生成包装函数，负责输入校验与上下文压缩。
@@ -38,6 +43,11 @@ flowchart TD
 - `make_subagent_tool`
   - 注册期：解析 `InputModel` 生成 JSON Schema，并执行一次“构造探测”（确保可实例化与最小环境可用），失败则拒绝注册并标记 `SubAgentUnavailable`。
   - 运行期：校验来参 → 压缩父上下文 → `export_agent(...).delegate(...)` → 返回 `ToolResponse`。
+
+#### 小节：模型来源与优先级
+- `export_agent(..., model_override: ChatModelBase | None)`：若提供则在本次生命周期内使用该模型；否则使用 Host 的 ChatModel（引用继承，非复制配置）。
+- 子代理 `reply(...)` 必须仅使用上述来源的模型；不得导入/实例化任何“默认模型”作为兜底。
+- `delegate(...)` 仅负责 `Msg → ToolResponse` 折叠，不改变模型的选择或配置。
 
 ### 4. 关键设计模式
 - 适配器：`make_subagent_tool` 将子代理封装为 Toolkit 工具（函数）。
@@ -93,6 +103,15 @@ flowchart TD
   ```
   当需要通过 Toolkit 对外暴露时，再由骨架的 `delegate` 将 `Msg` 包装为 `ToolResponse`，以履行工具注册契约。
 
+- 注册包装器约束
+  - `make_subagent_tool` 必须读取 `host.model` 并以 `model_override` 传入 `export_agent`；若调用方显式提供覆盖模型，则使用覆盖值；若 Host 不提供可用模型，注册应早失败并给出明确错误。
+
+- 模型责任边界
+  - Host 负责确定并提供默认 ChatModel；子代理仅复用或使用 `model_override`，不得放大权限（如替换 endpoint/注入新 key）。跨子代理差异化模型必须走 `model_override` 并在 `todo.md` 记录“兼容性与回滚”。
+
+- 更新调用链（含模型继承）
+  - `ReActAgent._acting → Toolkit.call_tool_function(<subagent_tool>) → InputModel.model_validate(...) → make_subagent_tool(..., host.model) → SubAgentBase.export_agent(..., model_override=host.model | override) → SubAgentBase.delegate(...) → ToolResponse → ReActAgent.generate_response/print`
+
 ## 五、测试文件
 
 - 绑定测试（覆盖要点）：
@@ -106,3 +125,10 @@ flowchart TD
 
 未覆盖建议：
 - 统一输入契约的“字段集合等价”属性测试（当有新增子代理时作为模板复用）。
+
+- 新增/补强测试（模型继承与覆盖）
+  - `test_model_inheritance_default`：不传 `model_override`，断言子代理内部模型对象 `is host.model`（同实例/同配置）。
+  - `test_model_override_explicit`：传入 `model_override`，断言子代理使用覆盖模型且不影响 `host.model`。
+  - `test_no_local_default_construction`：在禁止默认模型构造的 monkeypatch 下，子代理在无 override 时不可新建模型（否则失败）。
+  - `test_parallel_subagents_share_host_model`：并发导出多个子代理（无 override）均引用同一 `host.model`。
+  - 文档同步：PR 必须在 `todo.md` 写明启用 override 的动机/影响/回滚。

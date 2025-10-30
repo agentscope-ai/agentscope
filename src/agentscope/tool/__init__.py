@@ -24,7 +24,6 @@ from ._multi_modality import (
 )
 from ._toolkit import Toolkit
 from ._search.bing import search_bing
-from ._search.google import search_google
 from ._search.sogou import search_sogou
 from ._search.github import search_github
 from ._search.wiki import search_wiki
@@ -38,7 +37,6 @@ __all__ = [
     "write_text_file",
     "insert_text_file",
     "search_bing",
-    "search_google",
     "search_sogou",
     "search_github",
     "search_wiki",
