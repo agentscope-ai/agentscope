@@ -32,36 +32,36 @@ Subclasses:
     - ReMePersonalLongTermMemory: For user preferences and personal information
 
 Example:
-    ```python
-    from agentscope.models import OpenAIChatModel
-    from agentscope.embedding import OpenAITextEmbedding
-    from agentscope.memory._reme import ReMeToolLongTermMemory
+    .. code-block:: python
 
-    # Initialize models
-    model = OpenAIChatModel(model_name="gpt-4", api_key="...")
-    embedding = OpenAITextEmbedding(model_name="text-embedding-3-small", api_key="...")
+        from agentscope.models import OpenAIChatModel
+        from agentscope.embedding import OpenAITextEmbedding
+        from agentscope.memory._reme import ReMeToolLongTermMemory
 
-    # Create memory instance
-    memory = ReMeToolLongTermMemory(
-        agent_name="my_agent",
-        user_name="user_123",
-        model=model,
-        embedding_model=embedding
-    )
+        # Initialize models
+        model = OpenAIChatModel(model_name="gpt-4", api_key="...")
+        embedding = OpenAITextEmbedding(model_name="text-embedding-3-small", api_key="...")
 
-    # Use memory in async context
-    async with memory:
-        # Record tool execution
-        await memory.record_to_memory(
-            thinking="This tool worked well for data processing",
-            content=['{"tool_name": "process_data", "success": true, ...}']
+        # Create memory instance
+        memory = ReMeToolLongTermMemory(
+            agent_name="my_agent",
+            user_name="user_123",
+            model=model,
+            embedding_model=embedding
         )
 
-        # Retrieve tool guidelines
-        result = await memory.retrieve_from_memory(
-            keywords=["process_data"]
-        )
-    ```
+        # Use memory in async context
+        async with memory:
+            # Record tool execution
+            await memory.record_to_memory(
+                thinking="This tool worked well for data processing",
+                content=['{"tool_name": "process_data", "success": true, ...}']
+            )
+
+            # Retrieve tool guidelines
+            result = await memory.retrieve_from_memory(
+                keywords=["process_data"]
+            )
 """
 from abc import ABCMeta
 from typing import Any
@@ -106,7 +106,7 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
         | None = None,
         reme_config_path: str | None = None,
         **kwargs: Any,
-    ):
+    ) -> None:
         """Initialize the ReMe-based long-term memory.
 
         This constructor sets up the connection to the ReMe library and configures
@@ -146,35 +146,35 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             RuntimeError with installation instructions.
 
         Example:
-            ```python
-            from agentscope.models import OpenAIChatModel
-            from agentscope.embedding import OpenAITextEmbedding
-            from agentscope.memory._reme import ReMeToolLongTermMemory
+            .. code-block:: python
 
-            # Initialize models
-            model = OpenAIChatModel(
-                model_name="gpt-4",
-                api_key="your-api-key"
-            )
-            embedding = OpenAITextEmbedding(
-                model_name="text-embedding-3-small",
-                api_key="your-api-key"
-            )
+                from agentscope.models import OpenAIChatModel
+                from agentscope.embedding import OpenAITextEmbedding
+                from agentscope.memory._reme import ReMeToolLongTermMemory
 
-            # Create memory instance
-            memory = ReMeToolLongTermMemory(
-                agent_name="my_agent",
-                user_name="user_123",
-                run_name="session_001",
-                model=model,
-                embedding_model=embedding
-            )
+                # Initialize models
+                model = OpenAIChatModel(
+                    model_name="gpt-4",
+                    api_key="your-api-key"
+                )
+                embedding = OpenAITextEmbedding(
+                    model_name="text-embedding-3-small",
+                    api_key="your-api-key"
+                )
 
-            # Use with async context manager
-            async with memory:
-                # Memory operations...
-                pass
-            ```
+                # Create memory instance
+                memory = ReMeToolLongTermMemory(
+                    agent_name="my_agent",
+                    user_name="user_123",
+                    run_name="session_001",
+                    model=model,
+                    embedding_model=embedding
+                )
+
+                # Use with async context manager
+                async with memory:
+                    # Memory operations...
+                    pass
         """
         super().__init__()
 
@@ -320,20 +320,20 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             the context will raise RuntimeError when they call _check_app_available().
 
         Example:
-            ```python
-            memory = ReMeToolLongTermMemory(
-                agent_name="my_agent",
-                model=model,
-                embedding_model=embedding
-            )
+            .. code-block:: python
 
-            async with memory:
-                # Memory operations can be performed here
-                await memory.record_to_memory(
-                    thinking="Recording tool usage",
-                    content=[...]
+                memory = ReMeToolLongTermMemory(
+                    agent_name="my_agent",
+                    model=model,
+                    embedding_model=embedding
                 )
-            ```
+
+                async with memory:
+                    # Memory operations can be performed here
+                    await memory.record_to_memory(
+                        thinking="Recording tool usage",
+                        content=[...]
+                    )
         """
         if self.app is not None:
             await self.app.__aenter__()
@@ -367,16 +367,16 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             ensuring the memory state is properly reset.
 
         Example:
-            ```python
-            async with memory:
-                try:
-                    # Memory operations
-                    await memory.record_to_memory(...)
-                except Exception as e:
-                    # __aexit__ will be called even if an exception occurs
-                    print(f"Error: {e}")
-            # __aexit__ has been called and resources are cleaned up
-            ```
+            .. code-block:: python
+
+                async with memory:
+                    try:
+                        # Memory operations
+                        await memory.record_to_memory(...)
+                    except Exception as e:
+                        # __aexit__ will be called even if an exception occurs
+                        print(f"Error: {e}")
+                # __aexit__ has been called and resources are cleaned up
         """
         if self.app is not None:
             await self.app.__aexit__(exc_type, exc_val, exc_tb)
