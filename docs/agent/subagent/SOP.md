@@ -14,6 +14,11 @@
 - 资源注入：子代理不得自行扩大权限或创建独立策略，必须使用 `export_agent` 注入的共享资源。
 - 静默执行：子代理默认关闭控制台与 MsgHub 外泄，避免中间态噪声；Host 负责广播。
 
+- 上下文快照与短期记忆（默认）
+  - 子代理仅可“只读”获取 Host 短期 memory 的快照，并在注册包装器内通过 `_pre_context_compress` 压缩为 `DelegationContext`；严禁写回 Host 短期 memory。
+  - 子代理如何将快照映射到“子代理自有 short-term memory”由子类实现决定（可覆写）；默认策略是在 `delegate` 中注入一条 synthetic 的 user 消息并携带 `delegation_context`。常见做法是结合任务需求替换子代理自身的 system prompt。
+  - 子代理不可读写 Host 的 MsgHub（广播通道），仅通过 `ToolResponse` 与 Host 交换结果。
+
 - 模型继承（铁律）
   - 子代理默认复用 Host 的 ChatModel 实例（同一对象/同一配置）；禁止在子代理内部自建“默认模型”或隐式更换提供商/密钥。
   - 如确需特殊模型，Host 必须在注册/导出时以 `model_override` 显式传入，并在 SOP 与 `todo.md` 备案（动机/影响/回滚）。
@@ -48,6 +53,11 @@ flowchart TD
 - `export_agent(..., model_override: ChatModelBase | None)`：若提供则在本次生命周期内使用该模型；否则使用 Host 的 ChatModel（引用继承，非复制配置）。
 - 子代理 `reply(...)` 必须仅使用上述来源的模型；不得导入/实例化任何“默认模型”作为兜底。
 - `delegate(...)` 仅负责 `Msg → ToolResponse` 折叠，不改变模型的选择或配置。
+
+#### 小节：上下文快照与短期记忆策略
+- 包装器在进入子代理前从 Host 只读采样 `ContextBundle` 并压缩为 `DelegationContext`（最近对话/最近工具结果/长记忆引用/工作空间指针/安全标记）。
+- `delegate(...)` 的默认实现会将该上下文注入“子代理自有 memory”（synthetic user + `delegation_context`），随后调用子类的 `reply(input_obj)`。
+- 子类可覆写如何消费该快照（例如在进入 `reply` 之前替换自身 system prompt、丢弃冗余历史等），但不得写回或修改 Host 的短期 memory。
 
 ### 4. 关键设计模式
 - 适配器：`make_subagent_tool` 将子代理封装为 Toolkit 工具（函数）。
@@ -92,7 +102,7 @@ flowchart TD
 责任边界：
 - Host 决策/编排、广播与可观察性；子代理只聚焦单次任务与工具编排。
 - 文件系统权限由 Host 注入并强制；子代理仅消费，不声明策略。
-- 子代理不可读写 Host 的短期 memory 与 MsgHub；仅通过 `ToolResponse` 交换。
+- 子代理不可写 Host 的短期 memory；允许通过包装器“只读快照 + 压缩”访问 Host 短期 memory；子代理不可读写 Host 的 MsgHub。仅通过 `ToolResponse` 与 Host 交换结果。子代理如何将快照映射到自身短期记忆由子代理实现决定（默认 synthetic user + `delegation_context`，可替换自身 system prompt）。
 - 子代理同样可以作为普通 Agent 直接调用：
   ```python
   toolkit = build_toolkit()

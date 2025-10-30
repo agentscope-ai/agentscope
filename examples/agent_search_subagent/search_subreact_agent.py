@@ -14,9 +14,13 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from src.agentscope.agent._subagent_base import SubAgentBase
+from src.agentscope.agent._subagent_base import (
+    SubAgentBase,
+    DelegationContext,
+    _msg_to_tool_response,  # internal helper used by base class
+)
 from src.agentscope.agent import ReActAgent
-from src.agentscope.message import Msg
+from src.agentscope.message import Msg, TextBlock
 from src.agentscope.tool import Toolkit
 
 
@@ -104,6 +108,62 @@ class SearchSubReactAgent(SubAgentBase):
         msg = Msg(name="user", content=input_obj.query, role="user")
         agent = self._ensure_inner()
         return await agent(msg)
+
+    # Override delegate to avoid synthetic memory injection and consume no host history.
+    async def delegate(
+        self,
+        input_obj: SearchInput,
+        *,
+        delegation_context: DelegationContext | None = None,
+        **kwargs: Any,
+    ) -> "ToolResponse":
+        # Build a minimal context if none provided; do not inject into self.memory.
+        context = delegation_context or self._delegation_context
+        if context is None:
+            context = DelegationContext(
+                input_payload=input_obj.model_dump(),
+                recent_events=[],
+                long_term_refs=[],
+                workspace_pointers=[],
+                safety_flags={},
+                input_preview=input_obj.query[:200],
+            )
+
+        self._delegation_context = context
+        self._current_input = input_obj
+
+        try:
+            reply_msg = await self.reply(input_obj, **kwargs)
+        except Exception as error:  # pylint: disable=broad-except
+            from src.agentscope.tool import ToolResponse as _ToolResponse
+
+            return _ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=(
+                            "Subagent execution unavailable. "
+                            "See metadata for diagnostics."
+                        ),
+                    ),
+                ],
+                metadata={
+                    "unavailable": True,
+                    "error": str(error),
+                    "subagent": self.spec_name,
+                    "supervisor": self.permissions.supervisor_name,
+                },
+            )
+        finally:
+            if self._ephemeral_memory:
+                await self.memory.clear()
+
+        return _msg_to_tool_response(
+            reply_msg,
+            subagent_name=self.spec_name,
+            supervisor=self.permissions.supervisor_name,
+            context=context,
+        )
 
 
 __all__ = [
