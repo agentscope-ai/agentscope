@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
 """Tool memory implementation using ReMe library.
 
 This module provides a tool memory implementation that integrates
@@ -33,11 +32,15 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Record tool execution results to build a knowledge base of tool usage patterns.
+        """Record tool execution results to build tool usage patterns.
 
-        Use this function after successfully using tools to capture execution details,
-        results, and performance metrics. Over time, this builds comprehensive usage
-        guidelines and best practices for each tool.
+        Record tool execution results to build a knowledge base of tool
+        usage patterns.
+
+        Use this function after successfully using tools to capture
+        execution details, results, and performance metrics. Over time,
+        this builds comprehensive usage guidelines and best practices
+        for each tool.
 
         When to record:
         - After successfully executing any tool
@@ -45,15 +48,17 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         - When discovering effective parameter combinations
         - After noteworthy tool usage patterns
 
-        What to record: Each tool execution should include complete execution details.
+        What to record: Each tool execution should include complete
+        execution details.
 
         Args:
             thinking (`str`):
-                Your reasoning about why this tool execution is worth recording.
-                Mention what worked well, what could be improved, or lessons learned.
+                Your reasoning about why this tool execution is worth
+                recording. Mention what worked well, what could be
+                improved, or lessons learned.
             content (`list[str]`):
-                List of JSON strings, each representing a tool execution. Each JSON
-                must have these fields:
+                List of JSON strings, each representing a tool execution.
+                Each JSON must have these fields:
                 - create_time: Timestamp in format "YYYY-MM-DD HH:MM:SS"
                 - tool_name: Name of the tool executed
                 - input: Input parameters as a dict
@@ -62,15 +67,17 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 - success: Whether execution succeeded (boolean)
                 - time_cost: Execution time in seconds (float)
 
-                Example: '{"create_time": "2024-01-01 10:00:00", "tool_name": "search",
-                "input": {"query": "Python"}, "output": "Found 10 results",
-                "token_cost": 100, "success": true, "time_cost": 1.2}'
+                Example: '{"create_time": "2024-01-01 10:00:00",
+                "tool_name": "search", "input": {"query": "Python"},
+                "output": "Found 10 results", "token_cost": 100,
+                "success": true, "time_cost": 1.2}'
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
         Returns:
             `ToolResponse`:
-                Confirmation message with number of executions recorded and guidelines generated.
+                Confirmation message with number of executions recorded
+                and guidelines generated.
         """
         logger.info(
             "[ReMeToolMemory] Entering record_to_memory - "
@@ -146,7 +153,8 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             num_results = len(tool_call_results)
             summary_text = (
                 f"Successfully recorded {num_results} tool execution "
-                f"result{'s' if num_results > 1 else ''} and generated usage guidelines."
+                f"result{'s' if num_results > 1 else ''} and generated "
+                f"usage guidelines."
             )
 
             return ToolResponse(
@@ -174,19 +182,23 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         keywords: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Retrieve usage guidelines and best practices for specific tools.
+        """Retrieve usage guidelines and best practices for tools.
 
-        IMPORTANT: You should call this function BEFORE using a tool, especially
-        if you're uncertain about its proper usage or want to follow established
-        best practices. This retrieves synthesized guidelines based on past tool
-        executions.
+        Retrieve usage guidelines and best practices for specific tools.
+
+        IMPORTANT: You should call this function BEFORE using a tool,
+        especially if you're uncertain about its proper usage or want to
+        follow established best practices. This retrieves synthesized
+        guidelines based on past tool executions.
 
         Use this when:
         - About to use a tool and want to know the best practices
         - Uncertain about tool parameters or usage patterns
         - Want to learn from past successful/failed tool executions
-        - User asks "how should I use this tool?" or "what's the best way to..."
-        - Need to understand tool performance characteristics or limitations
+        - User asks "how should I use this tool?" or "what's the best
+          way to..."
+        - Need to understand tool performance characteristics or
+          limitations
 
         Benefits of retrieving first:
         - Learn from accumulated tool usage experience
@@ -197,17 +209,17 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
 
         Args:
             keywords (`list[str]`):
-                List of tool names to retrieve guidelines for. Use the exact
-                tool names. Examples: ["search"], ["database_query", "cache_get"],
-                ["api_call"].
+                List of tool names to retrieve guidelines for. Use the
+                exact tool names. Examples: ["search"],
+                ["database_query", "cache_get"], ["api_call"].
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
         Returns:
             `ToolResponse`:
-                Retrieved usage guidelines and best practices for the specified
-                tools. If no guidelines exist yet, you'll receive a message
-                indicating that.
+                Retrieved usage guidelines and best practices for the
+                specified tools. If no guidelines exist yet, you'll
+                receive a message indicating that.
         """
         logger.info(
             "[ReMeToolMemory] Entering retrieve_from_memory - "
@@ -344,13 +356,15 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     ) -> None:
         """Record the content to the tool memory.
 
-        This method extracts content from messages and treats them as JSON strings
-        representing tool_call_results, similar to record_to_memory.
+        This method extracts content from messages and treats them as
+        JSON strings representing tool_call_results, similar to
+        record_to_memory.
 
         Args:
             msgs (`list[Msg | None]`):
-                The messages to record to memory. Each message's content should be
-                a JSON string or list of JSON strings representing tool_call_results.
+                The messages to record to memory. Each message's content
+                should be a JSON string or list of JSON strings
+                representing tool_call_results.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording.
         """
@@ -414,7 +428,9 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             )
             import warnings
 
-            warnings.warn(f"Error recording tool messages to memory: {str(e)}")
+            warnings.warn(
+                f"Error recording tool messages to memory: {str(e)}",
+            )
 
     def _extract_tool_names_from_message(self, msg: Msg) -> str:
         """Extract tool names from a message.
@@ -461,12 +477,14 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         msg: Msg | list[Msg] | None,
         **kwargs: Any,
     ) -> str:
-        """Retrieve tool guidelines from memory based on message content.
+        """Retrieve tool guidelines from memory.
+
+        Retrieve tool guidelines from memory based on message content.
 
         Args:
             msg (`Msg | list[Msg] | None`):
-                The message containing tool names or queries to retrieve
-                guidelines for.
+                The message containing tool names or queries to
+                retrieve guidelines for.
             **kwargs (`Any`):
                 Additional keyword arguments.
 

@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
-# pylint: disable=C0301
-"""Personal memory example demonstrating ReMe personal memory functionality.
+"""Personal memory example demonstrating ReMe personal memory.
 
-This module provides examples of how to use the ReMePersonalMemory class
+This module provides examples of how to use the ReMePersonalMemory
+class.
 
 The example demonstrates 5 core interfaces:
 1. record_to_memory - Tool function for explicit memory recording
@@ -39,7 +38,7 @@ async def test_record_to_memory(
     print("Test case: Recording user's travel preferences...")
 
     result: ToolResponse = await memory.record_to_memory(
-        thinking="The user is sharing their travel preferences and habits",
+        thinking=("The user is sharing their travel preferences and habits"),
         content=[
             "I prefer to stay in homestays when traveling to Hangzhou",
             "I like to visit the West Lake in the morning",
@@ -66,9 +65,6 @@ async def test_retrieve_from_memory(
     print("-" * 70)
     print("Purpose: Keyword-based memory retrieval")
     print()
-    print(
-        "Test case: Searching for 'Hangzhou travel' and 'tea preference'",
-    )
 
     result = await memory.retrieve_from_memory(
         keywords=["Hangzhou travel", "tea preference"],
@@ -96,23 +92,34 @@ async def test_record_direct(memory: ReMePersonalLongTermMemory) -> None:
             msgs=[
                 Msg(
                     role="user",
-                    content="I work as a software engineer and prefer remote work",
+                    content=(
+                        "I work as a software engineer and prefer "
+                        "remote work"
+                    ),
                     name="user",
                 ),
                 Msg(
                     role="assistant",
-                    content="Understood! You're a software engineer who values remote work flexibility.",
+                    content=(
+                        "Understood! You're a software engineer who "
+                        "values remote work flexibility."
+                    ),
                     name="assistant",
                 ),
                 Msg(
                     role="user",
-                    content="I usually start my day at 9 AM with a cup of coffee",
+                    content=(
+                        "I usually start my day at 9 AM with a "
+                        "cup of coffee"
+                    ),
                     name="user",
                 ),
             ],
         )
         print("✓ Status: Successfully recorded conversation messages")
-        print("✓ Messages recorded: 3 messages (user-assistant dialogue)")
+        print(
+            "✓ Messages recorded: 3 messages (user-assistant dialogue)",
+        )
     except Exception as e:
         print(f"✗ Status: Failed - {str(e)}")
     print()
@@ -125,7 +132,8 @@ async def test_retrieve_direct(memory: ReMePersonalLongTermMemory) -> None:
     print("Purpose: Query-based memory retrieval using messages")
     print()
     print(
-        "Test case: Querying 'What do you know about my work preferences?'...",  # noqa: E501
+        "Test case: Querying 'What do you know about my "
+        "work preferences?'...",
     )
 
     memories = await memory.retrieve(
@@ -137,9 +145,12 @@ async def test_retrieve_direct(memory: ReMePersonalLongTermMemory) -> None:
     )
     print("✓ Retrieved memories:")
     print(f"{memories if memories else 'No memories found'}")
-    print(
-        f"✓ Status: {'Success - Found memories' if memories else 'No relevant memories found'}",  # noqa
+    status = (
+        "Success - Found memories"
+        if memories
+        else "No relevant memories found"
     )
+    print(f"✓ Status: {status}")
     print()
 
 
@@ -149,7 +160,9 @@ async def test_react_agent_with_memory(
     """Test ReActAgent integration with personal memory."""
     print("Interface 5: ReActAgent with Personal Memory")
     print("-" * 70)
-    print("Purpose: Demonstrate how ReActAgent uses personal memory tools")
+    print(
+        "Purpose: Demonstrate how ReActAgent uses personal memory tools",
+    )
     print()
     print("Test case: Agent-driven memory recording and retrieval...")
 
@@ -157,22 +170,33 @@ async def test_react_agent_with_memory(
     agent = ReActAgent(
         name="Friday",
         sys_prompt=(
-            "You are a helpful assistant named Friday with long-term memory capabilities. "
+            "You are a helpful assistant named Friday with long-term "
+            "memory capabilities. "
             "\n\n## Memory Management Guidelines:\n"
-            "1. **Recording Memories**: When users share personal information, preferences, "
-            "habits, or facts about themselves, ALWAYS record them using `record_to_memory` "
+            "1. **Recording Memories**: When users share personal "
+            "information, preferences, "
+            "habits, or facts about themselves, ALWAYS record them "
+            "using `record_to_memory` "
             "for future reference.\n"
-            "\n2. **Retrieving Memories**: BEFORE answering questions about the user's preferences, "
-            "past information, or personal details, you MUST FIRST call `retrieve_from_memory` "
-            "to check if you have any relevant stored information. Do NOT rely solely on the "
+            "\n2. **Retrieving Memories**: BEFORE answering questions "
+            "about the user's preferences, "
+            "past information, or personal details, you MUST FIRST "
+            "call `retrieve_from_memory` "
+            "to check if you have any relevant stored information. "
+            "Do NOT rely solely on the "
             "current conversation context.\n"
-            "\n3. **When to Retrieve**: Call `retrieve_from_memory` when:\n"
-            "   - User asks questions like 'what do I like?', 'what are my preferences?', "
+            "\n3. **When to Retrieve**: Call `retrieve_from_memory` "
+            "when:\n"
+            "   - User asks questions like 'what do I like?', "
+            "'what are my preferences?', "
             "'what do you know about me?'\n"
-            "   - User asks about their past behaviors, habits, or preferences\n"
+            "   - User asks about their past behaviors, habits, or "
+            "preferences\n"
             "   - User refers to information they mentioned before\n"
-            "   - You need context about the user to provide personalized responses\n"
-            "\nAlways check your memory first before claiming you don't know something about the user."
+            "   - You need context about the user to provide "
+            "personalized responses\n"
+            "\nAlways check your memory first before claiming you "
+            "don't know something about the user."
         ),
         model=DashScopeChatModel(
             model_name="qwen3-max",
@@ -189,23 +213,31 @@ async def test_react_agent_with_memory(
     await agent.memory.clear()
 
     print(
-        "→ User: 'When I travel to Hangzhou, I prefer to stay in a homestay'",
+        "→ User: 'When I travel to Hangzhou, I prefer to stay in "
+        "a homestay'",
     )
     msg = Msg(
         role="user",
-        content="When I travel to Hangzhou, I prefer to stay in a homestay",
+        content=(
+            "When I travel to Hangzhou, I prefer to stay in " "a homestay"
+        ),
         name="user",
     )
     msg = await agent(msg)
     print(f"✓ Agent response: {msg.get_text_content()}\n")
 
     print("→ User: 'what preference do I have?'")
-    msg = Msg(role="user", content="what preference do I have?", name="user")
+    msg = Msg(
+        role="user",
+        content="what preference do I have?",
+        name="user",
+    )
     msg = await agent(msg)
     print(f"✓ Agent response: {msg.get_text_content()}\n")
 
     print(
-        "✓ Status: Successfully demonstrated ReActAgent with personal memory",
+        "✓ Status: Successfully demonstrated ReActAgent with "
+        "personal memory",
     )
     print()
 

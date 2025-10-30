@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
-# pylint: disable=C0301
-"""Tool memory example demonstrating ReMe tool memory functionality with ReActAgent.
+"""Tool memory example demonstrating ReMe tool memory with ReActAgent.
 
 This module demonstrates the complete workflow:
 1. Mock a tool function and register it to Toolkit
@@ -10,8 +8,8 @@ This module demonstrates the complete workflow:
 4. Inject guidelines into ReActAgent's system prompt
 5. Use ReActAgent with tool memory
 
-This workflow helps LLMs learn from past tool usage patterns and improve
-their tool calling decisions over time.
+This workflow helps LLMs learn from past tool usage patterns and
+improve their tool calling decisions over time.
 """
 
 import asyncio
@@ -96,8 +94,10 @@ async def calculate(expression: str) -> ToolResponse:
 # ============================================================================
 
 
-async def record_tool_history(tool_memory: ReMeToolLongTermMemory) -> None:
-    """Record some historical tool execution results to tool memory.
+async def record_tool_history(
+    tool_memory: ReMeToolLongTermMemory,
+) -> None:
+    """Record historical tool execution results to tool memory.
 
     This simulates past tool usage that the agent can learn from.
     """
@@ -115,7 +115,9 @@ async def record_tool_history(tool_memory: ReMeToolLongTermMemory) -> None:
                 "query": "Python asyncio tutorial",
                 "max_results": 10,
             },
-            "output": "Found 10 results for query: 'Python asyncio tutorial'",
+            "output": (
+                "Found 10 results for query: 'Python asyncio tutorial'"
+            ),
             "token_cost": 150,
             "success": True,
             "time_cost": 2.3,
@@ -127,7 +129,7 @@ async def record_tool_history(tool_memory: ReMeToolLongTermMemory) -> None:
                 "query": "machine learning basics",
                 "max_results": 5,
             },
-            "output": "Found 5 results for query: 'machine learning basics'",
+            "output": ("Found 5 results for query: 'machine learning basics'"),
             "token_cost": 120,
             "success": True,
             "time_cost": 1.8,
@@ -236,7 +238,9 @@ async def retrieve_tool_guidelines(
             print(f"✓ Retrieved guidelines for '{tool_name}'")
             print(f"  Preview: {guidelines}")
         else:
-            print(f"✓ No guidelines found for '{tool_name}' (first time use)")
+            print(
+                f"✓ No guidelines found for '{tool_name}' " "(first time use)",
+            )
         print()
 
     if all_guidelines:
@@ -274,16 +278,24 @@ async def use_react_agent_with_tool_memory(
     print()
 
     # Create enhanced system prompt with tool guidelines
-    base_sys_prompt = """You are a helpful AI assistant named ToolBot.
-You have access to various tools to help users complete their tasks.
-Please use the tools appropriately based on the user's requests."""
+    base_sys_prompt = (
+        "You are a helpful AI assistant named ToolBot.\n"
+        "You have access to various tools to help users complete "
+        "their tasks.\n"
+        "Please use the tools appropriately based on the user's "
+        "requests."
+    )
 
     if tool_guidelines:
         sys_prompt = f"{base_sys_prompt}\n{tool_guidelines}"
-        print("✓ System prompt enhanced with tool memory guidelines")
+        print(
+            "✓ System prompt enhanced with tool memory guidelines",
+        )
     else:
         sys_prompt = base_sys_prompt
-        print("✓ Using base system prompt (no guidelines available)")
+        print(
+            "✓ Using base system prompt (no guidelines available)",
+        )
 
     print()
 
@@ -333,7 +345,7 @@ Please use the tools appropriately based on the user's requests."""
 
 
 async def main() -> None:
-    """Demonstrate the complete workflow of using ReMeToolMemory with ReActAgent.
+    """Demonstrate the workflow of using ReMeToolMemory with ReActAgent.
 
     This example shows:
     1. Create mock tools and register them to Toolkit
@@ -373,7 +385,6 @@ async def main() -> None:
     toolkit = Toolkit()
     toolkit.register_tool_function(web_search)
     toolkit.register_tool_function(calculate)
-    print("✓ Toolkit created and tools registered: web_search, calculate")
     print()
 
     # Use async context manager for tool memory
@@ -389,7 +400,10 @@ async def main() -> None:
         )
 
         # Step 3: Use ReActAgent with enhanced system prompt
-        await use_react_agent_with_tool_memory(toolkit, tool_guidelines)
+        await use_react_agent_with_tool_memory(
+            toolkit,
+            tool_guidelines,
+        )
 
     print("=" * 70)
     print("Workflow Complete!")
@@ -400,7 +414,9 @@ async def main() -> None:
     print("✓ Historical tool executions recorded to tool memory")
     print("✓ Tool usage guidelines retrieved from memory")
     print("✓ ReActAgent system prompt enhanced with guidelines")
-    print("✓ ReActAgent successfully used tools with memory guidance")
+    print(
+        "✓ ReActAgent successfully used tools with memory guidance",
+    )
     print()
     print("Benefits:")
     print("- Agent learns from past tool usage patterns")

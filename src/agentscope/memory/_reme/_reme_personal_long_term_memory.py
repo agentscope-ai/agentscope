@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
 """Personal memory implementation using ReMe library.
 
 This module provides a personal memory implementation that integrates
@@ -30,35 +29,43 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Record important user information to long-term memory for future reference.
+        """Record important user information to long-term memory.
 
-        Use this function to save user's personal information, preferences, habits,
-        and facts that you may need in future conversations. This enables you to
-        provide personalized and contextually relevant responses.
+        Record important user information to long-term memory for future
+        reference.
+
+        Use this function to save user's personal information,
+        preferences, habits, and facts that you may need in future
+        conversations. This enables you to provide personalized and
+        contextually relevant responses.
 
         When to record:
-        - User shares personal preferences (e.g., "I prefer homestays when traveling")
+        - User shares personal preferences (e.g., "I prefer homestays
+          when traveling")
         - User mentions habits or routines (e.g., "I start work at 9 AM")
         - User states likes/dislikes (e.g., "I enjoy drinking green tea")
-        - User provides personal facts (e.g., "I work as a software engineer")
+        - User provides personal facts (e.g., "I work as a software
+          engineer")
 
-        What to record: Be specific and structured. Include who, when, where, what,
-        why, and how when relevant.
+        What to record: Be specific and structured. Include who, when,
+        where, what, why, and how when relevant.
 
         Args:
             thinking (`str`):
-                Your reasoning about why this information is worth recording and
-                how it might be useful later.
+                Your reasoning about why this information is worth
+                recording and how it might be useful later.
             content (`list[str]`):
-                List of specific facts to remember. Each string should be a clear,
-                standalone piece of information. Examples: ["User prefers homestays
-                in Hangzhou", "User likes visiting West Lake in the morning"].
+                List of specific facts to remember. Each string should be
+                a clear, standalone piece of information. Examples:
+                ["User prefers homestays in Hangzhou", "User likes
+                visiting West Lake in the morning"].
             **kwargs (`Any`):
                 Additional keyword arguments for the recording operation.
 
         Returns:
             `ToolResponse`:
-                Confirmation message indicating successful memory recording.
+                Confirmation message indicating successful memory
+                recording.
         """
         logger.info(
             "[ReMePersonalMemory] Entering record_to_memory - "
@@ -101,7 +108,10 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": "I understand and will remember this information.",
+                        "content": (
+                            "I understand and will remember this "
+                            "information."
+                        ),
                     },
                 )
 
@@ -122,8 +132,8 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
 
             if memory_list:
                 summary_text = (
-                    f"Successfully recorded {len(memory_list)} memory/memories "
-                    f"to personal memory."
+                    f"Successfully recorded {len(memory_list)} "
+                    f"memory/memories to personal memory."
                 )
             else:
                 summary_text = "Memory recording completed."
@@ -156,30 +166,33 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
     ) -> ToolResponse:
         """Search and retrieve relevant information from long-term memory.
 
-        IMPORTANT: You should call this function BEFORE answering questions
-        about the user's preferences, past information, or personal details.
-        This ensures you provide accurate information based on stored memories
-        rather than guessing.
+        IMPORTANT: You should call this function BEFORE answering
+        questions about the user's preferences, past information, or
+        personal details. This ensures you provide accurate information
+        based on stored memories rather than guessing.
 
         Use this when:
-        - User asks "what do I like?", "what are my preferences?", "what do you know about me?"
-        - User asks about their past behaviors, habits, or stated preferences
-        - User refers to information they shared in previous conversations
+        - User asks "what do I like?", "what are my preferences?",
+          "what do you know about me?"
+        - User asks about their past behaviors, habits, or stated
+          preferences
+        - User refers to information they shared in previous
+          conversations
         - You need to personalize responses based on user's history
 
         Args:
             keywords (`list[str]`):
-                Keywords to search for in memory. Be specific and use multiple
-                keywords for better results. Examples: ["travel preferences",
-                "Hangzhou"], ["work habits", "morning routine"], ["food preferences",
-                "tea"].
+                Keywords to search for in memory. Be specific and use
+                multiple keywords for better results. Examples:
+                ["travel preferences", "Hangzhou"], ["work habits",
+                "morning routine"], ["food preferences", "tea"].
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
         Returns:
             `ToolResponse`:
-                Retrieved memories matching the keywords. If no memories found,
-                you'll receive a message indicating that.
+                Retrieved memories matching the keywords. If no memories
+                found, you'll receive a message indicating that.
         """
         logger.info(
             "[ReMePersonalMemory] Entering retrieve_from_memory - "

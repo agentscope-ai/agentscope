@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
 """Task memory implementation using ReMe library.
 
 This module provides a task memory implementation that integrates
@@ -33,11 +32,14 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Record task execution experiences and learnings to long-term memory.
+        """Record task execution experiences and learnings.
 
-        Use this function to save valuable task-related knowledge that can help
-        with future similar tasks. This enables learning from experience and
-        improving over time.
+        Record task execution experiences and learnings to long-term
+        memory.
+
+        Use this function to save valuable task-related knowledge that
+        can help with future similar tasks. This enables learning from
+        experience and improving over time.
 
         When to record:
         - After solving technical problems or completing tasks
@@ -54,20 +56,23 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
 
         Args:
             thinking (`str`):
-                Your reasoning about why this task experience is valuable and
-                what makes it worth remembering for future reference.
+                Your reasoning about why this task experience is valuable
+                and what makes it worth remembering for future reference.
             content (`list[str]`):
-                List of specific task insights to remember. Each string should
-                be a clear, actionable piece of information. Examples:
-                ["Add indexes on WHERE clause columns to speed up queries",
-                "Use EXPLAIN ANALYZE to identify missing indexes"].
+                List of specific task insights to remember. Each string
+                should be a clear, actionable piece of information.
+                Examples: ["Add indexes on WHERE clause columns to speed
+                up queries", "Use EXPLAIN ANALYZE to identify missing
+                indexes"].
             **kwargs (`Any`):
-                Additional keyword arguments. Can include 'score' (float) to
-                indicate the quality/success of this approach (default: 1.0).
+                Additional keyword arguments. Can include 'score' (float)
+                to indicate the quality/success of this approach
+                (default: 1.0).
 
         Returns:
             `ToolResponse`:
-                Confirmation message indicating successful memory recording.
+                Confirmation message indicating successful memory
+                recording.
         """
         logger.info(
             "[ReMeTaskMemory] Entering record_to_memory - "
@@ -157,16 +162,21 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
         keywords: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Search and retrieve relevant task experiences from long-term memory.
+        """Search and retrieve relevant task experiences.
 
-        IMPORTANT: You should call this function BEFORE attempting to solve
-        problems or answer technical questions. This ensures you leverage past
-        experiences and proven solutions rather than starting from scratch.
+        Search and retrieve relevant task experiences from long-term
+        memory.
+
+        IMPORTANT: You should call this function BEFORE attempting to
+        solve problems or answer technical questions. This ensures you
+        leverage past experiences and proven solutions rather than
+        starting from scratch.
 
         Use this when:
         - Asked to solve a technical problem or implement a solution
         - Asked for recommendations, best practices, or approaches
-        - Asked "what do you know about...?" or "have you seen this before?"
+        - Asked "what do you know about...?" or "have you seen this
+          before?"
         - Dealing with tasks that may be similar to past experiences
         - Need to recall specific techniques or methods
 
@@ -178,18 +188,20 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
 
         Args:
             keywords (`list[str]`):
-                Keywords describing the task or problem domain. Be specific
-                and use technical terms. Examples: ["database optimization",
-                "slow queries"], ["API design", "rate limiting"],
-                ["code refactoring", "Python"].
+                Keywords describing the task or problem domain. Be
+                specific and use technical terms. Examples:
+                ["database optimization", "slow queries"], ["API design",
+                "rate limiting"], ["code refactoring", "Python"].
             **kwargs (`Any`):
-                Additional keyword arguments. Can include 'top_k' (int) to
-                specify number of experiences to retrieve (default: 3).
+                Additional keyword arguments. Can include 'top_k' (int)
+                to specify number of experiences to retrieve
+                (default: 3).
 
         Returns:
             `ToolResponse`:
                 Retrieved task experiences and learnings. If no relevant
-                experiences found, you'll receive a message indicating that.
+                experiences found, you'll receive a message indicating
+                that.
         """
         logger.info(
             "[ReMeTaskMemory] Entering retrieve_from_memory - "
@@ -268,7 +280,8 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
                 The messages to record to memory.
             **kwargs (`Any`):
                 Additional keyword arguments for the recording.
-                Can include 'score' (float) for trajectory scoring (default: 1.0).
+                Can include 'score' (float) for trajectory scoring
+                (default: 1.0).
         """
         if isinstance(msgs, Msg):
             msgs = [msgs]
@@ -340,7 +353,9 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             )
             import warnings
 
-            warnings.warn(f"Error recording messages to task memory: {str(e)}")
+            warnings.warn(
+                f"Error recording messages to task memory: {str(e)}",
+            )
 
     async def retrieve(
         self,

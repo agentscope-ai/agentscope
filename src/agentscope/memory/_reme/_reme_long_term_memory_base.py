@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# flake8: noqa: E501
 """Base long-term memory implementation using ReMe library.
 
 This module provides a base class for long-term memory implementations
@@ -20,7 +19,7 @@ Key Features:
 - Safe fallback behavior when reme_ai is not installed
 
 Dependencies:
-    The ReMe library is an optional dependency that must be installed separately:
+    The ReMe library is an optional dependency that must be installed:
         pip install reme-ai
     Python 3.12 or greater is required to use ReMe.
     For more information, visit: https://github.com/modelscope/reMe
@@ -40,7 +39,8 @@ Example:
 
         # Initialize models
         model = OpenAIChatModel(model_name="gpt-4", api_key="...")
-        embedding = OpenAITextEmbedding(model_name="text-embedding-3-small", api_key="...")
+        embedding = OpenAITextEmbedding(
+            model_name="text-embedding-3-small", api_key="...")
 
         # Create memory instance
         memory = ReMeToolLongTermMemory(
@@ -90,8 +90,10 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
     Requirements:
         Python 3.12 or greater is required to use ReMe.
 
-    If the library is not installed, a warning will be issued during initialization,
-    and runtime errors with installation instructions will be raised when attempting
+    If the library is not installed, a warning will be issued during
+    initialization,
+    and runtime errors with installation instructions will be raised
+    when attempting
     to use memory operations.
     """
 
@@ -101,49 +103,60 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
         user_name: str | None = None,
         run_name: str | None = None,
         model: DashScopeChatModel | OpenAIChatModel | None = None,
-        embedding_model: DashScopeTextEmbedding
-        | OpenAITextEmbedding
-        | None = None,
+        embedding_model: (
+            DashScopeTextEmbedding | OpenAITextEmbedding | None
+        ) = None,
         reme_config_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the ReMe-based long-term memory.
 
-        This constructor sets up the connection to the ReMe library and configures
-        the necessary models for memory operations. The ReMe app will be initialized
+        This constructor sets up the connection to the ReMe
+        library and configures
+        the necessary models for memory operations. The ReMe app
+        will be initialized
         with the provided model configurations.
 
         Args:
             agent_name (`str | None`, optional):
-                Name identifier for the agent. Used for organizing memories by agent.
+                Name identifier for the agent. Used for organizing
+                memories by agent.
             user_name (`str | None`, optional):
-                Unique identifier for the user or workspace. This maps to workspace_id
-                in ReMe and helps isolate memories across different users/workspaces.
+                Unique identifier for the user or workspace. This maps
+                to workspace_id in ReMe and helps isolate memories across
+                different users/workspaces.
             run_name (`str | None`, optional):
                 Name identifier for the current execution run or session.
             model (`DashScopeChatModel | OpenAIChatModel | None`, optional):
-                The chat model to use for memory operations. The model's API
-                credentials and endpoint will be extracted and passed to ReMe.
-            embedding_model (`DashScopeTextEmbedding | OpenAITextEmbedding | None`, optional):
-                The embedding model to use for semantic memory retrieval. The model's
-                API credentials and endpoint will be extracted and passed to ReMe.
+                The chat model to use for memory operations. The model's
+                API credentials and endpoint will be extracted and
+                passed to ReMe.
+            embedding_model (
+                `DashScopeTextEmbedding | OpenAITextEmbedding | None`,
+                optional
+            ):
+                The embedding model to use for semantic memory retrieval.
+                The model's API credentials and endpoint will be
+                extracted and passed to ReMe.
             reme_config_path (`str | None`, optional):
                 Path to a custom ReMe configuration file. If not provided, ReMe
                 will use its default configuration.
             **kwargs (`Any`):
-                Additional keyword arguments to pass to the ReMeApp constructor.
+                Additional keyword arguments to pass to the
+                ReMeApp constructor.
                 These can include custom ReMe configuration parameters.
 
         Raises:
             ValueError:
-                If the provided model is not a DashScopeChatModel or OpenAIChatModel,
-                or if the embedding_model is not a DashScopeTextEmbedding or
-                OpenAITextEmbedding.
+                If the provided model is not a DashScopeChatModel or
+                OpenAIChatModel, or if the embedding_model is not a
+                DashScopeTextEmbedding or OpenAITextEmbedding.
 
         Note:
-            If the reme_ai library is not installed, a warning will be issued and
-            self.app will be set to None. Subsequent memory operations will raise
-            RuntimeError with installation instructions.
+            If the reme_ai library is not installed, a warning will be
+            issued and self.app will be set to None. Subsequent memory
+            operations will raise RuntimeError with installation
+            instructions.
 
         Example:
             .. code-block:: python
@@ -180,7 +193,8 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
         # Store agent and workspace identifiers
         self.agent_name = agent_name
-        self.workspace_id = user_name  # Maps to ReMe's workspace_id concept
+        # Maps to ReMe's workspace_id concept
+        self.workspace_id = user_name
         self.run_name = run_name
 
         # Build configuration arguments for ReMeApp
@@ -199,7 +213,8 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
         else:
             raise ValueError(
-                f"model must be a DashScopeChatModel or OpenAIChatModel instance. "
+                f"model must be a DashScopeChatModel or "
+                f"OpenAIChatModel instance. "
                 f"Got {type(model).__name__} instead.",
             )
 
@@ -210,7 +225,8 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             config_args.append(f"llm.default.model_name={llm_model_name}")
 
         # Extract embedding model API credentials based on type
-        # Similar to LLM, DashScope uses fixed endpoint, OpenAI can be customized
+        # Similar to LLM, DashScope uses fixed endpoint,
+        # OpenAI can be customized
         if isinstance(embedding_model, DashScopeTextEmbedding):
             embedding_api_base = (
                 "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -231,8 +247,9 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
         else:
             raise ValueError(
-                "embedding_model must be a DashScopeTextEmbedding or OpenAITextEmbedding "
-                f"instance. Got {type(embedding_model).__name__} instead.",
+                "embedding_model must be a DashScopeTextEmbedding or "
+                "OpenAITextEmbedding instance. "
+                f"Got {type(embedding_model).__name__} instead.",
             )
 
         # Extract embedding model name and add to config if provided
@@ -245,7 +262,8 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
         # Attempt to import and initialize ReMe
         # If import fails, set app to None and issue a warning
-        # This allows the class to be instantiated even without reme_ai installed
+        # This allows the class to be instantiated even without
+        # reme_ai installed
         try:
             from reme_ai import ReMeApp
 
@@ -256,18 +274,22 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
                 llm_api_base=llm_api_base,
                 embedding_api_key=embedding_api_key,
                 embedding_api_base=embedding_api_base,
-                config_path=reme_config_path,  # Optional custom config file
-                **kwargs,  # Additional ReMe-specific configurations
+                # Optional custom config file
+                config_path=reme_config_path,
+                # Additional ReMe-specific configurations
+                **kwargs,
             )
         except ImportError as e:
             # If reme_ai is not installed, warn user but don't crash
             import warnings
 
             warnings.warn(
-                "The 'reme_ai' library is required for ReMe-based long-term memory. "
+                "The 'reme_ai' library is required for ReMe-based "
+                "long-term memory. "
                 "Please install it using:\n"
                 "  pip install reme-ai\n"
-                "Or visit: https://github.com/modelscope/reMe for more information.\n"
+                "Or visit: https://github.com/modelscope/reMe "
+                "for more information.\n"
                 f"Error: {e}",
                 ImportWarning,
                 stacklevel=2,
@@ -281,43 +303,49 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
     def _check_app_available(self) -> None:
         """Check if the ReMe app is available and properly initialized.
 
-        This internal method is called before any operation that requires the ReMe
-        app. It ensures that the reme_ai library was successfully imported and the
-        ReMeApp instance was created during initialization.
+        This internal method is called before any operation that requires
+        the ReMe app. It ensures that the reme_ai library was successfully
+        imported and the ReMeApp instance was created during
+        initialization.
 
         Raises:
             RuntimeError:
-                If self.app is None, indicating that the reme_ai library is not
-                installed or failed to import. The error message includes detailed
-                installation instructions.
+                If self.app is None, indicating that the reme_ai library
+                is not installed or failed to import. The error message
+                includes detailed installation instructions.
 
         Note:
-            This method should be called at the beginning of any method in subclasses
-            that needs to use self.app for memory operations.
+            This method should be called at the beginning of any method
+            in subclasses that needs to use self.app for memory
+            operations.
         """
         if self.app is None:
             raise RuntimeError(
-                "ReMe app is not initialized. This is likely because the 'reme_ai' library "
-                "is not installed. Please install it using:\n"
+                "ReMe app is not initialized. This is likely because "
+                "the 'reme_ai' library is not installed. "
+                "Please install it using:\n"
                 "  pip install reme-ai\n"
-                "Or visit: https://github.com/modelscope/reMe for more information.",
+                "Or visit: https://github.com/modelscope/reMe "
+                "for more information.",
             )
 
     async def __aenter__(self) -> "ReMeLongTermMemoryBase":
         """Async context manager entry point.
 
-        This method is called when entering an async context (using 'async with').
-        It initializes the ReMe app context if available, enabling memory operations
-        within the context block.
+        This method is called when entering an async context
+        (using 'async with'). It initializes the ReMe app context if
+        available, enabling memory operations within the context block.
 
         Returns:
             `ReMeLongTermMemoryBase`:
-                The memory instance itself, allowing it to be used in the context.
+                The memory instance itself, allowing it to be used in
+                the context.
 
         Note:
-            If self.app is None (reme_ai not installed), this method will not raise
-            an error during entry. However, any subsequent memory operations within
-            the context will raise RuntimeError when they call _check_app_available().
+            If self.app is None (reme_ai not installed), this method will
+            not raise an error during entry. However, any subsequent
+            memory operations within the context will raise RuntimeError
+            when they call _check_app_available().
 
         Example:
             .. code-block:: python
@@ -348,23 +376,27 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
     ) -> None:
         """Async context manager exit point.
 
-        This method is called when exiting an async context (at the end of
-        'async with' block or when an exception occurs). It properly cleans up
-        the ReMe app context and resources.
+        This method is called when exiting an async context (at the end
+        of 'async with' block or when an exception occurs). It properly
+        cleans up the ReMe app context and resources.
 
         Args:
             exc_type (`Any`):
-                The type of exception that occurred, if any. None if no exception.
+                The type of exception that occurred, if any. None if no
+                exception.
             exc_val (`Any`):
-                The exception instance that occurred, if any. None if no exception.
+                The exception instance that occurred, if any. None if no
+                exception.
             exc_tb (`Any`):
-                The traceback object for the exception, if any. None if no exception.
+                The traceback object for the exception, if any. None if
+                no exception.
 
         Note:
-            This method will gracefully handle the case where self.app is None
-            (reme_ai not installed) by skipping the cleanup but still marking
-            the app as stopped. It will also always set _app_started to False,
-            ensuring the memory state is properly reset.
+            This method will gracefully handle the case where self.app
+            is None (reme_ai not installed) by skipping the cleanup but
+            still marking the app as stopped. It will also always set
+            _app_started to False, ensuring the memory state is properly
+            reset.
 
         Example:
             .. code-block:: python
