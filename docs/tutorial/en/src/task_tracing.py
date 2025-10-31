@@ -51,6 +51,22 @@ The ``tracing_url`` is the URL of your OpenTelemetry collector or any compatible
     # Connect to OpenTelemetry-compatible backends
     agentscope.init(tracing_url="https://your-tracing-backend:port/traces")
 
+Disabling Tracing
+---------------------------------------
+
+Even when ``studio_url`` or ``tracing_url`` is provided, you can disable tracing by setting ``enable_tracing=False``.
+This is useful in scenarios where you only want to use Studio's project management features without collecting tracing data.
+
+.. code-block:: python
+
+    import agentscope
+
+    # Connect to Studio but disable tracing
+    agentscope.init(
+        studio_url="http://localhost:8000",
+        enable_tracing=False,
+    )
+
 Taking Arize-Phoenix and Langfuse as examples:
 
 **Arize-Phoenix**: You need to set the ``PHOENIX_API_KEY`` in your environment variables.

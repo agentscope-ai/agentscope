@@ -52,6 +52,22 @@ AgentScope Studio
     # 连接到 OpenTelemetry 兼容的后端
     agentscope.init(tracing_url="https://your-tracing-backend:port/traces")
 
+禁用追踪
+---------------------------------------
+
+即使提供了 ``studio_url`` 或 ``tracing_url``，您也可以通过设置 ``enable_tracing=False`` 来禁用追踪功能。
+这在某些场景下很有用，例如您只想使用 Studio 的项目管理功能而不需要追踪数据。
+
+.. code-block:: python
+
+    import agentscope
+
+    # 连接到 Studio，但禁用追踪
+    agentscope.init(
+        studio_url="http://localhost:8000",
+        enable_tracing=False,
+    )
+
 以 Arize-Phoenix 和 Langfuse 为例：
 
 **Arize-Phoenix**：需要在环境变量中设置 ``PHOENIX_API_KEY``。
