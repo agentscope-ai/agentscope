@@ -40,6 +40,7 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
         contextually relevant responses.
 
         When to record:
+
         - User shares personal preferences (e.g., "I prefer homestays
           when traveling")
         - User mentions habits or routines (e.g., "I start work at 9 AM")
@@ -74,8 +75,6 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
             content,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -166,12 +165,13 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
     ) -> ToolResponse:
         """Search and retrieve relevant information from long-term memory.
 
-        IMPORTANT: You should call this function BEFORE answering
-        questions about the user's preferences, past information, or
-        personal details. This ensures you provide accurate information
-        based on stored memories rather than guessing.
+        .. note:: You should call this function BEFORE answering
+         questions about the user's preferences, past information, or
+         personal details. This ensures you provide accurate information
+         based on stored memories rather than guessing.
 
         Use this when:
+
         - User asks "what do I like?", "what are my preferences?",
           "what do you know about me?"
         - User asks about their past behaviors, habits, or stated
@@ -200,8 +200,6 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
             keywords,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -282,8 +280,6 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
             raise TypeError(
                 "The input messages must be a list of Msg objects.",
             )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -366,8 +362,6 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
             )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(

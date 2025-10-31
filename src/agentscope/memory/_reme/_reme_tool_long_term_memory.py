@@ -43,6 +43,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         for each tool.
 
         When to record:
+
         - After successfully executing any tool
         - After tool failures (to learn what doesn't work)
         - When discovering effective parameter combinations
@@ -86,8 +87,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             content,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -186,12 +185,13 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
 
         Retrieve usage guidelines and best practices for specific tools.
 
-        IMPORTANT: You should call this function BEFORE using a tool,
-        especially if you're uncertain about its proper usage or want to
-        follow established best practices. This retrieves synthesized
-        guidelines based on past tool executions.
+        .. note:: You should call this function BEFORE using a tool,
+         especially if you're uncertain about its proper usage or want to
+         follow established best practices. This retrieves synthesized
+         guidelines based on past tool executions.
 
         Use this when:
+
         - About to use a tool and want to know the best practices
         - Uncertain about tool parameters or usage patterns
         - Want to learn from past successful/failed tool executions
@@ -201,6 +201,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
           limitations
 
         Benefits of retrieving first:
+
         - Learn from accumulated tool usage experience
         - Avoid common mistakes and pitfalls
         - Use optimal parameter combinations
@@ -227,8 +228,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             keywords,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -381,8 +380,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 "The input messages must be a list of Msg objects.",
             )
 
-        self._check_app_available()
-
         if not self._app_started:
             raise RuntimeError(
                 "ReMeApp context not started. "
@@ -504,8 +501,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
             )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(

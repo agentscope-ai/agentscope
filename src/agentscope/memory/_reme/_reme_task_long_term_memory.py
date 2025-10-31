@@ -42,12 +42,14 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
         experience and improving over time.
 
         When to record:
+
         - After solving technical problems or completing tasks
         - When discovering useful techniques or approaches
         - After implementing solutions with specific steps
         - When learning best practices or important lessons
 
         What to record: Be detailed and actionable. Include:
+
         - Task description and context
         - Step-by-step execution details
         - Specific techniques and methods used
@@ -81,8 +83,6 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             content,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -169,7 +169,7 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
 
         IMPORTANT: You should call this function BEFORE attempting to
         solve problems or answer technical questions. This ensures you
-        leverage past experiences and proven solutions rather than
+        leverage experiences and proven solutions rather than
         starting from scratch.
 
         Use this when:
@@ -177,7 +177,7 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
         - Asked for recommendations, best practices, or approaches
         - Asked "what do you know about...?" or "have you seen this
           before?"
-        - Dealing with tasks that may be similar to past experiences
+        - Dealing with tasks that may be similar to experiences
         - Need to recall specific techniques or methods
 
         Benefits of retrieving first:
@@ -209,8 +209,6 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             keywords,
             kwargs,
         )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -295,8 +293,6 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             raise TypeError(
                 "The input messages must be a list of Msg objects.",
             )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
@@ -386,8 +382,6 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             raise TypeError(
                 "The input message must be a Msg or a list of Msg objects.",
             )
-
-        self._check_app_available()
 
         if not self._app_started:
             raise RuntimeError(
