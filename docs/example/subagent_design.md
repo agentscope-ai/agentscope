@@ -59,11 +59,14 @@
 - 保持对外接口简洁，同时满足功能需求
 
 ### 架构修正说明（重要）
-原始实现违反了SubAgent基本原则，已修正：
-- **错误模式**: SubAgent包含复杂的业务逻辑和工具编排
-- **正确模式**: SubAgent是最小化包装器，核心智能在Tool层
-- **实现**: `search_intelligent(query: str)` Tool负责所有智能逻辑
-- **使用**: SubAgent简单调用Tool并转换响应格式
+原始实现已收敛到“子代理内部组合 ReAct + provider-only 工具”的正确模式：
+- **错误模式**：把核心智能放在单一 Tool 层（如“intelligent_search”）并由 SubAgent 仅作薄包装，导致上下文与模型继承难以审计。
+- **正确模式**：SubAgent 内部组合 ReActAgent，复用“子代理自有”Toolkit（仅包含 provider 工具：Bing/Sogou/Wiki/GitHub），由子代理在 `reply(...)` 中自主规划与调用，多轮收束后返回 `Msg`；包装器仅做输入校验、只读快照与模型透传；`delegate(...)` 统一折叠为 `ToolResponse`。
+- **上下文策略（产品级可选）**：基类只保证“只读快照 + 可覆写”，不强加具体策略；每个子代理应按产品需求自行选择其短期记忆处理方式。常见模式包括：
+  1) 仅使用本轮输入（由 ChatModel 负责窗口管理）；
+  2) 引入 Host 快照的摘要/检索片段；
+  3) 替换子代理自身 system prompt 并注入极简上下文。
+  具体策略通过覆写 `load_delegation_context` 或 `delegate` 落地，且不得写回 Host 的短期记忆或操作 Host 的 MsgHub。
 
 ---
 

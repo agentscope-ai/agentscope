@@ -151,6 +151,8 @@ SubAgent（子 Agent）相关内容已迁移至独立文档：`docs/agent/subage
   - Toolkit：工具注册/分组/JSON‑Schema 暴露与执行；`preset_kwargs` 不出现在 Schema。
   - Formatter/Model：仅负责对话构造与 LLM 交互；不写文件与外部资源。
   - Memory/Session：短期对话/状态持久；不存放业务产物。
+  - Host 短期记忆：子代理可通过包装器“只读快照 + 压缩（DelegationContext）”访问，不得写回 Host 的短期 memory；如何将快照映射到子代理短期记忆由子代理实现决定（默认 synthetic user + delegation_context，或仅使用HostAgent调用的InputModel）。
+  - MsgHub：子代理不可读写 Host 的 MsgHub；与 Host 仅通过 `ToolResponse` 交换。
   - SubAgent：见 `docs/agent/subagent/SOP.md`（独立骨架与测试）。
 
 ## 五、测试文件
