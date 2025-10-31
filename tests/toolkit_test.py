@@ -664,7 +664,45 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         res = await self.toolkit.call_tool_function(tool_use_block)
 
         async for chunk in res:
-            print(chunk)
+            self.assertEqual(
+                chunk.content,
+                [
+                    TextBlock(type="text", text="arg1: 10, arg2: ['test']"),
+                    TextBlock(type="text", text="Processed"),
+                ],
+            )
+
+    async def test_async_postprocess_func(self) -> None:
+        """Test async postprocess function."""
+        tool_use_block = ToolUseBlock(
+            type="tool_use",
+            id="123",
+            name="sync_func",
+            input={"arg1": 10, "arg2": ["test"]},
+        )
+
+        async def async_postprocess_func(
+            tool_use: ToolUseBlock,
+            tool_response: ToolResponse,
+        ) -> ToolResponse | None:
+            """Postprocess function to modify tool response."""
+
+            self.assertEqual(tool_use, tool_use_block)
+
+            if tool_response.content:
+                tool_response.content.append(
+                    TextBlock(type="text", text="Processed"),
+                )
+            return tool_response
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            postprocess_func=async_postprocess_func,
+        )
+
+        res = await self.toolkit.call_tool_function(tool_use_block)
+
+        async for chunk in res:
             self.assertEqual(
                 chunk.content,
                 [

@@ -2,7 +2,7 @@
 """The data model for registered tool functions in AgentScope."""
 from copy import deepcopy
 from dataclasses import field, dataclass
-from typing import Callable, Literal, Type
+from typing import Callable, Literal, Type, Awaitable
 
 from pydantic import BaseModel
 
@@ -36,15 +36,22 @@ class RegisteredToolFunction:
     function, so that we can dynamically adjust the tool function."""
     mcp_name: str | None = None
     """The name of the MCP, if the tool function comes from an MCP server."""
-    postprocess_func: Callable[
-        [ToolUseBlock, ToolResponse],
-        ToolResponse | None,
-    ] | None = None
+    postprocess_func: (
+        Callable[
+            [ToolUseBlock, ToolResponse],
+            ToolResponse | None,
+        ]
+        | Callable[
+            [ToolUseBlock, ToolResponse],
+            Awaitable[ToolResponse | None],
+        ]
+    ) | None = None
     """The post-processing function that will be called after the tool
     function is executed, taking the tool call block and tool
-    response as arguments. If it returns `None`, the tool result will be
-    returned as is. If it returns a `ToolResponse`, the returned block
-    will be used as the final tool response."""
+    response as arguments. The function can be either sync or async. If it
+    returns `None`, the tool result will be returned as is. If it returns a
+    `ToolResponse`, the returned block will be used as the final tool
+    response."""
 
     @property
     def extended_json_schema(self) -> dict:
