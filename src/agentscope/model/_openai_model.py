@@ -38,6 +38,31 @@ else:
     AsyncStream = "openai.types.chat.AsyncStream"
 
 
+def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
+    """Qwen-omni uses OpenAI-compatible API but requires different audio
+    data format than OpenAI with "data:;base64," prefix.
+    Refer to `Qwen-omni documentation
+    <https://bailian.console.aliyun.com/?tab=doc#/doc/?type=model&url=2867839>`_
+    for more details.
+
+    Args:
+        messages (`list[dict]`):
+            The list of message dictionaries from OpenAI formatter.
+    """
+    for msg in messages:
+        if isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if (
+                    isinstance(block, dict)
+                    and "input_audio" in block
+                    and isinstance(block["input_audio"].get("data"), str)
+                ):
+                    if not block["input_audio"]["data"].startswith("http"):
+                        block["input_audio"]["data"] = (
+                            "data:;base64," + block["input_audio"]["data"]
+                        )
+
+
 class OpenAIChatModel(ChatModelBase):
     """The OpenAI chat model class."""
 
@@ -152,6 +177,10 @@ class OpenAIChatModel(ChatModelBase):
                 "Each message in the 'messages' list must contain a 'role' "
                 "and 'content' key for OpenAI API.",
             )
+
+        # Qwen-omni requires different base64 audio format from openai
+        if "omni" in self.model_name.lower():
+            _format_audio_data_for_qwen_omni(messages)
 
         kwargs = {
             "model": self.model_name,
