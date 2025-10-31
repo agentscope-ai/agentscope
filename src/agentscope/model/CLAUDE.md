@@ -1,11 +1,5 @@
-# Model Module
-
-**Location:** `src/agentscope/model/`
-**Parent:** [Project Root](../CLAUDE.md)
-
-## Overview
-
-The model module provides unified interfaces to various Large Language Model (LLM) providers, enabling model-agnostic agent development.
+Module: `src/agentscope/model/`
+Responsibility: Uniform LLM provider abstraction for model-agnostic programming
 
 ## Key Files
 

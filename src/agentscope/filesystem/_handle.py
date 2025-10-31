@@ -191,4 +191,56 @@ class FsHandle:
             raise AccessDeniedError("/", "list")
 
 
+    # ------------------------ Human-readable summary ------------------------
+    def describe_grants_markdown(self) -> str:
+        """Return a concise markdown summary of current grants.
+
+        Format (one line per prefix):
+            /prefix/: ls, stat, read, write, delete
+
+        Aliases:
+        - ls    -> list
+        - stat  -> file
+        - read  -> any of {read_file, read_binary, read_re}
+        - write -> write
+        - delete-> delete
+
+        Ordering:
+        - Lines sorted by prefix ascending
+        - Ops ordered as: ls, stat, read, write, delete (only those present)
+        """
+        # Aggregate ops per prefix
+        per_prefix: dict[str, set[str]] = {}
+        for grant in self._grants:
+            prefix = grant["prefix"]
+            ops = per_prefix.setdefault(prefix, set())
+            ops.update(grant.get("ops", set()))
+
+        def _tokens(ops: set[str]) -> list[str]:
+            has_ls = "list" in ops
+            has_stat = "file" in ops
+            has_read = any(o in ops for o in {"read_file", "read_binary", "read_re"})
+            has_write = "write" in ops
+            has_delete = "delete" in ops
+            items: list[str] = []
+            if has_ls:
+                items.append("ls")
+            if has_stat:
+                items.append("stat")
+            if has_read:
+                items.append("read")
+            if has_write:
+                items.append("write")
+            if has_delete:
+                items.append("delete")
+            return items
+
+        lines: list[str] = []
+        for prefix in sorted(per_prefix.keys()):
+            items = _tokens(per_prefix[prefix])
+            line = f"{prefix}: {', '.join(items)}" if items else f"{prefix}:"
+            lines.append(line)
+        return "\n".join(lines)
+
+
 __all__ = ["FsHandle", "validate_path"]

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import logging
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import Any, ClassVar, TYPE_CHECKING, TypedDict, Callable
+
+from pydantic import BaseModel
 
 from .._logging import logger
-from ..filesystem._base import FileSystemBase
 from ..message import Msg, TextBlock
 from ..session import SessionBase
 from ..types import JSONSerializableObject
@@ -27,11 +29,15 @@ else:  # pragma: no cover
 
 @dataclass(slots=True)
 class PermissionBundle:
-    """Shared resources copied from the host agent."""
+    """Shared resources copied from the host agent.
+
+    Filesystem policy is provided via a FileDomainService instance owned by
+    the host. The subagent skeleton must not create or widen policy.
+    """
 
     logger: logging.Logger
     tracer: Tracer | None = None
-    filesystem: FileSystemBase | None = None
+    filesystem_service: "object | None" = None  # FileDomainService at runtime
     session: SessionBase | None = None
     long_term_memory: "LongTermMemoryBase" | None = None
     safety_limits: dict[str, JSONSerializableObject] = field(
@@ -59,33 +65,39 @@ class ContextBundle:
 class DelegationContext:
     """Normalized payload shared with subagents."""
 
-    task_summary: str
+    input_payload: dict[str, JSONSerializableObject]
     recent_events: list[dict[str, JSONSerializableObject]]
     long_term_refs: list[dict[str, JSONSerializableObject]]
     workspace_pointers: list[str]
     safety_flags: dict[str, JSONSerializableObject]
+    input_preview: str | None = None
 
     def to_payload(self) -> dict[str, JSONSerializableObject]:
         """Convert to metadata payload."""
-        return {
-            "task_summary": self.task_summary,
+        payload: dict[str, JSONSerializableObject] = {
+            "input_payload": self.input_payload,
             "recent_events": self.recent_events,
             "long_term_refs": self.long_term_refs,
             "workspace_pointers": self.workspace_pointers,
             "safety_flags": self.safety_flags,
         }
+        if self.input_preview is not None:
+            payload["input_preview"] = self.input_preview
+        return payload
 
     @classmethod
     def from_payload(cls, payload: dict[str, JSONSerializableObject]) -> (
         "DelegationContext"
     ):
         """Hydrate from metadata payload."""
+        preview = payload.get("input_preview")
         return cls(
-            task_summary=str(payload.get("task_summary", "")),
+            input_payload=dict(payload.get("input_payload", {})),
             recent_events=list(payload.get("recent_events", [])),
             long_term_refs=list(payload.get("long_term_refs", [])),
             workspace_pointers=list(payload.get("workspace_pointers", [])),
             safety_flags=dict(payload.get("safety_flags", {})),
+            input_preview=str(preview) if preview is not None else None,
         )
 
 
@@ -93,10 +105,19 @@ class SubAgentUnavailable(RuntimeError):
     """Raised when the subagent skeleton cannot be exported."""
 
 
+class ToolSpec(TypedDict, total=False):
+    func: Callable[..., Any]
+    group: str
+    preset_kwargs: dict[str, Any]
+    func_description: str
+    json_schema: dict[str, Any]
+
+
 class SubAgentBase(AgentBase):
     """Skeleton agent dedicated to delegation-as-tool flows."""
 
     spec_name: ClassVar[str] = "subagent"
+    InputModel: ClassVar[type[BaseModel] | None] = None
 
     def __init__(
         self,
@@ -105,8 +126,7 @@ class SubAgentBase(AgentBase):
         spec_name: str,
         toolkit: "Toolkit" | None = None,
         memory: "MemoryBase" | None = None,
-        host_toolkit: "Toolkit" | None = None,
-        tools_allowlist: list[str] | None = None,
+        tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
         ephemeral_memory: bool = True,
     ) -> None:
@@ -117,14 +137,24 @@ class SubAgentBase(AgentBase):
         self.model_override = model_override
         if toolkit is None:
             from ..tool import Toolkit as _Toolkit
-
             toolkit = _Toolkit()
-            self._hydrate_toolkit(
-                toolkit,
-                host_toolkit,
-                tools_allowlist,
-            )
+            if tools:
+                self._hydrate_toolkit(toolkit, tools)
         self.toolkit = toolkit
+        # Auto-inherit full filesystem toolset when a service is provided.
+        svc = permissions.filesystem_service
+        if svc is not None and hasattr(svc, "tools"):
+            try:
+                for func, bound in svc.tools():
+                    name = getattr(func, "__name__", None)
+                    if name and name in self.toolkit.tools:
+                        continue
+                    self.toolkit.register_tool_function(
+                        func,
+                        preset_kwargs={"service": bound},
+                    )
+            except Exception:
+                pass
         if memory is None:
             from ..memory._in_memory_memory import InMemoryMemory
 
@@ -132,37 +162,10 @@ class SubAgentBase(AgentBase):
         self.memory = memory
         self._delegation_context: DelegationContext | None = None
         self._ephemeral_memory = ephemeral_memory
+        self._current_input: BaseModel | None = None
 
-        self._filesystem_root = f"/workspace/subagents/{self.spec_name}"
-        self.filesystem = None
-        if permissions.filesystem:
-            grants = [
-                {
-                    "prefix": f"{self._filesystem_root}",
-                    "ops": {
-                        "list",
-                        "file",
-                        "read_binary",
-                        "read_file",
-                        "read_re",
-                        "write",
-                        "delete",
-                    },
-                },
-                {
-                    "prefix": f"{self._filesystem_root}/",
-                    "ops": {
-                        "list",
-                        "file",
-                        "read_binary",
-                        "read_file",
-                        "read_re",
-                        "write",
-                        "delete",
-                    },
-                },
-            ]
-            self.filesystem = permissions.filesystem.create_handle(grants)
+        # Inherit host-provided FileDomainService as-is; no hardcoded namespace.
+        self.filesystem_service = permissions.filesystem_service
 
         self.set_console_output_enabled(False)
         self.set_msg_queue_enabled(False)
@@ -170,33 +173,38 @@ class SubAgentBase(AgentBase):
     def _hydrate_toolkit(
         self,
         toolkit: "Toolkit",
-        host_toolkit: "Toolkit" | None,
-        tools_allowlist: list[str] | None,
+        tools: list[Callable[..., Any] | ToolSpec],
     ) -> None:
-        """Populate the subagent toolkit according to the allowlist."""
-        if not host_toolkit or not tools_allowlist:
-            return
+        """Batch-register provided tools into the subagent's own Toolkit."""
+        for entry in tools:
+            if callable(entry):
+                toolkit.register_tool_function(entry)
+            else:
+                func = entry.get("func")
+                if not callable(func):
+                    continue
+                toolkit.register_tool_function(
+                    func,  # type: ignore[arg-type]
+                    group_name=entry.get("group", "basic"),
+                    preset_kwargs=dict(entry.get("preset_kwargs", {})),
+                    func_description=entry.get("func_description", ""),
+                    json_schema=entry.get("json_schema"),
+                )
 
-        for tool_name in tools_allowlist:
-            registered = host_toolkit.tools.get(tool_name)
-            if not registered:
-                continue
-            toolkit.register_tool_function(
-                registered.original_func,
-                group_name=registered.group,
-                preset_kwargs=dict(registered.preset_kwargs),
-                func_description=registered.json_schema["function"].get(
-                    "description",
-                    "",
-                ),
-                json_schema=registered.json_schema,
+    @classmethod
+    def get_input_model(cls) -> type[BaseModel]:
+        """Return the declared Pydantic input model."""
+        if cls.InputModel is None:
+            raise NotImplementedError(
+                f"{cls.__name__} must set `InputModel` to a Pydantic BaseModel subclass.",
             )
+        return cls.InputModel
 
     @classmethod
     def _pre_context_compress(
         cls,
         parent_context: ContextBundle,
-        task: str,
+        input_obj: BaseModel,
     ) -> DelegationContext:
         """Build a normalized delegation payload."""
         recent_events = [
@@ -208,12 +216,20 @@ class SubAgentBase(AgentBase):
                 _summarize_msg(parent_context.conversation[-1]),
             ]
 
+        payload = input_obj.model_dump()
+        try:
+            preview = json.dumps(payload, ensure_ascii=False)
+        except TypeError:
+            preview = str(payload)
+        preview = preview[:200]
+
         return DelegationContext(
-            task_summary=task,
+            input_payload=payload,
             recent_events=recent_events,
             long_term_refs=list(parent_context.long_term_refs),
             workspace_pointers=list(parent_context.workspace_handles),
             safety_flags=dict(parent_context.safety_flags),
+            input_preview=preview,
         )
 
     @classmethod
@@ -222,53 +238,42 @@ class SubAgentBase(AgentBase):
         *,
         permissions: PermissionBundle,
         parent_context: ContextBundle,
-        task: str,
         spec_name: str,
         ephemeral_memory: bool = True,
-        tools_allowlist: list[str] | None = None,
+        tools: list[Callable[..., Any] | ToolSpec] | None = None,
         model_override: "ChatModelBase" | None = None,
-        host_toolkit: "Toolkit" | None = None,
+        input_obj: BaseModel,
         delegation_context: DelegationContext | None = None,
-        run_healthcheck: bool = False,
     ) -> "SubAgentBase":
-        """Construct a fresh subagent instance and run health checks."""
-        _ = (parent_context, task)
+        """Construct a fresh subagent instance (no healthcheck)."""
         instance = cls(
             permissions=permissions,
             spec_name=spec_name,
-            host_toolkit=host_toolkit,
-            tools_allowlist=tools_allowlist,
+            tools=tools,
             model_override=model_override,
             ephemeral_memory=ephemeral_memory,
         )
 
         if delegation_context is not None:
             instance.load_delegation_context(delegation_context)
-
-        if run_healthcheck:
-            healthy = await instance.healthcheck()
-            if not healthy:
-                raise SubAgentUnavailable(
-                    f"Subagent `{spec_name}` failed healthcheck.",
-                )
+        else:
+            instance._delegation_context = None
 
         return instance
 
-    async def healthcheck(self) -> bool:
-        """Override to validate runtime dependencies."""
-        return True
-
     def load_delegation_context(
         self,
-        context: DelegationContext,
+        context: DelegationContext | dict[str, JSONSerializableObject],
     ) -> None:
         """Store the delegation context for later retrieval."""
+        if isinstance(context, dict):
+            context = DelegationContext.from_payload(context)
         self._delegation_context = context
 
     async def delegate(
         self,
+        input_obj: BaseModel,
         *,
-        task_summary: str,
         delegation_context: DelegationContext | None = None,
         **kwargs: Any,
     ) -> "ToolResponse":
@@ -277,18 +282,26 @@ class SubAgentBase(AgentBase):
 
         if context is None:
             context = DelegationContext(
-                task_summary=task_summary,
+                input_payload=input_obj.model_dump(),
                 recent_events=[],
                 long_term_refs=[],
                 workspace_pointers=[],
                 safety_flags={},
+                input_preview=json.dumps(
+                    input_obj.model_dump(),
+                    ensure_ascii=False,
+                )[:200],
             )
 
         self.load_delegation_context(context)
+        self._current_input = input_obj
 
         synthetic_msg = Msg(
             name=self.permissions.supervisor_name,
-            content=task_summary,
+            content=json.dumps(
+                context.input_payload,
+                ensure_ascii=False,
+            ),
             role="user",
             metadata={
                 "delegation_context": context.to_payload(),
@@ -298,7 +311,7 @@ class SubAgentBase(AgentBase):
         await self.memory.add(synthetic_msg)
 
         try:
-            reply_msg = await self.reply(synthetic_msg, **kwargs)
+            reply_msg = await self.reply(input_obj, **kwargs)
         except Exception as error:  # pylint: disable=broad-except
             logger.warning(
                 "Subagent `%s` failed: %s",

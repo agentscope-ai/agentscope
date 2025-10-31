@@ -44,6 +44,7 @@
 | `read_re(path: Path, pattern: str, overlap: int | None = None)` | `list[str]` | `InvalidPathError` / `InvalidArgumentError` / `AccessDeniedError` / `NotFoundError` | 基于正则的窗口匹配；`overlap >= 0`。 |
 | `write(path: Path, data: bytes | str, *, overwrite: bool = True)` | `EntryMeta` | `InvalidPathError` / `AccessDeniedError` / `ConflictError` | 写入内容；当 `overwrite=False` 且文件存在时抛冲突。 |
 | `delete(path: Path)` | `None` | `InvalidPathError` / `AccessDeniedError` / `NotFoundError` | 删除逻辑文件。 |
+| `describe_grants_markdown()` | `str` | - | 以一行/前缀导出授权摘要：`/prefix/: ls, stat, read, write, delete`；仅反映当前句柄视图，供 Agent 诊断使用。 |
 
 > FsHandle 内部仅维护 `_filesystem`, `_grants`, `_index`; 每次操作都通过 `_snapshot_impl` 获取最新 `{path -> EntryMeta}` 字典，禁止依赖缓存。
 

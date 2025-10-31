@@ -226,6 +226,19 @@ async def edit_file(
     text = f"edited {meta['path']} (size={int(meta.get('size', 0))})"
     return _TR(content=[_TB(type="text", text=text)])
 
+
+async def fs_describe_permissions_markdown(service: object):
+    """Summarize current filesystem grants as human‑readable markdown.
+
+    Use when the agent needs to understand which logical prefixes it can
+    access and with what operations; purely diagnostic, no writes.
+    """
+    from ..tool._response import ToolResponse as _TR
+    from ..message import TextBlock as _TB
+
+    text = service.describe_permissions_markdown()
+    return _TR(content=[_TB(type="text", text=text)])
+
 __all__ = [
     "read_text_file",
     "read_multiple_files",
@@ -237,4 +250,5 @@ __all__ = [
     "write_file",
     "delete_file",
     "edit_file",
+    "fs_describe_permissions_markdown",
 ]

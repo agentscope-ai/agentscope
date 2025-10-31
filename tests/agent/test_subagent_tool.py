@@ -38,7 +38,7 @@ def test_host_without_direct_tools() -> None:
             id="call-1",
             name=tool_name,
             input={
-                "task_summary": "Repeat the latest request verbatim.",
+                "message": "Repeat the latest request verbatim.",
             },
         )
 
@@ -47,9 +47,8 @@ def test_host_without_direct_tools() -> None:
         assert response.metadata is not None
         assert response.metadata["subagent"] == "echo"
         assert response.metadata["supervisor"] == agent.name
-        assert response.metadata["delegation_context"]["task_summary"] == (
-            "Repeat the latest request verbatim."
-        )
+        payload = response.metadata["delegation_context"]["input_payload"]
+        assert payload["message"] == "Repeat the latest request verbatim."
         assert response.content[0]["type"] == "text"
         assert response.content[0]["text"].startswith("echo:")
         assert response.is_last is True

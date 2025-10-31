@@ -23,6 +23,10 @@ from ._multi_modality import (
     openai_audio_to_text,
 )
 from ._toolkit import Toolkit
+from ._search.bing import search_bing
+from ._search.sogou import search_sogou
+from ._search.github import search_github
+from ._search.wiki import search_wiki
 
 __all__ = [
     "Toolkit",
@@ -32,6 +36,10 @@ __all__ = [
     "view_text_file",
     "write_text_file",
     "insert_text_file",
+    "search_bing",
+    "search_sogou",
+    "search_github",
+    "search_wiki",
     "dashscope_text_to_image",
     "dashscope_text_to_audio",
     "dashscope_image_to_text",

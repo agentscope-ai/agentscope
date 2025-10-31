@@ -25,7 +25,7 @@ def test_context_compress_called_once() -> None:
             build_spec("counter"),
         )
 
-        assert CountingSubAgent.compress_calls == 0
+        initial_calls = CountingSubAgent.compress_calls
 
         await agent.memory.add(
             Msg(
@@ -39,11 +39,11 @@ def test_context_compress_called_once() -> None:
             type="tool_use",
             id="ctx-1",
             name=tool_name,
-            input={"task_summary": "tag=count"},
+            input={"message": "Count context compress invocation.", "tag": "count"},
         )
 
         await invoke_tool(agent, tool_call)
 
-        assert CountingSubAgent.compress_calls == 1
+        assert CountingSubAgent.compress_calls == initial_calls + 1
 
     asyncio.run(_run())

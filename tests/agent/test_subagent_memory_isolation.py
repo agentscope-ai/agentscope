@@ -37,19 +37,22 @@ def test_subagent_memory_isolation() -> None:
             type="tool_use",
             id="call-2",
             name=tool_name,
-            input={"task_summary": "Summarize the latest updates."},
+            input={"message": "Summarize the latest updates."},
         )
 
         await invoke_tool(agent, tool_call)
 
         assert await agent.memory.size() == original_size
-        assert EchoSubAgent.delegation_payloads[0]["task_summary"] == "Summarize the latest updates."
+        assert (
+            EchoSubAgent.delegation_payloads[0]["input_payload"]["message"]
+            == "Summarize the latest updates."
+        )
 
         refreshed_history = await agent.memory.get_memory()
         assert refreshed_history[-1].metadata is not None
         assert (
             refreshed_history[-1]
-            .metadata["delegation_context"]["task_summary"]
+            .metadata["delegation_context"]["input_payload"]["message"]
             == "Summarize the latest updates."
         )
 

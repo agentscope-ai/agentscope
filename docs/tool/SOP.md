@@ -30,6 +30,7 @@ graph TD
 
 ### 3. 核心组件逻辑
 - **注册阶段**：`register_tool_function` 解析函数签名/Docstring 生成 Pydantic 模型，再转 JSON Schema；支持 `functools.partial`、`preset_kwargs`、`postprocess_func`；MCP 工具通过 `register_mcp_client/server` 批量注册。
+  - 注意（SubAgent 专属）：注册由 `make_subagent_tool(...)` 生成的子代理工具时，必须使用其返回的 `json_schema`（即返回值中的字典字段 `register_kwargs["json_schema"]`）进行注册；切勿依赖包装器函数签名再次推导 Schema（包装器本身没有业务参数），否则会丢失由 `InputModel` 定义的 `{query}` 等字段。
 - **分组与启停**：`create_tool_group`/`update_tool_groups`/`remove_tool_groups` 管理工具集合；`basic` 组常驻；`get_json_schemas` 根据激活分组返回 schema；`get_tool_group_notes` 提供提示文本。
 - **调用阶段**：`call_tool_function` 根据 `ToolUseBlock` 查找工具、合并用户参数与 `preset_kwargs`，并通过 `_async_wrapper` 适配同步函数、协程、同步/异步生成器；流式工具逐块产生 `ToolResponse`，最后一个块 `is_last=True`。
 - **结构化完成函数**：`Toolkit.set_extended_model`（在 Agent 中调用）将完成函数绑定 Pydantic 模型，使结构化输出与工具通道复用。

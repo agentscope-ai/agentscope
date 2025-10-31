@@ -105,6 +105,19 @@ Responsibility: Store tool metadata and post‑processing hooks.
 Module: `src/agentscope/mcp/_http_stateless_client.py`
 Responsibility: Disposable MCP HTTP/SSE client listing tools and wrapping call functions.
 
+Module: `src/agentscope/agent/_subagent_base.py`
+Responsibility: Agent-as-Tool skeleton with Pydantic input contracts.
+
+Key Concepts
+- `InputModel: type[BaseModel] | None` — subclasses must override; `get_input_model()` raises if missing, enforcing the Pydantic-only contract (no dict / legacy single-field fallbacks).
+- `export_agent(..., input_obj: BaseModel, delegation_context: dict | None)` — constructs a fresh subagent instance, injects shared permissions, skips healthchecks.
+- `_pre_context_compress(context_bundle, input_obj)` — dumps `input_payload` + `{recent_events,long_term_refs,workspace_pointers,safety_flags}`; subclasses may add human-readable previews.
+- `delegate(input_obj, *, delegation_context)` — stores context, caches `input_obj`, runs `reply(input_obj)` and folds to a single `ToolResponse(is_last=True)`; any exception returns `metadata["unavailable"]=True`.
+- `reply(input_obj, **kwargs)` — subclass entry point; consumes the validated model directly.
+
+Call Graph (Tool wrapper)
+`Toolkit.call_tool_function` → `make_subagent_tool(...)(_invoke_subagent)` → `InputModel.model_validate(arguments)` → `_pre_context_compress` → `export_agent(..., input_obj)` → `delegate` → `ToolResponse`.
+
 Cross‑module Call Graphs
 - Agent(ReAct).reply → Formatter.format → Model.__call__ (stream/tool/structured)
   → Toolkit.call_tool_function (0..n, possibly parallel) → ToolResponse

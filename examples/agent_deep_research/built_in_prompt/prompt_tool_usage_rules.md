@@ -1,6 +1,6 @@
 ### Tool usage rules
-1. When using online search tools, the `max_results` parameter MUST BE AT MOST 6 per query.
-2. When using online search tools, keep the `query` short and keyword-based (2-6 words ideal). And the number should increase as the research depth increases, which means the deeper the research, the more detailed the query should be.
+1. When using online search tools, populate the `query` field with a concise keyword phrase (2-6 words). Use the optional `context` field to provide one or two sentences of background or desired angles for the search.
+2. As research depth increases, refine the `query` and update the `context` to reflect newly discovered focus areas so subsequent searches stay aligned.
 3. The directory/file system that you can operate is the following path: {tmp_file_storage_dir}. DO NOT try to save/read/modify file in other directories.
 4. Try to use the local resource before going to online search. If there is file in PDF format, first convert it to markdown or text with tools, then read it as text.
 5. You can basically use web search tools to search and retrieve whatever you want to know, including financial data, location, news, etc.

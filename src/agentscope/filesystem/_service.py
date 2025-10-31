@@ -209,3 +209,36 @@ class FileDomainService:
         if domain == INTERNAL_PREFIX and not self._policy.allow_delete_internal:
             raise AccessDeniedError(path, "delete")
         self._handle.delete(path)
+
+    # ------------------------- diagnostics (optional) ------------------------
+    def describe_permissions_markdown(self) -> str:
+        """Return a human-readable markdown summary of this handle's grants.
+
+        Intended for agent diagnostics or logging; not registered as a tool
+        by default.
+        """
+        return self._handle.describe_grants_markdown()
+
+    # ---------------------- tool enumeration (optional) ----------------------
+    def tools(self) -> list[tuple[callable, "FileDomainService"]]:
+        """Return the standard controlled filesystem tools bound to this service.
+
+        This is backend-agnostic and mirrors the generic set in
+        ``src/agentscope/filesystem/_tools.py``.
+        """
+        from . import _tools as T
+
+        funcs = [
+            T.read_text_file,
+            T.read_multiple_files,
+            T.list_directory,
+            T.list_directory_with_sizes,
+            T.search_files,
+            T.get_file_info,
+            T.list_allowed_directories,
+            T.write_file,
+            T.delete_file,
+            T.edit_file,
+            T.fs_describe_permissions_markdown,
+        ]
+        return [(f, self) for f in funcs]

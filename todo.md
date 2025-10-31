@@ -1,83 +1,226 @@
-# TODO：SubAgent 委派落地
+# TODO：SubAgent 工具落地（Search / Browser / File / Generate）
 
-## 执行步骤清单
-- [x] 对齐 `docs/agent/SOP.md`，完成“实战示例”与资源继承表述（commit 0485093，feature/subagent-doc-example）。
-- [x] 实现 `SubAgentBase`：提供 `export_agent`、`delegate`、`_pre_context_compress`、`healthcheck`，行为与 SOP 一致。
-  - `export_agent`：复制 PermissionBundle 共享句柄，仅执行 `healthcheck()`；不做上下文压缩；失败抛 `SubAgentUnavailable`。
-  - `delegate`：基于 Host 提供的 `delegation_context` 初始化短期 memory → 运行 → 聚合单个 `ToolResponse(is_last=True)`；异常封装 `metadata.unavailable=True`。
-  - `_pre_context_compress`：产出五段结构（`task_summary`、`recent_events≤4`、`long_term_refs`、`workspace_pointers`、`safety_flags`）。
-  - `healthcheck`：仅用于注册阶段可执行性检查。
-- [x] 落地 `make_subagent_tool` 等工厂函数，负责将任意 `SubAgentBase` 子类包装为 Toolkit 工具，保证骨架在注册/调用阶段的职责分离。
-  - 注册阶段执行一次性 `export_agent(...).healthcheck()`，失败时记录 warning 并跳过工具注册。
-  - 运行阶段每次调用均重新实例化子代理，注入 `preset_kwargs` 传递 `permissions`、`parent_context`、`task` 等。
-  - 返回的工具函数对外仅暴露必要入参（如 `task_summary`），其余通过封装传递，输出单个 `ToolResponse`。
-  - wrapper 负责把 Host `delegation_context` 注入 `load_delegation_context`，并在异常时写入 `metadata["subagent"]`、`metadata["supervisor"]` 方便审计。
-- [x] 资源注入与上下文传递：复制 Logger/Tracing/FileSystem/Session/Long-term Memory 等堆资源；短期 memory/Hook/MsgHub 独立。`_acting` 中执行 `_pre_context_compress`，将结果写入“最新的 user 消息” `Msg.metadata[delegation_context]`。
-- [x] 在 `tests/agent` 下实现与下表一一对应的测试用例，覆盖调用链、上下文压缩、异常封装、健康检查、并行、白名单、FS 命名空间、广播约束、权限复制与元数据契约。
-  
+本清单将四类子代理的工具面“规范→不变量→示例→代码”落为可执行任务。严格遵守铁律：
+- 零偏差契约：工具参数集合与文档完全等价（一个不能少、一个不能多）。
+- schema 不含密钥/cookie/会话；外部客户端以 `preset_kwargs`/环境注入。
+- 业务结果只写入 `ToolResponse.content`；`metadata` 属于框架保留集合，禁止增加/变更业务字段（保持缺省）。
+- 全部写操作走受控 FileDomainService；写入仅限 Host 授权的可写前缀（由 FsHandle grants 决定）。
+- 子代理执行期静默：不向控制台/MsgHub 直接输出；Host 统一广播。
 
-## 验收清单（规范→不变量→测试→示例→代码）
-| 规范 | 不变量 | 验证测试/脚本 | 示例/E2E 见证 | 代码落点 |
-| --- | --- | --- | --- | --- |
-| 子代理以工具形态暴露，调用路径固定为 `_acting` → `make_subagent_tool` → `export_agent` → `delegate` | Host 自身不直接使用工具；所有工具结果经子代理聚合为单个 ToolResponse | `tests/agent/test_subagent_tool.py::test_host_without_direct_tools` | 文档示例链路 | `src/agentscope/agent/_subagent_tool.py` |
-| 共享堆资源（Logger/Tracing/FileSystem/Session/Long-term Memory），短期 memory/Hook/MsgHub 独立 | Host 进入子代理前 `_pre_context_compress` → 写入“最新的 user 消息” metadata；`export_agent` 不做压缩 | `tests/agent/test_subagent_memory_isolation.py` | 文档示例步骤 | `src/agentscope/agent/_react_agent.py::_acting` |
-| 子代理以工具形态暴露，调用路径固定为 `_acting` → `export_agent` → `delegate` | 骨架默认实现只做上下文传递与 ToolResponse 汇聚，不夹带业务逻辑 | `tests/agent/test_subagent_tool.py::test_host_without_direct_tools` | 骨架最小子类 + Mock Toolkit | `src/agentscope/agent/_subagent_tool.py` |
-| 共享堆资源（Logger/Tracing/FileSystem/Session/Long-term Memory）与短期 memory 隔离 | Host 在进入子代理前执行 `_pre_context_compress`，子代理仅注入共享句柄 | `tests/agent/test_subagent_memory_isolation.py::test_subagent_memory_isolation` | 文档示例步骤 | `src/agentscope/agent/_react_agent.py::_acting` |
-| 工具白名单 & JSON Schema | allowlist 工具被克隆，`Toolkit.get_json_schemas()` 含子代理条目 | `tests/agent/test_subagent_allowlist_schema.py::test_subagent_allowlist_schema` | Allowlist 场景 | `src/agentscope/agent/_subagent_base.py::_hydrate_toolkit` |
-| 文件系统命名空间限制 | 仅允许 `/workspace/subagents/<name>/` 前缀写入，越权抛 `AccessDeniedError` | `tests/agent/test_subagent_fs_namespace.py::test_subagent_filesystem_namespace` | in-memory FS 验证 | `src/agentscope/agent/_subagent_base.py::__init__` |
-| 并行调用互不污染 | 并行执行时短期 memory/顺序与 `asyncio.gather` 结果一致 | `tests/agent/test_subagent_parallel.py::test_subagent_parallel_calls` | 并行子任务场景 | `src/agentscope/agent/_subagent_tool.py::_invoke_subagent` |
-| 异常封装为 `ToolResponse(metadata.unavailable=True)` | 超时/异常封装为不可用响应，不冒泡到 Host | `tests/agent/test_subagent_error_propagation.py::test_subagent_error_propagation` | 文档示例 | `src/agentscope/agent/_subagent_base.py::delegate` |
-| 健康检查仅注册阶段一次 | 注册失败即跳过工具；运行期不再重复 healthcheck | `tests/agent/test_subagent_lifecycle.py::test_subagent_lifecycle_healthcheck` | 骨架示例 | `src/agentscope/agent/_subagent_tool.py::make_subagent_tool` |
-| 上下文压缩只由 Host 触发一次 | `_pre_context_compress` 在进入子代理前唯一执行 | `tests/agent/test_subagent_context_compress.py::test_context_compress_called_once` | 计数桩 | `src/agentscope/agent/_subagent_tool.py::_invoke_subagent` |
-| 禁止对外流式输出 & MsgHub 泄漏 | 子代理执行期关闭 console/MsgHub，metadata 含 `subagent`/`supervisor` 且 `is_last=True` | `tests/agent/test_subagent_tool.py::test_host_without_direct_tools` | 骨架最小子类 | `src/agentscope/agent/_subagent_base.py::delegate` |
+---
 
-## 目录树（相关范围）
+## 自我检视（忏悔）与新增铁律（必须遵守）
+
+- 忏悔：此前在 Search 工具上擅自加入 `client` 注入参数、输出使用 Markdown、未提供真实原样结果，只给“命令/OK”式表述，均违背了“零偏差契约/结果为先”的原则。
+
+- 铁律·输入契约：
+  - Search 类工具入参仅 `{query}`，严禁以任何形式新增参数（包括隐式注入对象出现在 schema/签名层）。
+  - Search 运行期依赖（如 Playwright/WebKit）必须在工具内部“按调用创建→关闭”，生命周期局限于本次调用。
+
+- 铁律·结果呈现：
+  - E2E 必须打印“原样输出”（完整内容块），PR/评审须粘贴真实结果；严禁只报“功能 OK”或仅贴命令。
+  - 未经 SOP 明示，禁止将结果渲染为 Markdown；默认使用纯文本；`metadata` 一律不写业务字段。
+
+- 铁律·描述与导出：
+  - 工具 docstring（description）必须英文、紧凑、面向模型决策；不得罗列参数/返回/实现细节。
+  - 模块用 `__all__` 仅导出工具函数，内部 helper/常量不得外泄。
+
+- 铁律·一致性与阻断：
+  - 文档→todo→代码→测试严格同步；任何偏离需先改文档再改代码，并补充验收项。
+  - 遇执行阻断（依赖、网络等）必须立即上报“具体错误+环境+重现步骤”，优先解除阻断后再交付结果。
+
+---
+
+## 0) 依赖与参考
+- 规范：docs/example/subagent_design.md（当前版本）。
+- FS 与授权：docs/filesystem/SOP.md；示例 examples/filesystem_agent。
+- Browser 生命周期与 MCP：examples/agent_browser。
+- DeepResearch 编排与截断：examples/agent_deep_research。
+
+---
+
+
+## 2) agent_browser
+
+### A) Viewer（不操控浏览器）
+工具与参数
+- `viewer_fetch(url: str, query: str | None)`
+- `http_download(url: str, save_path: str)`（写入 Host 授权的可写前缀；具体路径由 grants 决定）
+
+实施步骤
+1. http 客户端注入：`preset_kwargs={"http": http_client}`；工具内实现抓取与字符集/压缩处理。
+2. 分支逻辑：
+   - `query is None`：HTML→Markdown 转换，写入单个 TextBlock。
+   - `query provided`：基于已抓取正文，调用注入的 LLM 提取答案；答案与引用以 Markdown 文本写入 content（列表“Evidence: - url :: span”）。
+3. 下载：校验 `save_path` 必须在受控前缀；成功后在 content 输出“Downloaded: <path> (size=…)”。
+4. 截断与清洗：复用 Browser 示例中的清洗策略（去噪/裁剪）。
+
+不变量（验收）
+- `viewer_fetch`：schema `required == ["url"]`；`query` 可选；content 在两种分支均非空；不修改 metadata。
+- `http_download`：拒绝非前缀写入；content 明示写入路径与大小。
+
+### B) Automation（可操控浏览器）
+工具与参数（最小集合）
+- `browser_navigate(url: str)`、`browser_snapshot()`、`browser_screenshot()`
+- `browser_click(selector: str)`、`browser_type(selector: str, text: str)`、`browser_wait(selector: str, timeout: int)`
+
+实施步骤
+1. 通过 MCP 客户端接入 Playwright；`register_mcp_client` 批量注册工具；或以 `preset_kwargs` 注入已连接客户端。
+2. 生命周期钩子（Host）：`pre_reply` 首次导航、`pre_reasoning` 注入快照、`post_reasoning` 修剪观测、`post_acting` 清洗输出。
+3. content 输出：各工具返回简明回执（文本），如“navigated <url>”、“clicked <selector>”。
+
+不变量（验收）
+- 能完成“navigate→wait→snapshot”序列；所有返回仅在 content；子代理静默。
+
+---
+
+## 3) agent_file（全部走 FileDomainService）
+
+通用工具（复用现有受控 FS 工具）
+- `list_allowed_directories`、`list_directory(path)`、`get_file_info(path)`、`read_text_file(path, range?)`、`write_file(path, content)`、`edit_file(path, edits)`、`delete_file(path)`。
+
+类型专项（最小能力）
+- CSV：`csv_read(path)`、`csv_write(path, rows)`（content 展示表格/JSON 文本预览）。
+- PDF：`pdf_read_text(path, pages?)`（content 为预览片段）。
+- XLSX：`xlsx_read_cells(path, range)`、`xlsx_write_cells(path, range, values)`（content 为范围/表格预览或写入回执）。
+- PPTX：`pptx_read_outline(path)`、`pptx_write(path, slides_spec)`（content 为提纲/写入回执）。
+- IMG‑VLM：`image_qa(img_path, query?)`（content 为回答）。
+
+实施步骤
+1. 受控句柄：以 `DiskFileSystem.create_handle(grants)` + `FileDomainService` 注入服务对象，所有新工具以 `preset_kwargs={"service": svc}` 注册；禁止直触 OS 路径。
+2. 第三方库封装：按需注入 `pdf_reader/xlsx/pptx/vlm` 客户端，均通过 `preset_kwargs`；返回预览/回执文本至 content。
+3. 路径校验：所有入参 path 必须在授权命名空间；写入仅限 Host 授权的可写前缀（由 FsHandle grants 决定）。
+
+补充说明（继承与自动装配）
+- 若子代理继承到 `filesystem_service`，骨架在构造/导出时会自动装配受控文件工具全集（通过 `preset_kwargs={"service": …}` 注入），无需在 `spec.tools` 中逐一列出。
+
+不变量（验收）
+- schema 不暴露 `service`/句柄；content 非空；写操作仅在受控前缀；禁止原始 OS 文本 I/O。
+- FsHandle.describe_grants_markdown 渲染多前缀行。
+- FileDomainService.describe_permissions_markdown 与 handle 输出一致。
+- fs_describe_permissions_markdown 工具经 Toolkit 返回相同文本。
+- 继承到 `filesystem_service` 时，子代理 Toolkit 自动包含受控 FS 工具（如 list_directory/get_file_info/read_text_file/write_file/edit_file/delete_file），且 schema 无 `service` 字段。
+
+---
+
+## 4) agent_generate（基于总结与受控文件生成）
+
+工具（统一签名）
+- `generate_markdown(requirements: str, out_path: str, from_paths: list[str] | None)`
+- `generate_html(requirements: str, out_path: str, from_paths: list[str] | None)`
+- `generate_pptx(requirements: str, out_path: str, from_paths: list[str] | None)`
+- `generate_pdf(requirements: str | None, out_path: str, from_paths: list[str] | None)`
+
+实施步骤
+1. 模板/渲染：基于 `requirements` 与（可选）`from_paths` 渲染产物；仅写入受控前缀；content 输出“Generated <fmt> at <out_path>”。
+2. 注入：如需渲染器/转换器（markdown→html、html→pdf 等），以 `preset_kwargs` 注入；schema 不暴露实现细节。
+
+不变量（验收）
+- 参数集合与顺序严格一致；content 明示产物路径；不改写 metadata；写入仅在受控前缀。
+
+---
+
+## 5) Host 编排与广播（协同）
+实施步骤
+1. Host 将四类工具按分组注册并设置 allowlist；子代理只暴露本组工具。
+2. 执行链：Search→Browser(Viewer/Automation)→File→Generate；各步返回的 `ToolResponse` 由 Host 转 `Msg` 并通过 MsgHub 广播给后续代理。
+3. 截断与清洗：在 postprocess 中裁剪长文本与噪音；保证“可读 + 可控长度”。
+
+不变量（验收）
+- 子代理不直接广播；广播顺序与链路可观察；所有工具产出可落盘/可追溯。
+
+---
+
+## 6) 验收映射（示例）
+
+| 类别 | 不变量 | 测试用例建议 |
+| --- | --- | --- |
+| Search | schema 等价 `{query}`；content 非空；无写入 | tests/search/test_google_schema.py, test_google_output_preview.py |
+| Browser.Viewer | `viewer_fetch` 分支覆盖；`http_download` 前缀校验 | tests/browser/test_viewer_fetch.py, test_http_download_prefix.py |
+| Browser.Automation | 最小序列可执行；hook 顺序 | tests/browser/test_automation_sequence.py, test_automation_hooks.py |
+| File | 受控前缀写入；类型工具 content 预览 | tests/file/test_csv_pdf_xlsx_pptx_img.py |
+| Generate | 统一签名与写入前缀；回执文本 | tests/generate/test_generators.py |
+| 协同 | Search→Browser→File→Generate 广播链路 | tests/e2e/test_pipeline_broadcast.py |
+
+---
+
+## 7) 风险与护栏
+- 禁止在 schema 中暴露密钥/会话；仅用注入/环境变量。
+- 禁用原始 OS 文本 I/O 工具；统一通过 FileDomainService 工具访问。
+- 保持 `metadata` 不变；业务数据只写入 content。
+- 每次提交前跑契约测试（字段集合等价/E2E 广播/前缀校验）。
+
+---
+
+## 8) 目录树（参考范围）
+
+本任务涉及的主要目录/文件（精简）：
+
 ```
 docs/
-  agent/SOP.md
-  tool/SOP.md
-  memory/SOP.md
+  example/
+    subagent_design.md                 # 设计规范与最小工具面（当前任务基线）
+  filesystem/
+    SOP.md
+  tool/
+    SOP.md
+
+examples/
+  agent_browser/                       # 浏览器自动化示例（生命周期钩子、Playwright MCP）
+  filesystem_agent/                    # 受控文件系统示例（DiskFileSystem + FileDomainService）
+  agent_deep_research/                 # 编排循环、截断与 MCP 搜索 wiring
+
 src/agentscope/
   agent/
-    _agent_base.py
-    _react_agent.py
-    _subagent_base.py        # planned
-    _subagent_tool.py        # planned
-    CLAUDE.md
-  tool/
-    __init__.py
-    _toolkit.py
-  memory/
-    __init__.py
-    _memory_base.py
-  session/
-    __init__.py
-    _state_module.py
+    _subagent_base.py                 # 子代理骨架（静默、委派上下文等）
+    _subagent_tool.py                 # 注册工厂（allowlist、健康检查）
+    _react_agent.py                   # Host 编排、_acting、finish 结构化绑定
   filesystem/
-    __init__.py
-    _filesystem_base.py
-  tracing/
-    __init__.py
-    _tracing.py
-tests/
-  agent/
-    test_subagent_tool.py
-    test_subagent_memory_isolation.py
-    test_subagent_error_propagation.py
-    test_subagent_lifecycle.py
-    test_subagent_allowlist_schema.py
-    test_subagent_fs_namespace.py
-    test_subagent_parallel.py
-    test_subagent_context_compress.py
-    test_subagent_permissions.py
-```
+    _tools.py                         # 受控 FS 工具（list/read/write/edit/delete）
+    _service.py                       # FileDomainService（命名空间/授权）
+    _disk.py                          # DiskFileSystem（物理映射）
+  tool/
+    _toolkit.py                       # 工具注册/调用/分组与 postprocess
+    _response.py                      # ToolResponse（统一返回）
+    _multi_modality/                  # 生成/识别示例（按需参考）
+    _coding/                          # execute_python_code（慎用，默认不暴露）
+    _web/                             # 新增：Search/Viewer/Download 工具实现
+      _search.py                      # search_google/bing/sogou/github/wiki（仅 query）
+      _viewer.py                      # viewer_fetch(url, query|None) / http_download(url, save_path)
+    _filetypes/                       # 新增：受控 FS 的类型工具
+      _csv.py                         # csv_read/csv_write（content 预览/回执）
+      _pdf.py                         # pdf_read_text（预览片段）
+      _xlsx.py                        # xlsx_read_cells/xlsx_write_cells
+      _pptx.py                        # pptx_read_outline/pptx_write
+      _img_vlm.py                     # image_qa(img_path, query|None)
+    _generate/                        # 新增：生成器工具
+      _markdown.py                    # generate_markdown(requirements, out_path, from_paths|None)
+      _html.py                        # generate_html(requirements, out_path, from_paths|None)
+      _pptx.py                        # generate_pptx(requirements, out_path, from_paths|None)
+      _pdf.py                         # generate_pdf(requirements|None, out_path, from_paths|None)
 
-## 交互模块与依赖
-- Agent 核心：`AgentBase`、`ReActAgent` 负责 `_acting` 分发与 ToolResponse 汇总。
-- Toolkit：注册子代理工具，统一执行回调协议。
-- Memory：进入子代理前由 Host 触发 `_pre_context_compress` 并写入“最新的 user 消息” metadata，子代理 `load_delegation_context` 重建短期 memory；长期记忆共享但需 namespace 隔离。
-- Session/StateModule：共享持久化句柄，子代理使用独立 namespace。
-- FileSystem：复用父代理句柄，限定写入路径（共享堆）。
-- Tracing/Logger：沿用父代理 pipeline，记录子代理 span 与错误。
-- Pipeline/MsgHub：子代理默认禁用对外广播与对父级的流式输出。
-- External Tools：`search_web`、`http_request`（限子代理 allowlist，可扩展）。
+tests/
+  agent/                              # 子代理相关现有测试（可参考结构）
+  filesystem/                         # FS 授权/工具集成测试
+  search/                             # 新增：各来源 schema/输出预览
+    test_google_schema.py
+    test_bing_schema.py
+    test_sogou_schema.py
+    test_github_schema.py
+    test_wiki_schema.py
+  browser/                            # 新增：viewer/automation 套件
+    test_viewer_fetch.py
+    test_http_download_prefix.py
+    test_automation_sequence.py
+    test_automation_hooks.py
+  filetypes/                          # 新增：csv/pdf/xlsx/pptx/img 工具
+    test_csv_tools.py
+    test_pdf_tools.py
+    test_xlsx_tools.py
+    test_pptx_tools.py
+    test_image_vlm_tool.py
+  generate/                           # 新增：生成器工具
+    test_generators.py
+  e2e/
+    test_pipeline_broadcast.py        # 新增：Search→Browser→File→Generate 广播链路
+```
