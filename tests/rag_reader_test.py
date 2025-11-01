@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader
+from agentscope.rag import TextReader, PDFReader, ExcelReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -92,4 +92,68 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 "Johannes Gutenberg's innovation democratized knowledge and "
                 "made books \naccessible to the common people.",
             ],
+        )
+
+    async def test_excel__reader(self) -> None:
+        """Test the ExcelReader implementation."""
+        reader = ExcelReader(
+            chunk_size=512,
+            split_by="paragraph",
+        )
+        excel_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../examples/functionality/rag/example.xlsx",
+        )
+        docs = await reader(excel_path=excel_path)
+
+        # Verify document count (should contain content from two sheets)
+        self.assertEqual(len(docs), 11)
+
+        # Verify exact document content
+        doc_texts = [doc.metadata.content["text"] for doc in docs]
+
+        # Verify sheet headers
+        self.assertEqual(doc_texts[0], "Sheet: Employee Info")
+        self.assertEqual(doc_texts[6], "Sheet: Product Info")
+
+        # Verify employee data rows
+        self.assertEqual(
+            doc_texts[1],
+            "John Smith | 25 | Engineering | 8000 | 2020-01-15",
+        )
+        self.assertEqual(
+            doc_texts[2],
+            "Jane Doe | 30 | Sales | 12000 | 2019-03-20",
+        )
+        self.assertEqual(
+            doc_texts[3],
+            "Mike Johnson | 35 | HR | 9000 | 2021-06-10",
+        )
+        self.assertEqual(
+            doc_texts[4],
+            "Sarah Wilson | 28 | Finance | 10000 | 2020-09-05",
+        )
+        self.assertEqual(
+            doc_texts[5],
+            "David Brown | 32 | Marketing | 11000 | 2018-12-01",
+        )
+
+        # Verify product data rows
+        self.assertEqual(
+            doc_texts[7],
+            "Product A | 100 | 50 | High-quality Product A, suitable for "
+            "various scenarios.",
+        )
+        self.assertEqual(
+            doc_texts[8],
+            "Product B | 200 | 30 | Product B offers excellent performance.",
+        )
+        self.assertEqual(
+            doc_texts[9],
+            "Product C | 300 | 20 | Product C is a market-leading solution.",
+        )
+        self.assertEqual(
+            doc_texts[10],
+            "Product D | 400 | 40 | Product D provides comprehensive "
+            "functionality.",
         )
