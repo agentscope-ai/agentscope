@@ -488,6 +488,11 @@ class ReActAgent(ReActAgentBase):
                 ):
                     await self.print(tool_res_msg, chunk.is_last)
 
+                # Raise the CancelledError to handle the interruption in the
+                # handle_interrupt function
+                if chunk.is_interrupted:
+                    raise asyncio.CancelledError()
+
                 # Return message if generate_response is called successfully
                 if (
                     tool_call["name"] == self.finish_function_name
