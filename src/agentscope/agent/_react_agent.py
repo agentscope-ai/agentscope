@@ -574,7 +574,6 @@ class ReActAgent(ReActAgentBase):
         )
 
         await self.print(response_msg, True)
-        await self.print(response_msg, True)
         await self.memory.add(response_msg)
         return response_msg
 
