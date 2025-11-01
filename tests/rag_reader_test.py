@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader
+from agentscope.rag import TextReader, PDFReader, PowerPointReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -92,4 +92,54 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 "Johannes Gutenberg's innovation democratized knowledge and "
                 "made books \naccessible to the common people.",
             ],
+        )
+
+    async def test_ppt_reader(self) -> None:
+        """Test the PowerPointReader implementation."""
+        reader = PowerPointReader(
+            chunk_size=200,
+            split_by="sentence",
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../examples/functionality/rag/example.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Verify document count (should contain content from slides)
+        self.assertEqual(len(docs), 6)
+
+        # Verify exact document content
+        doc_texts = [doc.metadata.content["text"] for doc in docs]
+
+        # Verify slide content matches exactly
+        self.assertEqual(
+            doc_texts[0],
+            "Slide 1\nAgentScope\nAgentScope is an innovative multi-agent "
+            "framework designed for building intelligent agent systems.",
+        )
+        self.assertEqual(
+            doc_texts[1],
+            "It provides powerful tools for agent communication, "
+            "task coordination, and distributed problem solving.",
+        )
+        self.assertEqual(
+            doc_texts[2],
+            "Slide 2\nTransparent to Developers\nTransparent is "
+            "our\xa0FIRST principle.",
+        )
+        self.assertEqual(
+            doc_texts[3],
+            "Prompt engineering, API invocation, agent building, workflow "
+            "orchestration, all are visible and controllable for developers.",
+        )
+        self.assertEqual(
+            doc_texts[4],
+            "No deep encapsulation or implicit magic.",
+        )
+        self.assertEqual(
+            doc_texts[5],
+            "Slide 3\nHighly Customizable\nTools, prompt, agent, workflow, "
+            "third-party libs & visualization, customization is encouraged "
+            "everywhere.",
         )
