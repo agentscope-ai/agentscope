@@ -567,9 +567,13 @@ class ReActAgent(ReActAgentBase):
             "I noticed that you have interrupted me. What can I "
             "do for you?",
             "assistant",
-            metadata={},
+            metadata={
+                # Expose this field to indicate the interruption
+                "is_interrupted": True,
+            },
         )
 
+        await self.print(response_msg, True)
         await self.print(response_msg, True)
         await self.memory.add(response_msg)
         return response_msg
