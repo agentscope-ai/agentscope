@@ -63,6 +63,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-asyncio",
     "sphinx-gallery",
     "furo",
     "myst_parser",

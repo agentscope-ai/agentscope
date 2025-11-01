@@ -12,24 +12,78 @@ from ._reader import (
     ImageReader,
 )
 from ._store import (
+    StoreBase,
     VDBStoreBase,
+    GraphStoreBase,
     QdrantStore,
     MilvusLiteStore,
 )
 from ._knowledge_base import KnowledgeBase
 from ._simple_knowledge import SimpleKnowledge
 
+# Optional imports for graph features (requires neo4j package)
+try:
+    from ._store import Neo4jGraphStore
+    from ._graph_knowledge import GraphKnowledgeBase
+    from ._graph_types import (
+        Entity,
+        Relationship,
+        Community,
+        EntityDict,
+        RelationshipDict,
+        CommunityDict,
+        SearchMode,
+        CommunityAlgorithm,
+    )
+
+    _HAS_GRAPH_FEATURES = True
+except ImportError:
+    _HAS_GRAPH_FEATURES = False
+    Neo4jGraphStore = None  # type: ignore
+    GraphKnowledgeBase = None  # type: ignore
+    Entity = None  # type: ignore
+    Relationship = None  # type: ignore
+    Community = None  # type: ignore
+    EntityDict = None  # type: ignore
+    RelationshipDict = None  # type: ignore
+    CommunityDict = None  # type: ignore
+    SearchMode = None  # type: ignore
+    CommunityAlgorithm = None  # type: ignore
+
 
 __all__ = [
+    # Readers
     "ReaderBase",
     "TextReader",
     "PDFReader",
     "ImageReader",
+    # Documents
     "DocMetadata",
     "Document",
+    # Stores
+    "StoreBase",
     "VDBStoreBase",
+    "GraphStoreBase",
     "QdrantStore",
     "MilvusLiteStore",
+    # Knowledge bases
     "KnowledgeBase",
     "SimpleKnowledge",
 ]
+
+# Add graph features to __all__ if available
+if _HAS_GRAPH_FEATURES:
+    __all__.extend(
+        [
+            "Neo4jGraphStore",
+            "GraphKnowledgeBase",
+            "Entity",
+            "Relationship",
+            "Community",
+            "EntityDict",
+            "RelationshipDict",
+            "CommunityDict",
+            "SearchMode",
+            "CommunityAlgorithm",
+        ],
+    )

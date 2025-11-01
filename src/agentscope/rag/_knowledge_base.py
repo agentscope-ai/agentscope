@@ -5,7 +5,7 @@ from typing import Any
 
 from ._reader import Document
 from ..embedding import EmbeddingModelBase
-from ._store import VDBStoreBase
+from ._store import StoreBase
 from ..message import TextBlock
 from ..tool import ToolResponse
 
@@ -17,20 +17,33 @@ class KnowledgeBase:
     The ``retrieve`` and ``add_documents`` methods need to be implemented
     in the subclasses. We also provide a quick method ``retrieve_knowledge``
     that enables the agent to retrieve knowledge easily.
+
+    This class now supports both vector database stores (VDBStoreBase)
+    and graph database stores (GraphStoreBase) through the unified
+    StoreBase interface.
     """
 
-    embedding_store: VDBStoreBase
-    """The embedding store for the knowledge base."""
+    embedding_store: StoreBase
+    """The embedding store for the knowledge base.
+
+    Can be either a VDBStoreBase (vector database) or GraphStoreBase
+    (graph database) implementation.
+    """
 
     embedding_model: EmbeddingModelBase
     """The embedding model for the knowledge base."""
 
     def __init__(
         self,
-        embedding_store: VDBStoreBase,
+        embedding_store: StoreBase,
         embedding_model: EmbeddingModelBase,
     ) -> None:
-        """Initialize the knowledge base."""
+        """Initialize the knowledge base.
+
+        Args:
+            embedding_store: The storage backend (VDBStoreBase or GraphStoreBase)
+            embedding_model: The embedding model for generating vector embeddings
+        """
         self.embedding_store = embedding_store
         self.embedding_model = embedding_model
 
