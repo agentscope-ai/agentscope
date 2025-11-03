@@ -1,0 +1,1586 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="agentscope.module" href="agentscope.module.html"><link rel="prev" title="agentscope.model" href="agentscope.model.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>agentscope.formatter - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=18ea14ae" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_key_concept.html">Key Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_message.html">Create Message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_agent.html">Create ReAct Agent</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_conversation.html">Conversation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_multiagent_debate.html">Multi-Agent Debate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_concurrent_agents.html">Concurrent Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_routing.html">Routing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_handoffs.html">Handoffs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FAQ</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">FAQ</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_model.html">Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_prompt.html">Prompt Formatter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_memory.html">Memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_long_term_memory.html">Long-Term Memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_pipeline.html">Pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_plan.html">Plan</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_rag.html">RAG</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">Evaluation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">Embedding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.model.html">agentscope.model</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">agentscope.formatter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.module.html">agentscope.module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.pipeline.html">agentscope.pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.agent.html">agentscope.agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tool.html">agentscope.tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.mcp.html">agentscope.mcp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.embedding.html">agentscope.embedding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.evaluate.html">agentscope.evaluate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.plan.html">agentscope.plan</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.token.html">agentscope.token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tracing.html">agentscope.tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.session.html">agentscope.session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV1Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/api/agentscope.formatter.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="module-agentscope.formatter">
+<span id="agentscope-formatter"></span><h1>agentscope.formatter<a class="headerlink" href="#module-agentscope.formatter" title="Link to this heading">¶</a></h1>
+<p>The formatter module in agentscope.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.FormatterBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">FormatterBase</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_formatter_base.html#FormatterBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.FormatterBase" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>The base class for formatters.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.FormatterBase.format">
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_formatter_base.html#FormatterBase.format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.FormatterBase.format" title="Link to this definition">¶</a></dt>
+<dd><p>Format the Msg objects to a list of dictionaries that satisfy the
+API requirements.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.FormatterBase.assert_list_of_msgs">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">assert_list_of_msgs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_formatter_base.html#FormatterBase.assert_list_of_msgs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.FormatterBase.assert_list_of_msgs" title="Link to this definition">¶</a></dt>
+<dd><p>Assert that the input is a list of Msg objects.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – A list of Msg objects to be validated.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.FormatterBase.convert_tool_result_to_string">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">convert_tool_result_to_string</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_formatter_base.html#FormatterBase.convert_tool_result_to_string"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.FormatterBase.convert_tool_result_to_string" title="Link to this definition">¶</a></dt>
+<dd><p>Turn the tool result list into a textual output to be compatible
+with the LLM API that doesn’t support multimodal data.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>output</strong> (<cite>str | List[TextBlock | ImageBlock | AudioBlock]</cite>) – The output of the tool response, including text and multimodal
+data like images and audio.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A string representation of the tool result, with text blocks
+concatenated and multimodal data represented by file paths
+or URLs.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>str</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">TruncatedFormatterBase</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.FormatterBase" title="agentscope.formatter._formatter_base.FormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">FormatterBase</span></code></a>, <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
+<p>Base class for truncated formatters, which formats input messages into
+required formats with tokens under a specified limit.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the TruncatedFormatterBase.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) – A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) – The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase.format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase.format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase.format" title="Link to this definition">¶</a></dt>
+<dd><p>Format the input messages into the required format. If token
+counter and max token limit are provided, the messages will be
+truncated to fit the limit.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The input messages to be formatted.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The formatted messages in the required format.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format the input messages into the required format. This method
+should be implemented by the subclasses.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the LLM API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.TruncatedFormatterBase._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_truncated_formatter_base.html#TruncatedFormatterBase._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.TruncatedFormatterBase._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the LLM API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p></li>
+<li><p><strong>is_first</strong> (<em>bool</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DashScopeChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Formatter for DashScope messages.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into DashScope API format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of message objects to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The formatted messages as a list of dictionaries.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DashScopeMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>DashScope formatter for multi-agent conversations, where more than
+a user and an agent are involved.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This formatter will combine previous messages (except tool
+calls/results) into a history section in the first system message with
+the conversation history prompt.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For tool calls/results, they will be presented as separate
+messages as required by the DashScope API. Therefore, the tool calls/
+results messages are expected to be placed at the end of the input
+messages.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Telling the assistant’s name in the system prompt is very
+important in multi-agent conversations. So that LLM can know who it
+is playing as.</p>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the DashScope multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to use for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) – The token counter used for truncation.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) – The maximum number of tokens allowed in the formatted
+messages. If <cite>None</cite>, no truncation will be applied.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the DashScope API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of messages containing tool calls/results to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the DashScope API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into a user message with conversation history tags. For the
+first agent message, it will include the conversation history prompt.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – A list of Msg objects to be formatted.</p></li>
+<li><p><strong>is_first</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether this is the first agent message in the conversation.
+If <cite>True</cite>, the conversation history prompt will be included.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the DashScope API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OpenAIChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>The class used to format message objects into the OpenAI API required
+format.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversation</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision models</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>Supported message blocks for OpenAI API</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into OpenAI API required format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of Msg objects to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries, where each dictionary has “name”,
+“role”, and “content” keys.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OpenAIMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>OpenAI formatter for multi-agent conversations, where more than
+a user and an agent are involved.
+.. tip:: This formatter is compatible with OpenAI API and
+OpenAI-compatible services like vLLM, Azure OpenAI, and others.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversation</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision models</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>Supported message blocks for OpenAI API</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the OpenAI multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to use for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<a class="reference internal" href="agentscope.token.html#agentscope.token.TokenCounterBase" title="agentscope.token._token_base.TokenCounterBase"><em>TokenCounterBase</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>max_tokens</strong> (<em>int</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the OpenAI API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the OpenAI API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p></li>
+<li><p><strong>is_first</strong> (<em>bool</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AnthropicChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Formatter for Anthropic messages.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into Anthropic API format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of message objects to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The formatted messages as a list of dictionaries.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Anthropic suggests always passing all previous thinking
+blocks back to the API in subsequent calls to maintain reasoning
+continuity. For more details, please refer to
+<a class="reference external" href="https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks">Anthropic’s documentation</a>.</p>
+</div>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AnthropicMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Anthropic formatter for multi-agent conversations, where more than
+a user and an agent are involved.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the DashScope multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to use for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<a class="reference internal" href="agentscope.token.html#agentscope.token.TokenCounterBase" title="agentscope.token._token_base.TokenCounterBase"><em>TokenCounterBase</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>max_tokens</strong> (<em>int</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the Anthropic API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.AnthropicMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the Anthropic API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p></li>
+<li><p><strong>is_first</strong> (<em>bool</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">GeminiChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>The formatter for Google Gemini API.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.VideoBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.supported_extensions">
+<span class="sig-name descname"><span class="pre">supported_extensions</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'audio':</span> <span class="pre">['mp3',</span> <span class="pre">'wav',</span> <span class="pre">'aiff',</span> <span class="pre">'aac',</span> <span class="pre">'ogg',</span> <span class="pre">'flac'],</span> <span class="pre">'image':</span> <span class="pre">['png',</span> <span class="pre">'jpeg',</span> <span class="pre">'webp',</span> <span class="pre">'heic',</span> <span class="pre">'heif'],</span> <span class="pre">'video':</span> <span class="pre">['mp4',</span> <span class="pre">'mpeg',</span> <span class="pre">'mov',</span> <span class="pre">'avi',</span> <span class="pre">'x-flv',</span> <span class="pre">'mpg',</span> <span class="pre">'webm',</span> <span class="pre">'wmv',</span> <span class="pre">'3gpp']}</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.supported_extensions" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into Gemini API required format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>]</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">GeminiMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>The multi-agent formatter for Google Gemini API, where more than a
+user and an agent are involved.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This formatter will combine previous messages (except tool
+calls/results) into a history section in the first system message with
+the conversation history prompt.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For tool calls/results, they will be presented as separate
+messages as required by the Gemini API. Therefore, the tool calls/
+results messages are expected to be placed at the end of the input
+messages.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Telling the assistant’s name in the system prompt is very
+important in multi-agent conversations. So that LLM can know who it
+is playing as.</p>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.VideoBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Gemini multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to be used for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) – The token counter used for truncation.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) – The maximum number of tokens allowed in the formatted
+messages. If <cite>None</cite>, no truncation will be applied.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the Gemini API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of messages containing tool calls/results to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the Gemini API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the Gemini API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – A list of Msg objects to be formatted.</p></li>
+<li><p><strong>is_first</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether this is the first agent message in the conversation.
+If <cite>True</cite>, the conversation history prompt will be included.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the Gemini API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OllamaChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Formatter for Ollama messages.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into Ollama API format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of message objects to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The formatted messages as a list of dictionaries.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OllamaMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Ollama formatter for multi-agent conversations, where more than
+a user and an agent are involved.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Ollama multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to use for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) – The token counter used for truncation.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) – The maximum number of tokens allowed in the formatted
+messages. If <cite>None</cite>, no truncation will be applied.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the Ollama API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of messages containing tool calls/results to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the Ollama API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the Ollama API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – A list of Msg objects to be formatted.</p></li>
+<li><p><strong>is_first</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether this is the first agent message in the conversation.
+If <cite>True</cite>, the conversation history prompt will be included.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the ollama API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DeepSeekChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekChatFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>Formatter for DeepSeek messages.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter._format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekChatFormatter._format"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter._format" title="Link to this definition">¶</a></dt>
+<dd><p>Format message objects into DeepSeek API format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of message objects to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The formatted messages as a list of dictionaries.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DeepSeekMultiAgentFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekMultiAgentFormatter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
+<p>DeepSeek formatter for multi-agent conversations, where more than
+a user and an agent are involved.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter.support_tools_api">
+<span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support tools API</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent">
+<span class="sig-name descname"><span class="pre">support_multiagent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support multi-agent conversations</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter.support_vision">
+<span class="sig-name descname"><span class="pre">support_vision</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">False</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_vision" title="Link to this definition">¶</a></dt>
+<dd><p>Whether support vision data</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter.supported_blocks">
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the DeepSeek multi-agent formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) – The prompt to use for the conversation history section.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) – A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) – The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter._format_tool_sequence">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_tool_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekMultiAgentFormatter._format_tool_sequence"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_tool_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of tool call/result messages, format them into
+the required format for the DeepSeek API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – The list of messages containing tool calls/results to format.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the DeepSeek API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DeepSeekMultiAgentFormatter._format_agent_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">_format_agent_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">is_first</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekMultiAgentFormatter._format_agent_message"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_agent_message" title="Link to this definition">¶</a></dt>
+<dd><p>Given a sequence of messages without tool calls/results, format
+them into the required format for the DeepSeek API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msgs</strong> (<cite>list[Msg]</cite>) – A list of Msg objects to be formatted.</p></li>
+<li><p><strong>is_first</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether this is the first agent message in the conversation.
+If <cite>True</cite>, the conversation history prompt will be included.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of dictionaries formatted for the DeepSeek API.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[dict[str, Any]]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="agentscope.module.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">agentscope.module</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="agentscope.model.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">agentscope.model</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">agentscope.formatter</a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.FormatterBase"><code class="docutils literal notranslate"><span class="pre">FormatterBase</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.FormatterBase.format"><code class="docutils literal notranslate"><span class="pre">FormatterBase.format()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.FormatterBase.assert_list_of_msgs"><code class="docutils literal notranslate"><span class="pre">FormatterBase.assert_list_of_msgs()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.FormatterBase.convert_tool_result_to_string"><code class="docutils literal notranslate"><span class="pre">FormatterBase.convert_tool_result_to_string()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase.__init__"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase.format"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase.format()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase._format"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase._format()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase._format_agent_message"><code class="docutils literal notranslate"><span class="pre">TruncatedFormatterBase._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">DashScopeMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">OpenAIMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">AnthropicChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.AnthropicMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">AnthropicMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.supported_extensions"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.supported_extensions</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">GeminiMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">OllamaMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">DeepSeekChatFormatter._format()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_tools_api"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.support_tools_api</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.support_multiagent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.support_vision</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/language_switch.js?v=92e4c85c"></script>
+    </body>
+</html>

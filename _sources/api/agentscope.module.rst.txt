@@ -1,0 +1,7 @@
+agentscope.module
+=================
+
+.. automodule:: agentscope.module
+   :members:
+   :undoc-members:
+   :show-inheritance:

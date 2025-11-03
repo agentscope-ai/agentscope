@@ -1,0 +1,2247 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><link rel="index" title="Index" href="#"><link rel="search" title="Search" href="search.html">
+        <link rel="prefetch" href="_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 --><title>Index - AgentScope</title>
+<link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="_static/css/gallery.css?v=18ea14ae" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/quickstart_installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/quickstart_key_concept.html">Key Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/quickstart_message.html">Create Message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/quickstart_agent.html">Create ReAct Agent</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/workflow_conversation.html">Conversation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/workflow_multiagent_debate.html">Multi-Agent Debate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/workflow_concurrent_agents.html">Concurrent Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/workflow_routing.html">Routing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/workflow_handoffs.html">Handoffs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FAQ</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/faq.html">FAQ</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_model.html">Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_prompt.html">Prompt Formatter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_memory.html">Memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_long_term_memory.html">Long-Term Memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_pipeline.html">Pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_plan.html">Plan</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_rag.html">RAG</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_studio.html">AgentScope Studio</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tracing.html">Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_eval.html">Evaluation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_embedding.html">Embedding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.model.html">agentscope.model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.formatter.html">agentscope.formatter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.module.html">agentscope.module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.pipeline.html">agentscope.pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.agent.html">agentscope.agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.tool.html">agentscope.tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.mcp.html">agentscope.mcp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.embedding.html">agentscope.embedding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.evaluate.html">agentscope.evaluate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.plan.html">agentscope.plan</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.token.html">agentscope.token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.tracing.html">agentscope.tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.session.html">agentscope.session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV1Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          
+<section class="genindex-section">
+  <h1 id="index">Index</h1>
+  <div class="genindex-jumpbox"><a href="#_"><strong>_</strong></a> | <a href="#A"><strong>A</strong></a> | <a href="#B"><strong>B</strong></a> | <a href="#C"><strong>C</strong></a> | <a href="#D"><strong>D</strong></a> | <a href="#E"><strong>E</strong></a> | <a href="#F"><strong>F</strong></a> | <a href="#G"><strong>G</strong></a> | <a href="#H"><strong>H</strong></a> | <a href="#I"><strong>I</strong></a> | <a href="#J"><strong>J</strong></a> | <a href="#K"><strong>K</strong></a> | <a href="#L"><strong>L</strong></a> | <a href="#M"><strong>M</strong></a> | <a href="#N"><strong>N</strong></a> | <a href="#O"><strong>O</strong></a> | <a href="#P"><strong>P</strong></a> | <a href="#Q"><strong>Q</strong></a> | <a href="#R"><strong>R</strong></a> | <a href="#S"><strong>S</strong></a> | <a href="#T"><strong>T</strong></a> | <a href="#U"><strong>U</strong></a> | <a href="#V"><strong>V</strong></a> | <a href="#W"><strong>W</strong></a></div>
+</section>
+<section id="_" class="genindex-section">
+  <h2>_</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy.__call__">__call__() (ACEAccuracy method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEProcessAccuracy.__call__">(ACEProcessAccuracy method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.__call__">(AgentBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.AnthropicChatModel.__call__">(AnthropicChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.__call__">(ChatModelBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.DashScopeChatModel.__call__">(DashScopeChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding.__call__">(DashScopeMultiModalEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding.__call__">(DashScopeTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.__call__">(DefaultPlanToHint method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.__call__">(EmbeddingModelBase method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline.__call__">(FanoutPipeline method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.GeminiChatModel.__call__">(GeminiChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding.__call__">(GeminiTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader.__call__">(ImageReader method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.__call__">(MCPToolFunction method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricBase.__call__">(MetricBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.OllamaChatModel.__call__">(OllamaChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OllamaTextEmbedding.__call__">(OllamaTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel.__call__">(OpenAIChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding.__call__">(OpenAITextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.__call__">(PDFReader method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.ReaderBase.__call__">(ReaderBase method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.SequentialPipeline.__call__">(SequentialPipeline method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.StudioUserInput.__call__">(StudioUserInput method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.TerminalUserInput.__call__">(TerminalUserInput method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.TextReader.__call__">(TextReader method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputBase.__call__">(UserInputBase method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__call__">(WordReader method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy.__init__">__init__() (ACEAccuracy method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.__init__">(ACEBenchmark method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.__init__">(ACEPhone method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEProcessAccuracy.__init__">(ACEProcessAccuracy method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.__init__">(AgentBase method)</a>
+</li>
+          <li><a href="api/agentscope.exception.html#agentscope.exception.AgentOrientedExceptionBase.__init__">(AgentOrientedExceptionBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.AnthropicChatModel.__init__">(AnthropicChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.__init__">(AnthropicMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.AnthropicTokenCounter.__init__">(AnthropicTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase.__init__">(BenchmarkBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.__init__">(ChatModelBase method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.__init__">(ChatResponse method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.DashScopeChatModel.__init__">(DashScopeChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.__init__">(DashScopeMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding.__init__">(DashScopeMultiModalEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding.__init__">(DashScopeTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__">(DeepSeekMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.__init__">(DocMetadata method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.Document.__init__">(Document method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.__init__">(EmbeddingModelBase method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.__init__">(EmbeddingResponse method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.__init__">(EmbeddingUsage method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorBase.__init__">(EvaluatorBase method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline.__init__">(FanoutPipeline method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.__init__">(FileEmbeddingCache method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.__init__">(FileEvaluatorStorage method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.GeminiChatModel.__init__">(GeminiChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.__init__">(GeminiMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding.__init__">(GeminiTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter.__init__">(GeminiTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.__init__">(GeneralEvaluator method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatefulClient.__init__">(HttpStatefulClient method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.__init__">(HttpStatelessClient method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.HuggingFaceTokenCounter.__init__">(HuggingFaceTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.__init__">(InMemoryMemory method)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.__init__">(InMemoryPlanStorage method)</a>
+</li>
+          <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.__init__">(JSONSession method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.__init__">(KnowledgeBase method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPClientBase.__init__">(MCPClientBase method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.__init__">(MCPToolFunction method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory.__init__">(Mem0LongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricBase.__init__">(MetricBase method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.__init__">(MetricResult method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.__init__">(MilvusLiteStore method)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.Msg.__init__">(Msg method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.__init__">(MsgHub method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.OllamaChatModel.__init__">(OllamaChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter.__init__">(OllamaMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OllamaTextEmbedding.__init__">(OllamaTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel.__init__">(OpenAIChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter.__init__">(OpenAIMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding.__init__">(OpenAITextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter.__init__">(OpenAITokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.__init__">(PDFReader method)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.__init__">(PlanNotebook method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.__init__">(QdrantStore method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.RayEvaluator.__init__">(RayEvaluator method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.__init__">(ReActAgent method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgentBase.__init__">(ReActAgentBase method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.SequentialPipeline.__init__">(SequentialPipeline method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.__init__">(SolutionOutput method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.__init__">(StatefulClientBase method)</a>
+</li>
+          <li><a href="api/agentscope.module.html#agentscope.module.StateModule.__init__">(StateModule method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StdIOStatefulClient.__init__">(StdIOStatefulClient method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.StudioUserInput.__init__">(StudioUserInput method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.__init__">(Task method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.TerminalUserInput.__init__">(TerminalUserInput method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.TextReader.__init__">(TextReader method)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.__init__">(Toolkit method)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.__init__">(ToolResponse method)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel.__init__">(TrinityChatModel method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.__init__">(TruncatedFormatterBase method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.__init__">(UserAgent method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.__init__">(UserInputData method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__init__">(WordReader method)</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricType.__new__">__new__() (MetricType method)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter._format">_format() (AnthropicChatFormatter method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter._format">(DashScopeChatFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter._format">(DeepSeekChatFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter._format">(GeminiChatFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter._format">(OllamaChatFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter._format">(OpenAIChatFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase._format">(TruncatedFormatterBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter._format_agent_message">_format_agent_message() (AnthropicMultiAgentFormatter method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter._format_agent_message">(DashScopeMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter._format_agent_message">(DeepSeekMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter._format_agent_message">(GeminiMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter._format_agent_message">(OllamaMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter._format_agent_message">(OpenAIMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase._format_agent_message">(TruncatedFormatterBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter._format_tool_sequence">_format_tool_sequence() (AnthropicMultiAgentFormatter method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter._format_tool_sequence">(DashScopeMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter._format_tool_sequence">(DeepSeekMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter._format_tool_sequence">(GeminiMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter._format_tool_sequence">(OllamaMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter._format_tool_sequence">(OpenAIMultiAgentFormatter method)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase._format_tool_sequence">(TruncatedFormatterBase method)</a>
+</li>
+        </ul></li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="A" class="genindex-section">
+  <h2>A</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy">ACEAccuracy (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark">ACEBenchmark (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone">ACEPhone (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEProcessAccuracy">ACEProcessAccuracy (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.add">add() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.add">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.add">(MilvusLiteStore method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.add">(MsgHub method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.add">(QdrantStore method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.add">(VDBStoreBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.add_documents">add_documents() (KnowledgeBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.SimpleKnowledge.add_documents">(SimpleKnowledge method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.add_plan">add_plan() (InMemoryPlanStorage method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase.add_plan">(PlanStorageBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.AGENT_PRINTING_LOG">AGENT_PRINTING_LOG (FileEvaluatorStorage attribute)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase">AgentBase (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.exception.html#agentscope.exception.AgentOrientedExceptionBase">AgentOrientedExceptionBase</a>
+</li>
+        <li>
+    agentscope
+
+        <ul>
+          <li><a href="api/agentscope.html#module-agentscope">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.agent
+
+        <ul>
+          <li><a href="api/agentscope.agent.html#module-agentscope.agent">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.embedding
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#module-agentscope.embedding">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.evaluate
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#module-agentscope.evaluate">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.exception
+
+        <ul>
+          <li><a href="api/agentscope.exception.html#module-agentscope.exception">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.formatter
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#module-agentscope.formatter">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.hooks
+
+        <ul>
+          <li><a href="api/agentscope.hooks.html#module-agentscope.hooks">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.mcp
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#module-agentscope.mcp">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.memory
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li>
+    agentscope.message
+
+        <ul>
+          <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.model
+
+        <ul>
+          <li><a href="api/agentscope.model.html#module-agentscope.model">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.module
+
+        <ul>
+          <li><a href="api/agentscope.module.html#module-agentscope.module">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.pipeline
+
+        <ul>
+          <li><a href="api/agentscope.pipeline.html#module-agentscope.pipeline">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.plan
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#module-agentscope.plan">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.rag
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#module-agentscope.rag">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.session
+
+        <ul>
+          <li><a href="api/agentscope.session.html#module-agentscope.session">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.token
+
+        <ul>
+          <li><a href="api/agentscope.token.html#module-agentscope.token">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.tool
+
+        <ul>
+          <li><a href="api/agentscope.tool.html#module-agentscope.tool">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.tracing
+
+        <ul>
+          <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.tune
+
+        <ul>
+          <li><a href="api/agentscope.tune.html#module-agentscope.tune">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.types
+
+        <ul>
+          <li><a href="api/agentscope.types.html#module-agentscope.types">module</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorBase.aggregate">aggregate() (EvaluatorBase method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.aggregation_result_exists">aggregation_result_exists() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.aggregation_result_exists">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter">AnthropicChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.AnthropicChatModel">AnthropicChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter">AnthropicMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.AnthropicTokenCounter">AnthropicTokenCounter (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.hooks.html#agentscope.hooks.as_studio_forward_message_pre_print_hook">as_studio_forward_message_pre_print_hook() (in module agentscope.hooks)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.assert_list_of_msgs">assert_list_of_msgs() (FormatterBase static method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.at_the_beginning">at_the_beginning (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.at_the_end">at_the_end (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.AudioBlock">AudioBlock (class in agentscope.message)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="B" class="genindex-section">
+  <h2>B</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.message.html#agentscope.message.Base64Source">Base64Source (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase">BenchmarkBase (class in agentscope.evaluate)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.blocks_input">blocks_input (UserInputData attribute)</a>
+</li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.broadcast">broadcast() (MsgHub method)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="C" class="genindex-section">
+  <h2>C</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.cache_dir">cache_dir (FileEmbeddingCache property)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.call_tool_function">call_tool_function() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricType.CATEGORY">CATEGORY (MetricType attribute)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase">ChatModelBase (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse">ChatResponse (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.chunk_id">chunk_id (DocMetadata attribute)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingCacheBase.clear">clear() (EmbeddingCacheBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.clear">(FileEmbeddingCache method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.clear">(InMemoryMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.clear">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.clear">(Toolkit method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.clear_class_hooks">clear_class_hooks() (AgentBase class method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.clear_instance_hooks">clear_instance_hooks() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">close() (StatefulClientBase method)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.connect">connect() (StatefulClientBase method)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.content">content (ChatResponse attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.content">(DocMetadata attribute)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.content">(ToolResponse attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.convert_tool_result_to_string">convert_tool_result_to_string() (FormatterBase static method)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.AnthropicTokenCounter.count">count() (AnthropicTokenCounter method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter.count">(GeminiTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.HuggingFaceTokenCounter.count">(HuggingFaceTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter.count">(OpenAITokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.token.html#agentscope.token.TokenCounterBase.count">(TokenCounterBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.create_plan">create_plan() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.create_tool_group">create_tool_group() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.created_at">created_at (ChatResponse attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.created_at">(EmbeddingResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.created_at">(MetricResult attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.created_at">(Plan attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.created_at">(SubTask attribute)</a>
+</li>
+        </ul></li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="D" class="genindex-section">
+  <h2>D</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.dashscope_image_to_text">dashscope_image_to_text() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.dashscope_text_to_audio">dashscope_text_to_audio() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.dashscope_text_to_image">dashscope_text_to_image() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter">DashScopeChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.DashScopeChatModel">DashScopeChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter">DashScopeMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding">DashScopeMultiModalEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding">DashScopeTextEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Base64Source.data">data (Base64Source attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.data_dir_url">data_dir_url (ACEBenchmark attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.data_files">data_files (ACEBenchmark attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.data_subdir">data_subdir (ACEBenchmark attribute)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter">DeepSeekChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter">DeepSeekMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint">DefaultPlanToHint (class in agentscope.plan)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.delete">delete() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.delete">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.delete">(MilvusLiteStore method)</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.delete">(MsgHub method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.delete">(QdrantStore method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.delete">(VDBStoreBase method)</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.delete_plan">delete_plan() (InMemoryPlanStorage method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase.delete_plan">(PlanStorageBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase.description">description (BenchmarkBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.description">(MCPToolFunction attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.description">(Plan attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.description">(PlanNotebook attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.description">(SubTask attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.dimensions">dimensions (EmbeddingModelBase attribute)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.disable_console_output">disable_console_output() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.doc_id">doc_id (DocMetadata attribute)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata">DocMetadata (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.Document">Document (class in agentscope.rag)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="E" class="genindex-section">
+  <h2>E</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.Document.embedding">embedding (Document attribute)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.embedding_model">embedding_model (KnowledgeBase attribute)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.embedding_store">embedding_store (KnowledgeBase attribute)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingCacheBase">EmbeddingCacheBase (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase">EmbeddingModelBase (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse">EmbeddingResponse (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.embeddings">embeddings (EmbeddingResponse attribute)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage">EmbeddingUsage (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.evaluate">evaluate() (Task method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_DIR_NAME">EVALUATION_DIR_NAME (FileEvaluatorStorage attribute)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_META_FILE">EVALUATION_META_FILE (FileEvaluatorStorage attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.evaluation_result_exists">evaluation_result_exists() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.evaluation_result_exists">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_RESULT_FILE">EVALUATION_RESULT_FILE (FileEvaluatorStorage attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorBase">EvaluatorBase (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase">EvaluatorStorageBase (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.execute_python_code">execute_python_code() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.execute_shell_command">execute_shell_command() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.expected_outcome">expected_outcome (Plan attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.expected_outcome">(SubTask attribute)</a>
+</li>
+        </ul></li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="F" class="genindex-section">
+  <h2>F</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.fanout_pipeline">fanout_pipeline() (in module agentscope.pipeline)</a>
+</li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline">FanoutPipeline (class in agentscope.pipeline)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache">FileEmbeddingCache (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage">FileEvaluatorStorage (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.finish">finish() (Plan method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.finish">(SubTask method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.finish_function_name">finish_function_name (ReActAgent attribute)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_plan">finish_plan() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_subtask">finish_subtask() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.finished_at">finished_at (Plan attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.finished_at">(SubTask attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.format">format() (FormatterBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.format">(TruncatedFormatterBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase">FormatterBase (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.from_dict">from_dict() (Msg class method)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="G" class="genindex-section">
+  <h2>G</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter">GeminiChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.GeminiChatModel">GeminiChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter">GeminiMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding">GeminiTextEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter">GeminiTokenCounter (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator">GeneralEvaluator (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.generate_response">generate_response() (ReActAgent method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.get_activated_notes">get_activated_notes() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook">get_agent_pre_print_hook() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_agent_pre_print_hook">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.get_callable_function">get_callable_function() (HttpStatelessClient method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPClientBase.get_callable_function">(MCPClientBase method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.get_callable_function">(StatefulClientBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.get_client">get_client() (HttpStatelessClient method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.get_client">(MilvusLiteStore method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.get_client">(QdrantStore method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.get_client">(VDBStoreBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() (Msg method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() (ACEPhone method)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader.get_doc_id">get_doc_id() (ImageReader method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.get_doc_id">(PDFReader method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.ReaderBase.get_doc_id">(ReaderBase method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.TextReader.get_doc_id">(TextReader method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.get_doc_id">(WordReader method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_evaluation_result">get_evaluation_result() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_evaluation_result">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.get_json_schemas">get_json_schemas() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.get_memory">get_memory() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.get_memory">(MemoryBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.get_plan">get_plan() (InMemoryPlanStorage method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase.get_plan">(PlanStorageBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.get_plans">get_plans() (InMemoryPlanStorage method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase.get_plans">(PlanStorageBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_solution_result">get_solution_result() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_solution_result">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_text_content">get_text_content() (Msg method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_tool_function">get_tool_function() (ACEPhone method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.ground_truth">ground_truth (Task attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.ground_truth_dir">ground_truth_dir (ACEBenchmark attribute)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="H" class="genindex-section">
+  <h2>H</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.handle_interrupt">handle_interrupt() (AgentBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.handle_interrupt">(ReActAgent method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.handle_interrupt">(UserAgent method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.has_content_blocks">has_content_blocks() (Msg method)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.hint_prefix">hint_prefix (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.hint_suffix">hint_suffix (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatefulClient">HttpStatefulClient (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient">HttpStatelessClient (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.HuggingFaceTokenCounter">HuggingFaceTokenCounter (class in agentscope.token)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="I" class="genindex-section">
+  <h2>I</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.id">id (AgentBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.id">(ChatResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.Document.id">(Document attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.id">(EmbeddingResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.id">(Plan attribute)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.id">(Task attribute)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.id">(ToolResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.id">(ToolResultBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.id">(ToolUseBlock attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.message.html#agentscope.message.ImageBlock">ImageBlock (class in agentscope.message)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader">ImageReader (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.html#agentscope.init">init() (in module agentscope)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory">InMemoryMemory (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage">InMemoryPlanStorage (class in agentscope.plan)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.input">input (Task attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.input">(ToolUseBlock attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.insert_text_file">insert_text_file() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.interrupt">interrupt() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.is_connected">is_connected (StatefulClientBase attribute)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_interrupted">is_interrupted (ToolResponse attribute)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_last">is_last (ToolResponse attribute)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="J" class="genindex-section">
+  <h2>J</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.json_schema">json_schema (MCPToolFunction attribute)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.session.html#agentscope.session.JSONSession">JSONSession (class in agentscope.session)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="K" class="genindex-section">
+  <h2>K</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase">KnowledgeBase (class in agentscope.rag)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="L" class="genindex-section">
+  <h2>L</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.list_tools">list_tools() (HttpStatelessClient method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.list_tools">(PlanNotebook method)</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.list_tools">(StatefulClientBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.load_initial_config">load_initial_config() (ACEPhone method)</a>
+</li>
+        <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.load_session_state">load_session_state() (JSONSession method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.session.html#agentscope.session.SessionBase.load_session_state">(SessionBase method)</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.load_state_dict">load_state_dict() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.load_state_dict">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.module.html#agentscope.module.StateModule.load_state_dict">(StateModule method)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.load_state_dict">(Toolkit method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.login_device">login_device() (ACEPhone method)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.LongTermMemoryBase">LongTermMemoryBase (class in agentscope.memory)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="M" class="genindex-section">
+  <h2>M</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPClientBase">MCPClientBase (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction">MCPToolFunction (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Base64Source.media_type">media_type (Base64Source attribute)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory">Mem0LongTermMemory (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase">MemoryBase (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.message">message (MetricResult attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.meta">meta (SolutionOutput attribute)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.metadata">metadata (ChatResponse attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.Document.metadata">(Document attribute)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.metadata">(MetricResult attribute)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.metadata">(Task attribute)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.metadata">(ToolResponse attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricBase">MetricBase (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult">MetricResult (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.metrics">metrics (Task attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricType">MetricType (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore">MilvusLiteStore (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.model_config">model_config (Plan attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.model_config">(SubTask attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.model_name">model_name (ChatModelBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.model_name">(EmbeddingModelBase attribute)</a>
+</li>
+        </ul></li>
+        <li>
+    module
+
+        <ul>
+          <li><a href="api/agentscope.html#module-agentscope">agentscope</a>
+</li>
+          <li><a href="api/agentscope.agent.html#module-agentscope.agent">agentscope.agent</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#module-agentscope.embedding">agentscope.embedding</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#module-agentscope.evaluate">agentscope.evaluate</a>
+</li>
+          <li><a href="api/agentscope.exception.html#module-agentscope.exception">agentscope.exception</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#module-agentscope.formatter">agentscope.formatter</a>
+</li>
+          <li><a href="api/agentscope.hooks.html#module-agentscope.hooks">agentscope.hooks</a>
+</li>
+          <li><a href="api/agentscope.mcp.html#module-agentscope.mcp">agentscope.mcp</a>
+</li>
+          <li><a href="api/agentscope.memory.html#module-agentscope.memory">agentscope.memory</a>
+</li>
+          <li><a href="api/agentscope.message.html#module-agentscope.message">agentscope.message</a>
+</li>
+          <li><a href="api/agentscope.model.html#module-agentscope.model">agentscope.model</a>
+</li>
+          <li><a href="api/agentscope.module.html#module-agentscope.module">agentscope.module</a>
+</li>
+          <li><a href="api/agentscope.pipeline.html#module-agentscope.pipeline">agentscope.pipeline</a>
+</li>
+          <li><a href="api/agentscope.plan.html#module-agentscope.plan">agentscope.plan</a>
+</li>
+          <li><a href="api/agentscope.rag.html#module-agentscope.rag">agentscope.rag</a>
+</li>
+          <li><a href="api/agentscope.session.html#module-agentscope.session">agentscope.session</a>
+</li>
+          <li><a href="api/agentscope.token.html#module-agentscope.token">agentscope.token</a>
+</li>
+          <li><a href="api/agentscope.tool.html#module-agentscope.tool">agentscope.tool</a>
+</li>
+          <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">agentscope.tracing</a>
+</li>
+          <li><a href="api/agentscope.tune.html#module-agentscope.tune">agentscope.tune</a>
+</li>
+          <li><a href="api/agentscope.types.html#module-agentscope.types">agentscope.types</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg">Msg (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub">MsgHub (class in agentscope.pipeline)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="N" class="genindex-section">
+  <h2>N</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase.name">name (BenchmarkBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.name">(MCPToolFunction attribute)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.name">(MetricResult attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.name">(Plan attribute)</a>
+</li>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.name">(SubTask attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.name">(ToolResultBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.name">(ToolUseBlock attribute)</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.no_plan">no_plan (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricType.NUMERICAL">NUMERICAL (MetricType attribute)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="O" class="genindex-section">
+  <h2>O</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.observe">observe() (AgentBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.observe">(ReActAgent method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.observe">(UserAgent method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter">OllamaChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.OllamaChatModel">OllamaChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter">OllamaMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.OllamaTextEmbedding">OllamaTextEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_audio_to_text">openai_audio_to_text() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_create_image_variation">openai_create_image_variation() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_edit_image">openai_edit_image() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_image_to_text">openai_image_to_text() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_audio">openai_text_to_audio() (in module agentscope.tool)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image() (in module agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">OpenAIChatFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel">OpenAIChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter">OpenAIMultiAgentFormatter (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding">OpenAITextEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter">OpenAITokenCounter (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.outcome">outcome (Plan attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.outcome">(SubTask attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.output">output (SolutionOutput attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.output">(ToolResultBlock attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.override_class_input_method">override_class_input_method() (UserAgent class method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.override_instance_input_method">override_instance_input_method() (UserAgent method)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="P" class="genindex-section">
+  <h2>P</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader">PDFReader (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan">Plan (class in agentscope.plan)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook">PlanNotebook (class in agentscope.plan)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase">PlanStorageBase (class in agentscope.plan)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.print">print() (AgentBase method)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="Q" class="genindex-section">
+  <h2>Q</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore">QdrantStore (class in agentscope.rag)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="R" class="genindex-section">
+  <h2>R</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.RayEvaluator">RayEvaluator (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent">ReActAgent (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgentBase">ReActAgentBase (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.ReaderBase">ReaderBase (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.LongTermMemoryBase.record">record() (LongTermMemoryBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory.record">(Mem0LongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMePersonalLongTermMemory.record">(ReMePersonalLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeTaskLongTermMemory.record">(ReMeTaskLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeToolLongTermMemory.record">(ReMeToolLongTermMemory method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.LongTermMemoryBase.record_to_memory">record_to_memory() (LongTermMemoryBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory.record_to_memory">(Mem0LongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMePersonalLongTermMemory.record_to_memory">(ReMePersonalLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeTaskLongTermMemory.record_to_memory">(ReMeTaskLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeToolLongTermMemory.record_to_memory">(ReMeToolLongTermMemory method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.recover_historical_plan">recover_historical_plan() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.register_class_hook">register_class_hook() (AgentBase class method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.register_instance_hook">register_instance_hook() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.register_mcp_client">register_mcp_client() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.register_plan_change_hook">register_plan_change_hook() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.module.html#agentscope.module.StateModule.register_state">register_state() (StateModule method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.register_tool_function">register_tool_function() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.ReMePersonalLongTermMemory">ReMePersonalLongTermMemory (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeTaskLongTermMemory">ReMeTaskLongTermMemory (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeToolLongTermMemory">ReMeToolLongTermMemory (class in agentscope.memory)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingCacheBase.remove">remove() (EmbeddingCacheBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.remove">(FileEmbeddingCache method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_class_hook">remove_class_hook() (AgentBase class method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_instance_hook">remove_instance_hook() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.remove_plan_change_hook">remove_plan_change_hook() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_subscribers">remove_subscribers() (AgentBase method)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_function">remove_tool_function() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_groups">remove_tool_groups() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.reply">reply() (AgentBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.reply">(ReActAgent method)</a>
+</li>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.reply">(UserAgent method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.reset_equipped_tools">reset_equipped_tools() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.reset_subscribers">reset_subscribers() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.result">result (MetricResult attribute)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingCacheBase.retrieve">retrieve() (EmbeddingCacheBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.retrieve">(FileEmbeddingCache method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.retrieve">(InMemoryMemory method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.retrieve">(KnowledgeBase method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.LongTermMemoryBase.retrieve">(LongTermMemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory.retrieve">(Mem0LongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.retrieve">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMePersonalLongTermMemory.retrieve">(ReMePersonalLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeTaskLongTermMemory.retrieve">(ReMeTaskLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeToolLongTermMemory.retrieve">(ReMeToolLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.SimpleKnowledge.retrieve">(SimpleKnowledge method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.LongTermMemoryBase.retrieve_from_memory">retrieve_from_memory() (LongTermMemoryBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.Mem0LongTermMemory.retrieve_from_memory">(Mem0LongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory">(ReMePersonalLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory">(ReMeTaskLongTermMemory method)</a>
+</li>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory">(ReMeToolLongTermMemory method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.KnowledgeBase.retrieve_knowledge">retrieve_knowledge() (KnowledgeBase method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.revise_current_plan">revise_current_plan() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorBase.run">run() (EvaluatorBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.run">(GeneralEvaluator method)</a>
+</li>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.RayEvaluator.run">(RayEvaluator method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.run_evaluation">run_evaluation() (GeneralEvaluator method)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.run_solution">run_solution() (GeneralEvaluator method)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="S" class="genindex-section">
+  <h2>S</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_aggregation_result">save_aggregation_result() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_aggregation_result">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_evaluation_meta">save_evaluation_meta() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_evaluation_meta">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_evaluation_result">save_evaluation_result() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_evaluation_result">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.save_session_state">save_session_state() (JSONSession method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.session.html#agentscope.session.SessionBase.save_session_state">(SessionBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_solution_result">save_solution_result() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_solution_result">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.Document.score">score (Document attribute)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.search">search() (MilvusLiteStore method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.search">(QdrantStore method)</a>
+</li>
+          <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.search">(VDBStoreBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.sequential_pipeline">sequential_pipeline() (in module agentscope.pipeline)</a>
+</li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.SequentialPipeline">SequentialPipeline (class in agentscope.pipeline)</a>
+</li>
+        <li><a href="api/agentscope.session.html#agentscope.session.SessionBase">SessionBase (class in agentscope.session)</a>
+</li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.set_auto_broadcast">set_auto_broadcast() (MsgHub method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.set_console_output_enabled">set_console_output_enabled() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.set_extended_model">set_extended_model() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.set_msg_queue_enabled">set_msg_queue_enabled() (AgentBase method)</a>
+</li>
+        <li><a href="api/agentscope.html#agentscope.setup_logger">setup_logger() (in module agentscope)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.setup_tracing">setup_tracing() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.SimpleKnowledge">SimpleKnowledge (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.size">size() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.size">(MemoryBase method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.SOLUTION_FILE_NAME">SOLUTION_FILE_NAME (FileEvaluatorStorage attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.solution_result_exists">solution_result_exists() (EvaluatorStorageBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.solution_result_exists">(FileEvaluatorStorage method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput">SolutionOutput (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.AudioBlock.source">source (AudioBlock attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.source">(EmbeddingResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ImageBlock.source">(ImageBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock.source">(VideoBlock attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.state">state (Plan attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.state">(SubTask attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.state_dict">state_dict() (InMemoryMemory method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.state_dict">(MemoryBase method)</a>
+</li>
+          <li><a href="api/agentscope.module.html#agentscope.module.StateModule.state_dict">(StateModule method)</a>
+</li>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.state_dict">(Toolkit method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.stateful">stateful (HttpStatelessClient attribute)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase">StatefulClientBase (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.module.html#agentscope.module.StateModule">StateModule (class in agentscope.module)</a>
+</li>
+        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StdIOStatefulClient">StdIOStatefulClient (class in agentscope.mcp)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingCacheBase.store">store() (EmbeddingCacheBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.store">(FileEmbeddingCache method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.stream">stream (ChatModelBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.stream">(ToolResponse attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.stream_printing_messages">stream_printing_messages() (in module agentscope.pipeline)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.structured_input">structured_input (UserInputData attribute)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.StudioUserInput">StudioUserInput (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask">SubTask (class in agentscope.plan)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.subtasks">subtasks (Plan attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.success">success (SolutionOutput attribute)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter.support_multiagent">support_multiagent (AnthropicChatFormatter attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.support_multiagent">(AnthropicMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.support_multiagent">(DashScopeChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent">(DashScopeMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter.support_multiagent">(DeepSeekChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent">(DeepSeekMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.support_multiagent">(GeminiChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.support_multiagent">(GeminiMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.support_multiagent">(OllamaChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter.support_multiagent">(OllamaMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter.support_multiagent">(OpenAIChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter.support_multiagent">(OpenAIMultiAgentFormatter attribute)</a>
+</li>
+        </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter.support_tools_api">support_tools_api (AnthropicChatFormatter attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.support_tools_api">(AnthropicMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.support_tools_api">(DashScopeChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_tools_api">(DashScopeMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter.support_tools_api">(DeepSeekChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.support_tools_api">(DeepSeekMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.support_tools_api">(GeminiChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.support_tools_api">(GeminiMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.support_tools_api">(OllamaChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter.support_tools_api">(OllamaMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter.support_tools_api">(OpenAIChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter.support_tools_api">(OpenAIMultiAgentFormatter attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter.support_vision">support_vision (AnthropicChatFormatter attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.support_vision">(AnthropicMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.support_vision">(DashScopeChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_vision">(DashScopeMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter.support_vision">(DeepSeekChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.support_vision">(DeepSeekMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.support_vision">(GeminiChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.support_vision">(GeminiMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.support_vision">(OllamaChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter.support_vision">(OllamaMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter.support_vision">(OpenAIChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter.support_vision">(OpenAIMultiAgentFormatter attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter.supported_blocks">supported_blocks (AnthropicChatFormatter attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.supported_blocks">(AnthropicMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.supported_blocks">(DashScopeChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks">(DashScopeMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter.supported_blocks">(DeepSeekChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.supported_blocks">(DeepSeekMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.supported_blocks">(GeminiChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.supported_blocks">(GeminiMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.supported_blocks">(OllamaChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaMultiAgentFormatter.supported_blocks">(OllamaMultiAgentFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter.supported_blocks">(OpenAIChatFormatter attribute)</a>
+</li>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIMultiAgentFormatter.supported_blocks">(OpenAIMultiAgentFormatter attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.supported_extensions">supported_extensions (GeminiChatFormatter attribute)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.supported_hook_types">supported_hook_types (AgentBase attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgentBase.supported_hook_types">(ReActAgentBase attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding.supported_modalities">supported_modalities (DashScopeMultiModalEmbedding attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding.supported_modalities">(DashScopeTextEmbedding attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.supported_modalities">(EmbeddingModelBase attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding.supported_modalities">(GeminiTextEmbedding attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OllamaTextEmbedding.supported_modalities">(OllamaTextEmbedding attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding.supported_modalities">(OpenAITextEmbedding attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.sys_prompt">sys_prompt (ReActAgent property)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="T" class="genindex-section">
+  <h2>T</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.tags">tags (Task attribute)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task">Task (class in agentscope.evaluate)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.TerminalUserInput">TerminalUserInput (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.TextBlock.text">text (TextBlock attribute)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.TextBlock">TextBlock (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.TextReader">TextReader (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.ThinkingBlock.thinking">thinking (ThinkingBlock attribute)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.ThinkingBlock">ThinkingBlock (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.time">time (EmbeddingUsage attribute)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.to_dict">to_dict() (Msg method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.to_markdown">to_markdown() (Plan method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.to_markdown">(SubTask method)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.to_oneline_markdown">to_oneline_markdown() (SubTask method)</a>
+</li>
+        <li><a href="api/agentscope.token.html#agentscope.token.TokenCounterBase">TokenCounterBase (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.tokens">tokens (EmbeddingUsage attribute)</a>
+</li>
+        <li><a href="api/agentscope.exception.html#agentscope.exception.ToolInterruptedError">ToolInterruptedError</a>
+</li>
+        <li><a href="api/agentscope.exception.html#agentscope.exception.ToolInvalidArgumentsError">ToolInvalidArgumentsError</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit">Toolkit (class in agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.exception.html#agentscope.exception.ToolNotFoundError">ToolNotFoundError</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse">ToolResponse (class in agentscope.tool)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock">ToolResultBlock (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock">ToolUseBlock (class in agentscope.message)</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.total_chunks">total_chunks (DocMetadata attribute)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace">trace() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_embedding">trace_embedding() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_format">trace_format() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_llm">trace_llm() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_reply">trace_reply() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_toolkit">trace_toolkit() (in module agentscope.tracing)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.trajectory">trajectory (SolutionOutput attribute)</a>
+</li>
+        <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel">TrinityChatModel (class in agentscope.model)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase">TruncatedFormatterBase (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.tune.html#agentscope.tune.tune">tune() (in module agentscope.tune)</a>
+</li>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.turn_on_wifi">turn_on_wifi() (ACEPhone method)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.AudioBlock.type">type (AudioBlock attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.message.html#agentscope.message.Base64Source.type">(Base64Source attribute)</a>
+</li>
+          <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.type">(ChatResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.type">(EmbeddingResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.type">(EmbeddingUsage attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ImageBlock.type">(ImageBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.TextBlock.type">(TextBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ThinkingBlock.type">(ThinkingBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.type">(ToolResultBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.type">(ToolUseBlock attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.URLSource.type">(URLSource attribute)</a>
+</li>
+          <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock.type">(VideoBlock attribute)</a>
+</li>
+        </ul></li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="U" class="genindex-section">
+  <h2>U</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.update_subtask_state">update_subtask_state() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.update_tool_groups">update_tool_groups() (Toolkit method)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.URLSource.url">url (URLSource attribute)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.URLSource">URLSource (class in agentscope.message)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.usage">usage (ChatResponse attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.usage">(EmbeddingResponse attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent">UserAgent (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputBase">UserInputBase (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData">UserInputData (class in agentscope.agent)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="V" class="genindex-section">
+  <h2>V</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase">VDBStoreBase (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock">VideoBlock (class in agentscope.message)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.view_historical_plans">view_historical_plans() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.view_subtasks">view_subtasks() (PlanNotebook method)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.view_text_file">view_text_file() (in module agentscope.tool)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+<section id="W" class="genindex-section">
+  <h2>W</h2>
+  <table style="width: 100%" class="indextable genindextable"><tr>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_a_subtask_in_progress">when_a_subtask_in_progress (DefaultPlanToHint attribute)</a>
+</li>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_no_subtask_in_progress">when_no_subtask_in_progress (DefaultPlanToHint attribute)</a>
+</li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader">WordReader (class in agentscope.rag)</a>
+</li>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.write_text_file">write_text_file() (in module agentscope.tool)</a>
+</li>
+    </ul></td>
+  </tr></table>
+</section>
+
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer no-toc">
+      
+      
+      
+    </aside>
+  </div>
+</div><script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="_static/language_switch.js?v=92e4c85c"></script>
+    </body>
+</html>

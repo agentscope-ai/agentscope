@@ -1,0 +1,7 @@
+agentscope.tracing
+==================
+
+.. automodule:: agentscope.tracing
+   :members:
+   :undoc-members:
+   :show-inheritance:

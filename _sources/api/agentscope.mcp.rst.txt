@@ -1,0 +1,7 @@
+agentscope.mcp
+==============
+
+.. automodule:: agentscope.mcp
+   :members:
+   :undoc-members:
+   :show-inheritance:
