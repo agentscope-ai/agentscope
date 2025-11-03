@@ -365,7 +365,6 @@
     <span class="p">)</span>
     <span class="n">outcome</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The actual outcome of the subtask.&quot;</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">state</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;todo&quot;</span><span class="p">,</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">,</span> <span class="s2">&quot;done&quot;</span><span class="p">,</span> <span class="s2">&quot;abandoned&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
@@ -380,7 +379,6 @@
     <span class="n">finished_at</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The time the subtask was finished.&quot;</span><span class="p">,</span>
         <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
 
 <div class="viewcode-block" id="SubTask.finish">
@@ -450,7 +448,7 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">Plan</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The plan model used in the plan module, contains a list of subtasks.&quot;&quot;&quot;</span>
 
-    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">default_factory</span><span class="o">=</span><span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">)</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">)</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="p">(</span>
             <span class="s2">&quot;The plan name, should be concise, descriptive and not exceed 10 &quot;</span>
@@ -477,23 +475,43 @@
     <span class="n">created_at</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The time the plan was created.&quot;</span><span class="p">,</span>
         <span class="n">default_factory</span><span class="o">=</span><span class="n">_get_timestamp</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">state</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;todo&quot;</span><span class="p">,</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">,</span> <span class="s2">&quot;done&quot;</span><span class="p">,</span> <span class="s2">&quot;abandoned&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The state of the plan.&quot;</span><span class="p">,</span>
         <span class="n">default</span><span class="o">=</span><span class="s2">&quot;todo&quot;</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">finished_at</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The time the plan was finished.&quot;</span><span class="p">,</span>
         <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
     <span class="n">outcome</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
         <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The actual outcome of the plan.&quot;</span><span class="p">,</span>
         <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-        <span class="n">exclude</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
     <span class="p">)</span>
+
+<div class="viewcode-block" id="Plan.refresh_plan_state">
+<a class="viewcode-back" href="../../../api/agentscope.plan.html#agentscope.plan.Plan.refresh_plan_state">[文档]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">refresh_plan_state</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Refresh the plan state based on the states of its subtasks. This</span>
+<span class="sd">        function only switches the plan state between &quot;todo&quot; and &quot;in_progress&quot;.</span>
+
+<span class="sd">        # TODO: Handle the plan state much more formally.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;done&quot;</span><span class="p">,</span> <span class="s2">&quot;abandoned&quot;</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="n">any_in_progress</span> <span class="o">=</span> <span class="nb">any</span><span class="p">(</span><span class="n">_</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">&quot;in_progress&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">subtasks</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">any_in_progress</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">&quot;todo&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">&quot;in_progress&quot;</span>
+            <span class="k">return</span> <span class="s2">&quot;The plan state has been updated to &#39;in_progress&#39;.&quot;</span>
+
+        <span class="k">elif</span> <span class="ow">not</span> <span class="n">any_in_progress</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="s2">&quot;todo&quot;</span>
+            <span class="k">return</span> <span class="s2">&quot;The plan state has been updated to &#39;todo&#39;.&quot;</span>
+
+        <span class="k">return</span> <span class="s2">&quot;&quot;</span></div>
+
 
 <div class="viewcode-block" id="Plan.finish">
 <a class="viewcode-back" href="../../../api/agentscope.plan.html#agentscope.plan.Plan.finish">[文档]</a>

@@ -475,6 +475,19 @@
 <dd></dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="agentscope.plan.Plan.refresh_plan_state">
+<span class="sig-name descname"><span class="pre">refresh_plan_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/plan/_plan_model.html#Plan.refresh_plan_state"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.plan.Plan.refresh_plan_state" title="Link to this definition">¶</a></dt>
+<dd><p>Refresh the plan state based on the states of its subtasks. This
+function only switches the plan state between &quot;todo&quot; and &quot;in_progress&quot;.</p>
+<p># TODO: Handle the plan state much more formally.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="agentscope.plan.Plan.finish">
 <span class="sig-name descname"><span class="pre">finish</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outcome</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/plan/_plan_model.html#Plan.finish"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.plan.Plan.finish" title="Link to this definition">¶</a></dt>
 <dd><p>Finish the plan.</p>
@@ -1091,6 +1104,7 @@ returns nothing.</p></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.state"><code class="docutils literal notranslate"><span class="pre">Plan.state</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.finished_at"><code class="docutils literal notranslate"><span class="pre">Plan.finished_at</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.outcome"><code class="docutils literal notranslate"><span class="pre">Plan.outcome</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.plan.Plan.refresh_plan_state"><code class="docutils literal notranslate"><span class="pre">Plan.refresh_plan_state()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.finish"><code class="docutils literal notranslate"><span class="pre">Plan.finish()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.to_markdown"><code class="docutils literal notranslate"><span class="pre">Plan.to_markdown()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.plan.Plan.model_config"><code class="docutils literal notranslate"><span class="pre">Plan.model_config</span></code></a></li>

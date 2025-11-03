@@ -773,7 +773,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">update_subtask_state</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">subtask_idx</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-        <span class="n">state</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;todo&quot;</span><span class="p">,</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">,</span> <span class="s2">&quot;deprecated&quot;</span><span class="p">],</span>
+        <span class="n">state</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;todo&quot;</span><span class="p">,</span> <span class="s2">&quot;in_progress&quot;</span><span class="p">,</span> <span class="s2">&quot;abandoned&quot;</span><span class="p">],</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Update the state of a subtask by given index and state. Note if you</span>
 <span class="sd">        want to mark a subtask as done, you SHOULD call `finish_subtask`</span>
@@ -836,7 +836,7 @@
                 <span class="c1"># Check all previous subtasks are done or deprecated</span>
                 <span class="k">if</span> <span class="n">idx</span> <span class="o">&lt;</span> <span class="n">subtask_idx</span> <span class="ow">and</span> <span class="n">subtask</span><span class="o">.</span><span class="n">state</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span>
                     <span class="s2">&quot;done&quot;</span><span class="p">,</span>
-                    <span class="s2">&quot;deprecated&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;abandoned&quot;</span><span class="p">,</span>
                 <span class="p">]:</span>
                     <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
                         <span class="n">content</span><span class="o">=</span><span class="p">[</span>
@@ -869,6 +869,10 @@
                     <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">current_plan</span><span class="o">.</span><span class="n">subtasks</span><span class="p">[</span><span class="n">subtask_idx</span><span class="p">]</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">state</span>
+
+        <span class="c1"># Update the plan state to in_progress if not already</span>
+        <span class="n">suffix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_plan</span><span class="o">.</span><span class="n">refresh_plan_state</span><span class="p">()</span>
+
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trigger_plan_change_hooks</span><span class="p">()</span>
         <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
             <span class="n">content</span><span class="o">=</span><span class="p">[</span>
@@ -876,7 +880,7 @@
                     <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
                     <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Subtask at index </span><span class="si">{</span><span class="n">subtask_idx</span><span class="si">}</span><span class="s2">, named &quot;</span>
                     <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">current_plan</span><span class="o">.</span><span class="n">subtasks</span><span class="p">[</span><span class="n">subtask_idx</span><span class="p">]</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; &quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;is marked as &#39;</span><span class="si">{</span><span class="n">state</span><span class="si">}</span><span class="s2">&#39; successfully.&quot;</span><span class="p">,</span>
+                    <span class="sa">f</span><span class="s2">&quot;is marked as &#39;</span><span class="si">{</span><span class="n">state</span><span class="si">}</span><span class="s2">&#39; successfully. &quot;</span> <span class="o">+</span> <span class="n">suffix</span><span class="p">,</span>
                 <span class="p">),</span>
             <span class="p">],</span>
         <span class="p">)</span></div>
@@ -937,7 +941,7 @@
         <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">subtask</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">current_plan</span><span class="o">.</span><span class="n">subtasks</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="n">subtask_idx</span><span class="p">],</span>
         <span class="p">):</span>
-            <span class="k">if</span> <span class="n">subtask</span><span class="o">.</span><span class="n">state</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;done&quot;</span><span class="p">,</span> <span class="s2">&quot;deprecated&quot;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">subtask</span><span class="o">.</span><span class="n">state</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;done&quot;</span><span class="p">,</span> <span class="s2">&quot;abandoned&quot;</span><span class="p">]:</span>
                 <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
                     <span class="n">content</span><span class="o">=</span><span class="p">[</span>
                         <span class="n">TextBlock</span><span class="p">(</span>
@@ -1182,12 +1186,15 @@
 <span class="sd">                the agent.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="p">[</span>
+            <span class="c1"># subtask related tools</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">view_subtasks</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">update_subtask_state</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">finish_subtask</span><span class="p">,</span>
+            <span class="c1"># plan related tools</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">create_plan</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">revise_current_plan</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">finish_plan</span><span class="p">,</span>
+            <span class="c1"># historical plan related tools</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">view_historical_plans</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">recover_historical_plan</span><span class="p">,</span>
         <span class="p">]</span></div>

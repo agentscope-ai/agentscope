@@ -334,12 +334,8 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">base64</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">TYPE_CHECKING</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml</span><span class="w"> </span><span class="kn">import</span> <span class="n">CT_P</span><span class="p">,</span> <span class="n">CT_Tbl</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">docx.table</span><span class="w"> </span><span class="kn">import</span> <span class="n">Table</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">docx.text.paragraph</span><span class="w"> </span><span class="kn">import</span> <span class="n">Paragraph</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml.ns</span><span class="w"> </span><span class="kn">import</span> <span class="n">qn</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._reader_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReaderBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._text_reader</span><span class="w"> </span><span class="kn">import</span> <span class="n">TextReader</span>
@@ -347,20 +343,32 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">..._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">...message</span><span class="w"> </span><span class="kn">import</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">Base64Source</span><span class="p">,</span> <span class="n">TextBlock</span>
 
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">docx.table</span><span class="w"> </span><span class="kn">import</span> <span class="n">Table</span> <span class="k">as</span> <span class="n">DocxTable</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">docx.text.paragraph</span><span class="w"> </span><span class="kn">import</span> <span class="n">Paragraph</span> <span class="k">as</span> <span class="n">DocxParagraph</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">DocxTable</span> <span class="o">=</span> <span class="s2">&quot;docx.table.Table&quot;</span>
+    <span class="n">DocxParagraph</span> <span class="o">=</span> <span class="s2">&quot;docx.text.paragraph.Paragraph&quot;</span>
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_extract_text_from_paragraph</span><span class="p">(</span><span class="n">para</span><span class="p">:</span> <span class="n">Paragraph</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_text_from_paragraph</span><span class="p">(</span><span class="n">para</span><span class="p">:</span> <span class="n">DocxParagraph</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract text from a paragraph, including text in text boxes and shapes.</span>
 
 <span class="sd">    Args:</span>
-<span class="sd">        para: Paragraph object</span>
+<span class="sd">        para (`Paragraph`):</span>
+<span class="sd">            The paragraph object from which to extract text.</span>
+
 
 <span class="sd">    Returns:</span>
-<span class="sd">        str: Extracted text</span>
+<span class="sd">        `str`:</span>
+<span class="sd">            Extracted text</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
 
     <span class="c1"># Method 1: Extract all w:t elements directly from XML</span>
     <span class="c1">#  (handles revisions, hyperlinks, etc.)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml.ns</span><span class="w"> </span><span class="kn">import</span> <span class="n">qn</span>
+
     <span class="k">for</span> <span class="n">t_elem</span> <span class="ow">in</span> <span class="n">para</span><span class="o">.</span><span class="n">_element</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s2">&quot;.//&quot;</span> <span class="o">+</span> <span class="n">qn</span><span class="p">(</span><span class="s2">&quot;w:t&quot;</span><span class="p">)):</span>
         <span class="k">if</span> <span class="n">t_elem</span><span class="o">.</span><span class="n">text</span><span class="p">:</span>
             <span class="n">text</span> <span class="o">+=</span> <span class="n">t_elem</span><span class="o">.</span><span class="n">text</span>
@@ -392,7 +400,7 @@
     <span class="k">return</span> <span class="n">text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_extract_table_data</span><span class="p">(</span><span class="n">table</span><span class="p">:</span> <span class="n">Table</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_table_data</span><span class="p">(</span><span class="n">table</span><span class="p">:</span> <span class="n">DocxTable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract table data, handling merged cells and preserving line breaks</span>
 <span class="sd">    within cells.</span>
 
@@ -404,6 +412,8 @@
 <span class="sd">        `list[list[str]]`:</span>
 <span class="sd">            Table data represented as a 2D list.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml.ns</span><span class="w"> </span><span class="kn">import</span> <span class="n">qn</span>
 
     <span class="n">table_data</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="c1"># Extract table cell elements directly from XML</span>
@@ -435,7 +445,7 @@
     <span class="k">return</span> <span class="n">table_data</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">_extract_image_data</span><span class="p">(</span><span class="n">para</span><span class="p">:</span> <span class="n">Paragraph</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ImageBlock</span><span class="p">]:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_image_data</span><span class="p">(</span><span class="n">para</span><span class="p">:</span> <span class="n">DocxParagraph</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ImageBlock</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract image data from a paragraph.</span>
 
 <span class="sd">    Args:</span>
@@ -447,6 +457,8 @@
 <span class="sd">            A list of image blocks with base64-encoded image data</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">images</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml.ns</span><span class="w"> </span><span class="kn">import</span> <span class="n">qn</span>
 
     <span class="c1"># Method 1: Find all drawing elements (modern Word format)</span>
     <span class="n">drawings</span> <span class="o">=</span> <span class="n">para</span><span class="o">.</span><span class="n">_element</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="s2">&quot;.//&quot;</span> <span class="o">+</span> <span class="n">qn</span><span class="p">(</span><span class="s2">&quot;w:drawing&quot;</span><span class="p">))</span>
@@ -672,6 +684,11 @@
         <span class="c1"># Read the Word document</span>
         <span class="k">try</span><span class="p">:</span>
             <span class="kn">from</span><span class="w"> </span><span class="nn">docx</span><span class="w"> </span><span class="kn">import</span> <span class="n">Document</span> <span class="k">as</span> <span class="n">DocxDocument</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml</span><span class="w"> </span><span class="kn">import</span> <span class="n">CT_P</span><span class="p">,</span> <span class="n">CT_Tbl</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">docx.text.paragraph</span><span class="w"> </span><span class="kn">import</span> <span class="n">Paragraph</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">docx.table</span><span class="w"> </span><span class="kn">import</span> <span class="n">Table</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">docx.oxml.ns</span><span class="w"> </span><span class="kn">import</span> <span class="n">qn</span>
+
         <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
                 <span class="s2">&quot;Please install python-docx to use the Word reader. &quot;</span>

@@ -451,42 +451,39 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 正方的观点是，当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。为了证明这一点，我们可以使用圆的周长和相对运动的概念来解释。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 当一个圆沿着另一个圆的外部滚动且没有相对滑动时，其旋转次数取决于两个圆的周长。如果用R表示圆B的半径，那么圆A的半径就是R/3。
 
-设圆B的半径为 \( R \)，则圆A的半径为 \( \frac{R}{3} \)。圆B的周长为 \( 2\pi R \)，而圆A的周长则是 \( 2\pi \times \frac{R}{3} = \frac{2\pi R}{3} \)。
+圆B的周长是 \(2\pi R\)，而圆A的周长是 \(2\pi (R/3) = \frac{2\pi R}{3}\)。
 
-当圆A绕着圆B无滑动地滚动一周时，圆A的质心（即圆心）沿着圆B的外围移动了距离 \( 2\pi R \)。由于圆A在滚动过程中没有滑动，它所走过的路径长度等于其自身周长乘以它自转的次数。因此，如果圆A自转了 \( n \) 次，则有：
+当圆A绕着圆B滚动一圈回到起点时，它会沿着圆B的周长移动了 \(2\pi R\) 的距离。由于圆A每转一圈就覆盖了自己的周长，即 \(2\pi (R/3)\)，所以我们可以计算出圆A在滚动过程中总共旋转的圈数：
 
-\[ n \times \frac{2\pi R}{3} = 2\pi R \]
+\[ \text{旋转次数} = \frac{\text{圆B的周长}}{\text{圆A的周长}} = \frac{2\pi R}{\frac{2\pi R}{3}} = 3 \]
 
-解这个等式得到：
+因此，我的观点是：圆A绕着圆B滚动一圈回到起点的过程中，圆A会旋转3次。
+Alice: 当一个圆沿着另一个圆的外部滚动且没有相对滑动时，其旋转次数取决于两个圆的周长。如果用R表示圆B的半径，那么圆A的半径就是R/3。
 
-\[ n = \frac{2\pi R}{(2\pi R / 3)} = 3 \]
+圆B的周长是 $2\pi R$，而圆A的周长是 $2\pi (R/3) = \frac{2\pi R}{3}$。
 
-但是，这里有一个额外的因素需要考虑：当圆A绕圆B外切滚动时，除了围绕圆B中心旋转的这3次之外，圆A还会因为跟随圆B的圆形轨迹而进行一次额外的转动。这是因为圆A在绕行圆B的同时，也在随着圆B的曲率进行一个完整的旋转。所以，实际上圆A总共会旋转3次加上这次额外的旋转，总计4次。
-Bob: 反方的观点是，当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次，而不是4次。让我解释一下为什么。
+当圆A绕着圆B滚动一圈回到起点时，它会沿着圆B的周长移动了 $2\pi R$ 的距离。由于圆A每转一圈就覆盖了自己的周长，即 $2\pi (R/3)$，所以我们可以计算出圆A在滚动过程中总共旋转的圈数：
 
-首先，我们同意正方关于圆A和圆B周长的计算。圆B的周长为 \(2\pi R\)，而圆A的周长为 \(\frac{2\pi R}{3}\)。当圆A绕圆B无滑动地滚动一周时，它的质心确实沿着圆B的外围移动了距离 \(2\pi R\)。由于没有相对滑动，我们可以得出圆A必须自转的次数 \(n\) 以覆盖这段距离：
+$$ \text{旋转次数} = \frac{\text{圆B的周长}}{\text{圆A的周长}} = \frac{2\pi R}{\frac{2\pi R}{3}} = 3 $$
 
-\[ n \times \frac{2\pi R}{3} = 2\pi R \]
+因此，我的观点是：圆A绕着圆B滚动一圈回到起点的过程中，圆A会旋转3次。
+Bob: 我理解Alice的计算方法，但我想指出的是，在圆A绕着圆B滚动一圈回到起点的过程中，除了沿着圆B周长移动而产生的旋转外，还有一个额外的旋转。这是因为当圆A在圆B上滚动时，它不仅因为行进距离而旋转，还会因为要保持与圆B接触点的连续性而产生额外的转动。
 
-解这个等式得到：
+具体来说，当圆A完成围绕圆B的一圈时，它确实会由于滚动而旋转3次，这与Alice的计算相符。然而，当你考虑圆A必须始终与圆B保持相切的情况时，你会发现圆A还会有一次额外的完整旋转，以确保最终回到起始位置时它的方向和开始时相同。
 
-\[ n = \frac{2\pi R}{(2\pi R / 3)} = 3 \]
+因此，我认为圆A总共会旋转4次：3次是因为沿圆B周长滚动所产生的，还有1次是由于需要回到原始的方向。这就是我的观点。
+Bob: 为了更清楚地解释这个额外的旋转，我们可以想象一下圆A绕着圆B滚动的过程。当圆A开始滚动并到达圆B的对面时，它已经完成了大约一半的行程并且旋转了1.5次。继续滚动，直到圆A回到起点，它会再旋转1.5次，总共旋转了3次。
 
-这说明圆A在绕圆B外切滚动一周的过程中，它自身会旋转3次以完成整个路径。这里的关键在于理解额外的一次转动实际上是已经包含在这3次中的。
+但是，这里有一个重要的细节：当圆A回到起点时，它实际上已经面向了一个新的方向。如果我们将圆A看作一个有标记的圆盘，那么标记现在指向了与初始状态不同的方向。为了让标记再次指向原来的方向，圆A需要再进行一次完整的旋转。所以，我们可以说圆A总共旋转了4次。
 
-当一个较小的圆绕着一个较大的圆滚动时，较小的圆不仅因为其自身的旋转而前进，还因为它跟随较大圆的曲线而经历了一个几何上的旋转。然而，这种“跟随”式的旋转实际上就是圆A相对于地面的旋转，而不是一个独立的、额外的旋转。因此，在圆A绕圆B一周的过程中，它与地面接触点的轨迹表明它只进行了3次旋转。
+这种现象有时被称为“硬币悖论”或“滑动悖论”，因为它涉及到一个看似矛盾的事实：即使圆A没有滑动，它似乎也需要比直觉告诉我们的多一次旋转才能回到原位。
+Aggregator: 两位辩论者都提出了关于圆A绕圆B滚动时旋转次数的有趣观点。Alice 提到了基于周长比的计算，表明圆A将旋转3次。而Bob则指出了一个额外的旋转，这是由于圆A回到起点时需要再旋转一次来重新对齐方向，因此他认为总共是4次旋转。
 
-所以，根据以上分析，我方认为圆A绕圆B滚动一圈回到起点时，圆A总共会旋转3次。没有必要加上所谓的“额外”的一次旋转，因为那其实已经在3次旋转中被考虑进去了。
-Bob: 经过进一步的反思，我认为有必要澄清一点：当圆A绕着圆B滚动的时候，它不仅会因为要走过圆B的周长而旋转3次，还会因为在绕行过程中跟随圆B的曲率进行额外的一次完整旋转。这种额外的旋转并不是基于圆A的半径，而是基于圆A绕着圆B中心做圆周运动的事实。
+在没有相对滑动的情况下，当一个较小的圆沿着一个较大的圆外侧滚动一圈并且回到起始位置时，它确实会经历额外的一次旋转以恢复到初始的方向。这个现象有时被称为“硬币悖论”。因此，正确的答案是圆A总共会旋转4次。
 
-想象一下，如果我们将圆A看作是一个小球，并且它固定在一个大轮子（圆B）上，那么当我们转动大轮子时，小球除了绕着自己的轴旋转之外，还会随着大轮子的转动而旋转。这种现象在物理上被称为刚体的复合运动，其中包含了自转和平移两种成分。
-
-因此，虽然圆A为了覆盖圆B的周长需要旋转3次，但同时它也会因为跟随圆B的圆形轨迹而进行第4次旋转。这就是为什么我认为最终圆A会旋转4次的原因。
-Aggregator: 两位辩论者已经清楚地解释了圆A绕圆B滚动一圈回到起点时，它总共会旋转的次数。他们指出了圆A不仅因为要走过圆B的周长而旋转3次，而且由于跟随圆B的圆形轨迹而进行额外的一次完整旋转。因此，圆A总共会旋转4次。
-
-辩论结束，正确答案是： 4次
+辩论结束，正确答案是： 4
 </pre></div>
 </div>
 <section id="id1">
@@ -495,7 +492,7 @@ Aggregator: 两位辩论者已经清楚地解释了圆A绕圆B滚动一圈回到
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">管道 (Pipeline)</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 41.245 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 2.343 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>
