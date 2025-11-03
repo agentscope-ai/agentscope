@@ -202,9 +202,10 @@ An example structure could be:
 ```
 examples/
 └── {example_type}/
-    ├── main.py
-    ├── README.md  # Explain the example's purpose and usage
-    └── ... # The other scripts
+    └── {example_name}/
+        ├── main.py
+        ├── README.md  # Explain the example's purpose and usage
+        └── ... # The other scripts
 ```
 
 

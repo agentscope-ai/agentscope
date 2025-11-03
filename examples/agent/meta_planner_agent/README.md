@@ -60,7 +60,7 @@ export AGENT_OPERATION_DIR="/path/to/custom/working/directory"
 Run the agent interactively:
 
 ```bash
-cd examples/agent_meta_planner
+cd examples/agent/meta_planner_agent
 python main.py
 ```
 
