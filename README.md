@@ -138,6 +138,7 @@ Welcome to join our community on
   - [🧑‍🤝‍🧑 Multi-Agent Conversation](#-multi-agent-conversation)
   - [💻 AgentScope Studio](#-agentscope-studio)
 - [📖 Documentation](#-documentation)
+- [🤝 Contributing](#-contributing)
 - [⚖️ License](#-license)
 - [📚 Publications](#-publications)
 - [✨ Contributors](#-contributors)
