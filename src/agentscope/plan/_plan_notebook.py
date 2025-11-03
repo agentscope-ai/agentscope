@@ -424,7 +424,7 @@ class PlanNotebook(StateModule):
     async def update_subtask_state(
         self,
         subtask_idx: int,
-        state: Literal["todo", "in_progress", "deprecated"],
+        state: Literal["todo", "in_progress", "abandoned"],
     ) -> ToolResponse:
         """Update the state of a subtask by given index and state. Note if you
         want to mark a subtask as done, you SHOULD call `finish_subtask`
@@ -487,7 +487,7 @@ class PlanNotebook(StateModule):
                 # Check all previous subtasks are done or deprecated
                 if idx < subtask_idx and subtask.state not in [
                     "done",
-                    "deprecated",
+                    "abandoned",
                 ]:
                     return ToolResponse(
                         content=[
@@ -589,7 +589,7 @@ class PlanNotebook(StateModule):
         for idx, subtask in enumerate(
             self.current_plan.subtasks[0:subtask_idx],
         ):
-            if subtask.state not in ["done", "deprecated"]:
+            if subtask.state not in ["done", "abandoned"]:
                 return ToolResponse(
                     content=[
                         TextBlock(
