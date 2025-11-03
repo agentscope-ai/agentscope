@@ -344,6 +344,7 @@
     <span class="n">Type</span><span class="p">,</span>
     <span class="n">Generator</span><span class="p">,</span>
     <span class="n">Callable</span><span class="p">,</span>
+    <span class="n">Awaitable</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -542,13 +543,16 @@
         <span class="n">include_long_description</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">include_var_positional</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">include_var_keyword</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
-        <span class="n">postprocess_func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span>
-            <span class="p">[</span>
-                <span class="n">ToolUseBlock</span><span class="p">,</span>
-                <span class="n">ToolResponse</span><span class="p">,</span>
-            <span class="p">],</span>
-            <span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="p">]</span>
+        <span class="n">postprocess_func</span><span class="p">:</span> <span class="p">(</span>
+            <span class="n">Callable</span><span class="p">[</span>
+                <span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResponse</span><span class="p">],</span>
+                <span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="p">]</span>
+            <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span>
+                <span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResponse</span><span class="p">],</span>
+                <span class="n">Awaitable</span><span class="p">[</span><span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
         <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Register a tool function to the toolkit.</span>
@@ -583,14 +587,15 @@
 <span class="sd">            include_var_keyword (`bool`, defaults to `False`):</span>
 <span class="sd">                Whether to include the variable keyword arguments (`**kwargs`)</span>
 <span class="sd">                in the function schema.</span>
-<span class="sd">            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \</span>
-<span class="sd">            ToolResponse | None] | None`, optional):</span>
+<span class="sd">            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \</span>
+<span class="sd">            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \</span>
+<span class="sd">            Awaitable[ToolResponse | None]]) | None`, optional):</span>
 <span class="sd">                A post-processing function that will be called after the tool</span>
 <span class="sd">                function is executed, taking the tool call block and tool</span>
-<span class="sd">                response as arguments. If it returns `None`, the tool</span>
-<span class="sd">                result will be returned as is. If it returns a</span>
-<span class="sd">                `ToolResponse`, the returned block will be used as the</span>
-<span class="sd">                final tool result.</span>
+<span class="sd">                response as arguments. The function can be either sync or</span>
+<span class="sd">                async. If it returns `None`, the tool result will be</span>
+<span class="sd">                returned as is. If it returns a `ToolResponse`,</span>
+<span class="sd">                the returned block will be used as the final tool result.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Arguments checking</span>
         <span class="k">if</span> <span class="n">group_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">groups</span> <span class="ow">and</span> <span class="n">group_name</span> <span class="o">!=</span> <span class="s2">&quot;basic&quot;</span><span class="p">:</span>
@@ -897,7 +902,12 @@
 
         <span class="c1"># Prepare postprocess function</span>
         <span class="k">if</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">postprocess_func</span><span class="p">:</span>
-            <span class="n">partial_postprocess_func</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+            <span class="c1"># Type: partial wraps the postprocess_func with tool_call bound,</span>
+            <span class="c1"># reducing it from (ToolUseBlock, ToolResponse) to (ToolResponse)</span>
+            <span class="n">partial_postprocess_func</span><span class="p">:</span> <span class="p">(</span>
+                <span class="n">Callable</span><span class="p">[[</span><span class="n">ToolResponse</span><span class="p">],</span> <span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span>
+                <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">ToolResponse</span><span class="p">],</span> <span class="n">Awaitable</span><span class="p">[</span><span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]]</span>
+            <span class="p">)</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="o">.</span><span class="n">postprocess_func</span><span class="p">,</span>
                 <span class="n">tool_call</span><span class="p">,</span>
             <span class="p">)</span>
@@ -969,13 +979,16 @@
         <span class="n">enable_funcs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">disable_funcs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">preset_kwargs_mapping</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">postprocess_func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span>
-            <span class="p">[</span>
-                <span class="n">ToolUseBlock</span><span class="p">,</span>
-                <span class="n">ToolResponse</span><span class="p">,</span>
-            <span class="p">],</span>
-            <span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="p">]</span>
+        <span class="n">postprocess_func</span><span class="p">:</span> <span class="p">(</span>
+            <span class="n">Callable</span><span class="p">[</span>
+                <span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResponse</span><span class="p">],</span>
+                <span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="p">]</span>
+            <span class="o">|</span> <span class="n">Callable</span><span class="p">[</span>
+                <span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResponse</span><span class="p">],</span>
+                <span class="n">Awaitable</span><span class="p">[</span><span class="n">ToolResponse</span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
         <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Register tool functions from an MCP client.</span>
@@ -995,14 +1008,15 @@
 <span class="sd">            defaults to `None`):</span>
 <span class="sd">                The preset keyword arguments mapping, whose keys are the tool</span>
 <span class="sd">                function names and values are the preset keyword arguments.</span>
-<span class="sd">            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \</span>
-<span class="sd">            ToolResponse | None] | None`, optional):</span>
+<span class="sd">            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \</span>
+<span class="sd">            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \</span>
+<span class="sd">            Awaitable[ToolResponse | None]]) | None`, optional):</span>
 <span class="sd">                A post-processing function that will be called after the tool</span>
 <span class="sd">                function is executed, taking the tool call block and tool</span>
-<span class="sd">                response as arguments. If it returns `None`, the tool</span>
-<span class="sd">                result will be returned as is. If it returns a</span>
-<span class="sd">                `ToolResponse`, the returned block will be used as the</span>
-<span class="sd">                final tool result.</span>
+<span class="sd">                response as arguments. The function can be either sync or</span>
+<span class="sd">                async. If it returns `None`, the tool result will be</span>
+<span class="sd">                returned as is. If it returns a `ToolResponse`,</span>
+<span class="sd">                the returned block will be used as the final tool result.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="p">(</span>
             <span class="nb">isinstance</span><span class="p">(</span><span class="n">mcp_client</span><span class="p">,</span> <span class="n">StatefulClientBase</span><span class="p">)</span>

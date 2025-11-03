@@ -455,12 +455,12 @@ the long description will be included.</p></li>
 in the function schema.</p></li>
 <li><p><strong>include_var_keyword</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to include the variable keyword arguments (<cite>**kwargs</cite>)
 in the function schema.</p></li>
-<li><p><strong>postprocess_func</strong> (<cite>Callable[[ToolUseBlock, ToolResponse],             ToolResponse | None] | None</cite>, optional) -- A post-processing function that will be called after the tool
+<li><p><strong>postprocess_func</strong> (<cite>(Callable[[ToolUseBlock, ToolResponse],             ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse],             Awaitable[ToolResponse | None]]) | None</cite>, optional) -- A post-processing function that will be called after the tool
 function is executed, taking the tool call block and tool
-response as arguments. If it returns <cite>None</cite>, the tool
-result will be returned as is. If it returns a
-<cite>ToolResponse</cite>, the returned block will be used as the
-final tool result.</p></li>
+response as arguments. The function can be either sync or
+async. If it returns <cite>None</cite>, the tool result will be
+returned as is. If it returns a <cite>ToolResponse</cite>,
+the returned block will be used as the final tool result.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -601,12 +601,12 @@ tool functions will be filtered out.</p></li>
 <li><p><strong>preset_kwargs_mapping</strong> (<em>dict</em><em>[</em><em>str</em><em>, </em><em>dict</em><em>[</em><em>str</em><em>, </em><em>Any</em><em>]</em><em>] </em><em>| </em><em>None</em>) -- (<cite>Optional[dict[str, dict[str, Any]]]</cite>,             defaults to <cite>None</cite>):
 The preset keyword arguments mapping, whose keys are the tool
 function names and values are the preset keyword arguments.</p></li>
-<li><p><strong>postprocess_func</strong> (<cite>Callable[[ToolUseBlock, ToolResponse],             ToolResponse | None] | None</cite>, optional) -- A post-processing function that will be called after the tool
+<li><p><strong>postprocess_func</strong> (<cite>(Callable[[ToolUseBlock, ToolResponse],             ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse],             Awaitable[ToolResponse | None]]) | None</cite>, optional) -- A post-processing function that will be called after the tool
 function is executed, taking the tool call block and tool
-response as arguments. If it returns <cite>None</cite>, the tool
-result will be returned as is. If it returns a
-<cite>ToolResponse</cite>, the returned block will be used as the
-final tool result.</p></li>
+response as arguments. The function can be either sync or
+async. If it returns <cite>None</cite>, the tool result will be
+returned as is. If it returns a <cite>ToolResponse</cite>,
+the returned block will be used as the final tool result.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>

@@ -418,11 +418,11 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: 好的，我将帮您创作一首诗。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: 好的，我将为您创作一首诗。
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: null
+    &quot;task_description&quot;: &quot;为用户写一首诗&quot;
 }
 </pre></div>
 </div>
@@ -521,48 +521,60 @@ to download the full example code.</p>
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_9e0e3ffbd932492abdaaf7&quot;
+    &quot;id&quot;: &quot;call_5ca0dcec41814520be4104&quot;
 }
-PythonAgent: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
+PythonAgent: 下面是一个使用 Python 编写的快速排序函数。这个实现选择了列表中的第一个元素作为基准（pivot），然后将列表分为两部分，一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分递归地应用同样的过程。
+
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x &lt; pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x &gt; pivot]
-    return quicksort(left) + middle + quicksort(right)
+    else:
+        pivot = arr[0]
+        less = [x for x in arr[1:] if x &lt; pivot]
+        greater_or_equal = [x for x in arr[1:] if x &gt;= pivot]
+        return quicksort(less) + [pivot] + quicksort(greater_or_equal)
+
+# 示例
+example_list = [3, 6, 8, 10, 1, 2, 1]
+sorted_list = quicksort(example_list)
+print(&#39;Sorted list:&#39;, sorted_list)
 ```
-你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
+
+你可以复制上面的代码并在你的 Python 环境中运行它来查看结果。如果你需要一个不同版本的快速排序算法，比如使用最后一个元素作为基准，或者采用随机选择的元素作为基准，请告诉我。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_9e0e3ffbd932492abdaaf7&quot;,
+    &quot;id&quot;: &quot;call_5ca0dcec41814520be4104&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x &lt; pivot]\n    middle = [x for x in arr if x == pivot]\n    right = [x for x in arr if x &gt; pivot]\n    return quicksort(left) + middle + quicksort(right)\n```\n你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！&quot;
+            &quot;text&quot;: &quot;下面是一个使用 Python 编写的快速排序函数。这个实现选择了列表中的第一个元素作为基准（pivot），然后将列表分为两部分，一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分递归地应用同样的过程。\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[0]\n        less = [x for x in arr[1:] if x &lt; pivot]\n        greater_or_equal = [x for x in arr[1:] if x &gt;= pivot]\n        return quicksort(less) + [pivot] + quicksort(greater_or_equal)\n\n# 示例\nexample_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(example_list)\nprint(&#39;Sorted list:&#39;, sorted_list)\n```\n\n你可以复制上面的代码并在你的 Python 环境中运行它来查看结果。如果你需要一个不同版本的快速排序算法，比如使用最后一个元素作为基准，或者采用随机选择的元素作为基准，请告诉我。&quot;
         }
     ]
 }
-Router: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
+Router: 下面是一个使用 Python 编写的快速排序函数。这个实现选择了列表中的第一个元素作为基准（pivot），然后将列表分为两部分，一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分递归地应用同样的过程。
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x &lt; pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x &gt; pivot]
-    return quicksort(left) + middle + quicksort(right)
+    else:
+        pivot = arr[0]
+        less = [x for x in arr[1:] if x &lt; pivot]
+        greater_or_equal = [x for x in arr[1:] if x &gt;= pivot]
+        return quicksort(less) + [pivot] + quicksort(greater_or_equal)
+
+# 示例
+example_list = [3, 6, 8, 10, 1, 2, 1]
+sorted_list = quicksort(example_list)
+print(&#39;Sorted list:&#39;, sorted_list)
 ```
 
-你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
+你可以复制上面的代码并在你的 Python 环境中运行它来查看结果。如果你需要一个不同版本的快速排序算法，比如使用最后一个元素作为基准，或者采用随机选择的元素作为基准，请告诉我。
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 19.751 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 27.270 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
