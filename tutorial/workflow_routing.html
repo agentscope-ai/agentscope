@@ -418,11 +418,11 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Sure, I can help you with that. Could you please tell me more about the theme or any specific elements you&#39;d like to include in your poem?
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Sure, I can help with that. Could you please tell me more about what you&#39;d like the poem to be about? For example, do you have a specific theme, style, or mood in mind?
 The structured output:
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;Compose a poem based on user&#39;s preferences&quot;
+    &quot;task_description&quot;: &quot;Write a poem based on the user&#39;s preferences&quot;
 }
 </pre></div>
 </div>
@@ -519,11 +519,11 @@ The structured output:
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;input&quot;: {
-        &quot;demand&quot;: &quot;Generate a quick sort function.&quot;
+        &quot;demand&quot;: &quot;a quick sort function&quot;
     },
-    &quot;id&quot;: &quot;call_a7ee8fd5d247480bbe56e3&quot;
+    &quot;id&quot;: &quot;call_4aaa5b40ea334c08b0349e&quot;
 }
-PythonAgent: Here is a Python function that implements the quick sort algorithm:
+PythonAgent: Here is a Python implementation of the quick sort algorithm:
 
 ```python
 def quick_sort(arr):
@@ -537,23 +537,24 @@ def quick_sort(arr):
         return quick_sort(left) + middle + quick_sort(right)
 
 # Example usage:
-# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])
-# print(sorted_array)
+example_array = [3, 6, 8, 10, 1, 2, 1]
+sorted_array = quick_sort(example_array)
+print(&#39;Sorted Array:&#39;, sorted_array)
 ```
 
-You can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+You can use this function to sort an array or list. Just pass the list you want to sort as an argument to `quick_sort()`. The function will return a new list with the elements sorted in ascending order.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a7ee8fd5d247480bbe56e3&quot;,
+    &quot;id&quot;: &quot;call_4aaa5b40ea334c08b0349e&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Here is a Python function that implements the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\n# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])\n# print(sorted_array)\n```\n\nYou can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.&quot;
+            &quot;text&quot;: &quot;Here is a Python implementation of the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\nexample_array = [3, 6, 8, 10, 1, 2, 1]\nsorted_array = quick_sort(example_array)\nprint(&#39;Sorted Array:&#39;, sorted_array)\n```\n\nYou can use this function to sort an array or list. Just pass the list you want to sort as an argument to `quick_sort()`. The function will return a new list with the elements sorted in ascending order.&quot;
         }
     ]
 }
-Router: Here is a Python function that implements the quick sort algorithm:
+Router: Here is a Python implementation of the quick sort algorithm:
 
 ```python
 def quick_sort(arr):
@@ -567,14 +568,15 @@ def quick_sort(arr):
         return quick_sort(left) + middle + quick_sort(right)
 
 # Example usage:
-# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])
-# print(sorted_array)
+example_array = [3, 6, 8, 10, 1, 2, 1]
+sorted_array = quick_sort(example_array)
+print(&#39;Sorted Array:&#39;, sorted_array)
 ```
 
-You can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+You can use this function to sort an array or list. Just pass the list you want to sort as an argument to `quick_sort()`. The function will return a new list with the elements sorted in ascending order.
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 22.030 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 20.465 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>

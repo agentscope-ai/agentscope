@@ -281,9 +281,8 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
  .. code-block:: none
 
     Alice: Hi there! I'm Alice, a student currently pursuing my studies. It's nice to meet you. Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. I'm also a student and I enjoy learning new things every day. It's great to meet you too! What subjects are you most interested in?
-    Charlie: Alice: I'm really into science, especially biology and chemistry. There's something about the way life works at a molecular level that just fascinates me. How about you, Bob? What subjects pique your interest?
-    Charlie: That's really cool, Alice! I'm more on the tech side; computer science and mathematics are my main interests. It's amazing how we can use code to solve complex problems. Do you have any specific projects or experiments you're working on?
+    Bob: Hi Alice, I'm Bob. I'm also a student and it's great to meet you as well. What are you studying?
+    Charlie: Alice: I'm majoring in Environmental Science. It's a field that I'm really passionate about, especially with all the challenges our planet is facing. What about you, Bob? What's your major?
 
 
 
@@ -321,8 +320,8 @@ Now we print the memory of Alice to check if her memory is updated correctly.
     Alice: None
     system: None
     Alice: Hi there! I'm Alice, a student currently pursuing my studies. It's nice to meet you. Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. I'm also a student and I enjoy learning new things every day. It's great to meet you too! What subjects are you most interested in?
-    Charlie: That's really cool, Alice! I'm more on the tech side; computer science and mathematics are my main interests. It's amazing how we can use code to solve complex problems. Do you have any specific projects or experiments you're working on?
+    Bob: Hi Alice, I'm Bob. I'm also a student and it's great to meet you as well. What are you studying?
+    Charlie: Alice: I'm majoring in Environmental Science. It's a field that I'm really passionate about, especially with all the challenges our planet is facing. What about you, Bob? What's your major?
 
 
 
@@ -339,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.839 seconds)
+   **Total running time of the script:** (0 minutes 8.955 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
