@@ -185,9 +185,9 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: Staying in homestays can indeed provide a more local and personalized experience when traveling. Hangzhou, known for its beautiful West Lake and rich cultural heritage, has a plethora of options for travelers looking to immerse themselves in the local culture. Homestays often offer a unique insight into the lifestyle and traditions of the area, as well as personalized services that can enhance your trip.
+    Friday: Staying in homestays can indeed provide a more local and personalized experience when traveling. Hangzhou, known for its beautiful West Lake and rich cultural heritage, has a variety of charming homestays where you can immerse yourself in the local culture and lifestyle.
 
-    Would you like some recommendations on popular areas to stay or tips on what to look for in a homestay in Hangzhou?
+    Would you like some recommendations on popular areas to find homestays or tips on what to look for when choosing a homestay in Hangzhou?
 
 
 
@@ -525,7 +525,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 35.772 seconds)
+   **Total running time of the script:** (0 minutes 27.621 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

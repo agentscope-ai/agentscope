@@ -418,11 +418,11 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Sure, I can help with that. Could you please give me a theme or some keywords you&#39;d like the poem to be about?
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Sure, I can help you with that. Could you please tell me more about the theme or any specific elements you&#39;d like to include in your poem?
 The structured output:
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;Compose a poem based on the user&#39;s provided theme or keywords.&quot;
+    &quot;task_description&quot;: &quot;Compose a poem based on user&#39;s preferences&quot;
 }
 </pre></div>
 </div>
@@ -519,11 +519,11 @@ The structured output:
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;input&quot;: {
-        &quot;demand&quot;: &quot;a quick sort function&quot;
+        &quot;demand&quot;: &quot;Generate a quick sort function.&quot;
     },
-    &quot;id&quot;: &quot;call_9625beb909724f3483e68c&quot;
+    &quot;id&quot;: &quot;call_a7ee8fd5d247480bbe56e3&quot;
 }
-PythonAgent: Here is a Python implementation of the quick sort algorithm. This function takes a list and sorts it in place using the quick sort method.
+PythonAgent: Here is a Python function that implements the quick sort algorithm:
 
 ```python
 def quick_sort(arr):
@@ -535,29 +535,25 @@ def quick_sort(arr):
         middle = [x for x in arr if x == pivot]
         right = [x for x in arr if x &gt; pivot]
         return quick_sort(left) + middle + quick_sort(right)
+
+# Example usage:
+# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])
+# print(sorted_array)
 ```
 
-You can use this `quick_sort` function to sort a list of numbers. For example:
-
-```python
-numbers = [3, 6, 8, 10, 1, 2, 1]
-sorted_numbers = quick_sort(numbers)
-print(sorted_numbers)  # Output will be [1, 1, 2, 3, 6, 8, 10]
-```
-
-Please let me know if you need an in-place version of quicksort or any other modifications.
+You can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_9625beb909724f3483e68c&quot;,
+    &quot;id&quot;: &quot;call_a7ee8fd5d247480bbe56e3&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Here is a Python implementation of the quick sort algorithm. This function takes a list and sorts it in place using the quick sort method.\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n```\n\nYou can use this `quick_sort` function to sort a list of numbers. For example:\n\n```python\nnumbers = [3, 6, 8, 10, 1, 2, 1]\nsorted_numbers = quick_sort(numbers)\nprint(sorted_numbers)  # Output will be [1, 1, 2, 3, 6, 8, 10]\n```\n\nPlease let me know if you need an in-place version of quicksort or any other modifications.&quot;
+            &quot;text&quot;: &quot;Here is a Python function that implements the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\n# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])\n# print(sorted_array)\n```\n\nYou can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.&quot;
         }
     ]
 }
-Router: Here is a Python implementation of the quick sort algorithm. This function takes a list and sorts it in place using the quick sort method.
+Router: Here is a Python function that implements the quick sort algorithm:
 
 ```python
 def quick_sort(arr):
@@ -569,20 +565,16 @@ def quick_sort(arr):
         middle = [x for x in arr if x == pivot]
         right = [x for x in arr if x &gt; pivot]
         return quick_sort(left) + middle + quick_sort(right)
+
+# Example usage:
+# sorted_array = quick_sort([3, 6, 8, 10, 1, 2, 1])
+# print(sorted_array)
 ```
 
-You can use this `quick_sort` function to sort a list of numbers. For example:
-
-```python
-numbers = [3, 6, 8, 10, 1, 2, 1]
-sorted_numbers = quick_sort(numbers)
-print(sorted_numbers)  # Output will be [1, 1, 2, 3, 6, 8, 10]
-```
-
-Please let me know if you need an in-place version of quicksort or any other modifications.
+You can use this `quick_sort` function to sort an array of numbers. The function works by selecting a &#39;pivot&#39; element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 32.809 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 22.030 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
