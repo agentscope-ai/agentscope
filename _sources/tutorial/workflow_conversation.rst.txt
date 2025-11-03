@@ -281,8 +281,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
  .. code-block:: none
 
     Alice: Hi there, I'm Alice. It's nice to meet you! Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. It's great to meet you too! I'm a student with a keen interest in technology and programming. What about you?
-    Charlie: Alice: That's interesting, Bob! I'm actually working in the tech industry as a product manager. It's always great to meet someone who is passionate about tech. How do you like your studies so far?
+    Bob: Hi Alice, I'm Bob. It's great to meet you too! I'm a student currently studying computer science. What about you?
+    Charlie: Alice: I'm actually a professional in the field of data analysis. It's quite an interesting area, and I'm always learning new things. How do you like your studies in computer science, Bob?
+    Charlie: I'm really enjoying my studies, Alice. There's so much to learn, especially with how fast technology is advancing. It can be challenging at times, but it's very rewarding. Do you use any programming in your data analysis work?
 
 
 
@@ -320,8 +321,8 @@ Now we print the memory of Alice to check if her memory is updated correctly.
     Alice: None
     system: None
     Alice: Hi there, I'm Alice. It's nice to meet you! Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. It's great to meet you too! I'm a student with a keen interest in technology and programming. What about you?
-    Charlie: Alice: That's interesting, Bob! I'm actually working in the tech industry as a product manager. It's always great to meet someone who is passionate about tech. How do you like your studies so far?
+    Bob: Hi Alice, I'm Bob. It's great to meet you too! I'm a student currently studying computer science. What about you?
+    Charlie: I'm really enjoying my studies, Alice. There's so much to learn, especially with how fast technology is advancing. It can be challenging at times, but it's very rewarding. Do you use any programming in your data analysis work?
 
 
 
@@ -338,7 +339,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.148 seconds)
+   **Total running time of the script:** (0 minutes 15.167 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
