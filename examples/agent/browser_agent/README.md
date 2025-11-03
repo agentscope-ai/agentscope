@@ -44,6 +44,6 @@ npx @playwright/mcp@latest
 ### Basic Example
 You can start running the browser agent in your terminal with the following command
 ```bash
-cd examples/agent_browser
+cd examples/agent/browser_agent
 python main.py
 ```
