@@ -422,7 +422,7 @@ to download the full example code.</p>
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: null
+    &quot;task_description&quot;: &quot;为用户写一首诗&quot;
 }
 </pre></div>
 </div>
@@ -521,23 +521,22 @@ to download the full example code.</p>
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_8254fd0793c742a5931e4a&quot;
+    &quot;id&quot;: &quot;call_c06a826594b040279562ce&quot;
 }
-PythonAgent: 以下是一个使用 Python 编写的快速排序算法的实现。这个函数采用递归的方式来对列表进行排序：
+PythonAgent: 以下是一个使用Python编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
     else:
-        # 选择基准值
-        pivot = arr[len(arr) // 2]
-        # 分别存储小于、等于和大于基准值的元素
-        left = [x for x in arr if x &lt; pivot]
-        middle = [x for x in arr if x == pivot]
-        right = [x for x in arr if x &gt; pivot]
-        # 递归地对左右子数组进行快速排序，然后合并结果
-        return quicksort(left) + middle + quicksort(right)
+        # 选取基准值
+        pivot = arr.pop()
+        # 分区
+        less = [x for x in arr if x &lt;= pivot]
+        greater = [x for x in arr if x &gt; pivot]
+        # 递归排序和合并结果
+        return quicksort(less) + [pivot] + quicksort(greater)
 
 # 示例
 example_list = [3, 6, 8, 10, 1, 2, 1]
@@ -545,37 +544,32 @@ sorted_list = quicksort(example_list)
 print(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]
 ```
 
-这段代码首先检查输入数组`arr`的长度，如果长度小于或等于1，则直接返回数组（因为单个元素或空数组已经是有序的）。接着选取一个基准值，这里选择了数组中间位置的元素作为基准值。然后创建了三个列表：`left`用于存放所有小于基准值的元素，`middle`用于存放所有等于基准值的元素，`right`则存放所有大于基准值的元素。
-
-最后，函数通过递归调用自身来排序`left`和`right`两个列表，并将结果与`middle`合并，得到最终的排序数组。
-
-你可以将这段代码复制到你的Python环境中运行并测试它。如果你有任何问题或者需要进一步的帮助，请告诉我！
+这段代码定义了一个`quicksort`函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_8254fd0793c742a5931e4a&quot;,
+    &quot;id&quot;: &quot;call_c06a826594b040279562ce&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;以下是一个使用 Python 编写的快速排序算法的实现。这个函数采用递归的方式来对列表进行排序：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        # 选择基准值\n        pivot = arr[len(arr) // 2]\n        # 分别存储小于、等于和大于基准值的元素\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        # 递归地对左右子数组进行快速排序，然后合并结果\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例\nexample_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(example_list)\nprint(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]\n```\n\n这段代码首先检查输入数组`arr`的长度，如果长度小于或等于1，则直接返回数组（因为单个元素或空数组已经是有序的）。接着选取一个基准值，这里选择了数组中间位置的元素作为基准值。然后创建了三个列表：`left`用于存放所有小于基准值的元素，`middle`用于存放所有等于基准值的元素，`right`则存放所有大于基准值的元素。\n\n最后，函数通过递归调用自身来排序`left`和`right`两个列表，并将结果与`middle`合并，得到最终的排序数组。\n\n你可以将这段代码复制到你的Python环境中运行并测试它。如果你有任何问题或者需要进一步的帮助，请告诉我！&quot;
+            &quot;text&quot;: &quot;以下是一个使用Python编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        # 选取基准值\n        pivot = arr.pop()\n        # 分区\n        less = [x for x in arr if x &lt;= pivot]\n        greater = [x for x in arr if x &gt; pivot]\n        # 递归排序和合并结果\n        return quicksort(less) + [pivot] + quicksort(greater)\n\n# 示例\nexample_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(example_list)\nprint(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]\n```\n\n这段代码定义了一个`quicksort`函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！&quot;
         }
     ]
 }
-Router: 以下是一个使用 Python 编写的快速排序算法的实现。这个函数采用递归的方式来对列表进行排序：
+Router: 以下是一个使用 Python 编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
     else:
-        # 选择基准值
-        pivot = arr[len(arr) // 2]
-        # 分别存储小于、等于和大于基准值的元素
-        left = [x for x in arr if x &lt; pivot]
-        middle = [x for x in arr if x == pivot]
-        right = [x for x in arr if x &gt; pivot]
-        # 递归地对左右子数组进行快速排序，然后合并结果
-        return quicksort(left) + middle + quicksort(right)
+        # 选取基准值
+        pivot = arr.pop()
+        # 分区
+        less = [x for x in arr if x &lt;= pivot]
+        greater = [x for x in arr if x &gt; pivot]
+        # 递归排序和合并结果
+        return quicksort(less) + [pivot] + quicksort(greater)
 
 # 示例
 example_list = [3, 6, 8, 10, 1, 2, 1]
@@ -583,14 +577,10 @@ sorted_list = quicksort(example_list)
 print(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]
 ```
 
-这段代码首先检查输入数组 `arr` 的长度，如果长度小于或等于 1，则直接返回数组（因为单个元素或空数组已经是有序的）。接着选取一个基准值，这里选择了数组中间位置的元素作为基准值。然后创建了三个列表：`left` 用于存放所有小于基准值的元素，`middle` 用于存放所有等于基准值的元素，`right` 则存放所有大于基准值的元素。
-
-最后，函数通过递归调用自身来排序 `left` 和 `right` 两个列表，并将结果与 `middle` 合并，得到最终的排序数组。
-
-你可以将这段代码复制到你的 Python 环境中运行并测试它。如果你有任何问题或者需要进一步的帮助，请告诉我！
+这段代码定义了一个 `quicksort` 函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 30.589 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 24.612 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
