@@ -1,0 +1,515 @@
+:orphan:
+
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="关于 AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 什么是AgentScope？     AgentScope 是一个多智能体框架，旨在提供一种简单高效的方式来构建基于大语言模型的智能体应用程序。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_faq.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">常见问题</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 实现了基于 OpenTelemetry 的追踪来监控和调试 智能体应用程序的执行，具有以下特性">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tracing_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_tracing.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">追踪</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="本章从工程实践的角度介绍 AgentScope 中的核心概念，从而阐明 AgentScope 的设计理念。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_key_concept_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_quickstart_key_concept.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">核心概念</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在 AgentScope 中，记忆（memory）用于存储智能体的上下文，并在需要时检索它。 具体而言，AgentScope 在 agentscope.memory 模块下提供了记忆基类 MemoryBase 和一个可直接使用的基于内存实现 InMemoryMemory。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_memory.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">记忆</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope Studio 是一个本地部署的 Web 应用程序，它">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_studio_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_studio.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">AgentScope Studio</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 需要 Python 3.10 或更高版本。您可以从源代码或 PyPI 安装。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_installation_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_quickstart_installation.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">安装</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 在 agentscope.token 模块下提供了 token 计数功能，用于计算给定消息中 的 token 数量，允许开发者在调用 LLM API 前预估 token 数量。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_token_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_token.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Token 计数</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="下面展示了一个简单的示例，其中创建了两个智能体并并发执行。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_concurrent_agents_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_workflow_concurrent_agents.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Concurrent Agents</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="钩子（Hook）是 AgentScope 中的扩展点，允许开发者在特定位置自定义智能体行为，提供了一种灵活的方式来修改或扩展智能体的功能，而无需更改其核心实现。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_hook_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_hook.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">智能体钩子函数</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方式来完成目标任务。 在 AgentScope 中通过工具调用的方式实现 handoffs 非常简单。首先，我们创建一个函数来允许协调者动态创建子智能体。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_handoffs_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_workflow_handoffs.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Handoffs</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="对于多智能体编排，AgentScope 提供了 agentscope.pipeline 模块 作为将智能体链接在一起的语法糖，具体包括">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_pipeline_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_pipeline.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">管道 (Pipeline)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 为长期记忆提供了一个基类 LongTermMemoryBase 和一个基于 mem0 的具体实现 Mem0LongTermMemory。 结合 agent 章节中 ReActAgent 类的设计，我们提供了两种长期记忆模式：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_long_term_memory_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_long_term_memory.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">长期记忆</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中，嵌入模块提供了用于向量生成的统一接口，具有以下特性：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_embedding_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_embedding.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">嵌入(Embedding)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="本章将介绍 AgentScope 对 MCP（Model Context Protocol）的以下支持：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_mcp_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_mcp.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">MCP</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="消息是 AgentScope 中的核心概念，用于支持多模态数据、工具 API、信息存储/交换和提示构建。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_message_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_quickstart_message.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">创建消息</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在章我们首先重点介绍 AgentScope 中的 ReAct 智能体，然后简要介绍如何从零开始自定义智能体。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">智能体</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Conversation 是一种智能体间交换和共享信息的设计模式，常见于游戏、聊天机器人和多智能体讨论场景。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_conversation_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_workflow_conversation.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Conversation</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Multi-Agent debate 模拟不同智能体之间的多轮讨论场景，通常包括几个 solver 和一个 aggregator。 典型情况下，solver 生成并交换他们的答案，而 aggregator 收集并总结答案。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_multiagent_debate_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Multi-Agent Debate</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在本教程中，我们介绍 AgentScope 中集成的模型 API、如何使用它们，以及如何集成新的模型 API。 AgentScope 目前支持的模型 API 和模型提供商包括：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_model_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_model.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">模型</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 在 agentscope.agent 模块下提供了开箱即用的 ReAct 智能体 ReActAgent 供开发者使用。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_quickstart_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">创建 ReAct 智能体</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中的计划（Plan）模块使智能体能够正式地将复杂任务分解为可管理的子任务并系统地执行它们。主要功能包括：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_plan_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_plan.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">计划</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在 AgentScope 中，&quot;状态&quot; 是指智能体在运行中某一时刻的数据快照，包括其当前的系统提示、记忆、上下文、装备的工具以及其他 随时间变化 的信息。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_state_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_state.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">状态/会话管理</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="- 使用结构化输出的显式 routing - 使用工具调用的隐式 routing">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_routing_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_workflow_routing.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Routing</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中的格式化器（formatter）模块负责">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_prompt_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_prompt.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">提示词格式化</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 提供了一个内置的评测框架，用于评测智能体在不同任务和基准测试中的性能，主要特性包括：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_eval_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_eval.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">智能体评测</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 提供了内置的 RAG（Retrieval-Augmented Generation) 实现。本节将详细介绍">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_rag_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_rag.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">RAG</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="为了确保准确可靠的工具解析，AgentScope 全面支持工具 API 的使用，具有以下特性：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tool_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_tool.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">工具</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /tutorial/faq
+   /tutorial/task_tracing
+   /tutorial/quickstart_key_concept
+   /tutorial/task_memory
+   /tutorial/task_studio
+   /tutorial/quickstart_installation
+   /tutorial/task_token
+   /tutorial/workflow_concurrent_agents
+   /tutorial/task_hook
+   /tutorial/workflow_handoffs
+   /tutorial/task_pipeline
+   /tutorial/task_long_term_memory
+   /tutorial/task_embedding
+   /tutorial/task_mcp
+   /tutorial/quickstart_message
+   /tutorial/task_agent
+   /tutorial/workflow_conversation
+   /tutorial/workflow_multiagent_debate
+   /tutorial/task_model
+   /tutorial/quickstart_agent
+   /tutorial/task_plan
+   /tutorial/task_state
+   /tutorial/workflow_routing
+   /tutorial/task_prompt
+   /tutorial/task_eval
+   /tutorial/task_rag
+   /tutorial/task_tool
+
+
+
+.. only:: html
+
+ .. rst-class:: sphx-glr-signature
+
+    `Gallery generated by Sphinx-Gallery <https://sphinx-gallery.github.io>`_

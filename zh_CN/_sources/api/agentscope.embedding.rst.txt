@@ -1,0 +1,7 @@
+agentscope.embedding
+====================
+
+.. automodule:: agentscope.embedding
+   :members:
+   :undoc-members:
+   :show-inheritance:

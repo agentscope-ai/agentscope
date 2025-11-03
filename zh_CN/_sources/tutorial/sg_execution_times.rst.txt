@@ -1,0 +1,115 @@
+
+:orphan:
+
+.. _sphx_glr_tutorial_sg_execution_times:
+
+
+Computation times
+=================
+**03:57.416** total execution time for 27 files **from tutorial**:
+
+.. container::
+
+  .. raw:: html
+
+    <style scoped>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet" />
+    </style>
+    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script type="text/javascript" class="init">
+    $(document).ready( function () {
+        $('table.sg-datatable').DataTable({order: [[1, 'desc']]});
+    } );
+    </script>
+
+  .. list-table::
+   :header-rows: 1
+   :class: table table-striped sg-datatable
+
+   * - Example
+     - Time
+     - Mem (MB)
+   * - :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py` (``workflow_multiagent_debate.py``)
+     - 00:47.044
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_routing.py` (``workflow_routing.py``)
+     - 00:30.589
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_pipeline.py` (``task_pipeline.py``)
+     - 00:27.832
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_long_term_memory.py` (``task_long_term_memory.py``)
+     - 00:25.459
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_rag.py` (``task_rag.py``)
+     - 00:22.641
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_agent.py` (``task_agent.py``)
+     - 00:18.921
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_model.py` (``task_model.py``)
+     - 00:15.780
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_handoffs.py` (``workflow_handoffs.py``)
+     - 00:09.864
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_mcp.py` (``task_mcp.py``)
+     - 00:06.866
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_eval.py` (``task_eval.py``)
+     - 00:06.437
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_quickstart_agent.py` (``quickstart_agent.py``)
+     - 00:06.367
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_conversation.py` (``workflow_conversation.py``)
+     - 00:05.296
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_state.py` (``task_state.py``)
+     - 00:04.386
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_concurrent_agents.py` (``workflow_concurrent_agents.py``)
+     - 00:03.005
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_embedding.py` (``task_embedding.py``)
+     - 00:01.954
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_prompt.py` (``task_prompt.py``)
+     - 00:01.812
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_quickstart_installation.py` (``quickstart_installation.py``)
+     - 00:01.571
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_tool.py` (``task_tool.py``)
+     - 00:01.022
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_token.py` (``task_token.py``)
+     - 00:00.538
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_plan.py` (``task_plan.py``)
+     - 00:00.027
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_quickstart_message.py` (``quickstart_message.py``)
+     - 00:00.004
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_hook.py` (``task_hook.py``)
+     - 00:00.003
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_tracing.py` (``task_tracing.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_faq.py` (``faq.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_quickstart_key_concept.py` (``quickstart_key_concept.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_studio.py` (``task_studio.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_memory.py` (``task_memory.py``)
+     - 00:00.000
+     - 0.0

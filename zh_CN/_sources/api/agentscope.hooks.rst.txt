@@ -1,0 +1,7 @@
+agentscope.hooks
+================
+
+.. automodule:: agentscope.hooks
+   :members:
+   :undoc-members:
+   :show-inheritance:

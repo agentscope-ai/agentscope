@@ -1,0 +1,1053 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="agentscope.formatter" href="agentscope.formatter.html"><link rel="prev" title="agentscope.message" href="agentscope.message.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>agentscope.model - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=18ea14ae" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="搜索" name="q" aria-label="搜索">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_installation.html">安装</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_key_concept.html">核心概念</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_message.html">创建消息</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/quickstart_agent.html">创建 ReAct 智能体</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_conversation.html">Conversation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_multiagent_debate.html">Multi-Agent Debate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_concurrent_agents.html">Concurrent Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_routing.html">Routing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/workflow_handoffs.html">Handoffs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FAQ</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">常见问题</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_model.html">模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_prompt.html">提示词格式化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_memory.html">记忆</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_long_term_memory.html">长期记忆</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_plan.html">计划</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_rag.html">RAG</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">追踪</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token 计数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">agentscope.model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.formatter.html">agentscope.formatter</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.module.html">agentscope.module</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.pipeline.html">agentscope.pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.agent.html">agentscope.agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tool.html">agentscope.tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.mcp.html">agentscope.mcp</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.embedding.html">agentscope.embedding</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.evaluate.html">agentscope.evaluate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.plan.html">agentscope.plan</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.token.html">agentscope.token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tracing.html">agentscope.tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.session.html">agentscope.session</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV1Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/api/agentscope.model.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="module-agentscope.model">
+<span id="agentscope-model"></span><h1>agentscope.model<a class="headerlink" href="#module-agentscope.model" title="Link to this heading">¶</a></h1>
+<p>The model module.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.ChatModelBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ChatModelBase</span></span><a class="reference internal" href="../_modules/agentscope/model/_model_base.html#ChatModelBase"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.ChatModelBase" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Base class for chat models.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.ChatModelBase.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_model_base.html#ChatModelBase.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.ChatModelBase.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the chat model base class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>) -- The name of the model</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>) -- Whether the model output is streaming or not</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatModelBase.model_name">
+<span class="sig-name descname"><span class="pre">model_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.model.ChatModelBase.model_name" title="Link to this definition">¶</a></dt>
+<dd><p>The model name</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatModelBase.stream">
+<span class="sig-name descname"><span class="pre">stream</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><a class="headerlink" href="#agentscope.model.ChatModelBase.stream" title="Link to this definition">¶</a></dt>
+<dd><p>Is the model output streaming or not</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.ChatModelBase.__call__">
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_model_base.html#ChatModelBase.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.ChatModelBase.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Call self as a function.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a> | <em>AsyncGenerator</em>[<a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a>, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ChatResponse</span></span><a class="reference internal" href="../_modules/agentscope/model/_model_response.html#ChatResponse"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.ChatResponse" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">DictMixin</span></code></p>
+<p>The response of chat models.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.content">
+<span class="sig-name descname"><span class="pre">content</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.html#agentscope.message.TextBlock" title="agentscope.message._message_block.TextBlock"><span class="pre">TextBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.html#agentscope.message.ToolUseBlock" title="agentscope.message._message_block.ToolUseBlock"><span class="pre">ToolUseBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.html#agentscope.message.ThinkingBlock" title="agentscope.message._message_block.ThinkingBlock"><span class="pre">ThinkingBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.html#agentscope.message.AudioBlock" title="agentscope.message._message_block.AudioBlock"><span class="pre">AudioBlock</span></a><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#agentscope.model.ChatResponse.content" title="Link to this definition">¶</a></dt>
+<dd><p>The content of the chat response, which can include text blocks,
+tool use blocks, or thinking blocks.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.id">
+<span class="sig-name descname"><span class="pre">id</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.model.ChatResponse.id" title="Link to this definition">¶</a></dt>
+<dd><p>The unique identifier formatter</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.created_at">
+<span class="sig-name descname"><span class="pre">created_at</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.model.ChatResponse.created_at" title="Link to this definition">¶</a></dt>
+<dd><p>When the response was created</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">id=&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">created_at=&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">type=&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">usage=&lt;factory&gt;</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">metadata=&lt;factory&gt;</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#agentscope.model.ChatResponse.__init__" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>content</strong> (<em>Sequence</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.TextBlock" title="agentscope.message._message_block.TextBlock"><em>TextBlock</em></a><em> | </em><a class="reference internal" href="agentscope.message.html#agentscope.message.ToolUseBlock" title="agentscope.message._message_block.ToolUseBlock"><em>ToolUseBlock</em></a><em> | </em><a class="reference internal" href="agentscope.message.html#agentscope.message.ThinkingBlock" title="agentscope.message._message_block.ThinkingBlock"><em>ThinkingBlock</em></a><em> | </em><a class="reference internal" href="agentscope.message.html#agentscope.message.AudioBlock" title="agentscope.message._message_block.AudioBlock"><em>AudioBlock</em></a><em>]</em>)</p></li>
+<li><p><strong>id</strong> (<em>str</em>)</p></li>
+<li><p><strong>created_at</strong> (<em>str</em>)</p></li>
+<li><p><strong>type</strong> (<em>Literal</em><em>[</em><em>'chat'</em><em>]</em>)</p></li>
+<li><p><strong>usage</strong> (<em>ChatUsage</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>metadata</strong> (<em>dict</em><em>[</em><em>str</em><em>, </em><em>str</em><em> | </em><em>int</em><em> | </em><em>float</em><em> | </em><em>bool</em><em> | </em><em>None</em><em> | </em><em>list</em><em>[</em><em>JSONSerializableObject</em><em>] </em><em>| </em><em>dict</em><em>[</em><em>str</em><em>, </em><em>JSONSerializableObject</em><em>]</em><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.type">
+<span class="sig-name descname"><span class="pre">type</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'chat'</span></span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#agentscope.model.ChatResponse.type" title="Link to this definition">¶</a></dt>
+<dd><p>The type of the response, which is always 'chat'.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.usage">
+<span class="sig-name descname"><span class="pre">usage</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ChatUsage</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.model.ChatResponse.usage" title="Link to this definition">¶</a></dt>
+<dd><p>The usage information of the chat response, if available.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.model.ChatResponse.metadata">
+<span class="sig-name descname"><span class="pre">metadata</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">float</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">bool</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">JSONSerializableObject</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">JSONSerializableObject</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.model.ChatResponse.metadata" title="Link to this definition">¶</a></dt>
+<dd><p>The metadata of the chat response</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.DashScopeChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DashScopeChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_dashscope_model.html#DashScopeChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.DashScopeChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a></p>
+<p>The DashScope chat model class, which unifies the Generation and
+MultimodalConversation APIs into one method.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.DashScopeChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_thinking</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generate_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">base_http_api_url</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_dashscope_model.html#DashScopeChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.DashScopeChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the DashScope chat model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>) -- The model names.</p></li>
+<li><p><strong>api_key</strong> (<cite>str</cite>) -- The dashscope API key.</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>) -- The streaming output or not</p></li>
+<li><p><strong>enable_thinking</strong> (<cite>bool | None</cite>, optional) -- Enable thinking or not, only support Qwen3, QwQ, DeepSeek-R1.
+Refer to <a class="reference external" href="https://help.aliyun.com/zh/model-studio/deep-thinking">DashScope documentation</a>
+for more details.</p></li>
+<li><p><strong>generate_kwargs</strong> (<cite>dict[str, JSONSerializableObject] | None</cite>,             optional) -- The extra keyword arguments used in DashScope API generation,
+e.g. <cite>temperature</cite>, <cite>seed</cite>.</p></li>
+<li><p><strong>base_http_api_url</strong> (<cite>str | None</cite>, optional) -- The base URL for DashScope API requests. If not provided,
+the default base URL from the DashScope SDK will be used.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.DashScopeChatModel.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_choice</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_dashscope_model.html#DashScopeChatModel.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.DashScopeChatModel.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Get the response from the dashscope
+Generation/MultimodalConversation API by the given arguments.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>We unify the dashscope generation and multimodal conversation
+APIs into one method, since they support similar arguments and share
+the same functionality.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict[str, Any]]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
+required.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict] | None</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str              |  None</cite>,  default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, or specific tool name.
+For more details, please refer to
+<a class="reference external" href="https://help.aliyun.com/zh/model-studio/qwen-function-calling">https://help.aliyun.com/zh/model-studio/qwen-function-calling</a></p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- <p>A Pydantic BaseModel class that defines the expected structure
+for the model's output. When provided, the model will be forced
+to return data that conforms to this schema by automatically
+converting the BaseModel to a tool function and setting
+<cite>tool_choice</cite> to enforce its usage. This enables structured
+output generation.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>When <cite>structured_model</cite> is specified,
+both <cite>tools</cite> and <cite>tool_choice</cite> parameters are ignored,
+and the model will only perform structured output
+generation without calling any other tools.</p>
+</div>
+</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- <p>The keyword arguments for DashScope chat completions API,
+e.g. <cite>temperature</cite>, <cite>max_tokens</cite>, <cite>top_p</cite>, etc. Please
+refer to <a class="reference external" href="https://help.aliyun.com/zh/dashscope/developer-reference/api-details">DashScope documentation</a>
+for more detailed arguments.</p>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a> | <em>AsyncGenerator</em>[<a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a>, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.OpenAIChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OpenAIChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_openai_model.html#OpenAIChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OpenAIChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a></p>
+<p>The OpenAI chat model class.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.OpenAIChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reasoning_effort</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">organization</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generate_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_openai_model.html#OpenAIChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OpenAIChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the openai client.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>, default <cite>None</cite>) -- The name of the model to use in OpenAI API.</p></li>
+<li><p><strong>api_key</strong> (<cite>str</cite>, default <cite>None</cite>) -- The API key for OpenAI API. If not specified, it will
+be read from the environment variable <cite>OPENAI_API_KEY</cite>.</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>, default <cite>True</cite>) -- Whether to use streaming output or not.</p></li>
+<li><p><strong>reasoning_effort</strong> (<cite>Literal[&quot;low&quot;, &quot;medium&quot;, &quot;high&quot;] | None</cite>,             optional) -- Reasoning effort, supported for o3, o4, etc. Please refer to
+<a class="reference external" href="https://platform.openai.com/docs/guides/reasoning?api-mode=chat">OpenAI documentation</a>
+for more details.</p></li>
+<li><p><strong>organization</strong> (<cite>str</cite>, default <cite>None</cite>) -- The organization ID for OpenAI API. If not specified, it will
+be read from the environment variable <cite>OPENAI_ORGANIZATION</cite>.</p></li>
+<li><p><strong>client_args</strong> (<cite>dict</cite>, default <cite>None</cite>) -- The extra keyword arguments to initialize the OpenAI client.</p></li>
+<li><p><strong>generate_kwargs</strong> (<cite>dict[str, JSONSerializableObject] | None</cite>,              optional) -- <dl class="simple">
+<dt>The extra keyword arguments used in OpenAI API generation,</dt><dd><p>e.g. <cite>temperature</cite>, <cite>seed</cite>.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.OpenAIChatModel.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_choice</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_openai_model.html#OpenAIChatModel.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OpenAIChatModel.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Get the response from OpenAI chat completions API by the given
+arguments.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
+required, and <cite>name</cite> field is optional.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict]</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+name. For more details, please refer to
+<a class="reference external" href="https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice">https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice</a></p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- <p>A Pydantic BaseModel class that defines the expected structure
+for the model's output. When provided, the model will be forced
+to return data that conforms to this schema by automatically
+converting the BaseModel to a tool function and setting
+<cite>tool_choice</cite> to enforce its usage. This enables structured
+output generation.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>When <cite>structured_model</cite> is specified,
+both <cite>tools</cite> and <cite>tool_choice</cite> parameters are ignored,
+and the model will only perform structured output
+generation without calling any other tools.</p>
+</div>
+<p>For more details, please refer to the <a class="reference external" href="https://platform.openai.com/docs/guides/structured-outputs">official document</a></p>
+</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- The keyword arguments for OpenAI chat completions API,
+e.g. <cite>temperature</cite>, <cite>max_tokens</cite>, <cite>top_p</cite>, etc. Please
+refer to the OpenAI API documentation for more details.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The response from the OpenAI chat completions API.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>ChatResponse | AsyncGenerator[ChatResponse, None]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.AnthropicChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AnthropicChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_anthropic_model.html#AnthropicChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.AnthropicChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a></p>
+<p>The Anthropic model wrapper for AgentScope.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.AnthropicChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2048</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">thinking</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generate_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_anthropic_model.html#AnthropicChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.AnthropicChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Anthropic chat model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>) -- The model names.</p></li>
+<li><p><strong>api_key</strong> (<cite>str</cite>) -- The anthropic API key.</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>) -- The streaming output or not</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int</cite>) -- Limit the maximum token count the model can generate.</p></li>
+<li><p><strong>thinking</strong> (<cite>dict | None</cite>, default <cite>None</cite>) -- <p>Configuration for Claude's internal reasoning process.</p>
+<div class="literal-block-wrapper docutils container" id="id4">
+<div class="code-block-caption"><span class="caption-text">Example of thinking</span><a class="headerlink" href="#id4" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;enabled&quot;</span> <span class="o">|</span> <span class="s2">&quot;disabled&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;budget_tokens&quot;</span><span class="p">:</span> <span class="mi">1024</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+</p></li>
+<li><p><strong>client_args</strong> (<cite>dict | None</cite>, optional) -- The extra keyword arguments to initialize the Anthropic client.</p></li>
+<li><p><strong>generate_kwargs</strong> (<cite>dict[str, JSONSerializableObject] | None</cite>,              optional) -- The extra keyword arguments used in Gemini API generation,
+e.g. <cite>temperature</cite>, <cite>seed</cite>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.AnthropicChatModel.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_choice</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">generate_kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_anthropic_model.html#AnthropicChatModel.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.AnthropicChatModel.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Get the response from Anthropic chat completions API by the given
+arguments.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
+required, and <cite>name</cite> field is optional.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict]</cite>, default <cite>None</cite>) -- <p>The tools JSON schemas that in format of:</p>
+<div class="literal-block-wrapper docutils container" id="id5">
+<div class="code-block-caption"><span class="caption-text">Example of tools JSON schemas</span><a class="headerlink" href="#id5" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="p">[</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;function&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;xxx&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;xxx&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;param1&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span>
+                    <span class="p">},</span>
+                    <span class="c1"># Add more parameters as needed</span>
+                <span class="p">},</span>
+                <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;param1&quot;</span><span class="p">]</span>
+        <span class="p">}</span>
+    <span class="p">},</span>
+    <span class="c1"># More schemas here</span>
+<span class="p">]</span>
+</pre></div>
+</div>
+</div>
+</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+name. For more details, please refer to
+<a class="reference external" href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use">https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use</a></p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- <p>A Pydantic BaseModel class that defines the expected structure
+for the model's output. When provided, the model will be forced
+to return data that conforms to this schema by automatically
+converting the BaseModel to a tool function and setting
+<cite>tool_choice</cite> to enforce its usage. This enables structured
+output generation.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>When <cite>structured_model</cite> is specified,
+both <cite>tools</cite> and <cite>tool_choice</cite> parameters are ignored,
+and the model will only perform structured output
+generation without calling any other tools.</p>
+</div>
+</p></li>
+<li><p><strong>**generate_kwargs</strong> (<cite>Any</cite>) -- The keyword arguments for Anthropic chat completions API,
+e.g. <cite>temperature</cite>, <cite>top_p</cite>, etc. Please
+refer to the Anthropic API documentation for more details.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The response from the Anthropic chat completions API.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>ChatResponse | AsyncGenerator[ChatResponse, None]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.OllamaChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OllamaChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_ollama_model.html#OllamaChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OllamaChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a></p>
+<p>The Ollama chat model class in agentscope.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.OllamaChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">options</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">keep_alive</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'5m'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_thinking</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_ollama_model.html#OllamaChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OllamaChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Ollama chat model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>) -- The name of the model.</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>, default <cite>True</cite>) -- Streaming mode or not.</p></li>
+<li><p><strong>options</strong> (<cite>dict</cite>, default <cite>None</cite>) -- Additional parameters to pass to the Ollama API. These can
+include temperature etc.</p></li>
+<li><p><strong>keep_alive</strong> (<cite>str</cite>, default <cite>&quot;5m&quot;</cite>) -- Duration to keep the model loaded in memory. The format is a
+number followed by a unit suffix (s for seconds, m for minutes
+, h for hours).</p></li>
+<li><p><strong>enable_thinking</strong> (<cite>bool | None</cite>, default <cite>None</cite>) -- Whether enable thinking or not, only for models such as qwen3,
+deepseek-r1, etc. For more details, please refer to
+<a class="reference external" href="https://ollama.com/search?c=thinking">https://ollama.com/search?c=thinking</a></p></li>
+<li><p><strong>host</strong> (<cite>str | None</cite>, default <cite>None</cite>) -- The host address of the Ollama server. If None, uses the
+default address (typically <a class="reference external" href="http://localhost:11434">http://localhost:11434</a>).</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- Additional keyword arguments to pass to the base chat model
+class.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.OllamaChatModel.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_choice</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_ollama_model.html#OllamaChatModel.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.OllamaChatModel.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Get the response from Ollama chat completions API by the given
+arguments.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
+required, and <cite>name</cite> field is optional.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict]</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str                 | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+name.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- A Pydantic BaseModel class that defines the expected structure
+for the model's output.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- The keyword arguments for Ollama chat completions API,
+e.g. <a href="#id2"><span class="problematic" id="id3">`</span></a>think`etc. Please refer to the Ollama API
+documentation for more details.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The response from the Ollama chat completions API.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>ChatResponse | AsyncGenerator[ChatResponse, None]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.GeminiChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">GeminiChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_gemini_model.html#GeminiChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.GeminiChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a></p>
+<p>The Google Gemini chat model class in agentscope.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.GeminiChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">thinking_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_args</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generate_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_gemini_model.html#GeminiChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.GeminiChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Gemini chat model.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>model_name</strong> (<cite>str</cite>) -- The name of the Gemini model to use, e.g. &quot;gemini-2.5-flash&quot;.</p></li>
+<li><p><strong>api_key</strong> (<cite>str</cite>) -- The API key for Google Gemini.</p></li>
+<li><p><strong>stream</strong> (<cite>bool</cite>, default <cite>True</cite>) -- Whether to use streaming output or not.</p></li>
+<li><p><strong>thinking_config</strong> (<cite>dict | None</cite>, optional) -- <p>Thinking config, supported models are 2.5 Pro, 2.5 Flash, etc.
+Refer to <a class="reference external" href="https://ai.google.dev/gemini-api/docs/thinking">https://ai.google.dev/gemini-api/docs/thinking</a> for
+more details.</p>
+<div class="literal-block-wrapper docutils container" id="id6">
+<div class="code-block-caption"><span class="caption-text">Example of thinking_config</span><a class="headerlink" href="#id6" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;include_thoughts&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="c1"># enable thoughts or not</span>
+    <span class="s2">&quot;thinking_budget&quot;</span><span class="p">:</span> <span class="mi">1024</span>   <span class="c1"># Max tokens for reasoning</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+</p></li>
+<li><p><strong>client_args</strong> (<cite>dict</cite>, default <cite>None</cite>) -- The extra keyword arguments to initialize the OpenAI client.</p></li>
+<li><p><strong>generate_kwargs</strong> (<cite>dict[str, JSONSerializableObject] | None</cite>,              optional) -- The extra keyword arguments used in Gemini API generation,
+e.g. <cite>temperature</cite>, <cite>seed</cite>.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.GeminiChatModel.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_choice</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">config_kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_gemini_model.html#GeminiChatModel.__call__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.GeminiChatModel.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Call the Gemini model with the provided arguments.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict[str, Any]]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
+required.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict] | None</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+name. For more details, please refer to
+<a class="reference external" href="https://ai.google.dev/gemini-api/docs/function-calling?hl=en&amp;example=meeting#function_calling_modes">https://ai.google.dev/gemini-api/docs/function-calling?hl=en&amp;example=meeting#function_calling_modes</a></p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- <p>A Pydantic BaseModel class that defines the expected structure
+for the model's output.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>When <cite>structured_model</cite> is specified,
+both <cite>tools</cite> and <cite>tool_choice</cite> parameters are ignored,
+and the model will only perform structured output
+generation without calling any other tools.</p>
+</div>
+<dl class="simple">
+<dt>For more details, please refer to</dt><dd><p><a class="reference external" href="https://ai.google.dev/gemini-api/docs/structured-output">https://ai.google.dev/gemini-api/docs/structured-output</a></p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>**config_kwargs</strong> (<cite>Any</cite>) -- The keyword arguments for Gemini chat completions API.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a> | <em>AsyncGenerator</em>[<a class="reference internal" href="#agentscope.model.ChatResponse" title="agentscope.model._model_response.ChatResponse"><em>ChatResponse</em></a>, None]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.model.TrinityChatModel">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">TrinityChatModel</span></span><a class="reference internal" href="../_modules/agentscope/model/_trinity_model.html#TrinityChatModel"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.TrinityChatModel" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.model.OpenAIChatModel" title="agentscope.model._openai_model.OpenAIChatModel"><code class="xref py py-class docutils literal notranslate"><span class="pre">OpenAIChatModel</span></code></a></p>
+<p>A model class for RL Training with Trinity-RFT.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.model.TrinityChatModel.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">openai_async_client</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">generate_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_thinking</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/model/_trinity_model.html#TrinityChatModel.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.model.TrinityChatModel.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Trinity model class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>openai_async_client</strong> (<cite>AsyncOpenAI</cite>) -- The OpenAI async client instance provided by Trinity-RFT.</p></li>
+<li><p><strong>generate_kwargs</strong> (<cite>dict[str, JSONSerializableObject] | None</cite>,             optional) -- Additional keyword arguments to pass to the model's generate
+method. Defaults to None.</p></li>
+<li><p><strong>enable_thinking</strong> (<cite>bool</cite>, optional) -- Whether to enable the model's thinking capability. Only
+applicable for Qwen3 series models. Defaults to None.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="agentscope.formatter.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">agentscope.formatter</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="agentscope.message.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">agentscope.message</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">agentscope.model</a><ul>
+<li><a class="reference internal" href="#agentscope.model.ChatModelBase"><code class="docutils literal notranslate"><span class="pre">ChatModelBase</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.ChatModelBase.__init__"><code class="docutils literal notranslate"><span class="pre">ChatModelBase.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatModelBase.model_name"><code class="docutils literal notranslate"><span class="pre">ChatModelBase.model_name</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatModelBase.stream"><code class="docutils literal notranslate"><span class="pre">ChatModelBase.stream</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatModelBase.__call__"><code class="docutils literal notranslate"><span class="pre">ChatModelBase.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse"><code class="docutils literal notranslate"><span class="pre">ChatResponse</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.content"><code class="docutils literal notranslate"><span class="pre">ChatResponse.content</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.id"><code class="docutils literal notranslate"><span class="pre">ChatResponse.id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.created_at"><code class="docutils literal notranslate"><span class="pre">ChatResponse.created_at</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.__init__"><code class="docutils literal notranslate"><span class="pre">ChatResponse.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.type"><code class="docutils literal notranslate"><span class="pre">ChatResponse.type</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.usage"><code class="docutils literal notranslate"><span class="pre">ChatResponse.usage</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.ChatResponse.metadata"><code class="docutils literal notranslate"><span class="pre">ChatResponse.metadata</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.DashScopeChatModel"><code class="docutils literal notranslate"><span class="pre">DashScopeChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.DashScopeChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">DashScopeChatModel.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.DashScopeChatModel.__call__"><code class="docutils literal notranslate"><span class="pre">DashScopeChatModel.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.OpenAIChatModel"><code class="docutils literal notranslate"><span class="pre">OpenAIChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.OpenAIChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">OpenAIChatModel.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.OpenAIChatModel.__call__"><code class="docutils literal notranslate"><span class="pre">OpenAIChatModel.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.AnthropicChatModel"><code class="docutils literal notranslate"><span class="pre">AnthropicChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.AnthropicChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">AnthropicChatModel.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.AnthropicChatModel.__call__"><code class="docutils literal notranslate"><span class="pre">AnthropicChatModel.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.OllamaChatModel"><code class="docutils literal notranslate"><span class="pre">OllamaChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.OllamaChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">OllamaChatModel.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.OllamaChatModel.__call__"><code class="docutils literal notranslate"><span class="pre">OllamaChatModel.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.GeminiChatModel"><code class="docutils literal notranslate"><span class="pre">GeminiChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.GeminiChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">GeminiChatModel.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.model.GeminiChatModel.__call__"><code class="docutils literal notranslate"><span class="pre">GeminiChatModel.__call__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.model.TrinityChatModel"><code class="docutils literal notranslate"><span class="pre">TrinityChatModel</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.model.TrinityChatModel.__init__"><code class="docutils literal notranslate"><span class="pre">TrinityChatModel.__init__()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=7d86a446"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/language_switch.js?v=92e4c85c"></script>
+    </body>
+</html>
