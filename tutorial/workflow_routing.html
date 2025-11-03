@@ -418,11 +418,11 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Sure, I can help you with that. Could you please tell me more about the theme or any specific elements you&#39;d like to include in your poem?
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: Of course, I can help with that. Could you please tell me a bit more about what you would like the poem to be about? For example, do you have a specific theme, mood, or style in mind?
 The structured output:
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;Assist in writing a poem based on user&#39;s preferences&quot;
+    &quot;task_description&quot;: &quot;Write a poem based on the user&#39;s preferences&quot;
 }
 </pre></div>
 </div>
@@ -521,7 +521,7 @@ The structured output:
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;a quick sort function&quot;
     },
-    &quot;id&quot;: &quot;call_86e34628217e47cf8734e5&quot;
+    &quot;id&quot;: &quot;call_decb7dc0fa24414e911e26&quot;
 }
 PythonAgent: Here is a Python implementation of the quick sort algorithm:
 
@@ -542,17 +542,17 @@ sorted_arr = quick_sort(arr)
 print(sorted_arr)
 ```
 
-This function uses a divide-and-conquer approach to sort an array. It selects a &#39;pivot&#39; element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+This function uses a list comprehension to create three lists: `left` for elements less than the pivot, `middle` for elements equal to the pivot, and `right` for elements greater than the pivot. It then recursively sorts the `left` and `right` lists and concatenates them with `middle` to return the sorted array.
 
-Would you like to see an example of how to use this function, or do you need an explanation of any part of the code?
+Would you like to see an alternative version or do you have any specific requirements for the quick sort function?
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_86e34628217e47cf8734e5&quot;,
+    &quot;id&quot;: &quot;call_decb7dc0fa24414e911e26&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Here is a Python implementation of the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(sorted_arr)\n```\n\nThis function uses a divide-and-conquer approach to sort an array. It selects a &#39;pivot&#39; element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.\n\nWould you like to see an example of how to use this function, or do you need an explanation of any part of the code?&quot;
+            &quot;text&quot;: &quot;Here is a Python implementation of the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(sorted_arr)\n```\n\nThis function uses a list comprehension to create three lists: `left` for elements less than the pivot, `middle` for elements equal to the pivot, and `right` for elements greater than the pivot. It then recursively sorts the `left` and `right` lists and concatenates them with `middle` to return the sorted array.\n\nWould you like to see an alternative version or do you have any specific requirements for the quick sort function?&quot;
         }
     ]
 }
@@ -575,12 +575,12 @@ sorted_arr = quick_sort(arr)
 print(sorted_arr)
 ```
 
-This function uses a divide-and-conquer approach to sort an array. It selects a &#39;pivot&#39; element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+This function uses a list comprehension to create three lists: `left` for elements less than the pivot, `middle` for elements equal to the pivot, and `right` for elements greater than the pivot. It then recursively sorts the `left` and `right` lists and concatenates them with `middle` to return the sorted array.
 
-Would you like to see an example of how to use this function, or do you need an explanation of any part of the code?
+Would you like to see an alternative version or do you have any specific requirements for the quick sort function?
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 28.183 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 25.488 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>

@@ -236,20 +236,20 @@ Then we change its state by generating a reply message:
         "memory": {
             "content": [
                 {
-                    "id": "aBEdKGC4dBwc5wBgAtyMeA",
+                    "id": "DzDSgGZMhYPKe5fUgJH5rX",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:35.046"
+                    "timestamp": "2025-11-03 14:01:05.374"
                 },
                 {
-                    "id": "nnuRusxkW3xhP5swU9Y53Y",
+                    "id": "QuTV6huBtrNXeDRuWsnUzt",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
                         {
-                            "id": "gYQ24koyaF66khJdpsyFZa",
+                            "id": "g8jqn3QhQDgySytX7eJLpr",
                             "type": "tool_use",
                             "name": "generate_response",
                             "input": {
@@ -258,16 +258,16 @@ Then we change its state by generating a reply message:
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:35.046"
+                    "timestamp": "2025-11-03 14:01:05.375"
                 },
                 {
-                    "id": "JashtYcCK8sWByR4EME8XZ",
+                    "id": "oPYugQJaQGmSqDYojPeKA6",
                     "name": "system",
                     "role": "system",
                     "content": [
                         {
                             "type": "tool_result",
-                            "id": "gYQ24koyaF66khJdpsyFZa",
+                            "id": "g8jqn3QhQDgySytX7eJLpr",
                             "name": "generate_response",
                             "output": [
                                 {
@@ -278,15 +278,15 @@ Then we change its state by generating a reply message:
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.817"
+                    "timestamp": "2025-11-03 14:01:06.613"
                 },
                 {
-                    "id": "ePpetBk8sc8ikJj5UK6nQm",
+                    "id": "hVEwLkf8WmTmQ5U58vupUG",
                     "name": "Friday",
                     "role": "assistant",
                     "content": "Hello! How can I assist you today?",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.817"
+                    "timestamp": "2025-11-03 14:01:06.613"
                 }
             ]
         },
@@ -389,20 +389,20 @@ Saving Session State
         "memory": {
             "content": [
                 {
-                    "id": "ioaaX7GxVybS3FrdJg5syk",
+                    "id": "judQG2P2X6c8KyaVnyak5e",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.819"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "UKtZ2t27gfgjNPB8cWaUNt",
+                    "id": "VFbBwF8BhrjxCEMTreniEr",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
                         {
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "type": "tool_use",
                             "name": "generate_response",
                             "input": {
@@ -411,16 +411,16 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.820"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "R9AmJMLvky7x8dMdn3czH8",
+                    "id": "KA2ncS3qjqjPVMyrTuKo92",
                     "name": "system",
                     "role": "system",
                     "content": [
                         {
                             "type": "tool_result",
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "name": "generate_response",
                             "output": [
                                 {
@@ -431,15 +431,15 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 },
                 {
-                    "id": "ERZuUXngoAX4JBFSSeboXJ",
+                    "id": "cLvBUKftazZn8L6FKjjm28",
                     "name": "Friday",
                     "role": "assistant",
                     "content": "Hello! How can I assist you today?",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 }
             ]
         },
@@ -458,20 +458,20 @@ Saving Session State
         "memory": {
             "content": [
                 {
-                    "id": "ioaaX7GxVybS3FrdJg5syk",
+                    "id": "judQG2P2X6c8KyaVnyak5e",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.819"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "UKtZ2t27gfgjNPB8cWaUNt",
+                    "id": "VFbBwF8BhrjxCEMTreniEr",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
                         {
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "type": "tool_use",
                             "name": "generate_response",
                             "input": {
@@ -480,16 +480,16 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.820"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "R9AmJMLvky7x8dMdn3czH8",
+                    "id": "KA2ncS3qjqjPVMyrTuKo92",
                     "name": "system",
                     "role": "system",
                     "content": [
                         {
                             "type": "tool_result",
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "name": "generate_response",
                             "output": [
                                 {
@@ -500,15 +500,15 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 },
                 {
-                    "id": "ERZuUXngoAX4JBFSSeboXJ",
+                    "id": "cLvBUKftazZn8L6FKjjm28",
                     "name": "Friday",
                     "role": "assistant",
                     "content": "Hello! How can I assist you today?",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 }
             ]
         },
@@ -568,20 +568,20 @@ Then we save it to a session file:
             "memory": {
                 "content": [
                     {
-                        "id": "ioaaX7GxVybS3FrdJg5syk",
+                        "id": "judQG2P2X6c8KyaVnyak5e",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2025-11-03 12:26:36.819"
+                        "timestamp": "2025-11-03 14:01:06.616"
                     },
                     {
-                        "id": "UKtZ2t27gfgjNPB8cWaUNt",
+                        "id": "VFbBwF8BhrjxCEMTreniEr",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
                             {
-                                "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                                "id": "NjVdCtZfAoftgQi2svDtpT",
                                 "type": "tool_use",
                                 "name": "generate_response",
                                 "input": {
@@ -590,16 +590,16 @@ Then we save it to a session file:
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2025-11-03 12:26:36.820"
+                        "timestamp": "2025-11-03 14:01:06.616"
                     },
                     {
-                        "id": "R9AmJMLvky7x8dMdn3czH8",
+                        "id": "KA2ncS3qjqjPVMyrTuKo92",
                         "name": "system",
                         "role": "system",
                         "content": [
                             {
                                 "type": "tool_result",
-                                "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                                "id": "NjVdCtZfAoftgQi2svDtpT",
                                 "name": "generate_response",
                                 "output": [
                                     {
@@ -610,15 +610,15 @@ Then we save it to a session file:
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2025-11-03 12:26:38.708"
+                        "timestamp": "2025-11-03 14:01:07.921"
                     },
                     {
-                        "id": "ERZuUXngoAX4JBFSSeboXJ",
+                        "id": "cLvBUKftazZn8L6FKjjm28",
                         "name": "Friday",
                         "role": "assistant",
                         "content": "Hello! How can I assist you today?",
                         "metadata": null,
-                        "timestamp": "2025-11-03 12:26:38.708"
+                        "timestamp": "2025-11-03 14:01:07.921"
                     }
                 ]
             },
@@ -696,20 +696,20 @@ Now we load the session state from the saved file:
         "memory": {
             "content": [
                 {
-                    "id": "ioaaX7GxVybS3FrdJg5syk",
+                    "id": "judQG2P2X6c8KyaVnyak5e",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.819"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "UKtZ2t27gfgjNPB8cWaUNt",
+                    "id": "VFbBwF8BhrjxCEMTreniEr",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
                         {
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "type": "tool_use",
                             "name": "generate_response",
                             "input": {
@@ -718,16 +718,16 @@ Now we load the session state from the saved file:
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:36.820"
+                    "timestamp": "2025-11-03 14:01:06.616"
                 },
                 {
-                    "id": "R9AmJMLvky7x8dMdn3czH8",
+                    "id": "KA2ncS3qjqjPVMyrTuKo92",
                     "name": "system",
                     "role": "system",
                     "content": [
                         {
                             "type": "tool_result",
-                            "id": "UQUb7aEgRRimeoo6q5WNvZ",
+                            "id": "NjVdCtZfAoftgQi2svDtpT",
                             "name": "generate_response",
                             "output": [
                                 {
@@ -738,15 +738,15 @@ Now we load the session state from the saved file:
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 },
                 {
-                    "id": "ERZuUXngoAX4JBFSSeboXJ",
+                    "id": "cLvBUKftazZn8L6FKjjm28",
                     "name": "Friday",
                     "role": "assistant",
                     "content": "Hello! How can I assist you today?",
                     "metadata": null,
-                    "timestamp": "2025-11-03 12:26:38.708"
+                    "timestamp": "2025-11-03 14:01:07.921"
                 }
             ]
         },
@@ -771,7 +771,7 @@ Now we can see the agent state is restored to the saved state.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.673 seconds)
+   **Total running time of the script:** (0 minutes 2.557 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_state.py:
