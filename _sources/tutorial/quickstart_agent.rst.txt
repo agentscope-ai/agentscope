@@ -174,16 +174,16 @@ Taking DashScope API as example, we create an agent object as follows:
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_34aee61163ba458399d365",
+        "id": "call_afc5416f449c446a85398b",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello World')",
-            "timeout": 5
+            "timeout": 300
         }
     }
     system: {
         "type": "tool_result",
-        "id": "call_34aee61163ba458399d365",
+        "id": "call_afc5416f449c446a85398b",
         "name": "execute_python_code",
         "output": [
             {
@@ -192,7 +192,7 @@ Taking DashScope API as example, we create an agent object as follows:
             }
         ]
     }
-    Jarvis: The Python code executed successfully and printed:
+    Jarvis: The Python code has been executed successfully and it printed:
 
     ```
     Hello World
@@ -319,7 +319,7 @@ class by inheriting from it and implementing the ``reply`` method.
 
  .. code-block:: none
 
-    Friday: Hello! I'm Friday, an AI assistant designed to help with a wide range of tasks, from answering questions and providing information to assisting with planning and more. How can I assist you today?
+    Friday: I'm Friday, your helpful assistant! How can I assist you today?
 
 
 
@@ -337,7 +337,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 5.944 seconds)
+   **Total running time of the script:** (0 minutes 5.822 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_agent.py:
