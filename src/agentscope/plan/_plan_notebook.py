@@ -520,6 +520,10 @@ class PlanNotebook(StateModule):
                     )
 
         self.current_plan.subtasks[subtask_idx].state = state
+
+        # Update the plan state to in_progress if not already
+        suffix = self.current_plan.refresh_plan_state()
+
         await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
@@ -527,7 +531,7 @@ class PlanNotebook(StateModule):
                     type="text",
                     text=f"Subtask at index {subtask_idx}, named "
                     f"'{self.current_plan.subtasks[subtask_idx].name}' "
-                    f"is marked as '{state}' successfully.",
+                    f"is marked as '{state}' successfully." + " " + suffix,
                 ),
             ],
         )
