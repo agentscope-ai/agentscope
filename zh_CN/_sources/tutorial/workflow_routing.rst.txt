@@ -114,7 +114,7 @@ Routing
     结构化输出：
     {
         "your_choice": "Content Generation",
-        "task_description": "为用户写一首诗"
+        "task_description": null
     }
 
 
@@ -247,63 +247,49 @@ Routing
         "input": {
             "demand": "生成一个快速排序函数"
         },
-        "id": "call_c06a826594b040279562ce"
+        "id": "call_371e162c7e45430f92fae7"
     }
-    PythonAgent: 以下是一个使用Python编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。
+    PythonAgent: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
 
     ```python
-    def quicksort(arr):
+    def quick_sort(arr):
         if len(arr) <= 1:
             return arr
         else:
-            # 选取基准值
-            pivot = arr.pop()
-            # 分区
-            less = [x for x in arr if x <= pivot]
-            greater = [x for x in arr if x > pivot]
-            # 递归排序和合并结果
-            return quicksort(less) + [pivot] + quicksort(greater)
-
-    # 示例
-    example_list = [3, 6, 8, 10, 1, 2, 1]
-    sorted_list = quicksort(example_list)
-    print(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]
+            pivot = arr[len(arr) // 2]
+            left = [x for x in arr if x < pivot]
+            middle = [x for x in arr if x == pivot]
+            right = [x for x in arr if x > pivot]
+            return quick_sort(left) + middle + quick_sort(right)
     ```
 
-    这段代码定义了一个`quicksort`函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！
+    您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。
     system: {
         "type": "tool_result",
-        "id": "call_c06a826594b040279562ce",
+        "id": "call_371e162c7e45430f92fae7",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "以下是一个使用Python编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。\n\n```python\ndef quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        # 选取基准值\n        pivot = arr.pop()\n        # 分区\n        less = [x for x in arr if x <= pivot]\n        greater = [x for x in arr if x > pivot]\n        # 递归排序和合并结果\n        return quicksort(less) + [pivot] + quicksort(greater)\n\n# 示例\nexample_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(example_list)\nprint(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]\n```\n\n这段代码定义了一个`quicksort`函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！"
+                "text": "下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n```\n\n您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。"
             }
         ]
     }
-    Router: 以下是一个使用 Python 编写的快速排序函数。这个实现选择列表中的最后一个元素作为基准（pivot），并根据基准对列表进行分区，使得基准左边的元素都比它小，右边的元素都比它大。然后递归地对左右两部分继续执行快速排序。
+    Router: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
 
     ```python
-    def quicksort(arr):
+    def quick_sort(arr):
         if len(arr) <= 1:
             return arr
         else:
-            # 选取基准值
-            pivot = arr.pop()
-            # 分区
-            less = [x for x in arr if x <= pivot]
-            greater = [x for x in arr if x > pivot]
-            # 递归排序和合并结果
-            return quicksort(less) + [pivot] + quicksort(greater)
-
-    # 示例
-    example_list = [3, 6, 8, 10, 1, 2, 1]
-    sorted_list = quicksort(example_list)
-    print(sorted_list)  # 输出应该是 [1, 1, 2, 3, 6, 8, 10]
+            pivot = arr[len(arr) // 2]
+            left = [x for x in arr if x < pivot]
+            middle = [x for x in arr if x == pivot]
+            right = [x for x in arr if x > pivot]
+            return quick_sort(left) + middle + quick_sort(right)
     ```
 
-    这段代码定义了一个 `quicksort` 函数，并提供了一个例子来展示如何使用这个函数。如果你需要以数组的第一个或中间元素作为基准，或者想要一个更高效的原地排序版本，请告诉我！
+    您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，请告诉我，我可以为您提供那个版本的代码。
 
 
 
@@ -311,7 +297,7 @@ Routing
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 24.612 seconds)
+   **Total running time of the script:** (0 minutes 18.721 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:
