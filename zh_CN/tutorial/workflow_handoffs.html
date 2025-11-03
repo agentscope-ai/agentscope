@@ -356,20 +356,20 @@ to download the full example code.</p>
     &quot;input&quot;: {
         &quot;task_description&quot;: &quot;在 Python 中编写并执行一个简单的 &#39;Hello, World!&#39; 程序。&quot;
     },
-    &quot;id&quot;: &quot;call_b1816e96b5594e32b84eb7&quot;
+    &quot;id&quot;: &quot;call_cfba01cbcabd498b8226ed&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
-        &quot;timeout&quot;: 10
+        &quot;timeout&quot;: 5
     },
-    &quot;id&quot;: &quot;call_3ca663522a5343ea8aba15&quot;
+    &quot;id&quot;: &quot;call_9a1e19591ebd46c098916c&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_3ca663522a5343ea8aba15&quot;,
+    &quot;id&quot;: &quot;call_9a1e19591ebd46c098916c&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -385,7 +385,7 @@ Hello, World!
 ```
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_b1816e96b5594e32b84eb7&quot;,
+    &quot;id&quot;: &quot;call_cfba01cbcabd498b8226ed&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
@@ -394,7 +394,7 @@ system: {
         }
     ]
 }
-Orchestrator: 成功在 Python 中执行了 &quot;Hello, World!&quot; 程序，输出如下：
+Orchestrator: 成功执行了 Python 代码，输出为：
 
 ```
 Hello, World!
@@ -481,7 +481,7 @@ Hello, World!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 10.152 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.299 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>

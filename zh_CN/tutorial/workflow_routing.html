@@ -418,7 +418,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: 好的，我将为您创作一首诗。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Router: 好的，我将帮您创作一首诗。
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
@@ -521,52 +521,48 @@ to download the full example code.</p>
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_371e162c7e45430f92fae7&quot;
+    &quot;id&quot;: &quot;call_9e0e3ffbd932492abdaaf7&quot;
 }
-PythonAgent: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
-
+PythonAgent: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
 ```python
-def quick_sort(arr):
+def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    else:
-        pivot = arr[len(arr) // 2]
-        left = [x for x in arr if x &lt; pivot]
-        middle = [x for x in arr if x == pivot]
-        right = [x for x in arr if x &gt; pivot]
-        return quick_sort(left) + middle + quick_sort(right)
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x &lt; pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x &gt; pivot]
+    return quicksort(left) + middle + quicksort(right)
 ```
-
-您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。
+你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_371e162c7e45430f92fae7&quot;,
+    &quot;id&quot;: &quot;call_9e0e3ffbd932492abdaaf7&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n```\n\n您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。&quot;
+            &quot;text&quot;: &quot;这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x &lt; pivot]\n    middle = [x for x in arr if x == pivot]\n    right = [x for x in arr if x &gt; pivot]\n    return quicksort(left) + middle + quicksort(right)\n```\n你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！&quot;
         }
     ]
 }
-Router: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
+Router: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
 
 ```python
-def quick_sort(arr):
+def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    else:
-        pivot = arr[len(arr) // 2]
-        left = [x for x in arr if x &lt; pivot]
-        middle = [x for x in arr if x == pivot]
-        right = [x for x in arr if x &gt; pivot]
-        return quick_sort(left) + middle + quick_sort(right)
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x &lt; pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x &gt; pivot]
+    return quicksort(left) + middle + quicksort(right)
 ```
 
-您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，请告诉我，我可以为您提供那个版本的代码。
+你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 18.721 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 19.751 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>

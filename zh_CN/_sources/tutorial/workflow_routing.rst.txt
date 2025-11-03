@@ -110,7 +110,7 @@ Routing
 
  .. code-block:: none
 
-    Router: 好的，我将为您创作一首诗。
+    Router: 好的，我将帮您创作一首诗。
     结构化输出：
     {
         "your_choice": "Content Generation",
@@ -247,49 +247,45 @@ Routing
         "input": {
             "demand": "生成一个快速排序函数"
         },
-        "id": "call_371e162c7e45430f92fae7"
+        "id": "call_9e0e3ffbd932492abdaaf7"
     }
-    PythonAgent: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
-
+    PythonAgent: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
     ```python
-    def quick_sort(arr):
+    def quicksort(arr):
         if len(arr) <= 1:
             return arr
-        else:
-            pivot = arr[len(arr) // 2]
-            left = [x for x in arr if x < pivot]
-            middle = [x for x in arr if x == pivot]
-            right = [x for x in arr if x > pivot]
-            return quick_sort(left) + middle + quick_sort(right)
+        pivot = arr[len(arr) // 2]
+        left = [x for x in arr if x < pivot]
+        middle = [x for x in arr if x == pivot]
+        right = [x for x in arr if x > pivot]
+        return quicksort(left) + middle + quicksort(right)
     ```
-
-    您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。
+    你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
     system: {
         "type": "tool_result",
-        "id": "call_371e162c7e45430f92fae7",
+        "id": "call_9e0e3ffbd932492abdaaf7",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n```\n\n您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，我可以为您提供那个版本的代码。"
+                "text": "这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。\n```python\ndef quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x < pivot]\n    middle = [x for x in arr if x == pivot]\n    right = [x for x in arr if x > pivot]\n    return quicksort(left) + middle + quicksort(right)\n```\n你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！"
             }
         ]
     }
-    Router: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数 `quick_sort` 接受一个列表作为输入，并返回一个新的已排序列表。
+    Router: 这是一个使用 Python 实现的快速排序算法。快速排序是一种非常高效的排序方法，它采用了分治策略来递归地把一个大问题分解成小问题来解决。
 
     ```python
-    def quick_sort(arr):
+    def quicksort(arr):
         if len(arr) <= 1:
             return arr
-        else:
-            pivot = arr[len(arr) // 2]
-            left = [x for x in arr if x < pivot]
-            middle = [x for x in arr if x == pivot]
-            right = [x for x in arr if x > pivot]
-            return quick_sort(left) + middle + quick_sort(right)
+        pivot = arr[len(arr) // 2]
+        left = [x for x in arr if x < pivot]
+        middle = [x for x in arr if x == pivot]
+        right = [x for x in arr if x > pivot]
+        return quicksort(left) + middle + quicksort(right)
     ```
 
-    您可以将任何列表传递给此函数，它将返回一个排序后的新列表。如果您想要在原地对列表进行排序而不创建新的列表，请告诉我，我可以为您提供那个版本的代码。
+    你可以将这段代码复制到你的 Python 环境中去测试。如果你有任何疑问或需要进一步的帮助，请告诉我！
 
 
 
@@ -297,7 +293,7 @@ Routing
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 18.721 seconds)
+   **Total running time of the script:** (0 minutes 19.751 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:

@@ -215,7 +215,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_25b5db70d26c4d01a71607",
+        "id": "call_1960973a27fe4aa78d899b",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -223,7 +223,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_030722f4750b4927bb7b6c",
+        "id": "call_cd3af779f1514db098f54e",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -231,32 +231,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_25b5db70d26c4d01a71607",
+        "id": "call_1960973a27fe4aa78d899b",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 09:56:40.253370，结束于 09:56:43.256599。"
+                "text": "标签 tag1 开始于 12:17:44.453655，结束于 12:17:47.457325。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_030722f4750b4927bb7b6c",
+        "id": "call_cd3af779f1514db098f54e",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 09:56:40.253460，结束于 09:56:43.257302。"
+                "text": "标签 tag2 开始于 12:17:44.453746，结束于 12:17:47.458097。"
             }
         ]
     }
-    Jarvis: 两个函数 `example_tool_function` 已经并行执行完成，分别带有标签 'tag1' 和 'tag2'。它们几乎同时开始和结束：
+    Jarvis: 两个 `example_tool_function` 函数已经并行执行完毕。下面是它们的执行详情：
 
-    - 标签为 'tag1' 的函数从 09:56:40.253370 开始，在 09:56:43.256599 结束。
-    - 标签为 'tag2' 的函数从 09:56:40.253460 开始，在 09:56:43.257302 结束。
+    - 标签为 **tag1** 的函数开始于 12:17:44.453655，结束于 12:17:47.457325。
+    - 标签为 **tag2** 的函数开始于 12:17:44.453746，结束于 12:17:47.458097。
 
-    如果您需要进一步的操作或有其他请求，请告诉我！
+    两者几乎同时开始和结束，表明它们确实是以并行方式执行的。
 
 
 
@@ -321,17 +321,17 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
 
  .. code-block:: none
 
-    Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein, 1879-1955）是一位理论物理学家，他最著名的贡献是相对论。爱因斯坦被认为是现代物理学的奠基人之一，他的工作对科学界产生了深远的影响。
+    Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein）是一位著名的理论物理学家，他最出名的成就是发展了相对论。他的质能方程E=mc²是20世纪最重要的科学发现之一。爱因斯坦还对光电效应的研究做出了重要贡献，这项工作为量子力学的发展奠定了基础，并且为此他获得了1921年的诺贝尔物理学奖。
 
     结构化输出：
     {
-        "name": "Albert Einstein",
-        "description": "一位理论物理学家，以相对论而闻名于世。",
+        "name": "阿尔伯特·爱因斯坦",
+        "description": "著名理论物理学家，相对论的创立者",
         "age": 76,
         "honor": [
-            "诺贝尔物理学奖 (1921)",
-            "科普利奖章 (1925)",
-            "马克斯·普朗克奖章 (1929)"
+            "1921年诺贝尔物理学奖",
+            "普朗克奖章",
+            "科普利奖章"
         ]
     }
 
@@ -401,7 +401,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 19.637 seconds)
+   **Total running time of the script:** (0 minutes 17.508 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
