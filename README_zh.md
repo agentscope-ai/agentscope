@@ -106,6 +106,7 @@ AgentScope v1.0 新功能概览:
 | ...        |                                        |                                                                               |
 
 ## 📢 新闻
+- **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) 已更新，欢迎贡献到 AgentScope！
 - **[2025-09]** AgentScope 1.0 **RAG** 模块已上线！欢迎查看 [文档](https://doc.agentscope.io/zh_CN/tutorial/task_rag.html) 和 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)。
 - **[2025-09]** **Voice agent** 已上线！`ReActAgent` 已原生支持 Qwen-Omni 和 GPT-Audio 系列模型，欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) 和 [roadmap](https://github.com/agentscope-ai/agentscope/issues/773)。
 - **[2025-09]** 一个全新功能强大的 📋**Plan** 模块已经上线 AgentScope！查看[文档](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)了解更多详情。
@@ -138,6 +139,7 @@ AgentScope v1.0 新功能概览:
   - [🧑‍🤝‍🧑 多智能体对话](#-%E5%A4%9A%E6%99%BA%E8%83%BD%E4%BD%93%E5%AF%B9%E8%AF%9D)
   - [💻 AgentScope Studio](#-agentscope-studio)
 - [📖 文档](#-%E6%96%87%E6%A1%A3)
+- [🤝 贡献](#-%E8%B4%A1%E7%8C%AE)
 - [⚖️ 许可](#-%E8%AE%B8%E5%8F%AF)
 - [📚 论文](#-%E8%AE%BA%E6%96%87)
 - [✨ 贡献者](#-%E8%B4%A1%E7%8C%AE%E8%80%85)
@@ -382,11 +384,11 @@ as_studio
     - [基于DB的会话管理](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
     - [流式获取打印消息](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
   - 智能体
-    - [ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
+    - [ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/react_agent)
     - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
-    - [Deep Research 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
-    - [Browser-use 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
-    - [Meta Planner 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
+    - [Deep Research 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/deep_research_agent)
+    - [Browser-use 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/browser_agent)
+    - [Meta Planner 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/meta_planner_agent)
   - 游戏
     - [九人制狼人杀](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - 工作流
@@ -395,7 +397,13 @@ as_studio
     - [多智能体并发](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - 评测
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
+  - 训练
+    - [使用 Trinity-RFT 进行强化学习训练](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent)
 
+
+## 🤝 贡献
+
+我们欢迎并鼓励社区成员为 AgentScope 做出贡献！请参阅我们的 [贡献指南](./CONTRIBUTING.md) 了解更多详情。
 
 ## ⚖️ 许可
 

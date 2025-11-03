@@ -82,8 +82,8 @@ class TextReader(ReaderBase):
             try:
                 import nltk
 
-                nltk.download("punkt")
-                nltk.download("punkt_tab")
+                nltk.download("punkt", quiet=True)
+                nltk.download("punkt_tab", quiet=True)
             except ImportError as e:
                 raise ImportError(
                     "nltk is not installed. Please install it with "

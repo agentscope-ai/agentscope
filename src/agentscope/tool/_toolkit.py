@@ -14,6 +14,7 @@ from typing import (
     Type,
     Generator,
     Callable,
+    Awaitable,
 )
 
 from pydantic import (
@@ -196,13 +197,16 @@ class Toolkit(StateModule):
         include_long_description: bool = True,
         include_var_positional: bool = False,
         include_var_keyword: bool = False,
-        postprocess_func: Callable[
-            [
-                ToolUseBlock,
-                ToolResponse,
-            ],
-            ToolResponse | None,
-        ]
+        postprocess_func: (
+            Callable[
+                [ToolUseBlock, ToolResponse],
+                ToolResponse | None,
+            ]
+            | Callable[
+                [ToolUseBlock, ToolResponse],
+                Awaitable[ToolResponse | None],
+            ]
+        )
         | None = None,
     ) -> None:
         """Register a tool function to the toolkit.
@@ -237,14 +241,15 @@ class Toolkit(StateModule):
             include_var_keyword (`bool`, defaults to `False`):
                 Whether to include the variable keyword arguments (`**kwargs`)
                 in the function schema.
-            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | None`, optional):
+            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
-                response as arguments. If it returns `None`, the tool
-                result will be returned as is. If it returns a
-                `ToolResponse`, the returned block will be used as the
-                final tool result.
+                response as arguments. The function can be either sync or
+                async. If it returns `None`, the tool result will be
+                returned as is. If it returns a `ToolResponse`,
+                the returned block will be used as the final tool result.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -536,7 +541,12 @@ class Toolkit(StateModule):
 
         # Prepare postprocess function
         if tool_func.postprocess_func:
-            partial_postprocess_func = partial(
+            # Type: partial wraps the postprocess_func with tool_call bound,
+            # reducing it from (ToolUseBlock, ToolResponse) to (ToolResponse)
+            partial_postprocess_func: (
+                Callable[[ToolResponse], ToolResponse | None]
+                | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
+            ) | None = partial(
                 tool_func.postprocess_func,
                 tool_call,
             )
@@ -605,13 +615,16 @@ class Toolkit(StateModule):
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
         preset_kwargs_mapping: dict[str, dict[str, Any]] | None = None,
-        postprocess_func: Callable[
-            [
-                ToolUseBlock,
-                ToolResponse,
-            ],
-            ToolResponse | None,
-        ]
+        postprocess_func: (
+            Callable[
+                [ToolUseBlock, ToolResponse],
+                ToolResponse | None,
+            ]
+            | Callable[
+                [ToolUseBlock, ToolResponse],
+                Awaitable[ToolResponse | None],
+            ]
+        )
         | None = None,
     ) -> None:
         """Register tool functions from an MCP client.
@@ -631,14 +644,15 @@ class Toolkit(StateModule):
             defaults to `None`):
                 The preset keyword arguments mapping, whose keys are the tool
                 function names and values are the preset keyword arguments.
-            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | None`, optional):
+            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
-                response as arguments. If it returns `None`, the tool
-                result will be returned as is. If it returns a
-                `ToolResponse`, the returned block will be used as the
-                final tool result.
+                response as arguments. The function can be either sync or
+                async. If it returns `None`, the tool result will be
+                returned as is. If it returns a `ToolResponse`,
+                the returned block will be used as the final tool result.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)

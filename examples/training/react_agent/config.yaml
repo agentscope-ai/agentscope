@@ -1,0 +1,65 @@
+project: AgentScope-ReAct
+name: GSM8K-Qwen3-8B
+# directory to save checkpoints, default to ./checkpoints if TRINITY_CHECKPOINT_ROOT_DIR not set
+checkpoint_root_dir: ${oc.env:TRINITY_CHECKPOINT_ROOT_DIR,./checkpoints}
+algorithm:
+  algorithm_type: multi_step_grpo  # a GRPO-based algorithm for multi-step reasoning
+  repeat_times: 8  # repeat each training sample 8 times
+model:
+  # path to the pre-trained model, default to Qwen/Qwen3-8B if TRINITY_MODEL_PATH not set
+  # Note: The model should have ReAct capabilities, e.g., Qwen3 8B or above
+  # smaller models may not perform well on complex reasoning tasks
+  model_path: ${oc.env:TRINITY_MODEL_PATH,Qwen/Qwen3-8B}
+  # maximum tokens generated in response
+  max_response_tokens: 16384
+  # maximum token length for both input and output
+  # if you face OOM, try to reduce max_model_len and max_response_tokens
+  max_model_len: 24576
+cluster:
+  node_num: 1  # cluster with 1 node
+  gpu_per_node: 8  # each node has 8 GPUs
+buffer:
+  total_epochs: 1  # run taskset for 1 epoch
+  batch_size: 32  # each step contains 32 samples from taskset
+  train_batch_size: 256  # trainer batch size is 256 (multi-step reasoning generate more training samples)
+  explorer_input:
+    taskset:  # define the taskset for rollout
+      name: gsm8k
+      storage_type: file
+      path: 'openai/gsm8k'
+      subset_name: 'main'
+      split: 'train'
+      format:
+        prompt_key: 'question'
+        response_key: 'answer'
+      rollout_args:
+        temperature: 1.0
+explorer:
+  runner_per_model: 16  # each model has 16 runners for parallel rollout
+  max_timeout: 600  # max timeout for each rollout is 600 seconds
+  rollout_model:
+    engine_num: 4  # setup 4 vllm inference model instances
+    tensor_parallel_size: 1  # each model instance uses tensor parallel size of 1
+    enable_prefix_caching: false
+    enforce_eager: true
+    enable_openai_api: true  # some parameters to provide openai-style API, don't change them
+    enable_history: true
+    enable_auto_tool_choice: true
+    # Qwen3 series tool_call_parser and reasoning_parser, if you use other models, please adjust accordingly
+    tool_call_parser: hermes
+    reasoning_parser: deepseek_r1
+    enable_thinking: true
+    dtype: bfloat16
+    seed: 42
+synchronizer:
+  sync_style: dynamic_by_explorer
+  sync_method: 'nccl'
+  sync_interval: 2
+  sync_timeout: 1800  # wait for 30 minutes
+trainer:
+  save_interval: 100  # save checkpoint every 100 steps
+  use_dynamic_bsz: true
+  max_token_len_per_gpu: 24576  # if you face OOM, try to reduce this value
+  ulysses_sequence_parallel_size: 2  # use sequence parallelism to reduce memory usage
+monitor:
+  monitor_type: tensorboard  # here we use tensorboard, you can also use wandb or mlflow

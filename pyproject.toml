@@ -42,7 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 full = [
     # Model
-    "ollama",
+    "ollama>=0.5.4",
     "google-genai",
     "Pillow",
     "transformers",
@@ -54,6 +54,7 @@ full = [
     "packaging",
     # RAG
     "pypdf",
+    "python-docx",
     "nltk",
     "qdrant-client",
 ]
@@ -68,6 +69,8 @@ dev = [
     "myst_parser",
     "matplotlib",
     "pymilvus[milvus_lite]",
+    # Long-term memory
+    "reme-ai>=0.1.10.7; python_full_version >= '3.12'",
 ]
 
 [project.urls]

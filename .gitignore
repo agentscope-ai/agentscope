@@ -136,3 +136,9 @@ dmypy.json
 # docs
 docs/tutorial/en/build/
 docs/tutorial/zh_CN/build/
+
+# Sphinx build artifacts
+docs/tutorial/**/doctrees/
+docs/tutorial/**/.doctrees/
+*.buildinfo
+*.pickle
