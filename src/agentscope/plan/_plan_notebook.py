@@ -531,7 +531,7 @@ class PlanNotebook(StateModule):
                     type="text",
                     text=f"Subtask at index {subtask_idx}, named "
                     f"'{self.current_plan.subtasks[subtask_idx].name}' "
-                    f"is marked as '{state}' successfully." + " " + suffix,
+                    f"is marked as '{state}' successfully. " + suffix,
                 ),
             ],
         )
@@ -819,12 +819,15 @@ class PlanNotebook(StateModule):
                 the agent.
         """
         return [
+            # subtask related tools
             self.view_subtasks,
             self.update_subtask_state,
             self.finish_subtask,
+            # plan related tools
             self.create_plan,
             self.revise_current_plan,
             self.finish_plan,
+            # historical plan related tools
             self.view_historical_plans,
             self.recover_historical_plan,
         ]

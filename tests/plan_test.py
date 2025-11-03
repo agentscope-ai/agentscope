@@ -308,9 +308,9 @@ Subtask at index 2:
 
         self.assertIsNotNone(plan_notebook.current_plan)
 
+        # Check the exported state
         state = agent.state_dict()
         subtasks = plan_notebook.current_plan.subtasks
-        self.maxDiff = None
 
         self.assertDictEqual(
             state,
