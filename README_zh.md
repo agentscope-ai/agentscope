@@ -53,6 +53,21 @@
 <img src="https://trendshift.io/api/badge/repositories/10079" alt="modelscope%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
 </p>
 
+## 📢 新闻
+- **[2025-11]** AgentScope 开源 [**Alias-Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) 用于处理多样化的真实任务，以及 [**Data-Juicer Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) 用于自然语言驱动的数据处理。
+- **[2025-11]** AgentScope 通过集成 [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) 实现对 [**Agentic RL**](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) 的支持。
+- **[2025-11]** AgentScope 集成 [**ReMe**](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) 增强长期记忆能力。
+- **[2025-11]** AgentScope 推出 [**agentscope-samples**](https://github.com/agentscope-ai/agentscope-samples) 样例库，并升级 [**agentscope-runtime**](https://github.com/agentscope-ai/agentscope-runtime) 支持 Docker/K8s 部署和 VNC 驱动的图形化沙盒。
+- **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) 已更新，欢迎贡献到 AgentScope！
+- **[2025-09]** AgentScope 1.0 **RAG** 模块已上线！欢迎查看 [文档](https://doc.agentscope.io/zh_CN/tutorial/task_rag.html) 和 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)。
+- **[2025-09]** **Voice agent** 已上线！`ReActAgent` 已原生支持 Qwen-Omni 和 GPT-Audio 系列模型，欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) 和 [roadmap](https://github.com/agentscope-ai/agentscope/issues/773)。
+- **[2025-09]** 一个全新功能强大的 📋**Plan** 模块已经上线 AgentScope！查看[文档](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)了解更多详情。
+- **[2025-09]** **AgentScope Runtime** 现已开源！支持沙盒化工具执行的高效智能体部署，助力打造生产级AI应用。查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-runtime)。
+- **[2025-09]** **AgentScope Studio** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-studio)。
+- **[2025-08]** v1 版本 Tutorial 已上线！查看 [tutorial](https://doc.agentscope.io/zh_CN/) 了解更多详情。
+- **[2025-08]** 🎉🎉 AgentScope v1现已发布！在完全拥抱异步执行的基础上提供许多新功能和改进。查看 [changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md) 了解详细变更。
+
+
 ## ✨ Why AgentScope？
 
 浅显入门，精深致用。
@@ -104,16 +119,6 @@ AgentScope v1.0 新功能概览:
 | RAG        | 支持 agentic RAG                         | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                       |
 |            | 支持多模态 RAG                              |                                                                               |
 | ...        |                                        |                                                                               |
-
-## 📢 新闻
-- **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) 已更新，欢迎贡献到 AgentScope！
-- **[2025-09]** AgentScope 1.0 **RAG** 模块已上线！欢迎查看 [文档](https://doc.agentscope.io/zh_CN/tutorial/task_rag.html) 和 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)。
-- **[2025-09]** **Voice agent** 已上线！`ReActAgent` 已原生支持 Qwen-Omni 和 GPT-Audio 系列模型，欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) 和 [roadmap](https://github.com/agentscope-ai/agentscope/issues/773)。
-- **[2025-09]** 一个全新功能强大的 📋**Plan** 模块已经上线 AgentScope！查看[文档](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)了解更多详情。
-- **[2025-09]** **AgentScope Runtime** 现已开源！支持沙盒化工具执行的高效智能体部署，助力打造生产级AI应用。查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-runtime)。
-- **[2025-09]** **AgentScope Studio** 现已开源！查看 [GitHub 仓库](https://github.com/agentscope-ai/agentscope-studio)。
-- **[2025-08]** v1 版本 Tutorial 已上线！查看 [tutorial](https://doc.agentscope.io/zh_CN/) 了解更多详情。
-- **[2025-08]** 🎉🎉 AgentScope v1现已发布！在完全拥抱异步执行的基础上提供许多新功能和改进。查看 [changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md) 了解详细变更。
 
 ## 💬 联系我们
 
