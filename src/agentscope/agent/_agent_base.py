@@ -5,6 +5,7 @@ import io
 import json
 from asyncio import Task, Queue
 from collections import OrderedDict
+from copy import deepcopy
 from typing import Callable, Any
 import base64
 import shortuuid
@@ -205,7 +206,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                 non-streaming message, this should always be `True`.
         """
         if not self._disable_msg_queue:
-            await self.msg_queue.put((msg, last))
+            await self.msg_queue.put((deepcopy(msg), last))
 
         if self._disable_console_output:
             return

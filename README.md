@@ -53,6 +53,21 @@
 <img src="https://trendshift.io/api/badge/repositories/10079" alt="modelscope%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
 </p>
 
+## 📢 News
+- **[2025-11]** AgentScope open-sources [**Alias-Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [**Data-Juicer Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
+- **[2025-11]** AgentScope supports [**Agentic RL**](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) via integrating [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) library.
+- **[2025-11]** AgentScope integrates [**ReMe**](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) for enhanced long-term memory.
+- **[2025-11]** AgentScope launches [**agentscope-samples**](https://github.com/agentscope-ai/agentscope-samples) repository and upgrades [**agentscope-runtime**](https://github.com/agentscope-ai/agentscope-runtime) with Docker/K8s deployment and VNC-powered GUI sandboxes.
+- **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) is online now! Welcome to contribute to AgentScope.
+- **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
+- **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
+- **[2025-09]** A new powerful 📋**Plan** module is online now! Check out the [tutorial](https://doc.agentscope.io/tutorial/task_plan.html) for more details.
+- **[2025-09]** **AgentScope Runtime** is open-sourced now! Enabling effective agent deployment with sandboxed tool execution for production-ready AI applications. Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-runtime).
+- **[2025-09]** **AgentScope Studio** is open-sourced now! Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-studio).
+- **[2025-08]** The new tutorial of v1 is online now! Check out the [tutorial](https://doc.agentscope.io) for more details.
+- **[2025-08]** 🎉🎉 AgentScope v1 is released now! This version fully embraces the asynchronous execution, providing many new features and improvements. Check out [changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md) for detailed changes.
+
+
 ## ✨ Why AgentScope?
 
 Easy for beginners, powerful for experts.
@@ -104,14 +119,6 @@ Quick overview of important features in **AgentScope 1.0**:
 |            | Support multimodal RAG                                                             |                                                                         |
 | ...        |                                                                                    |                                                                         |
 
-## 📢 News
-- **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
-- **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
-- **[2025-09]** A new powerful 📋**Plan** module is online now! Check out the [tutorial](https://doc.agentscope.io/tutorial/task_plan.html) for more details.
-- **[2025-09]** **AgentScope Runtime** is open-sourced now! Enabling effective agent deployment with sandboxed tool execution for production-ready AI applications. Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-runtime).
-- **[2025-09]** **AgentScope Studio** is open-sourced now! Check out the [GitHub repo](https://github.com/agentscope-ai/agentscope-studio).
-- **[2025-08]** The new tutorial of v1 is online now! Check out the [tutorial](https://doc.agentscope.io) for more details.
-- **[2025-08]** 🎉🎉 AgentScope v1 is released now! This version fully embraces the asynchronous execution, providing many new features and improvements. Check out [changelog](https://github.com/agentscope-ai/agentscope/blob/main/docs/changelog.md) for detailed changes.
 
 ## 💬 Contact
 
@@ -137,6 +144,7 @@ Welcome to join our community on
   - [🧑‍🤝‍🧑 Multi-Agent Conversation](#-multi-agent-conversation)
   - [💻 AgentScope Studio](#-agentscope-studio)
 - [📖 Documentation](#-documentation)
+- [🤝 Contributing](#-contributing)
 - [⚖️ License](#-license)
 - [📚 Publications](#-publications)
 - [✨ Contributors](#-contributors)
@@ -371,7 +379,7 @@ as_studio
 - API
   - [API Docs](https://doc.agentscope.io/api/agentscope.html)
 - [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
-  - Functional
+  - Functionality
     - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
     - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
     - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
@@ -380,11 +388,11 @@ as_studio
     - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
     - [Stream Printing Messages](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
   - Agent
-    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/react_agent)
+    - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/react_agent)
     - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
-    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_deep_research)
-    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent_browser)
-    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/meta_planner_agent)
+    - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/deep_research_agent)
+    - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/browser_agent)
+    - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/meta_planner_agent)
   - Game
     - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - Workflow
@@ -393,7 +401,14 @@ as_studio
     - [Multi-agent Concurrent](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - Evaluation
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
+  - Training
+    - [Reinforcement learning (RL) with Trinity-RFT](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent)
 
+
+## 🤝 Contributing
+
+We welcome contributions from the community! Please refer to our [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines
+on how to contribute.
 
 ## ⚖️ License
 

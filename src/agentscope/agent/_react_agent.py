@@ -225,15 +225,24 @@ class ReActAgent(ReActAgentBase):
         self.plan_notebook = None
         if plan_notebook:
             self.plan_notebook = plan_notebook
-            self.toolkit.create_tool_group(
-                "plan_related",
-                description=self.plan_notebook.description,
-            )
-            for tool in plan_notebook.list_tools():
-                self.toolkit.register_tool_function(
-                    tool,
-                    group_name="plan_related",
+            # When enable_meta_tool is True, plan tools are in plan_related
+            # group and active by agent.
+            # Otherwise, plan tools in bassic group and always active.
+            if enable_meta_tool:
+                self.toolkit.create_tool_group(
+                    "plan_related",
+                    description=self.plan_notebook.description,
                 )
+                for tool in plan_notebook.list_tools():
+                    self.toolkit.register_tool_function(
+                        tool,
+                        group_name="plan_related",
+                    )
+            else:
+                for tool in plan_notebook.list_tools():
+                    self.toolkit.register_tool_function(
+                        tool,
+                    )
 
         # If print the reasoning hint messages
         self.print_hint_msg = print_hint_msg
@@ -387,6 +396,10 @@ class ReActAgent(ReActAgentBase):
                     await self.print(msg, False)
                 await self.print(msg, True)
 
+                # Add a tiny sleep to yield the last message object in the
+                # message queue
+                await asyncio.sleep(0.001)
+
             else:
                 msg = Msg(self.name, list(res.content), "assistant")
                 await self.print(msg, True)
@@ -484,6 +497,11 @@ class ReActAgent(ReActAgentBase):
                 ):
                     await self.print(tool_res_msg, chunk.is_last)
 
+                # Raise the CancelledError to handle the interruption in the
+                # handle_interrupt function
+                if chunk.is_interrupted:
+                    raise asyncio.CancelledError()
+
                 # Return message if generate_response is called successfully
                 if (
                     tool_call["name"] == self.finish_function_name
@@ -558,7 +576,10 @@ class ReActAgent(ReActAgentBase):
             "I noticed that you have interrupted me. What can I "
             "do for you?",
             "assistant",
-            metadata={},
+            metadata={
+                # Expose this field to indicate the interruption
+                "is_interrupted": True,
+            },
         )
 
         await self.print(response_msg, True)
