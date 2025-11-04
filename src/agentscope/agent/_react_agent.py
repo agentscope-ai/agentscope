@@ -567,6 +567,7 @@ class ReActAgent(ReActAgentBase):
     async def handle_interrupt(
         self,
         _msg: Msg | list[Msg] | None = None,
+        **kwargs: Any,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
         user or something else."""
