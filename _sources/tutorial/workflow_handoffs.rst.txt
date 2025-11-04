@@ -46,7 +46,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
         "input": {
             "task_description": "Print 'Hello, World!' using Python."
         },
-        "id": "call_6e668ebcc22a418da0f6bd"
+        "id": "call_da9edeb1730d45258cd323"
     }
     Worker: {
         "type": "tool_use",
@@ -55,11 +55,11 @@ First, we create a function to allow the orchestrator to create workers dynamica
             "code": "print('Hello, World!')",
             "timeout": 5
         },
-        "id": "call_829fa3e5f7b3479d843b60"
+        "id": "call_704e6152769f4a0d87de5c"
     }
     system: {
         "type": "tool_result",
-        "id": "call_829fa3e5f7b3479d843b60",
+        "id": "call_704e6152769f4a0d87de5c",
         "name": "execute_python_code",
         "output": [
             {
@@ -68,23 +68,23 @@ First, we create a function to allow the orchestrator to create workers dynamica
             }
         ]
     }
-    Worker: The Python code has been executed and it printed:
+    Worker: The Python code has been executed successfully and it printed:
 
     ```
     Hello, World!
     ```
     system: {
         "type": "tool_result",
-        "id": "call_6e668ebcc22a418da0f6bd",
+        "id": "call_da9edeb1730d45258cd323",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "The Python code has been executed and it printed:\n\n```\nHello, World!\n```"
+                "text": "The Python code has been executed successfully and it printed:\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: The Python code has been executed and it printed:
+    Orchestrator: The Python code has been executed successfully and it printed:
 
     ```
     Hello, World!
@@ -179,7 +179,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 7.885 seconds)
+   **Total running time of the script:** (0 minutes 9.845 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:

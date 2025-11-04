@@ -280,10 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a passion for learning and exploring new things. It's nice to meet you. Could you tell me a bit about yourself?
-    Bob: Hi Alice! I'm Bob, also a student. I enjoy diving into all sorts of topics and I'm always up for a good discussion. It's great to meet you as well! What kind of things do you like to explore?
-    Charlie: Alice: I love delving into science and technology, but I also have a soft spot for literature and arts. It's fascinating to see how different fields can intersect and influence each other. What about you, Bob? What are your interests?
-    Charlie: I'm really into history and philosophy, but I like to keep up with the latest in tech too. It's interesting to see how historical events shape our current world and where new technologies might take us in the future. Do you have any favorite books or authors, Alice?
+    Alice: Hi there, my name is Alice. I'm a student currently pursuing my studies. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hi Alice, I'm Bob. I'm also a student and always eager to learn new things. It's great to meet you as well. What are you studying?
+    Charlie: Alice: I'm majoring in environmental science. It's a field I'm really passionate about, and I hope to make a positive impact. How about you, Bob? What's your area of study?
 
 
 
@@ -320,9 +319,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
     system: Now you meet each other with a brief self-introduction.
     Alice: None
     system: None
-    Alice: Hi there! I'm Alice, a student with a passion for learning and exploring new things. It's nice to meet you. Could you tell me a bit about yourself?
-    Bob: Hi Alice! I'm Bob, also a student. I enjoy diving into all sorts of topics and I'm always up for a good discussion. It's great to meet you as well! What kind of things do you like to explore?
-    Charlie: I'm really into history and philosophy, but I like to keep up with the latest in tech too. It's interesting to see how historical events shape our current world and where new technologies might take us in the future. Do you have any favorite books or authors, Alice?
+    Alice: Hi there, my name is Alice. I'm a student currently pursuing my studies. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hi Alice, I'm Bob. I'm also a student and always eager to learn new things. It's great to meet you as well. What are you studying?
+    Charlie: Alice: I'm majoring in environmental science. It's a field I'm really passionate about, and I hope to make a positive impact. How about you, Bob? What's your area of study?
 
 
 
@@ -339,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.255 seconds)
+   **Total running time of the script:** (0 minutes 10.433 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
