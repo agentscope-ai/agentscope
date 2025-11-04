@@ -422,7 +422,7 @@ to download the full example code.</p>
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;写一首诗&quot;
+    &quot;task_description&quot;: null
 }
 </pre></div>
 </div>
@@ -521,76 +521,60 @@ to download the full example code.</p>
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_36413c7087274126a7ef1d&quot;
+    &quot;id&quot;: &quot;call_0314557af4b1467784371f&quot;
 }
-PythonAgent: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数采用了递归的方式来对数组进行排序。
+PythonAgent: 下面是一个使用 Python 编写的快速排序函数。这个实现采用了递归的方法，选择列表中的第一个元素作为基准(pivot)，然后将列表分为两部分：一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分分别进行快速排序，最后将结果合并。
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x &lt; pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x &gt; pivot]
-    return quicksort(left) + middle + quicksort(right)
-```
+    else:
+        pivot = arr[0]
+        less_than_pivot = [x for x in arr[1:] if x &lt; pivot]
+        greater_than_or_equal_to_pivot = [x for x in arr[1:] if x &gt;= pivot]
+        return quicksort(less_than_pivot) + [pivot] + quicksort(greater_than_or_equal_to_pivot)
 
-你可以将一个列表传递给 `quicksort` 函数，它会返回一个新的已排序的列表。例如：
-
-```python
+# 示例用法
 unsorted_list = [3, 6, 8, 10, 1, 2, 1]
 sorted_list = quicksort(unsorted_list)
 print(sorted_list)
 ```
 
-这将会输出：
-```
-[1, 1, 2, 3, 6, 8, 10]
-```
-
-如果你需要我在代码中添加什么额外的功能或者有其他要求，请告诉我！
+这段代码定义了一个名为 `quicksort` 的函数，它接受一个列表 `arr` 作为输入，并返回一个新的已排序列表。在示例中，我们创建了一个未排序的列表 `unsorted_list` 并调用了 `quicksort` 函数对其进行排序，然后打印出排序后的列表。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_36413c7087274126a7ef1d&quot;,
+    &quot;id&quot;: &quot;call_0314557af4b1467784371f&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;下面是一个使用 Python 编写的快速排序算法的实现。这个函数采用了递归的方式来对数组进行排序。\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x &lt; pivot]\n    middle = [x for x in arr if x == pivot]\n    right = [x for x in arr if x &gt; pivot]\n    return quicksort(left) + middle + quicksort(right)\n```\n\n你可以将一个列表传递给 `quicksort` 函数，它会返回一个新的已排序的列表。例如：\n\n```python\nunsorted_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(unsorted_list)\nprint(sorted_list)\n```\n\n这将会输出：\n```\n[1, 1, 2, 3, 6, 8, 10]\n```\n\n如果你需要我在代码中添加什么额外的功能或者有其他要求，请告诉我！&quot;
+            &quot;text&quot;: &quot;下面是一个使用 Python 编写的快速排序函数。这个实现采用了递归的方法，选择列表中的第一个元素作为基准(pivot)，然后将列表分为两部分：一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分分别进行快速排序，最后将结果合并。\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[0]\n        less_than_pivot = [x for x in arr[1:] if x &lt; pivot]\n        greater_than_or_equal_to_pivot = [x for x in arr[1:] if x &gt;= pivot]\n        return quicksort(less_than_pivot) + [pivot] + quicksort(greater_than_or_equal_to_pivot)\n\n# 示例用法\nunsorted_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quicksort(unsorted_list)\nprint(sorted_list)\n```\n\n这段代码定义了一个名为 `quicksort` 的函数，它接受一个列表 `arr` 作为输入，并返回一个新的已排序列表。在示例中，我们创建了一个未排序的列表 `unsorted_list` 并调用了 `quicksort` 函数对其进行排序，然后打印出排序后的列表。&quot;
         }
     ]
 }
-Router: 下面是一个使用 Python 编写的快速排序算法的实现。这个函数采用了递归的方式来对数组进行排序。
+Router: 下面是一个使用 Python 编写的快速排序函数。这个实现采用了递归的方法，选择列表中的第一个元素作为基准(pivot)，然后将列表分为两部分：一部分包含所有小于基准的元素，另一部分包含所有大于或等于基准的元素。接着对这两部分分别进行快速排序，最后将结果合并。
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x &lt; pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x &gt; pivot]
-    return quicksort(left) + middle + quicksort(right)
-```
+    else:
+        pivot = arr[0]
+        less_than_pivot = [x for x in arr[1:] if x &lt; pivot]
+        greater_than_or_equal_to_pivot = [x for x in arr[1:] if x &gt;= pivot]
+        return quicksort(less_than_pivot) + [pivot] + quicksort(greater_than_or_equal_to_pivot)
 
-你可以将一个列表传递给 `quicksort` 函数，它会返回一个新的已排序的列表。例如：
-
-```python
+# 示例用法
 unsorted_list = [3, 6, 8, 10, 1, 2, 1]
 sorted_list = quicksort(unsorted_list)
 print(sorted_list)
 ```
 
-这将会输出：
-```
-[1, 1, 2, 3, 6, 8, 10]
-```
-
-如果你需要我在代码中添加什么额外的功能或者有其他要求，请告诉我！
+这段代码定义了一个名为 `quicksort` 的函数，它接受一个列表 `arr` 作为输入，并返回一个新的已排序列表。在示例中，我们创建了一个未排序的列表 `unsorted_list` 并调用了 `quicksort` 函数对其进行排序，然后打印出排序后的列表。您可以直接使用此代码来实现快速排序功能。
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 27.986 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.205 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
