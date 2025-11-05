@@ -2,7 +2,8 @@
 """The tool functions used in the planner example."""
 import json
 import os
-from typing import AsyncGenerator, OrderedDict
+from collections import OrderedDict
+from typing import AsyncGenerator
 
 from pydantic import BaseModel, Field
 
@@ -154,7 +155,7 @@ You MUST use the `{ReActAgent.finish_function_name}` to generate the final answe
     )
 
     # disable the console output of the sub-agent
-    sub_agent.set_console_output_enabled(True)
+    sub_agent.set_console_output_enabled(False)
 
     # Collect the execution process content
     msgs = OrderedDict()

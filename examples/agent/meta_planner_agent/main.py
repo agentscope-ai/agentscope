@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=C0301
 """The planner agent example."""
 import asyncio
 import os
@@ -8,7 +7,6 @@ from tool import create_worker
 
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
-from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.plan import PlanNotebook
 from agentscope.tool import Toolkit
@@ -21,6 +19,7 @@ async def main() -> None:
 
     planner = ReActAgent(
         name="Friday",
+        # pylint: disable=C0301
         sys_prompt="""You are Friday, a multifunctional agent that can help people solving different complex tasks. You act like a meta planner to solve complicated tasks by decomposing the task and building/orchestrating different worker agents to finish the sub-tasks.
 
 ## Core Mission
@@ -52,7 +51,7 @@ Task: "Create a data visualization from my sales spreadsheet"
     )
     user = UserAgent(name="user")
 
-    msg = Msg("user", "执行hello world", "user")
+    msg = None
     while True:
         msg = await planner(msg)
         msg = await user(msg)

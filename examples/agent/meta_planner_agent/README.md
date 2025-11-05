@@ -11,7 +11,7 @@ plans. It's equipped with a tool function named `create_worker` in [tool.py](./t
 dynamically and finish the assigned subtask. The sub-agents are equipped with some basic tools, and some preset
 MCP servers to enhance their capabilities.
 
-> We suggest to use AgentScope-Studio to visualize the agent-interactions in this example. 
+> We suggest to use AgentScope-Studio to visualize the agent-interactions in this example.
 
 ## Quick Start
 
@@ -57,7 +57,7 @@ Also, you can choose to expose the sub-agent to the user, and only take the stru
 ### Changing the LLM
 
 The example is built with DashScope chat model. If you want to change the model in this example, don't forget
-to change the formatter at the same time! The corresponding relationship between built-in models and formatters are 
+to change the formatter at the same time! The corresponding relationship between built-in models and formatters are
 list in [our tutorial](https://doc.agentscope.io/tutorial/task_prompt.html#id1)
 
 ## Further Reading
