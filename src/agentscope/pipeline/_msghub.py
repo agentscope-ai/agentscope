@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """MsgHub is designed to share messages among a group of agents."""
+
+from collections.abc import Sequence
 from typing import Any
 
 import shortuuid
 
 from .._logging import logger
-
 from ..agent import AgentBase
 from ..message import Msg
 
@@ -40,7 +41,7 @@ class MsgHub:
 
     def __init__(
         self,
-        participants: list[AgentBase],
+        participants: Sequence[AgentBase],
         announcement: list[Msg] | Msg | None = None,
         enable_auto_broadcast: bool = True,
         name: str | None = None,
@@ -63,8 +64,9 @@ class MsgHub:
                 The name of this MsgHub. If not provided, a random ID
                 will be generated.
         """
+
         self.name = name or shortuuid.uuid()
-        self.participants = participants
+        self.participants = list(participants)
         self.announcement = announcement
         self.enable_auto_broadcast = enable_auto_broadcast
 
