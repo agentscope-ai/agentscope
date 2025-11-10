@@ -391,12 +391,13 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         Args:
             keywords (`list[str]`):
-                The keywords to search for in the memory, which should be
-                specific and concise, e.g. the person's name, the date, the
-                location, etc.
+                Short, targeted search phrases (for example, a person's name,
+                a specific date, a location, or a phrase describing something
+                you want to retrieve from the memory). Each keyword is issued
+                as an independent query against the memory store.
             limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
-
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword.
         Returns:
             `ToolResponse`:
                 A ToolResponse containing the retrieved memories as JSON text.
@@ -537,7 +538,12 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
             limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. if the
+                message is a list of messages, the limit will be applied to
+                each message. If the message is a single message, then the
+                limit is the total number of memories to retrieve for the
+                message.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
