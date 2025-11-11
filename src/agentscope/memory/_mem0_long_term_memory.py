@@ -5,6 +5,7 @@ This module provides a long-term memory implementation that integrates
 with the mem0 library to provide persistent memory storage and retrieval
 capabilities for AgentScope agents.
 """
+import asyncio
 import json
 from typing import Any, TYPE_CHECKING
 from importlib import metadata
@@ -405,14 +406,18 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         try:
             results = []
-            for keyword in keywords:
-                result = await self.long_term_working_memory.search(
+            search_coroutines = [
+                self.long_term_working_memory.search(
                     query=keyword,
                     agent_id=self.agent_id,
                     user_id=self.user_id,
                     run_id=self.run_id,
                     limit=limit,
                 )
+                for keyword in keywords
+            ]
+            search_results = await asyncio.gather(*search_coroutines)
+            for result in search_results:
                 if result:
                     results.extend(
                         [item["memory"] for item in result["results"]],
@@ -566,15 +571,21 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         ]
 
         results = []
-        for item in msg_strs:
-            result = await self.long_term_working_memory.search(
+        search_coroutines = [
+            self.long_term_working_memory.search(
                 query=item,
                 agent_id=self.agent_id,
                 user_id=self.user_id,
                 run_id=self.run_id,
                 limit=limit,
             )
+            for item in msg_strs
+        ]
+        search_results = await asyncio.gather(*search_coroutines)
+        for result in search_results:
             if result:
-                results.extend([item["memory"] for item in result["results"]])
+                results.extend(
+                    [memory["memory"] for memory in result["results"]],
+                )
 
         return "\n".join(results)
