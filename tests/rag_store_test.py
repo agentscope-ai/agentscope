@@ -152,17 +152,22 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                 "id": "test-uuid-1",
                 "doc_id": "doc1",
                 "chunk_id": 0,
-                "content": '{"type": "text", "text": "This is a test document."}',
+                "content": (
+                    '{"type": "text", "text": "This is a test document."}'
+                ),
                 "total_chunks": 2,
                 "distance": 0.03,  # Low distance = high similarity
             },
         ]
 
         # Use patch.dict to mock sys.modules
-        with patch.dict('sys.modules', {
-            'mysql': mock_mysql,
-            'mysql.connector': mock_mysql_connector,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "mysql": mock_mysql,
+                "mysql.connector": mock_mysql_connector,
+            },
+        ):
             # Create store instance
             store = AlibabaCloudMySQLStore(
                 host="test-host",

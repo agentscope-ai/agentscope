@@ -198,8 +198,8 @@ cursor = conn.cursor()
 # Use MySQL native vector functions directly
 query_vector = "[0.1,0.2,0.3,0.4]"
 cursor.execute("""
-    SELECT 
-        doc_id, 
+    SELECT
+        doc_id,
         VEC_DISTANCE_COSINE(vector, VEC_FROMTEXT(%s)) as distance
     FROM test_vectors
     ORDER BY distance ASC

@@ -66,14 +66,15 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             dimensions (`int`):
                 The dimension of the embeddings.
             distance (`Literal["COSINE", "EUCLIDEAN"]`, default to "COSINE"):
-                The distance metric to use for similarity search. Can be one of
-                "COSINE" (cosine similarity) or "EUCLIDEAN" (Euclidean distance).
-                Defaults to "COSINE".
+                The distance metric to use for similarity search. Can be
+                one of "COSINE" (cosine similarity) or "EUCLIDEAN"
+                (Euclidean distance). Defaults to "COSINE".
             hnsw_m (`int`, default to 16):
-                The M parameter for HNSW vector index, which controls the number
-                of bi-directional links created for each node during construction.
-                Higher values create denser graphs with better recall but use more
-                memory. Typical values range from 4 to 64. Defaults to 16.
+                The M parameter for HNSW vector index, which controls
+                the number of bi-directional links created for each node
+                during construction. Higher values create denser graphs
+                with better recall but use more memory. Typical values
+                range from 4 to 64. Defaults to 16.
             connection_kwargs (`dict[str, Any] | None`, optional):
                 Other keyword arguments for the MySQL connector.
                 Example: {"ssl_ca": "/path/to/ca.pem", "charset": "utf8mb4"}
@@ -139,15 +140,17 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
 
     async def _validate_table(self) -> None:
         """Validate the table exists, if not, create it.
-        Creates a table with VECTOR type columns and automatically creates
-        a vector index based on the specified distance metric using HNSW algorithm.
+        Creates a table with VECTOR type columns and automatically
+        creates a vector index based on the specified distance metric
+        using HNSW algorithm.
         """
         # Get distance metric in lowercase for SQL
         distance_metric = self.distance.lower()
-        
+
         # Create table with VECTOR INDEX in a single statement
         # VECTOR(dimensions) type is available in AlibabaCloud MySQL 8.0+
-        # VECTOR INDEX uses HNSW algorithm with M parameter for graph connectivity
+        # VECTOR INDEX uses HNSW algorithm with M parameter for
+        # graph connectivity
         # IF NOT EXISTS prevents errors if table already exists
         create_table_sql = f"""
         CREATE TABLE IF NOT EXISTS {self.table_name} (
@@ -190,6 +193,11 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             unique_id = _map_text_to_uuid(unique_string)
 
             # Format vector for MySQL VEC_FROMTEXT
+            if doc.embedding is None:
+                raise ValueError(
+                    f"Document embedding cannot be None for doc_id: "
+                    f"{doc.metadata.doc_id}",
+                )
             vector_text = self._format_vector_for_sql(doc.embedding)
 
             # Insert data using VEC_FROMTEXT to convert text to vector
@@ -211,7 +219,7 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
                 if isinstance(doc.metadata.content, str)
                 else json.dumps(doc.metadata.content, ensure_ascii=False)
             )
-            
+
             self._cursor.execute(
                 insert_sql,
                 (
@@ -242,10 +250,10 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             limit (`int`):
                 The number of relevant documents to retrieve.
             score_threshold (`float | None`, optional):
-                The minimum similarity score threshold to filter the results.
-                Score is calculated as 1 - distance, where higher scores indicate
-                higher similarity. Only documents with score >= score_threshold
-                will be returned.
+                The minimum similarity score threshold to filter the
+                results. Score is calculated as 1 - distance, where
+                higher scores indicate higher similarity. Only documents
+                with score >= score_threshold will be returned.
             **kwargs (`Any`):
                 Additional arguments for the search operation.
                 - filter (`str`): WHERE clause to filter the search results.
@@ -253,23 +261,25 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
 
         # Format query vector for MySQL VEC_FROMTEXT
         query_vector_text = self._format_vector_for_sql(query_embedding)
-        
+
         # Get the distance function
         distance_func = self._get_distance_function()
-        
+
         # Build WHERE clause
         where_conditions = []
         if "filter" in kwargs and kwargs["filter"]:
             where_conditions.append(kwargs["filter"])
-        
+
         # Add score threshold condition if specified
-        # Score is calculated as 1 - distance, so higher scores indicate higher similarity
-        # To filter by score_threshold, we need: 1.0 - distance >= score_threshold
+        # Score is calculated as 1 - distance, so higher scores
+        # indicate higher similarity
+        # To filter by score_threshold, we need:
+        # 1.0 - distance >= score_threshold
         if score_threshold is not None:
             where_conditions.append(
                 f"{distance_func}(embedding, VEC_FROMTEXT(%s)) <= %s",
             )
-        
+
         where_clause = ""
         if where_conditions:
             where_clause = "WHERE " + " AND ".join(where_conditions)
@@ -291,9 +301,10 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
         """
 
         # Prepare parameters
-        params = [query_vector_text]
+        params: list[str | float | int] = [query_vector_text]
         if score_threshold is not None:
-            # Convert score threshold to distance threshold: distance <= 1.0 - score
+            # Convert score threshold to distance threshold:
+            # distance <= 1.0 - score
             params.extend([query_vector_text, 1.0 - score_threshold])
         params.append(limit)
 
@@ -310,7 +321,7 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             except (json.JSONDecodeError, TypeError):
                 # If it's not valid JSON, keep it as is (plain string)
                 pass
-            
+
             doc_metadata = DocMetadata(
                 content=content,
                 doc_id=row["doc_id"],
@@ -355,7 +366,9 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
         if ids is not None:
             # Delete by IDs
             placeholders = ",".join(["%s"] * len(ids))
-            delete_sql = f"DELETE FROM {self.table_name} WHERE id IN ({placeholders})"
+            delete_sql = (
+                f"DELETE FROM {self.table_name} WHERE id IN ({placeholders})"
+            )
             self._cursor.execute(delete_sql, ids)
         elif filter is not None:
             # Delete by filter
@@ -387,4 +400,3 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             self.close()
         except Exception:  # pylint: disable=broad-except
             pass
-
