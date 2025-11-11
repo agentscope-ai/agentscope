@@ -57,6 +57,7 @@ full = [
     "python-docx",
     "nltk",
     "qdrant-client",
+    "python-pptx"
 ]
 dev = [
     # Include full dependencies from local package

@@ -505,4 +505,4 @@ class WordReader(ReaderBase):
             `str`:
                 The generated document ID.
         """
-        return hashlib.md5(word_path.encode("utf-8")).hexdigest()
+        return hashlib.sha256(word_path.encode("utf-8")).hexdigest()
