@@ -11,7 +11,6 @@ from ..._utils._common import _map_text_to_uuid
 from ...types import Embedding
 
 if TYPE_CHECKING:
-    import mysql.connector
     from mysql.connector import MySQLConnection
 else:
     MySQLConnection = "mysql.connector.MySQLConnection"
@@ -126,14 +125,12 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
                 f"Unsupported distance metric: {self.distance}. "
                 f"AlibabaCloud MySQL only supports 'COSINE' and 'EUCLIDEAN'.",
             )
-    
+
     def _format_vector_for_sql(self, vector: list[float]) -> str:
         """Format a vector as a string for MySQL VEC_FROMTEXT function.
-        
         Args:
             vector (`list[float]`):
                 The vector to format.
-                
         Returns:
             `str`:
                 The formatted vector string like "[1,2,3,4]".
@@ -142,7 +139,6 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
 
     async def _validate_table(self) -> None:
         """Validate the table exists, if not, create it.
-        
         Creates a table with VECTOR type columns and automatically creates
         a vector index based on the specified distance metric using HNSW algorithm.
         """

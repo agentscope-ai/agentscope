@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
 import os
-import sys
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
@@ -137,15 +136,15 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         mock_mysql_connector = MagicMock()
         mock_mysql = MagicMock()
         mock_mysql.connector = mock_mysql_connector
-        
+
         # Create mock cursor and connection
         mock_cursor = MagicMock()
         mock_conn = MagicMock()
-        
+
         # Configure mock connection to return mock cursor
         mock_conn.cursor.return_value = mock_cursor
         mock_mysql_connector.connect.return_value = mock_conn
-        
+
         # Mock the search query result
         # Simulate a database row returned by fetchall
         mock_search_result = [
@@ -158,7 +157,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                 "distance": 0.03,  # Low distance = high similarity
             },
         ]
-        
+
         # Use patch.dict to mock sys.modules
         with patch.dict('sys.modules', {
             'mysql': mock_mysql,
@@ -174,10 +173,10 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                 table_name="test_vectors",
                 dimensions=3,
             )
-            
+
             # Verify connection was established
             mock_mysql_connector.connect.assert_called_once()
-            
+
             # Test add operation
             await store.add(
                 [
@@ -207,25 +206,25 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                     ),
                 ],
             )
-            
+
             # Verify add operations executed SQL
             self.assertTrue(mock_cursor.execute.called)
             self.assertTrue(mock_conn.commit.called)
-            
+
             # Reset mock for search operation
             mock_cursor.reset_mock()
             mock_conn.reset_mock()
-            
+
             # Configure mock to return search results
             mock_cursor.fetchall.return_value = mock_search_result
-            
+
             # Test search operation
             res = await store.search(
                 query_embedding=[0.15, 0.25, 0.35],
                 limit=3,
                 score_threshold=0.95,
             )
-            
+
             # Verify search results
             self.assertEqual(len(res), 1)
             # Score = 1 - distance = 1 - 0.03 = 0.97
@@ -237,20 +236,20 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             self.assertEqual(res[0].metadata.doc_id, "doc1")
             self.assertEqual(res[0].metadata.chunk_id, 0)
             self.assertEqual(res[0].metadata.total_chunks, 2)
-            
+
             # Verify search executed SQL query
             self.assertTrue(mock_cursor.execute.called)
             self.assertTrue(mock_cursor.fetchall.called)
-            
+
             # Test delete operation
             await store.delete(filter='doc_id = "doc1"')
-            
+
             # Verify delete executed SQL
             self.assertTrue(mock_conn.commit.called)
-            
+
             # Test close
             store.close()
-            
+
             # Verify connections were closed
             mock_cursor.close.assert_called()
             mock_conn.close.assert_called()
