@@ -160,6 +160,7 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 3,
         **kwargs: Any,
     ) -> ToolResponse:
         """Search and retrieve relevant task experiences.
@@ -192,6 +193,10 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
                 specific and use technical terms. Examples:
                 ["database optimization", "slow queries"], ["API design",
                 "rate limiting"], ["code refactoring", "Python"].
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments. Can include 'top_k' (int)
                 to specify number of experiences to retrieve
@@ -220,13 +225,12 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
             results = []
 
             # Search for each keyword
-            top_k = kwargs.get("top_k", 3)
             for keyword in keywords:
                 result = await self.app.async_execute(
                     name="retrieve_task_memory",
                     workspace_id=self.workspace_id,
                     query=keyword,
-                    top_k=top_k,
+                    top_k=limit,
                     **kwargs,
                 )
 
@@ -356,6 +360,7 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve(
         self,
         msg: Msg | list[Msg] | None,
+        limit: int = 3,
         **kwargs: Any,
     ) -> str:
         """Retrieve relevant task experiences from memory.
@@ -363,6 +368,13 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
         Args:
             msg (`Msg | list[Msg] | None`):
                 The message to search for relevant task experiences.
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. If the
+                message is a list of messages, the limit applies to each
+                message. If the message is a single message, the limit is the
+                total number of memories to retrieve for that message. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -410,12 +422,11 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
                 return ""
 
             # Retrieve using the query from the last message
-            top_k = kwargs.get("top_k", 3)
             result = await self.app.async_execute(
                 name="retrieve_task_memory",
                 workspace_id=self.workspace_id,
                 query=query,
-                top_k=top_k,
+                top_k=limit,
                 **kwargs,
             )
 

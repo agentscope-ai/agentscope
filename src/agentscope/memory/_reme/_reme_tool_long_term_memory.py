@@ -179,6 +179,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 3,
         **kwargs: Any,
     ) -> ToolResponse:
         """Retrieve usage guidelines and best practices for tools.
@@ -213,6 +214,10 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 List of tool names to retrieve guidelines for. Use the
                 exact tool names. Examples: ["search"],
                 ["database_query", "cache_get"], ["api_call"].
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -244,6 +249,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
                 tool_names=tool_names,
+                top_k=limit,
                 **kwargs,
             )
 

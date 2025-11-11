@@ -161,6 +161,7 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 3,
         **kwargs: Any,
     ) -> ToolResponse:
         """Search and retrieve relevant information from long-term memory.
@@ -186,6 +187,10 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
                 multiple keywords for better results. Examples:
                 ["travel preferences", "Hangzhou"], ["work habits",
                 "morning routine"], ["food preferences", "tea"].
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -211,7 +216,6 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
             results = []
 
             # Search for each keyword
-            limit = kwargs.get("limit", 3)
             for keyword in keywords:
                 result = await self.app.async_execute(
                     name="retrieve_personal_memory",
@@ -334,6 +338,7 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve(
         self,
         msg: Msg | list[Msg] | None,
+        limit: int = 3,
         **kwargs: Any,
     ) -> str:
         """Retrieve the content from the long-term memory.
@@ -343,6 +348,13 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
                 The message to search for in the memory, which should be
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. If the
+                message is a list of messages, the limit applies to each
+                message. If the message is a single message, the limit is the
+                total number of memories to retrieve for that message. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -390,13 +402,11 @@ class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
                 return ""
 
             # Retrieve using the query from the last message
-            # Extract top_k from kwargs if available, default to 3
-            top_k = kwargs.get("top_k", 3)
             result = await self.app.async_execute(
                 name="retrieve_personal_memory",
                 workspace_id=self.workspace_id,
                 query=query,
-                top_k=top_k,
+                top_k=limit,
                 **kwargs,
             )
 
