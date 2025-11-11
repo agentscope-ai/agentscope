@@ -330,12 +330,13 @@
           <h1>Source code for agentscope.pipeline._msghub</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="sd">&quot;&quot;&quot;MsgHub is designed to share messages among a group of agents.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sequence</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
-
 <span class="kn">from</span><span class="w"> </span><span class="nn">..agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
 
@@ -374,7 +375,7 @@
 <a class="viewcode-back" href="../../../api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.__init__">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">participants</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AgentBase</span><span class="p">],</span>
+        <span class="n">participants</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">AgentBase</span><span class="p">],</span>
         <span class="n">announcement</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="n">Msg</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">enable_auto_broadcast</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -397,8 +398,9 @@
 <span class="sd">                The name of this MsgHub. If not provided, a random ID</span>
 <span class="sd">                will be generated.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
+
         <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span> <span class="ow">or</span> <span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">participants</span> <span class="o">=</span> <span class="n">participants</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">participants</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">participants</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">announcement</span> <span class="o">=</span> <span class="n">announcement</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">enable_auto_broadcast</span> <span class="o">=</span> <span class="n">enable_auto_broadcast</span></div>
 

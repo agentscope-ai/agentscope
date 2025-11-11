@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there, my name is Alice. I'm a student currently pursuing my studies. It's nice to meet you! Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. I'm also a student and always eager to learn new things. It's great to meet you as well. What are you studying?
-    Charlie: Alice: I'm majoring in environmental science. It's a field I'm really passionate about, and I hope to make a positive impact. How about you, Bob? What's your area of study?
+    Alice: Hi there! I'm Alice, a student. Nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hi Alice! I'm Bob, also a student. It's great to meet you too. What do you like to do in your free time?
+    Charlie: Hey, I'm Charlie, a fellow student. Good to meet you both! In my free time, I enjoy playing video games and reading. Alice, what kind of hobbies do you have?
 
 
 
@@ -319,9 +319,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
     system: Now you meet each other with a brief self-introduction.
     Alice: None
     system: None
-    Alice: Hi there, my name is Alice. I'm a student currently pursuing my studies. It's nice to meet you! Could you tell me a bit about yourself?
-    Bob: Hi Alice, I'm Bob. I'm also a student and always eager to learn new things. It's great to meet you as well. What are you studying?
-    Charlie: Alice: I'm majoring in environmental science. It's a field I'm really passionate about, and I hope to make a positive impact. How about you, Bob? What's your area of study?
+    Alice: Hi there! I'm Alice, a student. Nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hi Alice! I'm Bob, also a student. It's great to meet you too. What do you like to do in your free time?
+    Charlie: Hey, I'm Charlie, a fellow student. Good to meet you both! In my free time, I enjoy playing video games and reading. Alice, what kind of hobbies do you have?
 
 
 
@@ -338,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.433 seconds)
+   **Total running time of the script:** (0 minutes 10.074 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

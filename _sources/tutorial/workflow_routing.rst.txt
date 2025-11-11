@@ -110,11 +110,11 @@ Initialize a routing agent
 
  .. code-block:: none
 
-    Router: Of course, I can help you with that. Could you please tell me more about the theme or any specific elements you would like to include in your poem?
+    Router: Sure, I can help with that. Could you please provide me with a theme or some keywords you'd like the poem to be about?
     The structured output:
     {
         "your_choice": "Content Generation",
-        "task_description": "Write a poem based on the user's provided theme or elements"
+        "task_description": "Generate a poem based on the user's provided theme or keywords."
     }
 
 
@@ -247,9 +247,9 @@ After that, we define a routing agent and equip it with the above tool functions
         "input": {
             "demand": "a quick sort function"
         },
-        "id": "call_781b62bafb97434d976c99"
+        "id": "call_f18c157a73b847999c49f5"
     }
-    PythonAgent: Here is a Python implementation of the quick sort algorithm:
+    PythonAgent: Here is a simple implementation of the quick sort algorithm in Python:
 
     ```python
     def quick_sort(arr):
@@ -263,26 +263,26 @@ After that, we define a routing agent and equip it with the above tool functions
             return quick_sort(left) + middle + quick_sort(right)
 
     # Example usage:
-    example_list = [3, 6, 8, 10, 1, 2, 1]
-    sorted_list = quick_sort(example_list)
-    print('Sorted list:', sorted_list)
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    sorted_arr = quick_sort(arr)
+    print(sorted_arr)  # Output will be the sorted array
     ```
 
-    This function chooses a pivot element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+    This function uses the divide-and-conquer approach to sort an array. It selects a 'pivot' element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
 
-    Would you like to see an in-place version of the quicksort algorithm, or do you need any further explanation on how this works?
+    Let me know if you need further explanation or another version of the quick sort algorithm.
     system: {
         "type": "tool_result",
-        "id": "call_781b62bafb97434d976c99",
+        "id": "call_f18c157a73b847999c49f5",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "Here is a Python implementation of the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\nexample_list = [3, 6, 8, 10, 1, 2, 1]\nsorted_list = quick_sort(example_list)\nprint('Sorted list:', sorted_list)\n```\n\nThis function chooses a pivot element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.\n\nWould you like to see an in-place version of the quicksort algorithm, or do you need any further explanation on how this works?"
+                "text": "Here is a simple implementation of the quick sort algorithm in Python:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(sorted_arr)  # Output will be the sorted array\n```\n\nThis function uses the divide-and-conquer approach to sort an array. It selects a 'pivot' element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.\n\nLet me know if you need further explanation or another version of the quick sort algorithm."
             }
         ]
     }
-    Router: Here is a Python implementation of the quick sort algorithm:
+    Router: Here is a simple implementation of the quick sort algorithm in Python:
 
     ```python
     def quick_sort(arr):
@@ -296,14 +296,14 @@ After that, we define a routing agent and equip it with the above tool functions
             return quick_sort(left) + middle + quick_sort(right)
 
     # Example usage:
-    example_list = [3, 6, 8, 10, 1, 2, 1]
-    sorted_list = quick_sort(example_list)
-    print('Sorted list:', sorted_list)
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    sorted_arr = quick_sort(arr)
+    print(sorted_arr)  # Output will be the sorted array
     ```
 
-    This function chooses a pivot element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+    This function uses the divide-and-conquer approach to sort an array. It selects a 'pivot' element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
 
-    Would you like to see an in-place version of the quicksort algorithm, or do you need any further explanation on how this works?
+    Let me know if you need further explanation or another version of the quick sort algorithm.
 
 
 
@@ -311,7 +311,7 @@ After that, we define a routing agent and equip it with the above tool functions
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 28.739 seconds)
+   **Total running time of the script:** (0 minutes 49.051 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:
