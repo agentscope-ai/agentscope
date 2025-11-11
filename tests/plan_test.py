@@ -308,16 +308,21 @@ Subtask at index 2:
 
         self.assertIsNotNone(plan_notebook.current_plan)
 
+        # Check the exported state
         state = agent.state_dict()
         subtasks = plan_notebook.current_plan.subtasks
+
         self.assertDictEqual(
             state,
             {
                 "memory": {"content": []},
                 "toolkit": {"active_groups": []},
                 "plan_notebook": {
-                    "storage": {},
+                    "storage": {
+                        "plans": {},
+                    },
                     "current_plan": {
+                        "id": plan_notebook.current_plan.id,
                         "name": "text",
                         "description": "abc",
                         "expected_outcome": "edf",
@@ -326,15 +331,25 @@ Subtask at index 2:
                                 "name": "1",
                                 "description": "1",
                                 "expected_outcome": "1",
+                                "outcome": None,
+                                "state": "todo",
                                 "created_at": subtasks[0].created_at,
+                                "finished_at": None,
                             },
                             {
                                 "name": "2",
                                 "description": "2",
                                 "expected_outcome": "2",
+                                "outcome": None,
+                                "state": "todo",
                                 "created_at": subtasks[1].created_at,
+                                "finished_at": None,
                             },
                         ],
+                        "created_at": plan_notebook.current_plan.created_at,
+                        "state": "todo",
+                        "finished_at": None,
+                        "outcome": None,
                     },
                 },
                 "_reasoning_hint_msgs": {"content": []},
@@ -342,6 +357,252 @@ Subtask at index 2:
                 "_sys_prompt": "You are a helpful assistant named Friday. ",
             },
         )
+
+        # Test finish the plan serialization
+        res = await plan_notebook.update_subtask_state(
+            0,
+            "in_progress",
+        )
+        self.assertEqual(
+            res.content[0]["text"],
+            "Subtask at index 0, named '1' is marked as 'in_progress' "
+            "successfully. The plan state has been updated to 'in_progress'.",
+        )
+
+        self.assertEqual(
+            plan_notebook.state_dict(),
+            {
+                "storage": {
+                    "plans": {},
+                },
+                "current_plan": {
+                    "id": plan_notebook.current_plan.id,
+                    "name": "text",
+                    "description": "abc",
+                    "expected_outcome": "edf",
+                    "subtasks": [
+                        {
+                            "name": "1",
+                            "description": "1",
+                            "expected_outcome": "1",
+                            "state": "in_progress",
+                            "created_at": subtasks[0].created_at,
+                            "outcome": None,
+                            "finished_at": None,
+                        },
+                        {
+                            "name": "2",
+                            "description": "2",
+                            "expected_outcome": "2",
+                            "state": "todo",
+                            "created_at": subtasks[1].created_at,
+                            "outcome": None,
+                            "finished_at": None,
+                        },
+                    ],
+                    "state": "in_progress",
+                    "created_at": plan_notebook.current_plan.created_at,
+                    "finished_at": None,
+                    "outcome": None,
+                },
+            },
+        )
+
+        # When finish a subtask
+        await plan_notebook.finish_subtask(
+            0,
+            subtask_outcome="abc",
+        )
+        self.assertDictEqual(
+            plan_notebook.state_dict(),
+            {
+                "storage": {
+                    "plans": {},
+                },
+                "current_plan": {
+                    "id": plan_notebook.current_plan.id,
+                    "name": "text",
+                    "description": "abc",
+                    "expected_outcome": "edf",
+                    "created_at": plan_notebook.current_plan.created_at,
+                    "subtasks": [
+                        {
+                            "name": "1",
+                            "description": "1",
+                            "expected_outcome": "1",
+                            "state": "done",
+                            "created_at": subtasks[0].created_at,
+                            "finished_at": plan_notebook.current_plan.subtasks[
+                                0
+                            ].finished_at,
+                            "outcome": "abc",
+                        },
+                        {
+                            "name": "2",
+                            "description": "2",
+                            "expected_outcome": "2",
+                            "state": "in_progress",
+                            "created_at": subtasks[1].created_at,
+                            "finished_at": None,
+                            "outcome": None,
+                        },
+                    ],
+                    "finished_at": None,
+                    "outcome": None,
+                    "state": "in_progress",
+                },
+            },
+        )
+
+        # Test deserialization
+        await plan_notebook.finish_subtask(1, "def")
+        self.assertDictEqual(
+            plan_notebook.state_dict(),
+            {
+                "storage": {
+                    "plans": {},
+                },
+                "current_plan": {
+                    "id": plan_notebook.current_plan.id,
+                    "name": "text",
+                    "description": "abc",
+                    "expected_outcome": "edf",
+                    "created_at": plan_notebook.current_plan.created_at,
+                    "subtasks": [
+                        {
+                            "name": "1",
+                            "description": "1",
+                            "expected_outcome": "1",
+                            "state": "done",
+                            "created_at": subtasks[0].created_at,
+                            "finished_at": plan_notebook.current_plan.subtasks[
+                                0
+                            ].finished_at,
+                            "outcome": "abc",
+                        },
+                        {
+                            "name": "2",
+                            "description": "2",
+                            "expected_outcome": "2",
+                            "state": "done",
+                            "created_at": subtasks[1].created_at,
+                            "finished_at": plan_notebook.current_plan.subtasks[
+                                1
+                            ].finished_at,
+                            "outcome": "def",
+                        },
+                    ],
+                    "finished_at": None,
+                    "outcome": None,
+                    "state": "in_progress",
+                },
+            },
+        )
+
+        # Finish the plan
+        await plan_notebook.finish_plan("done", "Overall outcome")
+        self.assertIsNone(
+            plan_notebook.current_plan,
+        )
+
+        # Check the finished plan
+        plan = (await plan_notebook.storage.get_plans())[0]
+
+        self.assertDictEqual(
+            plan_notebook.state_dict(),
+            {
+                "storage": {
+                    "plans": {
+                        plan.id: {
+                            "id": plan.id,
+                            "name": "text",
+                            "description": "abc",
+                            "expected_outcome": "edf",
+                            "subtasks": [
+                                {
+                                    "name": "1",
+                                    "description": "1",
+                                    "expected_outcome": "1",
+                                    "outcome": "abc",
+                                    "state": "done",
+                                    "created_at": plan.subtasks[0].created_at,
+                                    "finished_at": plan.subtasks[
+                                        0
+                                    ].finished_at,
+                                },
+                                {
+                                    "name": "2",
+                                    "description": "2",
+                                    "expected_outcome": "2",
+                                    "outcome": "def",
+                                    "state": "done",
+                                    "created_at": plan.subtasks[1].created_at,
+                                    "finished_at": plan.subtasks[
+                                        1
+                                    ].finished_at,
+                                },
+                            ],
+                            "created_at": plan.created_at,
+                            "state": "done",
+                            "finished_at": plan.finished_at,
+                            "outcome": "Overall outcome",
+                        },
+                    },
+                },
+                "current_plan": None,
+            },
+        )
+
+        # Load the state
+        new_plan_notebook = PlanNotebook()
+        new_plan_notebook.load_state_dict(
+            plan_notebook.state_dict(),
+        )
+        self.assertDictEqual(
+            new_plan_notebook.state_dict(),
+            {
+                "storage": {
+                    "plans": {
+                        plan.id: {
+                            "id": plan.id,
+                            "name": "text",
+                            "description": "abc",
+                            "expected_outcome": "edf",
+                            "subtasks": [
+                                {
+                                    "name": "1",
+                                    "description": "1",
+                                    "expected_outcome": "1",
+                                    "outcome": "abc",
+                                    "state": "done",
+                                    "created_at": plan.subtasks[0].created_at,
+                                    "finished_at": plan.subtasks[
+                                        0
+                                    ].finished_at,
+                                },
+                                {
+                                    "name": "2",
+                                    "description": "2",
+                                    "expected_outcome": "2",
+                                    "outcome": "def",
+                                    "state": "done",
+                                    "created_at": plan.subtasks[1].created_at,
+                                    "finished_at": plan.subtasks[
+                                        1
+                                    ].finished_at,
+                                },
+                            ],
+                            "created_at": plan.created_at,
+                            "state": "done",
+                            "finished_at": plan.finished_at,
+                            "outcome": "Overall outcome",
+                        },
+                    },
+                },
+                "current_plan": None,
+            },
+        )
+
         plan_notebook.current_plan = None
         self.assertIsNone(
             agent.plan_notebook.current_plan,

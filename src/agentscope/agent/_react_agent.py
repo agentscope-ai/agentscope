@@ -5,7 +5,6 @@
 import asyncio
 from typing import Type, Any, AsyncGenerator, Literal
 
-import shortuuid
 from pydantic import BaseModel, ValidationError, Field
 
 from ._react_agent_base import ReActAgentBase
@@ -30,40 +29,6 @@ class _QueryRewriteModel(BaseModel):
     )
 
 
-def finish_function_pre_print_hook(
-    self: "ReActAgent",
-    kwargs: dict[str, Any],
-) -> dict[str, Any] | None:
-    """A pre-speak hook function that check if finish_function is called. If
-    so, it will wrap the response argument into a message and return it to
-    replace the original message. By this way, the calling of the finish
-    function will be displayed as a text reply instead of a tool call."""
-
-    msg = kwargs["msg"]
-
-    if isinstance(msg.content, str):
-        return None
-
-    if isinstance(msg.content, list):
-        for i, block in enumerate(msg.content):
-            if (
-                block["type"] == "tool_use"
-                and block["name"] == self.finish_function_name
-            ):
-                # Convert the response argument into a text block for
-                # displaying
-                try:
-                    msg.content[i] = TextBlock(
-                        type="text",
-                        text=block["input"].get("response", ""),
-                    )
-                    return kwargs
-                except Exception:
-                    print("Error in block input", block["input"])
-
-    return None
-
-
 class ReActAgent(ReActAgentBase):
     """A ReAct agent implementation in AgentScope, which supports
 
@@ -74,8 +39,8 @@ class ReActAgent(ReActAgentBase):
     """
 
     finish_function_name: str = "generate_response"
-    """The function name used to finish replying and return a response to
-    the user."""
+    """The name of the function used to generate structured output. Only
+    registered when structured output model is provided in the reply call."""
 
     def __init__(
         self,
@@ -192,9 +157,6 @@ class ReActAgent(ReActAgentBase):
         # -------------- Tool management --------------
         # If None, a default Toolkit will be created
         self.toolkit = toolkit or Toolkit()
-        self.toolkit.register_tool_function(
-            getattr(self, self.finish_function_name),
-        )
         if self._agent_control:
             # Adding two tool functions into the toolkit to allow self-control
             self.toolkit.register_tool_function(
@@ -225,15 +187,24 @@ class ReActAgent(ReActAgentBase):
         self.plan_notebook = None
         if plan_notebook:
             self.plan_notebook = plan_notebook
-            self.toolkit.create_tool_group(
-                "plan_related",
-                description=self.plan_notebook.description,
-            )
-            for tool in plan_notebook.list_tools():
-                self.toolkit.register_tool_function(
-                    tool,
-                    group_name="plan_related",
+            # When enable_meta_tool is True, plan tools are in plan_related
+            # group and active by agent.
+            # Otherwise, plan tools in bassic group and always active.
+            if enable_meta_tool:
+                self.toolkit.create_tool_group(
+                    "plan_related",
+                    description=self.plan_notebook.description,
                 )
+                for tool in plan_notebook.list_tools():
+                    self.toolkit.register_tool_function(
+                        tool,
+                        group_name="plan_related",
+                    )
+            else:
+                for tool in plan_notebook.list_tools():
+                    self.toolkit.register_tool_function(
+                        tool,
+                    )
 
         # If print the reasoning hint messages
         self.print_hint_msg = print_hint_msg
@@ -257,19 +228,13 @@ class ReActAgent(ReActAgentBase):
         self.register_state("name")
         self.register_state("_sys_prompt")
 
-        self.register_instance_hook(
-            "pre_print",
-            "finish_function_pre_print_hook",
-            finish_function_pre_print_hook,
-        )
-
     @property
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
         return self._sys_prompt
 
     @trace_reply
-    async def reply(
+    async def reply(  # pylint: disable=too-many-branches
         self,
         msg: Msg | list[Msg] | None = None,
         structured_model: Type[BaseModel] | None = None,
@@ -291,49 +256,120 @@ class ReActAgent(ReActAgentBase):
         # Record the input message(s) in the memory
         await self.memory.add(msg)
 
+        # -------------- Retrieval process --------------
         # Retrieve relevant records from the long-term memory if activated
         await self._retrieve_from_long_term_memory(msg)
         # Retrieve relevant documents from the knowledge base(s) if any
         await self._retrieve_from_knowledge(msg)
 
+        # -------------- Structured output management --------------
         self._required_structured_model = structured_model
         # Record structured output model if provided
         if structured_model:
+            # Register generate_response tool only when structured output
+            # is required
+            if self.finish_function_name not in self.toolkit.tools:
+                self.toolkit.register_tool_function(
+                    getattr(self, self.finish_function_name),
+                )
+
+            # Set the structured output model
             self.toolkit.set_extended_model(
                 self.finish_function_name,
                 structured_model,
             )
+        else:
+            # Remove generate_response tool if no structured output is required
+            self.toolkit.remove_tool_function(self.finish_function_name)
 
-        # The reasoning-acting loop
-        reply_msg = None
+        # -------------- The reasoning-acting loop --------------
+        # Control if LLM generates tool calls in each reasoning step
+        tool_choice = None
+        # Cache the structured output generated in the finish function call
+        structured_output = None
         for _ in range(self.max_iters):
-            msg_reasoning = await self._reasoning()
+            # -------------- The reasoning process --------------
+            msg_reasoning = await self._reasoning(tool_choice)
 
+            # -------------- The acting process --------------
             futures = [
                 self._acting(tool_call)
                 for tool_call in msg_reasoning.get_content_blocks(
                     "tool_use",
                 )
             ]
-
             # Parallel tool calls or not
             if self.parallel_tool_calls:
-                acting_responses = await asyncio.gather(*futures)
-
+                structured_outputs = await asyncio.gather(*futures)
             else:
                 # Sequential tool calls
-                acting_responses = [await _ for _ in futures]
+                structured_outputs = [await _ for _ in futures]
 
-            # Find the first non-None replying message from the acting
-            for acting_msg in acting_responses:
-                reply_msg = reply_msg or acting_msg
+            # -------------- Check for exit condition --------------
+            # If structured output is still not satisfied
+            if self._required_structured_model:
+                # Remove None results
+                structured_outputs = [_ for _ in structured_outputs if _]
 
-            if reply_msg:
-                break
+                msg_hint = None
+                # If the acting step generates structured outputs
+                if structured_outputs:
+                    # Cache the structured output data
+                    structured_output = structured_outputs[-1]
+
+                    # Prepare textual response
+                    if msg_reasoning.has_content_blocks("text"):
+                        # Re-use the existing text response if any to avoid
+                        # duplicate text generation
+                        return Msg(
+                            self.name,
+                            msg_reasoning.get_content_blocks("text"),
+                            "assistant",
+                            metadata=structured_output,
+                        )
+
+                    # Generate a textual response in the next iteration
+                    msg_hint = Msg(
+                        "user",
+                        "<system-hint>Now generate a text "
+                        "response based on your current situation"
+                        "</system-hint>",
+                        "user",
+                    )
+                    await self._reasoning_hint_msgs.add(msg_hint)
+
+                    # Just generate text response in the next reasoning step
+                    tool_choice = "none"
+                    # The structured output is generated successfully
+                    self._required_structured_model = None
+
+                elif not msg_reasoning.has_content_blocks("tool_use"):
+                    # If structured output is required but no tool call is
+                    # made, remind the llm to go on the task
+                    msg_hint = Msg(
+                        "user",
+                        "<system-hint>Structured output is "
+                        f"required, go on to finish your task or call "
+                        f"'{self.finish_function_name}' to generate the "
+                        f"required structured output.</system-hint>",
+                        "user",
+                    )
+                    await self._reasoning_hint_msgs.add(msg_hint)
+                    # Require tool call in the next reasoning step
+                    tool_choice = "required"
+
+                if msg_hint and self.print_hint_msg:
+                    await self.print(msg_hint)
+
+            elif not msg_reasoning.has_content_blocks("tool_use"):
+                # Exit the loop when no structured output is required (or
+                # already satisfied) and only text response is generated
+                msg_reasoning.metadata = structured_output
+                return msg_reasoning
 
         # When the maximum iterations are reached
-        if reply_msg is None:
-            reply_msg = await self._summarizing()
+        reply_msg = await self._summarizing()
+        reply_msg.metadata = structured_output
 
         # Post-process the memory, long-term memory
         if self._static_control:
@@ -350,6 +386,7 @@ class ReActAgent(ReActAgentBase):
 
     async def _reasoning(
         self,
+        tool_choice: Literal["auto", "none", "any", "required"] | None = None,
     ) -> Msg:
         """Perform the reasoning process."""
         if self.plan_notebook:
@@ -374,6 +411,7 @@ class ReActAgent(ReActAgentBase):
         res = await self.model(
             prompt,
             tools=self.toolkit.get_json_schemas(),
+            tool_choice=tool_choice,
         )
 
         # handle output from the model
@@ -387,6 +425,10 @@ class ReActAgent(ReActAgentBase):
                     await self.print(msg, False)
                 await self.print(msg, True)
 
+                # Add a tiny sleep to yield the last message object in the
+                # message queue
+                await asyncio.sleep(0.001)
+
             else:
                 msg = Msg(self.name, list(res.content), "assistant")
                 await self.print(msg, True)
@@ -396,19 +438,6 @@ class ReActAgent(ReActAgentBase):
             raise e from None
 
         finally:
-            if msg and not msg.has_content_blocks("tool_use"):
-                # Turn plain text response into a tool call of the finish
-                # function
-                msg = Msg.from_dict(msg.to_dict())
-                msg.content = [
-                    ToolUseBlock(
-                        id=shortuuid.uuid(),
-                        type="tool_use",
-                        name=self.finish_function_name,
-                        input={"response": msg.get_text_content()},
-                    ),
-                ]
-
             # None will be ignored by the memory
             await self.memory.add(msg)
 
@@ -436,17 +465,18 @@ class ReActAgent(ReActAgentBase):
                     await self.print(msg_res, True)
         return msg
 
-    async def _acting(self, tool_call: ToolUseBlock) -> Msg | None:
-        """Perform the acting process.
+    async def _acting(self, tool_call: ToolUseBlock) -> dict | None:
+        """Perform the acting process, and return the structured output if
+        it's generated and verified in the finish function call.
 
         Args:
             tool_call (`ToolUseBlock`):
                 The tool use block to be executed.
 
         Returns:
-            `Union[Msg, None]`:
-                Return a message to the user if the `finish_function` is
-                called, otherwise return `None`.
+            `Union[dict, None]`:
+                Return the structured output if it's verified in the finish
+                function call, otherwise return None.
         """
 
         tool_res_msg = Msg(
@@ -465,7 +495,6 @@ class ReActAgent(ReActAgentBase):
             # Execute the tool call
             tool_res = await self.toolkit.call_tool_function(tool_call)
 
-            response_msg = None
             # Async generator handling
             async for chunk in tool_res:
                 # Turn into a tool result block
@@ -473,29 +502,23 @@ class ReActAgent(ReActAgentBase):
                     "output"
                 ] = chunk.content
 
-                # Skip the printing of the finish function call
-                if (
-                    tool_call["name"] != self.finish_function_name
-                    or tool_call["name"] == self.finish_function_name
-                    and (
-                        chunk.metadata is None
-                        or not chunk.metadata.get("success")
-                    )
-                ):
-                    await self.print(tool_res_msg, chunk.is_last)
+                await self.print(tool_res_msg, chunk.is_last)
+
+                # Raise the CancelledError to handle the interruption in the
+                # handle_interrupt function
+                if chunk.is_interrupted:
+                    raise asyncio.CancelledError()
 
                 # Return message if generate_response is called successfully
                 if (
                     tool_call["name"] == self.finish_function_name
                     and chunk.metadata
-                    and chunk.metadata.get(
-                        "success",
-                        True,
-                    )
+                    and chunk.metadata.get("success", False)
                 ):
-                    response_msg = chunk.metadata.get("response_msg")
+                    # Only return the structured output
+                    return chunk.metadata.get("structured_output")
 
-            return response_msg
+            return None
 
         finally:
             # Record the tool result message in the memory
@@ -558,7 +581,10 @@ class ReActAgent(ReActAgentBase):
             "I noticed that you have interrupted me. What can I "
             "do for you?",
             "assistant",
-            metadata={},
+            metadata={
+                # Expose this field to indicate the interruption
+                "is_interrupted": True,
+            },
         )
 
         await self.print(response_msg, True)
@@ -567,29 +593,19 @@ class ReActAgent(ReActAgentBase):
 
     def generate_response(
         self,
-        response: str,
         **kwargs: Any,
     ) -> ToolResponse:
-        """Generate a response. Note only the input argument `response` is
-        visible to the others, you should include all the necessary
-        information in the `response` argument.
-
-        Args:
-            response (`str`):
-                Your response to the user.
         """
-        response_msg = Msg(
-            self.name,
-            response,
-            "assistant",
-        )
+        Generate required structured output by this function and return it
+        """
 
+        structured_output = None
         # Prepare structured output
         if self._required_structured_model:
             try:
                 # Use the metadata field of the message to store the
                 # structured output
-                response_msg.metadata = (
+                structured_output = (
                     self._required_structured_model.model_validate(
                         kwargs,
                     ).model_dump()
@@ -605,9 +621,14 @@ class ReActAgent(ReActAgentBase):
                     ],
                     metadata={
                         "success": False,
-                        "response_msg": None,
+                        "structured_output": {},
                     },
                 )
+        else:
+            logger.warning(
+                "The generate_response function is called when no structured "
+                "output model is required.",
+            )
 
         return ToolResponse(
             content=[
@@ -618,7 +639,7 @@ class ReActAgent(ReActAgentBase):
             ],
             metadata={
                 "success": True,
-                "response_msg": response_msg,
+                "structured_output": structured_output,
             },
             is_last=True,
         )
