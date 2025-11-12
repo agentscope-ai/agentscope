@@ -5,8 +5,6 @@ This module provides a tool memory implementation that integrates
 with the ReMe library to record tool execution results and retrieve
 tool usage guidelines.
 
-Requirements:
-    Python 3.12 or greater is required to use ReMe.
 """
 from typing import Any
 
@@ -22,8 +20,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     Tool memory records tool execution results and generates usage
     guidelines from the execution history.
 
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
     """
 
     async def record_to_memory(

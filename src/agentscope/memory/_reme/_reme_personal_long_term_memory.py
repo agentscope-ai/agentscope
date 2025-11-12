@@ -5,8 +5,6 @@ This module provides a personal memory implementation that integrates
 with the ReMe library to provide persistent personal memory storage and
 retrieval capabilities for AgentScope agents.
 
-Requirements:
-    Python 3.12 or greater is required to use ReMe.
 """
 from typing import Any
 
@@ -17,11 +15,7 @@ from ...tool import ToolResponse
 
 
 class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
-    """Personal memory implementation using ReMe library.
-
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
-    """
+    """Personal memory implementation using ReMe library."""
 
     async def record_to_memory(
         self,

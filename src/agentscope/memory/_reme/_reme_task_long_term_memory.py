@@ -5,8 +5,6 @@ This module provides a task memory implementation that integrates
 with the ReMe library to learn from execution trajectories and
 retrieve relevant task experiences.
 
-Requirements:
-    Python 3.12 or greater is required to use ReMe.
 """
 from typing import Any
 
@@ -22,8 +20,6 @@ class ReMeTaskLongTermMemory(ReMeLongTermMemoryBase):
     Task memory learns from execution trajectories and provides
     retrieval of relevant task experiences.
 
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
     """
 
     async def record_to_memory(

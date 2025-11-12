@@ -24,8 +24,6 @@ Dependencies:
         .. code-block:: bash
 
             pip install reme-ai
-
-    Python 3.12 or greater is required to use ReMe.
     For more information, visit: https://github.com/modelscope/reMe
 
 Subclasses:
@@ -91,9 +89,6 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
     The ReMe library must be installed separately:
         pip install reme-ai
-
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
 
     If the library is not installed, a warning will be issued during
     initialization,
