@@ -1,0 +1,47 @@
+# AgentScope 核心依赖
+agentscope[full]>=1.0.0
+
+# 数据库
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+alembic>=1.10.0
+
+# 网页抓取和内容处理
+aiohttp>=3.8.0
+beautifulsoup4>=4.11.0
+readability-lxml>=0.8.1
+feedparser>=6.0.0
+
+# 文件处理
+aiofiles>=22.1.0
+python-multipart>=0.0.5
+
+# 文本处理
+jieba>=0.42.1
+nltk>=3.8.0
+
+# 机器学习（可选）
+scikit-learn>=1.3.0
+numpy>=1.24.0
+
+# 缓存
+redis>=4.5.0
+
+# 配置管理
+python-dotenv>=1.0.0
+
+# 开发工具
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+mypy>=1.0.0
+flake8>=6.0.0
+
+# 可选依赖（向量数据库）
+qdrant-client>=1.5.0
+milvus>=2.3.0
+
+# 可选依赖（LLM）
+openai>=1.0.0
+anthropic>=0.15.0
+dashscope>=1.17.0
