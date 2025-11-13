@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader, WordReader
+from agentscope.rag import TextReader, PDFReader, WordReader, ExcelReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -153,4 +153,103 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 if _.metadata.content["type"] == "image"
             ],
             ["image/png", "image/png", "image/png"],
+        )
+
+    async def test_excel_reader_with_images_and_tables(self) -> None:
+        """Test the ExcelReader implementation with images and table
+        separation."""
+        # Test with images and table separation enabled
+        reader = ExcelReader(
+            chunk_size=200,
+            split_by="sentence",
+            include_image=True,
+            separate_table=True,
+            table_format="markdown",
+        )
+        excel_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "test.xlsx",
+        )
+        docs = await reader(excel_path=excel_path)
+
+        # Verify document types match expected sequence
+        # Expected: table blocks from first sheet, then image (row 9),
+        # then table blocks from second sheet
+        # Order is based on row positions: table (row 0-5) → image (row 9)
+        # → table (row 0-4)
+        self.assertListEqual(
+            [_.metadata.content["type"] for _ in docs],
+            ["text"] * 2 + ["image"] * 1 + ["text"] * 5,
+        )
+
+        import json
+
+        print(
+            json.dumps(
+                [_.metadata.content.get("text") for _ in docs],
+                indent=4,
+                ensure_ascii=False,
+            ),
+        )
+
+        # Verify exact document content
+        doc_texts = [_.metadata.content.get("text") for _ in docs]
+
+        # Verify sheet headers and table content
+        # First text block should contain Employee Info sheet header and table
+        # Note: Due to chunk_size=200, the last row is truncated
+        # Order: table (row 0-5) → image (row 9) → table (row 0-4)
+        self.assertEqual(
+            doc_texts[0],
+            "Sheet: Employee Info\n"
+            "| John Smith | 25 | Engineering | 8000 | 2020-01-15 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Jane Doe | 30 | Sales | 12000 | 2019-03-20 |\n"
+            "| Mike || Johnson | 35 | HR | 9000 | 2021-06-1",
+        )
+        # Second text block continues the employee table
+        # Note: Starts with "0 |" from the truncated previous row
+        self.assertEqual(
+            doc_texts[1],
+            "0 |\n"
+            "| Sarah Wilson | 28 | Finance | 10000 | 2020-09-05 |\n"
+            "| David Brown | 32 | Marketing | 11000 | 2018-12-01 |",
+        )
+        # Image block (text is None)
+        self.assertIsNone(doc_texts[2])
+        # Third text block should contain Product Info sheet header and
+        # start of table
+        self.assertEqual(
+            doc_texts[3],
+            "Sheet: Product Info\n"
+            "| Product A | 100 | 50 | High-quality Product A, suitable for "
+            "various scenarios.",
+        )
+        # Remaining blocks continue the product table
+        self.assertEqual(
+            doc_texts[4],
+            "|\n"
+            "| --- | --- | --- | --- |\n"
+            "| Product B | 200 | 30 | Product B offers excellent performance.",
+        )
+        self.assertEqual(
+            doc_texts[5],
+            "|\n"
+            "| Product C | 300 | 20 | Product C is a market-leading solution.",
+        )
+        self.assertEqual(
+            doc_texts[6],
+            "|\n"
+            "| Product D | 400 | 40 | Product D provides comprehensive "
+            "functionality.",
+        )
+
+        # Verify image media types
+        self.assertEqual(
+            [
+                _.metadata.content["source"]["media_type"]
+                for _ in docs
+                if _.metadata.content["type"] == "image"
+            ],
+            ["image/png"],
         )
