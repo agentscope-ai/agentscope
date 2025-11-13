@@ -238,11 +238,12 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             embedding_api_key = embedding_model.api_key
 
         elif isinstance(embedding_model, OpenAITextEmbedding):
-            embedding_api_base = getattr(
+            base_url = getattr(
                 embedding_model.client,
                 "base_url",
                 None,
             )
+            embedding_api_base = str(base_url) if base_url else None
             embedding_api_key = getattr(
                 embedding_model.client,
                 "api_key",
