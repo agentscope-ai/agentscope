@@ -57,8 +57,6 @@ class GeminiTextEmbedding(EmbeddingModelBase):
         Args:
             text (`List[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
-
-        # TODO: handle the batch size limit
         """
         gather_text = []
         for _ in text:
@@ -71,39 +69,46 @@ class GeminiTextEmbedding(EmbeddingModelBase):
                     "Input text must be a list of strings or TextBlock dicts.",
                 )
 
-        kwargs = {
-            "model": self.model_name,
-            "contents": gather_text,
-            "config": kwargs,
-        }
+        # Gemini API has a limit of 100 requests per batch
+        batch_size = 100
+        all_embeddings = []
+        total_time = 0
 
-        if self.embedding_cache:
-            cached_embeddings = await self.embedding_cache.retrieve(
-                identifier=kwargs,
-            )
-            if cached_embeddings:
-                return EmbeddingResponse(
-                    embeddings=cached_embeddings,
-                    usage=EmbeddingUsage(
-                        tokens=0,
-                        time=0,
-                    ),
-                    source="cache",
+        # Process in batches
+        for i in range(0, len(gather_text), batch_size):
+            batch_text = gather_text[i:i + batch_size]
+
+            batch_kwargs = {
+                "model": self.model_name,
+                "contents": batch_text,
+                "config": kwargs,
+            }
+
+            if self.embedding_cache:
+                cached_embeddings = await self.embedding_cache.retrieve(
+                    identifier=batch_kwargs,
+                )
+                if cached_embeddings:
+                    all_embeddings.extend(cached_embeddings)
+                    continue
+
+            start_time = datetime.now()
+            response = self.client.models.embed_content(**batch_kwargs)
+            batch_time = (datetime.now() - start_time).total_seconds()
+            total_time += batch_time
+
+            batch_embeddings = [_.values for _ in response.embeddings]
+            all_embeddings.extend(batch_embeddings)
+
+            if self.embedding_cache:
+                await self.embedding_cache.store(
+                    identifier=batch_kwargs,
+                    embeddings=batch_embeddings,
                 )
 
-        start_time = datetime.now()
-        response = self.client.models.embed_content(**kwargs)
-        time = (datetime.now() - start_time).total_seconds()
-
-        if self.embedding_cache:
-            await self.embedding_cache.store(
-                identifier=kwargs,
-                embeddings=[_.values for _ in response.embeddings],
-            )
-
         return EmbeddingResponse(
-            embeddings=[_.values for _ in response.embeddings],
+            embeddings=all_embeddings,
             usage=EmbeddingUsage(
-                time=time,
+                time=total_time,
             ),
         )
