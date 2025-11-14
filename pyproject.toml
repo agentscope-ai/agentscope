@@ -58,6 +58,7 @@ full = [
     "python-docx",
     "nltk",
     "qdrant-client",
+    "neo4j",
 ]
 dev = [
     # Include full dependencies from local package
@@ -65,6 +66,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-asyncio",
     "sphinx-gallery",
     "furo",
     "myst_parser",
