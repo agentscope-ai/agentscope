@@ -35,6 +35,7 @@ def init(
     logging_level: str = "INFO",
     studio_url: str | None = None,
     tracing_url: str | None = None,
+    enable_tracing: bool = True,
 ) -> None:
     """Initialize the agentscope library.
 
@@ -55,6 +56,10 @@ def init(
             OpenTelemetry tracing platforms like Arize-Phoenix and Langfuse.
             If not provided and `studio_url` is provided, it will send traces
             to the AgentScope Studio's tracing endpoint.
+        enable_tracing (`bool`, optional):
+            Whether to enable tracing. Defaults to True. Set to False to
+            disable tracing even when `studio_url` or `tracing_url` is
+            provided.
     """
 
     from . import _config
@@ -97,15 +102,19 @@ def init(
 
         _equip_as_studio_hooks(studio_url)
 
-    if tracing_url:
-        endpoint = tracing_url
-    else:
-        endpoint = studio_url.strip("/") + "/v1/traces" if studio_url else None
+    # Tracing functionality: OpenTelemetry trace data collection and export
+    if enable_tracing:
+        if tracing_url:
+            endpoint = tracing_url
+        else:
+            endpoint = (
+                studio_url.strip("/") + "/v1/traces" if studio_url else None
+            )
 
-    if endpoint:
-        from .tracing import setup_tracing
+        if endpoint:
+            from .tracing import setup_tracing
 
-        setup_tracing(endpoint=endpoint)
+            setup_tracing(endpoint=endpoint)
 
 
 __all__ = [

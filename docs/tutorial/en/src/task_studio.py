@@ -48,6 +48,21 @@ To connect your application to the Studio, use the ``agentscope.init`` function 
     # your application code
     ...
 
+.. note:: By default, connecting to Studio automatically enables tracing. If you only want to use Studio's project management features without collecting tracing data, you can set ``enable_tracing=False``:
+
+.. code-block:: python
+
+    import agentscope
+
+    # Connect to Studio but disable tracing
+    agentscope.init(
+        studio_url="http://localhost:8000",
+        enable_tracing=False,
+    )
+
+    # your application code
+    ...
+
 Then, you can see your application in the Studio as follows:
 
 .. figure:: ../../_static/images/studio_project.webp
