@@ -52,6 +52,7 @@ full = [
     # Long-term memory
     "mem0ai",
     "packaging",
+    "reme-ai>=0.2.0.0",
     # RAG
     "pypdf",
     "python-docx",
@@ -70,7 +71,6 @@ dev = [
     "matplotlib",
     "pymilvus[milvus_lite]",
     # Long-term memory
-    "reme-ai>=0.1.10.7; python_full_version >= '3.12'",
 ]
 
 [project.urls]

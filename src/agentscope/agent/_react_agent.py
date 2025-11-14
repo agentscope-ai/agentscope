@@ -262,6 +262,9 @@ class ReActAgent(ReActAgentBase):
         # Retrieve relevant documents from the knowledge base(s) if any
         await self._retrieve_from_knowledge(msg)
 
+        # Control if LLM generates tool calls in each reasoning step
+        tool_choice: Literal["auto", "none", "any", "required"] | None = None
+
         # -------------- Structured output management --------------
         self._required_structured_model = structured_model
         # Record structured output model if provided
@@ -278,13 +281,12 @@ class ReActAgent(ReActAgentBase):
                 self.finish_function_name,
                 structured_model,
             )
+            tool_choice = "required"
         else:
             # Remove generate_response tool if no structured output is required
             self.toolkit.remove_tool_function(self.finish_function_name)
 
         # -------------- The reasoning-acting loop --------------
-        # Control if LLM generates tool calls in each reasoning step
-        tool_choice = None
         # Cache the structured output generated in the finish function call
         structured_output = None
         for _ in range(self.max_iters):
