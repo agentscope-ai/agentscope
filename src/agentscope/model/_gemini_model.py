@@ -440,11 +440,33 @@ class GeminiChatModel(ChatModelBase):
                     }
                 ]
         """
+        import copy
+
+        def remove_additional_properties(obj):
+            """Recursively remove additionalProperties from schema."""
+            if isinstance(obj, dict):
+                # Remove the key if it exists
+                obj.pop("additionalProperties", None)
+                obj.pop("additional_properties", None)
+                # Recursively process nested dicts
+                for value in obj.values():
+                    remove_additional_properties(value)
+            elif isinstance(obj, list):
+                # Recursively process list items
+                for item in obj:
+                    remove_additional_properties(item)
+
+        # Deep copy and clean schemas
+        cleaned_functions = []
+        for schema in schemas:
+            if "function" in schema:
+                func_copy = copy.deepcopy(schema["function"])
+                remove_additional_properties(func_copy)
+                cleaned_functions.append(func_copy)
+
         return [
             {
-                "function_declarations": [
-                    _["function"] for _ in schemas if "function" in _
-                ],
+                "function_declarations": cleaned_functions,
             },
         ]
 
