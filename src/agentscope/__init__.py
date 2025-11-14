@@ -31,6 +31,7 @@ from ._version import __version__
 def init(
     project: str | None = None,
     name: str | None = None,
+    run_id: str | None = None,
     logging_path: str | None = None,
     logging_level: str = "INFO",
     studio_url: str | None = None,
@@ -43,6 +44,8 @@ def init(
             The project name.
         name (`str | None`, optional):
             The name of the run.
+        run_id (`str | None`, optional):
+            The run ID.
         logging_path (`str | None`, optional):
             The path to saving the log file. If not provided, logs will not be
             saved.
@@ -64,6 +67,9 @@ def init(
 
     if name:
         _config.name = name
+
+    if run_id:
+        _config.run_id = run_id
 
     setup_logger(logging_level, logging_path)
 
@@ -106,6 +112,7 @@ def init(
         from .tracing import setup_tracing
 
         setup_tracing(endpoint=endpoint)
+        _config.trace_enabled = True
 
 
 __all__ = [
