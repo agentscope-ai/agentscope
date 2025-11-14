@@ -233,11 +233,12 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             embedding_api_key = embedding_model.api_key
 
         elif isinstance(embedding_model, OpenAITextEmbedding):
-            embedding_api_base = getattr(
+            base_url = getattr(
                 embedding_model.client,
                 "base_url",
                 None,
             )
+            embedding_api_base = str(base_url) if base_url else None
             embedding_api_key = getattr(
                 embedding_model.client,
                 "api_key",
@@ -258,6 +259,11 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             config_args.append(
                 f"embedding_model.default.model_name={embedding_model_name}",
             )
+
+        embedding_dimensions = embedding_model.dimensions
+        config_args.append(
+            f"embedding_model.default.params={{\"dimensions\": {embedding_dimensions}}}"
+        )
 
         # Attempt to import and initialize ReMe
         # If import fails, set app to None and issue a warning
