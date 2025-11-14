@@ -265,6 +265,11 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
                 f"embedding_model.default.model_name={embedding_model_name}",
             )
 
+        embedding_dimensions = embedding_model.dimensions
+        config_args.append(
+            f"embedding_model.default.params={{\"dimensions\": {embedding_dimensions}}}"
+        )
+
         # Attempt to import and initialize ReMe
         # If import fails, set app to None and issue a warning
         # This allows the class to be instantiated even without
