@@ -137,7 +137,7 @@ class OpenAIChatModel(ChatModelBase):
             organization=organization,
             **(client_kwargs or {}),
         )
-        
+
         if "azure_endpoint" in client_args:
             self.client = openai.AsyncAzureOpenAI(
                 api_key=api_key,
