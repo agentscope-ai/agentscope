@@ -175,6 +175,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 3,
         **kwargs: Any,
     ) -> ToolResponse:
         """Retrieve usage guidelines and best practices for tools.
@@ -209,6 +210,10 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 List of tool names to retrieve guidelines for. Use the
                 exact tool names. Examples: ["search"],
                 ["database_query", "cache_get"], ["api_call"].
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -240,6 +245,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
                 tool_names=tool_names,
+                top_k=limit,
                 **kwargs,
             )
 
@@ -468,6 +474,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve(
         self,
         msg: Msg | list[Msg] | None,
+        limit: int = 3,
         **kwargs: Any,
     ) -> str:
         """Retrieve tool guidelines from memory.
@@ -478,6 +485,13 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             msg (`Msg | list[Msg] | None`):
                 The message containing tool names or queries to
                 retrieve guidelines for.
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. If the
+                message is a list of messages, the limit applies to each
+                message. If the message is a single message, the limit is the
+                total number of memories to retrieve for that message. Defaults
+                to 3.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -517,6 +531,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
                 tool_names=tool_names,
+                top_k=limit,
                 **kwargs,
             )
 
