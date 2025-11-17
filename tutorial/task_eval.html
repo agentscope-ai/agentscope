@@ -615,8 +615,46 @@ as well.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: The answer to 2 + 2 is 4.
-Friday: The sum of 12345, 54321, 6789, and 9876 is 83331.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: {
+    &quot;type&quot;: &quot;tool_use&quot;,
+    &quot;name&quot;: &quot;generate_response&quot;,
+    &quot;input&quot;: {
+        &quot;answer_as_number&quot;: 4
+    },
+    &quot;id&quot;: &quot;call_02f62544aa93439db822c2&quot;
+}
+system: {
+    &quot;type&quot;: &quot;tool_result&quot;,
+    &quot;id&quot;: &quot;call_02f62544aa93439db822c2&quot;,
+    &quot;name&quot;: &quot;generate_response&quot;,
+    &quot;output&quot;: [
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Successfully generated response.&quot;
+        }
+    ]
+}
+Friday: The answer to 2 + 2 is 4.
+Friday: {
+    &quot;type&quot;: &quot;tool_use&quot;,
+    &quot;name&quot;: &quot;generate_response&quot;,
+    &quot;input&quot;: {
+        &quot;answer_as_number&quot;: 73021
+    },
+    &quot;id&quot;: &quot;call_e1949d9ff7d245a4b9ea31&quot;
+}
+system: {
+    &quot;type&quot;: &quot;tool_result&quot;,
+    &quot;id&quot;: &quot;call_e1949d9ff7d245a4b9ea31&quot;,
+    &quot;name&quot;: &quot;generate_response&quot;,
+    &quot;output&quot;: [
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Successfully generated response.&quot;
+        }
+    ]
+}
+Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73021.
 Repeat ID: 0
         Metric: math check number equal
                 Type: MetricType.NUMERICAL
@@ -624,13 +662,13 @@ Repeat ID: 0
                 Completed tasks: 2
                 Incomplete tasks: 0
                 Aggregation: {
-                    &quot;mean&quot;: 1.0,
+                    &quot;mean&quot;: 0.5,
                     &quot;max&quot;: 1.0,
-                    &quot;min&quot;: 1.0
+                    &quot;min&quot;: 0.0
                 }
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 7.128 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 8.468 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-eval-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/c97c5fec6c05569e62f14d7f1ea7d164/task_eval.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_eval.ipynb</span></code></a></p>

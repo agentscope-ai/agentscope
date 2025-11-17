@@ -335,7 +335,6 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Type</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">AsyncGenerator</span><span class="p">,</span> <span class="n">Literal</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ValidationError</span><span class="p">,</span> <span class="n">Field</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._react_agent_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgentBase</span>
@@ -360,40 +359,6 @@
     <span class="p">)</span>
 
 
-<span class="k">def</span><span class="w"> </span><span class="nf">finish_function_pre_print_hook</span><span class="p">(</span>
-    <span class="bp">self</span><span class="p">:</span> <span class="s2">&quot;ReActAgent&quot;</span><span class="p">,</span>
-    <span class="n">kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
-<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;A pre-speak hook function that check if finish_function is called. If</span>
-<span class="sd">    so, it will wrap the response argument into a message and return it to</span>
-<span class="sd">    replace the original message. By this way, the calling of the finish</span>
-<span class="sd">    function will be displayed as a text reply instead of a tool call.&quot;&quot;&quot;</span>
-
-    <span class="n">msg</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;msg&quot;</span><span class="p">]</span>
-
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-        <span class="k">return</span> <span class="kc">None</span>
-
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
-        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">block</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="p">):</span>
-            <span class="k">if</span> <span class="p">(</span>
-                <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;tool_use&quot;</span>
-                <span class="ow">and</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span>
-            <span class="p">):</span>
-                <span class="c1"># Convert the response argument into a text block for</span>
-                <span class="c1"># displaying</span>
-                <span class="k">try</span><span class="p">:</span>
-                    <span class="n">msg</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">TextBlock</span><span class="p">(</span>
-                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
-                        <span class="n">text</span><span class="o">=</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;input&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;response&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
-                    <span class="p">)</span>
-                    <span class="k">return</span> <span class="n">kwargs</span>
-                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-                    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Error in block input&quot;</span><span class="p">,</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;input&quot;</span><span class="p">])</span>
-
-    <span class="k">return</span> <span class="kc">None</span>
-
-
 <div class="viewcode-block" id="ReActAgent">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ReActAgent</span><span class="p">(</span><span class="n">ReActAgentBase</span><span class="p">):</span>
@@ -406,8 +371,8 @@
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">finish_function_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;generate_response&quot;</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The function name used to finish replying and return a response to</span>
-<span class="sd">    the user.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The name of the function used to generate structured output. Only</span>
+<span class="sd">    registered when structured output model is provided in the reply call.&quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="ReActAgent.__init__">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.__init__">[docs]</a>
@@ -526,9 +491,6 @@
         <span class="c1"># -------------- Tool management --------------</span>
         <span class="c1"># If None, a default Toolkit will be created</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span> <span class="o">=</span> <span class="n">toolkit</span> <span class="ow">or</span> <span class="n">Toolkit</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span>
-            <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="p">),</span>
-        <span class="p">)</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_agent_control</span><span class="p">:</span>
             <span class="c1"># Adding two tool functions into the toolkit to allow self-control</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span>
@@ -598,13 +560,7 @@
         <span class="c1"># -------------- State registration and hooks --------------</span>
         <span class="c1"># Register the status variables</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">register_state</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">register_state</span><span class="p">(</span><span class="s2">&quot;_sys_prompt&quot;</span><span class="p">)</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">register_instance_hook</span><span class="p">(</span>
-            <span class="s2">&quot;pre_print&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;finish_function_pre_print_hook&quot;</span><span class="p">,</span>
-            <span class="n">finish_function_pre_print_hook</span><span class="p">,</span>
-        <span class="p">)</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">register_state</span><span class="p">(</span><span class="s2">&quot;_sys_prompt&quot;</span><span class="p">)</span></div>
 
 
     <span class="nd">@property</span>
@@ -615,7 +571,7 @@
 <div class="viewcode-block" id="ReActAgent.reply">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.reply">[docs]</a>
     <span class="nd">@trace_reply</span>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">reply</span><span class="p">(</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">reply</span><span class="p">(</span>  <span class="c1"># pylint: disable=too-many-branches</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">structured_model</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">BaseModel</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -637,49 +593,122 @@
         <span class="c1"># Record the input message(s) in the memory</span>
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 
+        <span class="c1"># -------------- Retrieval process --------------</span>
         <span class="c1"># Retrieve relevant records from the long-term memory if activated</span>
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieve_from_long_term_memory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
         <span class="c1"># Retrieve relevant documents from the knowledge base(s) if any</span>
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieve_from_knowledge</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 
+        <span class="c1"># Control if LLM generates tool calls in each reasoning step</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># -------------- Structured output management --------------</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span> <span class="o">=</span> <span class="n">structured_model</span>
         <span class="c1"># Record structured output model if provided</span>
         <span class="k">if</span> <span class="n">structured_model</span><span class="p">:</span>
+            <span class="c1"># Register generate_response tool only when structured output</span>
+            <span class="c1"># is required</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span>
+                    <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="p">),</span>
+                <span class="p">)</span>
+
+            <span class="c1"># Set the structured output model</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">set_extended_model</span><span class="p">(</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="p">,</span>
                 <span class="n">structured_model</span><span class="p">,</span>
             <span class="p">)</span>
+            <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;required&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Remove generate_response tool if no structured output is required</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">remove_tool_function</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="p">)</span>
 
-        <span class="c1"># The reasoning-acting loop</span>
-        <span class="n">reply_msg</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="c1"># -------------- The reasoning-acting loop --------------</span>
+        <span class="c1"># Cache the structured output generated in the finish function call</span>
+        <span class="n">structured_output</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_iters</span><span class="p">):</span>
-            <span class="n">msg_reasoning</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning</span><span class="p">()</span>
+            <span class="c1"># -------------- The reasoning process --------------</span>
+            <span class="n">msg_reasoning</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning</span><span class="p">(</span><span class="n">tool_choice</span><span class="p">)</span>
 
+            <span class="c1"># -------------- The acting process --------------</span>
             <span class="n">futures</span> <span class="o">=</span> <span class="p">[</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">_acting</span><span class="p">(</span><span class="n">tool_call</span><span class="p">)</span>
                 <span class="k">for</span> <span class="n">tool_call</span> <span class="ow">in</span> <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span>
                     <span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
                 <span class="p">)</span>
             <span class="p">]</span>
-
             <span class="c1"># Parallel tool calls or not</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">parallel_tool_calls</span><span class="p">:</span>
-                <span class="n">acting_responses</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">futures</span><span class="p">)</span>
-
+                <span class="n">structured_outputs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">futures</span><span class="p">)</span>
             <span class="k">else</span><span class="p">:</span>
                 <span class="c1"># Sequential tool calls</span>
-                <span class="n">acting_responses</span> <span class="o">=</span> <span class="p">[</span><span class="k">await</span> <span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">futures</span><span class="p">]</span>
+                <span class="n">structured_outputs</span> <span class="o">=</span> <span class="p">[</span><span class="k">await</span> <span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">futures</span><span class="p">]</span>
 
-            <span class="c1"># Find the first non-None replying message from the acting</span>
-            <span class="k">for</span> <span class="n">acting_msg</span> <span class="ow">in</span> <span class="n">acting_responses</span><span class="p">:</span>
-                <span class="n">reply_msg</span> <span class="o">=</span> <span class="n">reply_msg</span> <span class="ow">or</span> <span class="n">acting_msg</span>
+            <span class="c1"># -------------- Check for exit condition --------------</span>
+            <span class="c1"># If structured output is still not satisfied</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span><span class="p">:</span>
+                <span class="c1"># Remove None results</span>
+                <span class="n">structured_outputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">structured_outputs</span> <span class="k">if</span> <span class="n">_</span><span class="p">]</span>
 
-            <span class="k">if</span> <span class="n">reply_msg</span><span class="p">:</span>
-                <span class="k">break</span>
+                <span class="n">msg_hint</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="c1"># If the acting step generates structured outputs</span>
+                <span class="k">if</span> <span class="n">structured_outputs</span><span class="p">:</span>
+                    <span class="c1"># Cache the structured output data</span>
+                    <span class="n">structured_output</span> <span class="o">=</span> <span class="n">structured_outputs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+                    <span class="c1"># Prepare textual response</span>
+                    <span class="k">if</span> <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">has_content_blocks</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">):</span>
+                        <span class="c1"># Re-use the existing text response if any to avoid</span>
+                        <span class="c1"># duplicate text generation</span>
+                        <span class="k">return</span> <span class="n">Msg</span><span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                            <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">),</span>
+                            <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+                            <span class="n">metadata</span><span class="o">=</span><span class="n">structured_output</span><span class="p">,</span>
+                        <span class="p">)</span>
+
+                    <span class="c1"># Generate a textual response in the next iteration</span>
+                    <span class="n">msg_hint</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;&lt;system-hint&gt;Now generate a text &quot;</span>
+                        <span class="s2">&quot;response based on your current situation&quot;</span>
+                        <span class="s2">&quot;&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">)</span>
+
+                    <span class="c1"># Just generate text response in the next reasoning step</span>
+                    <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>
+                    <span class="c1"># The structured output is generated successfully</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span> <span class="o">=</span> <span class="kc">None</span>
+
+                <span class="k">elif</span> <span class="ow">not</span> <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">has_content_blocks</span><span class="p">(</span><span class="s2">&quot;tool_use&quot;</span><span class="p">):</span>
+                    <span class="c1"># If structured output is required but no tool call is</span>
+                    <span class="c1"># made, remind the llm to go on the task</span>
+                    <span class="n">msg_hint</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;&lt;system-hint&gt;Structured output is &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;required, go on to finish your task or call &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="si">}</span><span class="s2">&#39; to generate the &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;required structured output.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">)</span>
+                    <span class="c1"># Require tool call in the next reasoning step</span>
+                    <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;required&quot;</span>
+
+                <span class="k">if</span> <span class="n">msg_hint</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">print_hint_msg</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">)</span>
+
+            <span class="k">elif</span> <span class="ow">not</span> <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">has_content_blocks</span><span class="p">(</span><span class="s2">&quot;tool_use&quot;</span><span class="p">):</span>
+                <span class="c1"># Exit the loop when no structured output is required (or</span>
+                <span class="c1"># already satisfied) and only text response is generated</span>
+                <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">structured_output</span>
+                <span class="k">return</span> <span class="n">msg_reasoning</span>
 
         <span class="c1"># When the maximum iterations are reached</span>
-        <span class="k">if</span> <span class="n">reply_msg</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">reply_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_summarizing</span><span class="p">()</span>
+        <span class="n">reply_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_summarizing</span><span class="p">()</span>
+        <span class="n">reply_msg</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">structured_output</span>
 
         <span class="c1"># Post-process the memory, long-term memory</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static_control</span><span class="p">:</span>
@@ -697,6 +726,7 @@
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_reasoning</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Perform the reasoning process.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span><span class="p">:</span>
@@ -721,6 +751,7 @@
         <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span>
             <span class="n">prompt</span><span class="p">,</span>
             <span class="n">tools</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span>
+            <span class="n">tool_choice</span><span class="o">=</span><span class="n">tool_choice</span><span class="p">,</span>
         <span class="p">)</span>
 
         <span class="c1"># handle output from the model</span>
@@ -747,19 +778,6 @@
             <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
         <span class="k">finally</span><span class="p">:</span>
-            <span class="k">if</span> <span class="n">msg</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">msg</span><span class="o">.</span><span class="n">has_content_blocks</span><span class="p">(</span><span class="s2">&quot;tool_use&quot;</span><span class="p">):</span>
-                <span class="c1"># Turn plain text response into a tool call of the finish</span>
-                <span class="c1"># function</span>
-                <span class="n">msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">to_dict</span><span class="p">())</span>
-                <span class="n">msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="p">[</span>
-                    <span class="n">ToolUseBlock</span><span class="p">(</span>
-                        <span class="nb">id</span><span class="o">=</span><span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">(),</span>
-                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
-                        <span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span><span class="p">,</span>
-                        <span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_text_content</span><span class="p">()},</span>
-                    <span class="p">),</span>
-                <span class="p">]</span>
-
             <span class="c1"># None will be ignored by the memory</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 
@@ -787,17 +805,18 @@
                     <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg_res</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">msg</span>
 
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_acting</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_call</span><span class="p">:</span> <span class="n">ToolUseBlock</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Perform the acting process.</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_acting</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_call</span><span class="p">:</span> <span class="n">ToolUseBlock</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Perform the acting process, and return the structured output if</span>
+<span class="sd">        it&#39;s generated and verified in the finish function call.</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            tool_call (`ToolUseBlock`):</span>
 <span class="sd">                The tool use block to be executed.</span>
 
 <span class="sd">        Returns:</span>
-<span class="sd">            `Union[Msg, None]`:</span>
-<span class="sd">                Return a message to the user if the `finish_function` is</span>
-<span class="sd">                called, otherwise return `None`.</span>
+<span class="sd">            `Union[dict, None]`:</span>
+<span class="sd">                Return the structured output if it&#39;s verified in the finish</span>
+<span class="sd">                function call, otherwise return None.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">tool_res_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
@@ -816,7 +835,6 @@
             <span class="c1"># Execute the tool call</span>
             <span class="n">tool_res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">call_tool_function</span><span class="p">(</span><span class="n">tool_call</span><span class="p">)</span>
 
-            <span class="n">response_msg</span> <span class="o">=</span> <span class="kc">None</span>
             <span class="c1"># Async generator handling</span>
             <span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">tool_res</span><span class="p">:</span>
                 <span class="c1"># Turn into a tool result block</span>
@@ -824,16 +842,7 @@
                     <span class="s2">&quot;output&quot;</span>
                 <span class="p">]</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">content</span>
 
-                <span class="c1"># Skip the printing of the finish function call</span>
-                <span class="k">if</span> <span class="p">(</span>
-                    <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span>
-                    <span class="ow">or</span> <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span>
-                    <span class="ow">and</span> <span class="p">(</span>
-                        <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span> <span class="ow">is</span> <span class="kc">None</span>
-                        <span class="ow">or</span> <span class="ow">not</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;success&quot;</span><span class="p">)</span>
-                    <span class="p">)</span>
-                <span class="p">):</span>
-                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">tool_res_msg</span><span class="p">,</span> <span class="n">chunk</span><span class="o">.</span><span class="n">is_last</span><span class="p">)</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">tool_res_msg</span><span class="p">,</span> <span class="n">chunk</span><span class="o">.</span><span class="n">is_last</span><span class="p">)</span>
 
                 <span class="c1"># Raise the CancelledError to handle the interruption in the</span>
                 <span class="c1"># handle_interrupt function</span>
@@ -844,14 +853,12 @@
                 <span class="k">if</span> <span class="p">(</span>
                     <span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">finish_function_name</span>
                     <span class="ow">and</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span>
-                    <span class="ow">and</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-                        <span class="s2">&quot;success&quot;</span><span class="p">,</span>
-                        <span class="kc">True</span><span class="p">,</span>
-                    <span class="p">)</span>
+                    <span class="ow">and</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;success&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
                 <span class="p">):</span>
-                    <span class="n">response_msg</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;response_msg&quot;</span><span class="p">)</span>
+                    <span class="c1"># Only return the structured output</span>
+                    <span class="k">return</span> <span class="n">chunk</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;structured_output&quot;</span><span class="p">)</span>
 
-            <span class="k">return</span> <span class="n">response_msg</span>
+            <span class="k">return</span> <span class="kc">None</span>
 
         <span class="k">finally</span><span class="p">:</span>
             <span class="c1"># Record the tool result message in the memory</span>
@@ -934,29 +941,19 @@
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.generate_response">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">generate_response</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">response</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate a response. Note only the input argument `response` is</span>
-<span class="sd">        visible to the others, you should include all the necessary</span>
-<span class="sd">        information in the `response` argument.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            response (`str`):</span>
-<span class="sd">                Your response to the user.</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Generate required structured output by this function and return it</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">response_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-            <span class="n">response</span><span class="p">,</span>
-            <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
-        <span class="p">)</span>
 
+        <span class="n">structured_output</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="c1"># Prepare structured output</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
                 <span class="c1"># Use the metadata field of the message to store the</span>
                 <span class="c1"># structured output</span>
-                <span class="n">response_msg</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">structured_output</span> <span class="o">=</span> <span class="p">(</span>
                     <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span>
                         <span class="n">kwargs</span><span class="p">,</span>
                     <span class="p">)</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()</span>
@@ -972,9 +969,14 @@
                     <span class="p">],</span>
                     <span class="n">metadata</span><span class="o">=</span><span class="p">{</span>
                         <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
-                        <span class="s2">&quot;response_msg&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="s2">&quot;structured_output&quot;</span><span class="p">:</span> <span class="p">{},</span>
                     <span class="p">},</span>
                 <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;The generate_response function is called when no structured &quot;</span>
+                <span class="s2">&quot;output model is required.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
 
         <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
             <span class="n">content</span><span class="o">=</span><span class="p">[</span>
@@ -985,7 +987,7 @@
             <span class="p">],</span>
             <span class="n">metadata</span><span class="o">=</span><span class="p">{</span>
                 <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
-                <span class="s2">&quot;response_msg&quot;</span><span class="p">:</span> <span class="n">response_msg</span><span class="p">,</span>
+                <span class="s2">&quot;structured_output&quot;</span><span class="p">:</span> <span class="n">structured_output</span><span class="p">,</span>
             <span class="p">},</span>
             <span class="n">is_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="p">)</span></div>

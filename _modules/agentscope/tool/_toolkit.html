@@ -703,18 +703,24 @@
 
 <div class="viewcode-block" id="Toolkit.remove_tool_function">
 <a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_function">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">remove_tool_function</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">remove_tool_function</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">tool_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">allow_not_exist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove tool function from the toolkit by its name.</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            tool_name (`str`):</span>
 <span class="sd">                The name of the tool function to be removed.</span>
+<span class="sd">            allow_not_exist (`bool`):</span>
+<span class="sd">                Allow the tool function to not exist when removing.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
-        <span class="k">if</span> <span class="n">tool_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
-                <span class="s2">&quot;Skipping removing tool function &#39;</span><span class="si">%s</span><span class="s2">&#39; as it does not exist.&quot;</span><span class="p">,</span>
-                <span class="n">tool_name</span><span class="p">,</span>
+        <span class="k">if</span> <span class="n">tool_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">allow_not_exist</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Tool function &#39;</span><span class="si">{</span><span class="n">tool_name</span><span class="si">}</span><span class="s2">&#39; does not exist in the &quot;</span>
+                <span class="s2">&quot;toolkit.&quot;</span><span class="p">,</span>
             <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">tool_name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span></div>

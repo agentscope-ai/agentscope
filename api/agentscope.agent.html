@@ -696,8 +696,8 @@ pre-acting, and post-acting by the <cite>_ReActAgentMeta</cite> metaclass.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.finish_function_name">
 <span class="sig-name descname"><span class="pre">finish_function_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'generate_response'</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.finish_function_name" title="Link to this definition">¶</a></dt>
-<dd><p>The function name used to finish replying and return a response to
-the user.</p>
+<dd><p>The name of the function used to generate structured output. Only
+registered when structured output model is provided in the reply call.</p>
 </dd></dl>
 
 <dl class="py method">
@@ -811,16 +811,11 @@ user or something else.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.generate_response">
-<span class="sig-name descname"><span class="pre">generate_response</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">response</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.generate_response"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.generate_response" title="Link to this definition">¶</a></dt>
-<dd><p>Generate a response. Note only the input argument <cite>response</cite> is
-visible to the others, you should include all the necessary
-information in the <cite>response</cite> argument.</p>
+<span class="sig-name descname"><span class="pre">generate_response</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.generate_response"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.generate_response" title="Link to this definition">¶</a></dt>
+<dd><p>Generate required structured output by this function and return it</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>response</strong> (<cite>str</cite>) – Your response to the user.</p></li>
-<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
-</ul>
+<dd class="field-odd"><p><strong>kwargs</strong> (<em>Any</em>)</p>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
 <dd class="field-even"><p><a class="reference internal" href="agentscope.tool.html#agentscope.tool.ToolResponse" title="agentscope.tool._response.ToolResponse"><em>ToolResponse</em></a></p>
