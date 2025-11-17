@@ -173,7 +173,7 @@ class PlanNotebook(StateModule):
     """The plan notebook to manage the plan, providing hints and plan related
     tool functions to the agent."""
 
-    _plan_change_hooks: dict[str, Callable[["PlanNotebook", Plan], None]]
+    _plan_change_hooks: dict[str, Callable[["PlanNotebook", Plan], Union[None, Awaitable[None]]]]
     """The hooks that will be triggered when the plan is changed. For example,
     used to display the plan on the frontend."""
 
@@ -856,7 +856,7 @@ class PlanNotebook(StateModule):
     def register_plan_change_hook(
         self,
         hook_name: str,
-        hook: Callable[["PlanNotebook", Plan], None],
+        hook: Callable[["PlanNotebook", Plan], Union[None, Awaitable[None]]]
     ) -> None:
         """Register a plan hook that will be triggered when the plan is
         changed.
