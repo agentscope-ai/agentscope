@@ -348,7 +348,7 @@
 
 <span class="sd">    Example:</span>
 <span class="sd">        In the following example, the reply message from `agent1`, `agent2`,</span>
-<span class="sd">        and `agent3` will be broadcasted to all the other agents in the MsgHub.</span>
+<span class="sd">        and `agent3` will be broadcast to all the other agents in the MsgHub.</span>
 
 <span class="sd">        .. code-block:: python</span>
 
@@ -383,9 +383,9 @@
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize a MsgHub context manager.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            participants (`list[AgentBase]`):</span>
-<span class="sd">                A list of agents that participate in the MsgHub.</span>
-<span class="sd">            announcement （`list[Msg] | Msg | None`):</span>
+<span class="sd">            participants (`Sequence[AgentBase]`):</span>
+<span class="sd">                A sequence of agents that participate in the MsgHub.</span>
+<span class="sd">            announcement (`list[Msg] | Msg | None`):</span>
 <span class="sd">                The message that will be broadcast to all participants when</span>
 <span class="sd">                entering the MsgHub.</span>
 <span class="sd">            enable_auto_broadcast (`bool`, defaults to `True`):</span>

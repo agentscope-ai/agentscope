@@ -345,7 +345,7 @@ complex workflows and multi-agent conversations.</p>
 <p>MsgHub class that controls the subscription of the participated agents.</p>
 <p class="rubric">示例</p>
 <p>In the following example, the reply message from <cite>agent1</cite>, <cite>agent2</cite>,
-and <cite>agent3</cite> will be broadcasted to all the other agents in the MsgHub.</p>
+and <cite>agent3</cite> will be broadcast to all the other agents in the MsgHub.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">MsgHub</span><span class="p">(</span><span class="n">participant</span><span class="o">=</span><span class="p">[</span><span class="n">agent1</span><span class="p">,</span> <span class="n">agent2</span><span class="p">,</span> <span class="n">agent3</span><span class="p">]):</span>
     <span class="n">agent1</span><span class="p">()</span>
     <span class="n">agent2</span><span class="p">()</span>
@@ -369,8 +369,8 @@ easy and elegant!</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>participants</strong> (<cite>list[AgentBase]</cite>) -- A list of agents that participate in the MsgHub.</p></li>
-<li><p><strong>None</strong><strong>)</strong> (<em>announcement （list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message.Msg"><em>Msg</em></a><em>] </em><em>| </em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message.Msg"><em>Msg</em></a><em> |</em>) -- The message that will be broadcast to all participants when
+<li><p><strong>participants</strong> (<cite>Sequence[AgentBase]</cite>) -- A sequence of agents that participate in the MsgHub.</p></li>
+<li><p><strong>announcement</strong> (<cite>list[Msg] | Msg | None</cite>) -- The message that will be broadcast to all participants when
 entering the MsgHub.</p></li>
 <li><p><strong>enable_auto_broadcast</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- Whether to enable automatic broadcasting of the replied
 message from any participant to all other participants. If
@@ -379,7 +379,6 @@ broadcaster with the <cite>announcement</cite> argument and the
 <cite>broadcast()</cite> method.</p></li>
 <li><p><strong>name</strong> (<cite>str | None</cite>) -- The name of this MsgHub. If not provided, a random ID
 will be generated.</p></li>
-<li><p><strong>announcement</strong> (<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em> | </em><em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>] </em><em>| </em><em>None</em>)</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>

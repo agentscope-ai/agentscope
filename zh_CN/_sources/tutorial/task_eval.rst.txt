@@ -322,8 +322,46 @@ AgentScope 当前的实现包括：
 
  .. code-block:: none
 
-    Friday: 2 + 2 equals 4.
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 83331.
+    Friday: {
+        "type": "tool_use",
+        "name": "generate_response",
+        "input": {
+            "answer_as_number": 4
+        },
+        "id": "call_92f4db93cedc46fdb80142"
+    }
+    system: {
+        "type": "tool_result",
+        "id": "call_92f4db93cedc46fdb80142",
+        "name": "generate_response",
+        "output": [
+            {
+                "type": "text",
+                "text": "Successfully generated response."
+            }
+        ]
+    }
+    Friday: The answer to 2 + 2 is 4.
+    Friday: {
+        "type": "tool_use",
+        "name": "generate_response",
+        "input": {
+            "answer_as_number": 73331
+        },
+        "id": "call_aa0b0b7846e14c6a99eb1c"
+    }
+    system: {
+        "type": "tool_result",
+        "id": "call_aa0b0b7846e14c6a99eb1c",
+        "name": "generate_response",
+        "output": [
+            {
+                "type": "text",
+                "text": "Successfully generated response."
+            }
+        ]
+    }
+    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73331.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -331,9 +369,9 @@ AgentScope 当前的实现包括：
                     Completed tasks: 2
                     Incomplete tasks: 0
                     Aggregation: {
-                        "mean": 1.0,
+                        "mean": 0.5,
                         "max": 1.0,
-                        "min": 1.0
+                        "min": 0.0
                     }
 
 
@@ -342,7 +380,7 @@ AgentScope 当前的实现包括：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 5.799 seconds)
+   **Total running time of the script:** (0 minutes 8.652 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:

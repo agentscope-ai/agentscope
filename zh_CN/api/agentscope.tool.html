@@ -471,11 +471,14 @@ the returned block will be used as the final tool result.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit.remove_tool_function">
-<span class="sig-name descname"><span class="pre">remove_tool_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tool_name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.remove_tool_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.remove_tool_function" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">remove_tool_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tool_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.remove_tool_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.remove_tool_function" title="Link to this definition">¶</a></dt>
 <dd><p>Remove tool function from the toolkit by its name.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>tool_name</strong> (<cite>str</cite>) -- The name of the tool function to be removed.</p>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>tool_name</strong> (<cite>str</cite>) -- The name of the tool function to be removed.</p></li>
+<li><p><strong>allow_not_exist</strong> (<cite>bool</cite>) -- Allow the tool function to not exist when removing.</p></li>
+</ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
 <dd class="field-even"><p>None</p>
