@@ -397,8 +397,10 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 you want to retrieve from the memory). Each keyword is issued
                 as an independent query against the memory store.
             limit (`int`, optional):
-                The maximum number of memories to retrieve per search, i.e.,
-                the number of memories to retrieve for each keyword.
+                The maximum number of memories to retrieve per search,
+                defaults to 5.
+                i.e.,the number of memories to retrieve for
+                each keyword.
         Returns:
             `ToolResponse`:
                 A ToolResponse containing the retrieved memories as JSON text.
@@ -548,7 +550,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 message is a list of messages, the limit will be applied to
                 each message. If the message is a single message, then the
                 limit is the total number of memories to retrieve for the
-                message.
+                message. Defaults to 5.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
