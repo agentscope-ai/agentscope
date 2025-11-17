@@ -493,6 +493,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_from_memory</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">keywords</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Search and retrieve relevant task experiences.</span>
@@ -525,6 +526,10 @@
 <span class="sd">                specific and use technical terms. Examples:</span>
 <span class="sd">                [&quot;database optimization&quot;, &quot;slow queries&quot;], [&quot;API design&quot;,</span>
 <span class="sd">                &quot;rate limiting&quot;], [&quot;code refactoring&quot;, &quot;Python&quot;].</span>
+<span class="sd">            limit (`int`, optional):</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for each keyword. Defaults</span>
+<span class="sd">                to 5.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments. Can include &#39;top_k&#39; (int)</span>
 <span class="sd">                to specify number of experiences to retrieve</span>
@@ -553,13 +558,12 @@
             <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
 
             <span class="c1"># Search for each keyword</span>
-            <span class="n">top_k</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;top_k&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
             <span class="k">for</span> <span class="n">keyword</span> <span class="ow">in</span> <span class="n">keywords</span><span class="p">:</span>
                 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">async_execute</span><span class="p">(</span>
                     <span class="n">name</span><span class="o">=</span><span class="s2">&quot;retrieve_task_memory&quot;</span><span class="p">,</span>
                     <span class="n">workspace_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace_id</span><span class="p">,</span>
                     <span class="n">query</span><span class="o">=</span><span class="n">keyword</span><span class="p">,</span>
-                    <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+                    <span class="n">top_k</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
                     <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
                 <span class="p">)</span>
 
@@ -695,6 +699,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Retrieve relevant task experiences from memory.</span>
@@ -702,6 +707,13 @@
 <span class="sd">        Args:</span>
 <span class="sd">            msg (`Msg | list[Msg] | None`):</span>
 <span class="sd">                The message to search for relevant task experiences.</span>
+<span class="sd">            limit (`int`, optional):</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for the message. If the</span>
+<span class="sd">                message is a list of messages, the limit applies to each</span>
+<span class="sd">                message. If the message is a single message, the limit is the</span>
+<span class="sd">                total number of memories to retrieve for that message. Defaults</span>
+<span class="sd">                to 3.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments.</span>
 
@@ -749,12 +761,11 @@
                 <span class="k">return</span> <span class="s2">&quot;&quot;</span>
 
             <span class="c1"># Retrieve using the query from the last message</span>
-            <span class="n">top_k</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;top_k&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
             <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">app</span><span class="o">.</span><span class="n">async_execute</span><span class="p">(</span>
                 <span class="n">name</span><span class="o">=</span><span class="s2">&quot;retrieve_task_memory&quot;</span><span class="p">,</span>
                 <span class="n">workspace_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace_id</span><span class="p">,</span>
                 <span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">,</span>
-                <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+                <span class="n">top_k</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
 

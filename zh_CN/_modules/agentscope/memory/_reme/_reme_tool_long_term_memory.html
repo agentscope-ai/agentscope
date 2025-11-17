@@ -512,6 +512,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_from_memory</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">keywords</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Retrieve usage guidelines and best practices for tools.</span>
@@ -546,6 +547,10 @@
 <span class="sd">                List of tool names to retrieve guidelines for. Use the</span>
 <span class="sd">                exact tool names. Examples: [&quot;search&quot;],</span>
 <span class="sd">                [&quot;database_query&quot;, &quot;cache_get&quot;], [&quot;api_call&quot;].</span>
+<span class="sd">            limit (`int`, optional):</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for each keyword. Defaults</span>
+<span class="sd">                to 5.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments for the retrieval operation.</span>
 
@@ -577,6 +582,7 @@
                 <span class="n">name</span><span class="o">=</span><span class="s2">&quot;retrieve_tool_memory&quot;</span><span class="p">,</span>
                 <span class="n">workspace_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace_id</span><span class="p">,</span>
                 <span class="n">tool_names</span><span class="o">=</span><span class="n">tool_names</span><span class="p">,</span>
+                <span class="n">top_k</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
 
@@ -811,6 +817,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Retrieve tool guidelines from memory.</span>
@@ -821,6 +828,13 @@
 <span class="sd">            msg (`Msg | list[Msg] | None`):</span>
 <span class="sd">                The message containing tool names or queries to</span>
 <span class="sd">                retrieve guidelines for.</span>
+<span class="sd">            limit (`int`, optional):</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for the message. If the</span>
+<span class="sd">                message is a list of messages, the limit applies to each</span>
+<span class="sd">                message. If the message is a single message, the limit is the</span>
+<span class="sd">                total number of memories to retrieve for that message. Defaults</span>
+<span class="sd">                to 5.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments.</span>
 
@@ -860,6 +874,7 @@
                 <span class="n">name</span><span class="o">=</span><span class="s2">&quot;retrieve_tool_memory&quot;</span><span class="p">,</span>
                 <span class="n">workspace_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">workspace_id</span><span class="p">,</span>
                 <span class="n">tool_names</span><span class="o">=</span><span class="n">tool_names</span><span class="p">,</span>
+                <span class="n">top_k</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
                 <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
             <span class="p">)</span>
 

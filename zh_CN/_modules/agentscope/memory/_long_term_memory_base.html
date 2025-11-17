@@ -372,6 +372,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">msg</span><span class="p">:</span> <span class="n">Msg</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;A developer-designed method to retrieve information from the</span>
@@ -411,6 +412,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_from_memory</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">keywords</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Retrieve the memory based on the given keywords.</span>
@@ -420,6 +422,10 @@
 <span class="sd">                The keywords to search for in the memory, which should be</span>
 <span class="sd">                specific and concise, e.g. the person&#39;s name, the date, the</span>
 <span class="sd">                location, etc.</span>
+<span class="sd">            limit (`int`, optional):</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for each keyword. Defaults</span>
+<span class="sd">                to 5.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            `list[Msg]`:</span>
