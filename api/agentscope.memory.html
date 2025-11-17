@@ -624,7 +624,7 @@ input message(s) to the long-term memory.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>A developer-designed method to retrieve information from the
 long-term memory based on the given input message(s). The retrieved
 information will be added to the system prompt of the agent.</p>
@@ -632,6 +632,7 @@ information will be added to the system prompt of the agent.</p>
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>msg</strong> (<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em> | </em><em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>] </em><em>| </em><em>None</em>)</p></li>
+<li><p><strong>limit</strong> (<em>int</em>)</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
@@ -663,7 +664,7 @@ who, when, where, do what, why, how, etc.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the memory based on the given keywords.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -671,6 +672,9 @@ who, when, where, do what, why, how, etc.</p>
 <li><p><strong>keywords</strong> (<cite>list[str]</cite>) – The keywords to search for in the memory, which should be
 specific and concise, e.g. the person’s name, the date, the
 location, etc.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for each keyword. Defaults
+to 5.</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
@@ -803,10 +807,14 @@ who, when, where, do what, why, how, etc.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>keywords</strong> (<cite>list[str]</cite>) – The keywords to search for in the memory, which should be
-specific and concise, e.g. the person’s name, the date, the
-location, etc.</p></li>
-<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search.</p></li>
+<li><p><strong>keywords</strong> (<cite>list[str]</cite>) – Short, targeted search phrases (for example, a person’s name,
+a specific date, a location, or a phrase describing something
+you want to retrieve from the memory). Each keyword is issued
+as an independent query against the memory store.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search,
+defaults to 5.
+i.e.,the number of memories to retrieve for
+each keyword.</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
@@ -850,7 +858,12 @@ procedural memories.</p></li>
 <li><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>) – The message to search for in the memory, which should be
 specific and concise, e.g. the person’s name, the date, the
 location, etc.</p></li>
-<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for the message. if the
+message is a list of messages, the limit will be applied to
+each message. If the message is a single message, then the
+limit is the total number of memories to retrieve for the
+message. Defaults to 5.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments.</p></li>
 </ul>
 </dd>
@@ -915,7 +928,7 @@ recording.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Search and retrieve relevant information from long-term memory.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -941,6 +954,9 @@ conversations</p></li>
 multiple keywords for better results. Examples:
 [“travel preferences”, “Hangzhou”], [“work habits”,
 “morning routine”], [“food preferences”, “tea”].</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for each keyword. Defaults
+to 3.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments for the retrieval operation.</p></li>
 </ul>
 </dd>
@@ -975,7 +991,7 @@ records them using the personal memory flow.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the content from the long-term memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -983,6 +999,12 @@ records them using the personal memory flow.</p>
 <li><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>) – The message to search for in the memory, which should be
 specific and concise, e.g. the person’s name, the date, the
 location, etc.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for the message. If the
+message is a list of messages, the limit applies to each
+message. If the message is a single message, the limit is the
+total number of memories to retrieve for that message. Defaults
+to 5.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments.</p></li>
 </ul>
 </dd>
@@ -1055,7 +1077,7 @@ recording.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Search and retrieve relevant task experiences.</p>
 <p>Search and retrieve relevant task experiences from long-term
 memory.</p>
@@ -1086,6 +1108,9 @@ starting from scratch.</p>
 specific and use technical terms. Examples:
 [“database optimization”, “slow queries”], [“API design”,
 “rate limiting”], [“code refactoring”, “Python”].</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for each keyword. Defaults
+to 5.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments. Can include ‘top_k’ (int)
 to specify number of experiences to retrieve
 (default: 3).</p></li>
@@ -1125,12 +1150,18 @@ Can include ‘score’ (float) for trajectory scoring
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve relevant task experiences from memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>) – The message to search for relevant task experiences.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for the message. If the
+message is a list of messages, the limit applies to each
+message. If the message is a single message, the limit is the
+total number of memories to retrieve for that message. Defaults
+to 3.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments.</p></li>
 </ul>
 </dd>
@@ -1206,7 +1237,7 @@ and guidelines generated.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve usage guidelines and best practices for tools.</p>
 <p>Retrieve usage guidelines and best practices for specific tools.</p>
 <div class="admonition note">
@@ -1240,6 +1271,9 @@ limitations</p></li>
 <li><p><strong>keywords</strong> (<cite>list[str]</cite>) – List of tool names to retrieve guidelines for. Use the
 exact tool names. Examples: [“search”],
 [“database_query”, “cache_get”], [“api_call”].</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for each keyword. Defaults
+to 5.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments for the retrieval operation.</p></li>
 </ul>
 </dd>
@@ -1278,7 +1312,7 @@ representing tool_call_results.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve tool guidelines from memory.</p>
 <p>Retrieve tool guidelines from memory based on message content.</p>
 <dl class="field-list simple">
@@ -1286,6 +1320,12 @@ representing tool_call_results.</p></li>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>) – The message containing tool names or queries to
 retrieve guidelines for.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>, optional) – The maximum number of memories to retrieve per search, i.e.,
+the number of memories to retrieve for the message. If the
+message is a list of messages, the limit applies to each
+message. If the message is a single message, the limit is the
+total number of memories to retrieve for that message. Defaults
+to 5.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments.</p></li>
 </ul>
 </dd>

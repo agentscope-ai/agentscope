@@ -329,9 +329,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='fzQivZEXNBPZAZdWKtZ3Fa', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='VtFUjPa67UyckowRBH2Vza', embedding=None, score=0.5657136536003619) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='mZciNwsQs4tSvnUAEnQYUK', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='Qqc9dcu55P3v6JMrPMautC', embedding=None, score=0.5062624400117309) 
 
 
 
@@ -453,34 +453,48 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a close friend you can rely on. Is there anything specific you'd like to share or ask about John Doe or your friendship?
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share or ask about John Doe or your friendship?
 
 
     The second response: 
     Friday: {
         "type": "tool_use",
-        "id": "call_fac8554fa82449d9976263",
+        "id": "call_eb8066efa7454862afb7d8",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
             "limit": 5,
-            "score_threshold": 0.5
+            "score_threshold": null
         }
     }
     system: {
         "type": "tool_result",
-        "id": "call_fac8554fa82449d9976263",
+        "id": "call_eb8066efa7454862afb7d8",
         "name": "retrieve_knowledge",
         "output": [
             {
                 "type": "text",
                 "text": "Score: 0.5653893900693138, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.4790107771624694, Content: I'm John Doe, 28 years old."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.2473851245249162, Content: My best friend is James Smith."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.15979023413058244, Content: I live in San Francisco. I work at OpenAI as a software engineer. I love hiking and photography."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.15195164753879928, Content: I'm now a PhD student at Stanford University, majoring in Computer Science. My advisor is Prof. Jane Williams, who is a leading expert in artificial intelligence. I have published several papers in top conferences, such as NeurIPS and ICML."
             }
         ]
     }
-    Friday: John Doe's father is Michael Doe, and he is a doctor. It seems that John is very proud of his father. If you need more information, feel free to ask.
-  
-    Is there anything else you would like to know about John or his family?
+    Friday: According to the information I found, John Doe's father is Michael Doe, and he is a doctor. If this isn't the John Doe you're asking about, could you provide more details so I can look up the correct person?
 
 
 
@@ -696,7 +710,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='TM5vSCkhRquW8go5gcxs46', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2025-11-17 02:58:05.020', invocation_id='None')
+    Msg(id='ByhKQq7t3wAUfmhDEMUdr4', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2025-11-17 05:41:03.983', invocation_id='None')
 
 
 
@@ -709,7 +723,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 28.051 seconds)
+   **Total running time of the script:** (0 minutes 25.096 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:

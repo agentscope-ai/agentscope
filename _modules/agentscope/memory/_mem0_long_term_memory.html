@@ -335,6 +335,7 @@
 <span class="sd">with the mem0 library to provide persistent memory storage and retrieval</span>
 <span class="sd">capabilities for AgentScope agents.</span>
 <span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">TYPE_CHECKING</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">importlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">metadata</span>
@@ -731,12 +732,15 @@
 
 <span class="sd">        Args:</span>
 <span class="sd">            keywords (`list[str]`):</span>
-<span class="sd">                The keywords to search for in the memory, which should be</span>
-<span class="sd">                specific and concise, e.g. the person&#39;s name, the date, the</span>
-<span class="sd">                location, etc.</span>
+<span class="sd">                Short, targeted search phrases (for example, a person&#39;s name,</span>
+<span class="sd">                a specific date, a location, or a phrase describing something</span>
+<span class="sd">                you want to retrieve from the memory). Each keyword is issued</span>
+<span class="sd">                as an independent query against the memory store.</span>
 <span class="sd">            limit (`int`, optional):</span>
-<span class="sd">                The maximum number of memories to retrieve per search.</span>
-
+<span class="sd">                The maximum number of memories to retrieve per search,</span>
+<span class="sd">                defaults to 5.</span>
+<span class="sd">                i.e.,the number of memories to retrieve for</span>
+<span class="sd">                each keyword.</span>
 <span class="sd">        Returns:</span>
 <span class="sd">            `ToolResponse`:</span>
 <span class="sd">                A ToolResponse containing the retrieved memories as JSON text.</span>
@@ -744,14 +748,18 @@
 
         <span class="k">try</span><span class="p">:</span>
             <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
-            <span class="k">for</span> <span class="n">keyword</span> <span class="ow">in</span> <span class="n">keywords</span><span class="p">:</span>
-                <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">long_term_working_memory</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+            <span class="n">search_coroutines</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">long_term_working_memory</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
                     <span class="n">query</span><span class="o">=</span><span class="n">keyword</span><span class="p">,</span>
                     <span class="n">agent_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">agent_id</span><span class="p">,</span>
                     <span class="n">user_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">user_id</span><span class="p">,</span>
                     <span class="n">run_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span>
                     <span class="n">limit</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
                 <span class="p">)</span>
+                <span class="k">for</span> <span class="n">keyword</span> <span class="ow">in</span> <span class="n">keywords</span>
+            <span class="p">]</span>
+            <span class="n">search_results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">search_coroutines</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">search_results</span><span class="p">:</span>
                 <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
                     <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
                         <span class="p">[</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;memory&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;results&quot;</span><span class="p">]],</span>
@@ -883,7 +891,12 @@
 <span class="sd">                specific and concise, e.g. the person&#39;s name, the date, the</span>
 <span class="sd">                location, etc.</span>
 <span class="sd">            limit (`int`, optional):</span>
-<span class="sd">                The maximum number of memories to retrieve per search.</span>
+<span class="sd">                The maximum number of memories to retrieve per search, i.e.,</span>
+<span class="sd">                the number of memories to retrieve for the message. if the</span>
+<span class="sd">                message is a list of messages, the limit will be applied to</span>
+<span class="sd">                each message. If the message is a single message, then the</span>
+<span class="sd">                limit is the total number of memories to retrieve for the</span>
+<span class="sd">                message. Defaults to 5.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments.</span>
 
@@ -906,16 +919,22 @@
         <span class="p">]</span>
 
         <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">msg_strs</span><span class="p">:</span>
-            <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">long_term_working_memory</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="n">search_coroutines</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">long_term_working_memory</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
                 <span class="n">query</span><span class="o">=</span><span class="n">item</span><span class="p">,</span>
                 <span class="n">agent_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">agent_id</span><span class="p">,</span>
                 <span class="n">user_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">user_id</span><span class="p">,</span>
                 <span class="n">run_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span>
                 <span class="n">limit</span><span class="o">=</span><span class="n">limit</span><span class="p">,</span>
             <span class="p">)</span>
+            <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">msg_strs</span>
+        <span class="p">]</span>
+        <span class="n">search_results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">search_coroutines</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">search_results</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
-                <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;memory&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;results&quot;</span><span class="p">]])</span>
+                <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                    <span class="p">[</span><span class="n">memory</span><span class="p">[</span><span class="s2">&quot;memory&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">memory</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;results&quot;</span><span class="p">]],</span>
+                <span class="p">)</span>
 
         <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">results</span><span class="p">)</span></div>
 </div>
