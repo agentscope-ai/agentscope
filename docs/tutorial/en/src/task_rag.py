@@ -326,6 +326,10 @@ async def example_generic_manner() -> None:
         ),
     )
 
+    print("Take a look at the agent's memory:")
+    content = (await agent.memory.get_memory())[1].content
+    print(json.dumps(content, indent=2, ensure_ascii=False))
+
 
 asyncio.run(example_generic_manner())
 

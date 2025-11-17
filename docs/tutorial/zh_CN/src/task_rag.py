@@ -313,7 +313,7 @@ async def example_generic_manner() -> None:
     )
 
     print("\n查看智能体记忆中检索信息如何插入：")
-    content = (await agent.memory.get_memory())[-4].content
+    content = (await agent.memory.get_memory())[1].content
     print(json.dumps(content, indent=2, ensure_ascii=False))
 
 
@@ -390,7 +390,7 @@ async def example_multimodal_rag() -> None:
 
     # 让我们看看检索到的图片数据是否已经加入了智能体的记忆中
     print("\n查看智能体记忆中检索信息如何插入：")
-    content = (await agent.memory.get_memory())[-4].content
+    content = (await agent.memory.get_memory())[1].content
     print(json.dumps(content, indent=2, ensure_ascii=False))
 
 
