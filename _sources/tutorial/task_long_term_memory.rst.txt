@@ -185,9 +185,34 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique local touch to your travels, allowing you to immerse yourself in the culture and daily life of the city. 
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who can share insider tips about the city.
 
-    If you're looking for recommendations or tips on finding great homestays in Hangzhou, I can help suggest some popular areas or platforms where you might discover the perfect place. Would you like more information on that?
+    If you're planning another trip to Hangzhou, here are some recommendations for finding great homestays:
+
+    ### 1. **Platforms to Find Homestays**
+       - **Airbnb**: Offers a wide range of unique homestays with reviews from past guests.
+       - **Tujia**: A popular platform in China specifically for short-term rentals and homestays.
+       - **Xiaozhu (小猪短租)**: Another Chinese platform similar to Airbnb, where locals rent out their homes or rooms.
+       - **Booking.com**: Often lists boutique guesthouses and homestay-style accommodations.
+
+    ### 2. **Neighborhoods to Consider**
+       - **West Lake (西湖)**: Staying near West Lake gives you easy access to its scenic beauty and nearby attractions. Look for homestays with lake views if possible!
+       - **Lingyin Temple Area**: This area is quieter and closer to nature, perfect for those seeking tranquility.
+       - **Hefang Street (河坊街)**: If you want to stay in the heart of Hangzhou’s traditional culture, this historic street has charming homestays surrounded by shops and eateries.
+       - **Qiantang New Town**: A modern part of the city with convenient transport links but still close enough to major sights.
+
+    ### 3. **Questions to Ask Hosts**
+       - Are breakfast or other meals included?
+       - How far is it from key attractions like West Lake or Lingyin Temple?
+       - Is there parking available if you plan to rent a car?
+       - Do they offer any special experiences, such as tea ceremonies or cooking classes?
+
+    ### 4. **Unique Features to Look For**
+       - **Tea-themed Homestays**: Given Hangzhou's fame for Longjing tea, some homestays incorporate tea culture into their offerings, such as tastings or visits to nearby plantations.
+       - **Traditional Architecture**: Some homestays are located in restored old houses, giving you an authentic feel of Jiangnan-style architecture.
+       - **Garden Views**: Many homestays boast beautiful gardens, which provide a peaceful retreat after a day of sightseeing.
+
+    Would you like me to help narrow down specific options based on your preferences? Let me know what kind of vibe or amenities you’re looking for!
 
 
 
@@ -525,7 +550,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 15.912 seconds)
+   **Total running time of the script:** (0 minutes 31.397 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
