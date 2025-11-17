@@ -408,7 +408,7 @@ async def example_multimodal_rag() -> None:
 
     # Let's see the last message from the agent
     print("\nThe image is attached in the agent's memory:")
-    print((await agent.memory.get_memory())[-4])
+    print((await agent.memory.get_memory())[1])
 
 
 asyncio.run(example_multimodal_rag())
