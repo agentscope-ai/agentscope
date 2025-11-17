@@ -265,9 +265,9 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
                 f"embedding_model.default.model_name={embedding_model_name}",
             )
 
-        embedding_dimensions = embedding_model.dimensions
+        dimensions = embedding_model.dimensions
         config_args.append(
-            f"embedding_model.default.params={{\"dimensions\": {embedding_dimensions}}}"
+            f'embedding_model.default.params={{"dimensions": {dimensions}}}',
         )
 
         # Attempt to import and initialize ReMe
