@@ -57,13 +57,13 @@ class AgentScopeLLM(LLMBase):
                 with "content" and "tool_calls" keys. Otherwise, return
                 a string.
         """
-        text_parts = []
-        thinking_parts = []
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_parts = []
         for block in response.content:
             # Handle TextBlock
             if isinstance(block, dict) and block.get("type") == "text":
-                text_parts.append(block.get("text", ""))
+                text_parts.append(str(block.get("text", "")))
 
             # Handle ThinkingBlock
             elif isinstance(block, dict) and block.get("type") == "thinking":
