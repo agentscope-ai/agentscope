@@ -947,6 +947,6 @@ class Toolkit(StateModule):
         so, raise a ValueError."""
         if func_name in self.tools:
             raise ValueError(
-                f"A function with name '{func_name} is already registered "
+                f"A function with name '{func_name}' is already registered "
                 "in the toolkit.",
             )
