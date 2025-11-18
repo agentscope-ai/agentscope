@@ -58,6 +58,7 @@ full = [
     "python-docx",
     "nltk",
     "qdrant-client",
+    "mysql-connector-python",
 ]
 dev = [
     # Include full dependencies from local package
