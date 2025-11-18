@@ -9,7 +9,6 @@ from functools import partial
 from typing import (
     AsyncGenerator,
     Literal,
-    Dict,
     Any,
     Type,
     Generator,
@@ -17,13 +16,12 @@ from typing import (
     Awaitable,
 )
 
+import shortuuid
 from pydantic import (
     BaseModel,
     Field,
     create_model,
-    ConfigDict,
 )
-from docstring_parser import parse
 
 from ._async_wrapper import (
     _async_generator_wrapper,
@@ -32,7 +30,7 @@ from ._async_wrapper import (
 )
 from ._registered_tool_function import RegisteredToolFunction
 from ._response import ToolResponse
-from .._utils._common import _remove_title_field
+from .._utils._common import _parse_tool_function
 from ..mcp import (
     MCPToolFunction,
     MCPClientBase,
@@ -187,7 +185,8 @@ class Toolkit(StateModule):
             if self.tools[tool_name].group in group_names:
                 self.tools.pop(tool_name)
 
-    def register_tool_function(  # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches, too-many-statements
+    def register_tool_function(
         self,
         tool_func: ToolFunction,
         group_name: str | Literal["basic"] = "basic",
@@ -208,6 +207,12 @@ class Toolkit(StateModule):
             ]
         )
         | None = None,
+        namesake_strategy: Literal[
+            "override",
+            "skip",
+            "raise",
+            "rename",
+        ] = "raise",
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -250,6 +255,15 @@ class Toolkit(StateModule):
                 async. If it returns `None`, the tool result will be
                 returned as is. If it returns a `ToolResponse`,
                 the returned block will be used as the final tool result.
+            namesake_strategy (`Literal['raise', 'override', 'skip', \
+            'rename']`, defaults to `'raise'`):
+                The strategy to handle the tool function name conflict:
+                - 'raise': raise a ValueError (default behavior).
+                - 'override': override the existing tool function with the new
+                  one.
+                - 'skip': skip the registration of the new tool function.
+                - 'rename': rename the new tool function by appending a random
+                  suffix to make it unique.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -272,7 +286,6 @@ class Toolkit(StateModule):
         if isinstance(tool_func, MCPToolFunction):
             func_name = tool_func.name
             original_func = tool_func.__call__
-            self._validate_tool_function(func_name)
             json_schema = json_schema or tool_func.json_schema
             mcp_name = tool_func.mcp_name
 
@@ -295,8 +308,7 @@ class Toolkit(StateModule):
 
             func_name = tool_func.func.__name__
             original_func = tool_func.func
-            self._validate_tool_function(func_name)
-            json_schema = json_schema or self._parse_tool_function(
+            json_schema = json_schema or _parse_tool_function(
                 tool_func.func,
                 include_long_description=include_long_description,
                 include_var_positional=include_var_positional,
@@ -307,8 +319,7 @@ class Toolkit(StateModule):
             # normal function
             func_name = tool_func.__name__
             original_func = tool_func
-            self._validate_tool_function(func_name)
-            json_schema = json_schema or self._parse_tool_function(
+            json_schema = json_schema or _parse_tool_function(
                 tool_func,
                 include_long_description=include_long_description,
                 include_var_positional=include_var_positional,
@@ -352,7 +363,65 @@ class Toolkit(StateModule):
             postprocess_func=postprocess_func,
         )
 
-        self.tools[func_name] = func_obj
+        if func_name in self.tools:
+            if namesake_strategy == "raise":
+                raise ValueError(
+                    f"A function with name '{func_name}' is already "
+                    f"registered in the toolkit.",
+                )
+
+            if namesake_strategy == "skip":
+                logger.warning(
+                    "A function with name '%s' is already "
+                    "registered in the toolkit. Skipping registration.",
+                    func_name,
+                )
+
+            elif namesake_strategy == "override":
+                logger.warning(
+                    "A function with name '%s' is already registered "
+                    "in the toolkit. Overriding with the new function.",
+                    func_name,
+                )
+                self.tools[func_name] = func_obj
+
+            elif namesake_strategy == "rename":
+                new_func_name = func_name
+                for _ in range(100):
+                    suffix = shortuuid.uuid()[:5]
+                    new_func_name = f"{func_name}_{suffix}"
+                    if new_func_name not in self.tools:
+                        break
+
+                # Raise error if failed to find a unique name
+                if new_func_name in self.tools:
+                    raise RuntimeError(
+                        f"Failed to register tool function '{func_name}' with "
+                        "a unique name after 100 attempts.",
+                    )
+                logger.warning(
+                    "A function with name '%s' is already "
+                    "registered in the toolkit. Renaming the new function to "
+                    "'%s'.",
+                    func_name,
+                    new_func_name,
+                )
+
+                # Replace the function name with the new one
+                func_obj.name = new_func_name
+                func_obj.json_schema["function"]["name"] = new_func_name
+
+                self.tools[new_func_name] = func_obj
+
+            else:
+                raise ValueError(
+                    f"Invalid namesake_strategy: {namesake_strategy}. "
+                    "Supported strategies are 'raise', 'override', 'skip', "
+                    "and 'rename'.",
+                )
+
+        else:
+            self.tools[func_name] = func_obj
 
     def remove_tool_function(
         self,
@@ -632,6 +701,12 @@ class Toolkit(StateModule):
             ]
         )
         | None = None,
+        namesake_strategy: Literal[
+            "override",
+            "skip",
+            "raise",
+            "rename",
+        ] = "raise",
     ) -> None:
         """Register tool functions from an MCP client.
 
@@ -659,6 +734,15 @@ class Toolkit(StateModule):
                 async. If it returns `None`, the tool result will be
                 returned as is. If it returns a `ToolResponse`,
                 the returned block will be used as the final tool result.
+            namesake_strategy (`Literal['raise', 'override', 'skip', \
+            'rename']`, defaults to `'raise'`):
+                The strategy to handle the tool function name conflict:
+                - 'raise': raise a ValueError (default behavior).
+                - 'override': override the existing tool function with the new
+                  one.
+                - 'skip': skip the registration of the new tool function.
+                - 'rename': rename the new tool function by appending a random
+                  suffix to make it unique.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)
@@ -725,12 +809,12 @@ class Toolkit(StateModule):
             if preset_kwargs_mapping is not None:
                 preset_kwargs = preset_kwargs_mapping.get(mcp_tool.name, {})
 
-            # TODO: handle mcp_server_name
             self.register_tool_function(
                 tool_func=func_obj,
                 group_name=group_name,
                 preset_kwargs=preset_kwargs,
                 postprocess_func=postprocess_func,
+                namesake_strategy=namesake_strategy,
             )
 
         logger.info(
@@ -863,111 +947,6 @@ class Toolkit(StateModule):
         so, raise a ValueError."""
         if func_name in self.tools:
             raise ValueError(
-                f"A function with name '{func_name} is already registered "
+                f"A function with name '{func_name}' is already registered "
                 "in the toolkit.",
             )
-
-    @staticmethod
-    def _parse_tool_function(
-        tool_func: ToolFunction,
-        include_long_description: bool,
-        include_var_positional: bool,
-        include_var_keyword: bool,
-    ) -> dict:
-        """Extract JSON schema from the tool function's docstring"""
-        docstring = parse(tool_func.__doc__)
-        params_docstring = {
-            _.arg_name: _.description for _ in docstring.params
-        }
-
-        # Function description
-        descriptions = []
-        if docstring.short_description is not None:
-            descriptions.append(docstring.short_description)
-
-        if include_long_description and docstring.long_description is not None:
-            descriptions.append(docstring.long_description)
-
-        func_description = "\n\n".join(descriptions)
-
-        # Create a dynamic model with the function signature
-        fields = {}
-        for name, param in inspect.signature(tool_func).parameters.items():
-            # Skip the `self` and `cls` parameters
-            if name in ["self", "cls"]:
-                continue
-
-            # Handle `**kwargs`
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                if not include_var_keyword:
-                    continue
-
-                fields[name] = (
-                    Dict[str, Any]
-                    if param.annotation == inspect.Parameter.empty
-                    else Dict[str, param.annotation],  # type: ignore
-                    Field(
-                        description=params_docstring.get(
-                            f"**{name}",
-                            params_docstring.get(name, None),
-                        ),
-                        default={}
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
-
-            elif param.kind == inspect.Parameter.VAR_POSITIONAL:
-                if not include_var_positional:
-                    continue
-
-                fields[name] = (
-                    list[Any]
-                    if param.annotation == inspect.Parameter.empty
-                    else list[param.annotation],  # type: ignore
-                    Field(
-                        description=params_docstring.get(
-                            f"*{name}",
-                            params_docstring.get(name, None),
-                        ),
-                        default=[]
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
-
-            else:
-                fields[name] = (
-                    Any
-                    if param.annotation == inspect.Parameter.empty
-                    else param.annotation,
-                    Field(
-                        description=params_docstring.get(name, None),
-                        default=...
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
-
-        base_model = create_model(
-            "_StructuredOutputDynamicClass",
-            __config__=ConfigDict(arbitrary_types_allowed=True),
-            **fields,
-        )
-        params_json_schema = base_model.model_json_schema()
-
-        # Remove the title from the json schema
-        _remove_title_field(params_json_schema)
-
-        func_json_schema: dict = {
-            "type": "function",
-            "function": {
-                "name": tool_func.__name__,
-                "parameters": params_json_schema,
-            },
-        }
-
-        if func_description not in [None, ""]:
-            func_json_schema["function"]["description"] = func_description
-
-        return func_json_schema
