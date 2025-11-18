@@ -430,7 +430,7 @@ prompt.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit.register_tool_function">
-<span class="sig-name descname"><span class="pre">register_tool_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tool_func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">group_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'basic'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">preset_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func_description</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">json_schema</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_long_description</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_var_positional</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_var_keyword</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">postprocess_func</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.register_tool_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.register_tool_function" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">register_tool_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tool_func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">group_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'basic'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">preset_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">func_description</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">json_schema</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_long_description</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_var_positional</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_var_keyword</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">postprocess_func</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">namesake_strategy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'raise'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.register_tool_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.register_tool_function" title="Link to this definition">¶</a></dt>
 <dd><p>Register a tool function to the toolkit.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -461,6 +461,18 @@ response as arguments. The function can be either sync or
 async. If it returns <cite>None</cite>, the tool result will be
 returned as is. If it returns a <cite>ToolResponse</cite>,
 the returned block will be used as the final tool result.</p></li>
+<li><p><strong>namesake_strategy</strong> (<cite>Literal['raise', 'override', 'skip',             'rename']</cite>, defaults to <cite>'raise'</cite>) -- <p>The strategy to handle the tool function name conflict:
+- 'raise': raise a ValueError (default behavior).
+- 'override': override the existing tool function with the new</p>
+<blockquote>
+<div><p>one.</p>
+</div></blockquote>
+<ul>
+<li><p>'skip': skip the registration of the new tool function.</p></li>
+<li><p>'rename': rename the new tool function by appending a random
+suffix to make it unique.</p></li>
+</ul>
+</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -590,7 +602,7 @@ generator of <cite>ToolResponse</cite> objects.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit.register_mcp_client">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">register_mcp_client</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mcp_client</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">group_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'basic'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_funcs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">disable_funcs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">preset_kwargs_mapping</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">postprocess_func</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.register_mcp_client"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.register_mcp_client" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">register_mcp_client</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mcp_client</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">group_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'basic'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_funcs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">disable_funcs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">preset_kwargs_mapping</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">postprocess_func</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">namesake_strategy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'raise'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.register_mcp_client"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.register_mcp_client" title="Link to this definition">¶</a></dt>
 <dd><p>Register tool functions from an MCP client.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -610,6 +622,18 @@ response as arguments. The function can be either sync or
 async. If it returns <cite>None</cite>, the tool result will be
 returned as is. If it returns a <cite>ToolResponse</cite>,
 the returned block will be used as the final tool result.</p></li>
+<li><p><strong>namesake_strategy</strong> (<cite>Literal['raise', 'override', 'skip',             'rename']</cite>, defaults to <cite>'raise'</cite>) -- <p>The strategy to handle the tool function name conflict:
+- 'raise': raise a ValueError (default behavior).
+- 'override': override the existing tool function with the new</p>
+<blockquote>
+<div><p>one.</p>
+</div></blockquote>
+<ul>
+<li><p>'skip': skip the registration of the new tool function.</p></li>
+<li><p>'rename': rename the new tool function by appending a random
+suffix to make it unique.</p></li>
+</ul>
+</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>

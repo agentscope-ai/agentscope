@@ -339,7 +339,6 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">AsyncGenerator</span><span class="p">,</span>
     <span class="n">Literal</span><span class="p">,</span>
-    <span class="n">Dict</span><span class="p">,</span>
     <span class="n">Any</span><span class="p">,</span>
     <span class="n">Type</span><span class="p">,</span>
     <span class="n">Generator</span><span class="p">,</span>
@@ -347,13 +346,12 @@
     <span class="n">Awaitable</span><span class="p">,</span>
 <span class="p">)</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">BaseModel</span><span class="p">,</span>
     <span class="n">Field</span><span class="p">,</span>
     <span class="n">create_model</span><span class="p">,</span>
-    <span class="n">ConfigDict</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">docstring_parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._async_wrapper</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">_async_generator_wrapper</span><span class="p">,</span>
@@ -362,7 +360,7 @@
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._registered_tool_function</span><span class="w"> </span><span class="kn">import</span> <span class="n">RegisteredToolFunction</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._response</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolResponse</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_remove_title_field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_parse_tool_function</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..mcp</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">MCPToolFunction</span><span class="p">,</span>
     <span class="n">MCPClientBase</span><span class="p">,</span>
@@ -531,9 +529,10 @@
                 <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">tool_name</span><span class="p">)</span></div>
 
 
+    <span class="c1"># pylint: disable=too-many-branches, too-many-statements</span>
 <div class="viewcode-block" id="Toolkit.register_tool_function">
 <a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.register_tool_function">[文档]</a>
-    <span class="k">def</span><span class="w"> </span><span class="nf">register_tool_function</span><span class="p">(</span>  <span class="c1"># pylint: disable=too-many-branches</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">register_tool_function</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">tool_func</span><span class="p">:</span> <span class="n">ToolFunction</span><span class="p">,</span>
         <span class="n">group_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;basic&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;basic&quot;</span><span class="p">,</span>
@@ -554,6 +553,12 @@
             <span class="p">]</span>
         <span class="p">)</span>
         <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">namesake_strategy</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span>
+            <span class="s2">&quot;override&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;skip&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;raise&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;rename&quot;</span><span class="p">,</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;raise&quot;</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Register a tool function to the toolkit.</span>
 
@@ -596,6 +601,15 @@
 <span class="sd">                async. If it returns `None`, the tool result will be</span>
 <span class="sd">                returned as is. If it returns a `ToolResponse`,</span>
 <span class="sd">                the returned block will be used as the final tool result.</span>
+<span class="sd">            namesake_strategy (`Literal[&#39;raise&#39;, &#39;override&#39;, &#39;skip&#39;, \</span>
+<span class="sd">            &#39;rename&#39;]`, defaults to `&#39;raise&#39;`):</span>
+<span class="sd">                The strategy to handle the tool function name conflict:</span>
+<span class="sd">                - &#39;raise&#39;: raise a ValueError (default behavior).</span>
+<span class="sd">                - &#39;override&#39;: override the existing tool function with the new</span>
+<span class="sd">                  one.</span>
+<span class="sd">                - &#39;skip&#39;: skip the registration of the new tool function.</span>
+<span class="sd">                - &#39;rename&#39;: rename the new tool function by appending a random</span>
+<span class="sd">                  suffix to make it unique.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="c1"># Arguments checking</span>
         <span class="k">if</span> <span class="n">group_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">groups</span> <span class="ow">and</span> <span class="n">group_name</span> <span class="o">!=</span> <span class="s2">&quot;basic&quot;</span><span class="p">:</span>
@@ -618,7 +632,6 @@
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tool_func</span><span class="p">,</span> <span class="n">MCPToolFunction</span><span class="p">):</span>
             <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">name</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="fm">__call__</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_validate_tool_function</span><span class="p">(</span><span class="n">func_name</span><span class="p">)</span>
             <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">json_schema</span>
             <span class="n">mcp_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">mcp_name</span>
 
@@ -641,8 +654,7 @@
 
             <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_validate_tool_function</span><span class="p">(</span><span class="n">func_name</span><span class="p">)</span>
-            <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_tool_function</span><span class="p">(</span>
+            <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">_parse_tool_function</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span><span class="p">,</span>
                 <span class="n">include_long_description</span><span class="o">=</span><span class="n">include_long_description</span><span class="p">,</span>
                 <span class="n">include_var_positional</span><span class="o">=</span><span class="n">include_var_positional</span><span class="p">,</span>
@@ -653,8 +665,7 @@
             <span class="c1"># normal function</span>
             <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="vm">__name__</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_validate_tool_function</span><span class="p">(</span><span class="n">func_name</span><span class="p">)</span>
-            <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_tool_function</span><span class="p">(</span>
+            <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">_parse_tool_function</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="p">,</span>
                 <span class="n">include_long_description</span><span class="o">=</span><span class="n">include_long_description</span><span class="p">,</span>
                 <span class="n">include_var_positional</span><span class="o">=</span><span class="n">include_var_positional</span><span class="p">,</span>
@@ -698,7 +709,65 @@
             <span class="n">postprocess_func</span><span class="o">=</span><span class="n">postprocess_func</span><span class="p">,</span>
         <span class="p">)</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">[</span><span class="n">func_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_obj</span></div>
+        <span class="k">if</span> <span class="n">func_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">namesake_strategy</span> <span class="o">==</span> <span class="s2">&quot;raise&quot;</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;A function with name &#39;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">&#39; is already &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;registered in the toolkit.&quot;</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">namesake_strategy</span> <span class="o">==</span> <span class="s2">&quot;skip&quot;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;A function with name &#39;</span><span class="si">%s</span><span class="s2">&#39; is already &quot;</span>
+                    <span class="s2">&quot;registered in the toolkit. Skipping registration.&quot;</span><span class="p">,</span>
+                    <span class="n">func_name</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="k">elif</span> <span class="n">namesake_strategy</span> <span class="o">==</span> <span class="s2">&quot;override&quot;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;A function with name &#39;</span><span class="si">%s</span><span class="s2">&#39; is already registered &quot;</span>
+                    <span class="s2">&quot;in the toolkit. Overriding with the new function.&quot;</span><span class="p">,</span>
+                    <span class="n">func_name</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">[</span><span class="n">func_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_obj</span>
+
+            <span class="k">elif</span> <span class="n">namesake_strategy</span> <span class="o">==</span> <span class="s2">&quot;rename&quot;</span><span class="p">:</span>
+                <span class="n">new_func_name</span> <span class="o">=</span> <span class="n">func_name</span>
+                <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
+                    <span class="n">suffix</span> <span class="o">=</span> <span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">()[:</span><span class="mi">5</span><span class="p">]</span>
+                    <span class="n">new_func_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">suffix</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="k">if</span> <span class="n">new_func_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
+                        <span class="k">break</span>
+
+                <span class="c1"># Raise error if failed to find a unique name</span>
+                <span class="k">if</span> <span class="n">new_func_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Failed to register tool function &#39;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">&#39; with &quot;</span>
+                        <span class="s2">&quot;a unique name after 100 attempts.&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;A function with name &#39;</span><span class="si">%s</span><span class="s2">&#39; is already &quot;</span>
+                    <span class="s2">&quot;registered in the toolkit. Renaming the new function to &quot;</span>
+                    <span class="s2">&quot;&#39;</span><span class="si">%s</span><span class="s2">&#39;.&quot;</span><span class="p">,</span>
+                    <span class="n">func_name</span><span class="p">,</span>
+                    <span class="n">new_func_name</span><span class="p">,</span>
+                <span class="p">)</span>
+
+                <span class="c1"># Replace the function name with the new one</span>
+                <span class="n">func_obj</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">new_func_name</span>
+                <span class="n">func_obj</span><span class="o">.</span><span class="n">json_schema</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">new_func_name</span>
+
+                <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">[</span><span class="n">new_func_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_obj</span>
+
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Invalid namesake_strategy: </span><span class="si">{</span><span class="n">namesake_strategy</span><span class="si">}</span><span class="s2">. &quot;</span>
+                    <span class="s2">&quot;Supported strategies are &#39;raise&#39;, &#39;override&#39;, &#39;skip&#39;, &quot;</span>
+                    <span class="s2">&quot;and &#39;rename&#39;.&quot;</span><span class="p">,</span>
+                <span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">[</span><span class="n">func_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_obj</span></div>
 
 
 <div class="viewcode-block" id="Toolkit.remove_tool_function">
@@ -996,6 +1065,12 @@
             <span class="p">]</span>
         <span class="p">)</span>
         <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">namesake_strategy</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span>
+            <span class="s2">&quot;override&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;skip&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;raise&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;rename&quot;</span><span class="p">,</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;raise&quot;</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Register tool functions from an MCP client.</span>
 
@@ -1023,6 +1098,15 @@
 <span class="sd">                async. If it returns `None`, the tool result will be</span>
 <span class="sd">                returned as is. If it returns a `ToolResponse`,</span>
 <span class="sd">                the returned block will be used as the final tool result.</span>
+<span class="sd">            namesake_strategy (`Literal[&#39;raise&#39;, &#39;override&#39;, &#39;skip&#39;, \</span>
+<span class="sd">            &#39;rename&#39;]`, defaults to `&#39;raise&#39;`):</span>
+<span class="sd">                The strategy to handle the tool function name conflict:</span>
+<span class="sd">                - &#39;raise&#39;: raise a ValueError (default behavior).</span>
+<span class="sd">                - &#39;override&#39;: override the existing tool function with the new</span>
+<span class="sd">                  one.</span>
+<span class="sd">                - &#39;skip&#39;: skip the registration of the new tool function.</span>
+<span class="sd">                - &#39;rename&#39;: rename the new tool function by appending a random</span>
+<span class="sd">                  suffix to make it unique.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="p">(</span>
             <span class="nb">isinstance</span><span class="p">(</span><span class="n">mcp_client</span><span class="p">,</span> <span class="n">StatefulClientBase</span><span class="p">)</span>
@@ -1089,12 +1173,12 @@
             <span class="k">if</span> <span class="n">preset_kwargs_mapping</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
                 <span class="n">preset_kwargs</span> <span class="o">=</span> <span class="n">preset_kwargs_mapping</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">mcp_tool</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">{})</span>
 
-            <span class="c1"># TODO: handle mcp_server_name</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="o">=</span><span class="n">func_obj</span><span class="p">,</span>
                 <span class="n">group_name</span><span class="o">=</span><span class="n">group_name</span><span class="p">,</span>
                 <span class="n">preset_kwargs</span><span class="o">=</span><span class="n">preset_kwargs</span><span class="p">,</span>
                 <span class="n">postprocess_func</span><span class="o">=</span><span class="n">postprocess_func</span><span class="p">,</span>
+                <span class="n">namesake_strategy</span><span class="o">=</span><span class="n">namesake_strategy</span><span class="p">,</span>
             <span class="p">)</span>
 
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
@@ -1243,114 +1327,9 @@
 <span class="sd">        so, raise a ValueError.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">func_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;A function with name &#39;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2"> is already registered &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;A function with name &#39;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">&#39; is already registered &quot;</span>
                 <span class="s2">&quot;in the toolkit.&quot;</span><span class="p">,</span>
-            <span class="p">)</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_parse_tool_function</span><span class="p">(</span>
-        <span class="n">tool_func</span><span class="p">:</span> <span class="n">ToolFunction</span><span class="p">,</span>
-        <span class="n">include_long_description</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
-        <span class="n">include_var_positional</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
-        <span class="n">include_var_keyword</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Extract JSON schema from the tool function&#39;s docstring&quot;&quot;&quot;</span>
-        <span class="n">docstring</span> <span class="o">=</span> <span class="n">parse</span><span class="p">(</span><span class="n">tool_func</span><span class="o">.</span><span class="vm">__doc__</span><span class="p">)</span>
-        <span class="n">params_docstring</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">_</span><span class="o">.</span><span class="n">arg_name</span><span class="p">:</span> <span class="n">_</span><span class="o">.</span><span class="n">description</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">docstring</span><span class="o">.</span><span class="n">params</span>
-        <span class="p">}</span>
-
-        <span class="c1"># Function description</span>
-        <span class="n">descriptions</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">if</span> <span class="n">docstring</span><span class="o">.</span><span class="n">short_description</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">descriptions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">docstring</span><span class="o">.</span><span class="n">short_description</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">include_long_description</span> <span class="ow">and</span> <span class="n">docstring</span><span class="o">.</span><span class="n">long_description</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">descriptions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">docstring</span><span class="o">.</span><span class="n">long_description</span><span class="p">)</span>
-
-        <span class="n">func_description</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">descriptions</span><span class="p">)</span>
-
-        <span class="c1"># Create a dynamic model with the function signature</span>
-        <span class="n">fields</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">tool_func</span><span class="p">)</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
-            <span class="c1"># Skip the `self` and `cls` parameters</span>
-            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;self&quot;</span><span class="p">,</span> <span class="s2">&quot;cls&quot;</span><span class="p">]:</span>
-                <span class="k">continue</span>
-
-            <span class="c1"># Handle `**kwargs`</span>
-            <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">VAR_KEYWORD</span><span class="p">:</span>
-                <span class="k">if</span> <span class="ow">not</span> <span class="n">include_var_keyword</span><span class="p">:</span>
-                    <span class="k">continue</span>
-
-                <span class="n">fields</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
-                    <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">annotation</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span>
-                    <span class="k">else</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">param</span><span class="o">.</span><span class="n">annotation</span><span class="p">],</span>  <span class="c1"># type: ignore</span>
-                    <span class="n">Field</span><span class="p">(</span>
-                        <span class="n">description</span><span class="o">=</span><span class="n">params_docstring</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;**</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                            <span class="n">params_docstring</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-                        <span class="p">),</span>
-                        <span class="n">default</span><span class="o">=</span><span class="p">{}</span>
-                        <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="n">param</span><span class="o">.</span><span class="n">empty</span>
-                        <span class="k">else</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span><span class="p">,</span>
-                    <span class="p">),</span>
-                <span class="p">)</span>
-
-            <span class="k">elif</span> <span class="n">param</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">VAR_POSITIONAL</span><span class="p">:</span>
-                <span class="k">if</span> <span class="ow">not</span> <span class="n">include_var_positional</span><span class="p">:</span>
-                    <span class="k">continue</span>
-
-                <span class="n">fields</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span>
-                    <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">annotation</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span>
-                    <span class="k">else</span> <span class="nb">list</span><span class="p">[</span><span class="n">param</span><span class="o">.</span><span class="n">annotation</span><span class="p">],</span>  <span class="c1"># type: ignore</span>
-                    <span class="n">Field</span><span class="p">(</span>
-                        <span class="n">description</span><span class="o">=</span><span class="n">params_docstring</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;*</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                            <span class="n">params_docstring</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-                        <span class="p">),</span>
-                        <span class="n">default</span><span class="o">=</span><span class="p">[]</span>
-                        <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="n">param</span><span class="o">.</span><span class="n">empty</span>
-                        <span class="k">else</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span><span class="p">,</span>
-                    <span class="p">),</span>
-                <span class="p">)</span>
-
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">fields</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
-                    <span class="n">Any</span>
-                    <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">annotation</span> <span class="o">==</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="o">.</span><span class="n">empty</span>
-                    <span class="k">else</span> <span class="n">param</span><span class="o">.</span><span class="n">annotation</span><span class="p">,</span>
-                    <span class="n">Field</span><span class="p">(</span>
-                        <span class="n">description</span><span class="o">=</span><span class="n">params_docstring</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">),</span>
-                        <span class="n">default</span><span class="o">=...</span>
-                        <span class="k">if</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="n">param</span><span class="o">.</span><span class="n">empty</span>
-                        <span class="k">else</span> <span class="n">param</span><span class="o">.</span><span class="n">default</span><span class="p">,</span>
-                    <span class="p">),</span>
-                <span class="p">)</span>
-
-        <span class="n">base_model</span> <span class="o">=</span> <span class="n">create_model</span><span class="p">(</span>
-            <span class="s2">&quot;_StructuredOutputDynamicClass&quot;</span><span class="p">,</span>
-            <span class="n">__config__</span><span class="o">=</span><span class="n">ConfigDict</span><span class="p">(</span><span class="n">arbitrary_types_allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
-            <span class="o">**</span><span class="n">fields</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="n">params_json_schema</span> <span class="o">=</span> <span class="n">base_model</span><span class="o">.</span><span class="n">model_json_schema</span><span class="p">()</span>
-
-        <span class="c1"># Remove the title from the json schema</span>
-        <span class="n">_remove_title_field</span><span class="p">(</span><span class="n">params_json_schema</span><span class="p">)</span>
-
-        <span class="n">func_json_schema</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;function&quot;</span><span class="p">:</span> <span class="p">{</span>
-                <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">tool_func</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
-                <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="n">params_json_schema</span><span class="p">,</span>
-            <span class="p">},</span>
-        <span class="p">}</span>
-
-        <span class="k">if</span> <span class="n">func_description</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">]:</span>
-            <span class="n">func_json_schema</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">][</span><span class="s2">&quot;description&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_description</span>
-
-        <span class="k">return</span> <span class="n">func_json_schema</span></div>
+            <span class="p">)</span></div>
 
 </pre></div>
         </article>
