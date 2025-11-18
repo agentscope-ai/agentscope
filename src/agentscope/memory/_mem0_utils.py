@@ -43,14 +43,16 @@ class AgentScopeLLM(LLMBase):
 
     def _parse_response(
         self,
-        response: ChatResponse,
+        model_response: ChatResponse,
         has_tool: bool,
     ) -> str | dict:
-        """Parse the response from the AgentScope model.
+        """Parse the model response into a string or
+        a dict to follow the mem0 library's format.
 
         Args:
-            response: The response from the AgentScope model.
-            has_tool: Whether there are tool calls in the response.
+            model_response (`ChatResponse`): The response from the model.
+            has_tool (`bool`): Whether there are tool calls in the response.
+
         Returns:
             `str | dict`:
                 The parsed response. If has_tool is True, return a dict
@@ -60,7 +62,7 @@ class AgentScopeLLM(LLMBase):
         text_parts: list[str] = []
         thinking_parts: list[str] = []
         tool_parts = []
-        for block in response.content:
+        for block in model_response.content:
             # Handle TextBlock
             if isinstance(block, dict) and block.get("type") == "text":
                 text_parts.append(str(block.get("text", "")))
