@@ -213,6 +213,7 @@ class Toolkit(StateModule):
             "raise",
             "rename",
         ] = "raise",
+        human_permit_func: (Callable[[ToolUseBlock], bool]) | None = None,
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -361,6 +362,7 @@ class Toolkit(StateModule):
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
+            human_permit_func=human_permit_func,
         )
 
         if func_name in self.tools:
@@ -606,6 +608,29 @@ class Toolkit(StateModule):
                 ),
                 None,
             )
+        human_permit = True  # Default to permit the tool function to be called
+        origin_tool_call = deepcopy(tool_call)
+        origin_tool_call_name = origin_tool_call["name"]
+        tool_func = self.tools[tool_call["name"]]
+        if tool_func.human_permit_func is not None:
+            human_permit = tool_func.human_permit_func(tool_call)
+            assert (
+                tool_call["id"] == origin_tool_call["id"]
+            ), f"{tool_call['id']} should not be modified inplace."
+
+        if not human_permit:
+            denie_msg = (
+                f"Tool execution `{origin_tool_call_name}` denied by user"
+            )
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=denie_msg,
+                    ),
+                ],
+            )
+            return _object_wrapper(res, None)
 
         # Prepare function and keyword arguments
         tool_func = self.tools[tool_call["name"]]
