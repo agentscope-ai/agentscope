@@ -520,7 +520,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_6eb9ad5515984b87b9ea10&quot;,
+    &quot;id&quot;: &quot;call_859e2e8b0f184b5e9bc53b&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -528,7 +528,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_195c94dae01a42e3814e5a&quot;,
+    &quot;id&quot;: &quot;call_5361c4ccd38741749c7e6f&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -536,32 +536,31 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_6eb9ad5515984b87b9ea10&quot;,
+    &quot;id&quot;: &quot;call_859e2e8b0f184b5e9bc53b&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag1 started at 10:26:22.200216 and ended at 10:26:25.203461. &quot;
+            &quot;text&quot;: &quot;Tag tag1 started at 12:38:15.479187 and ended at 12:38:18.481563. &quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_195c94dae01a42e3814e5a&quot;,
+    &quot;id&quot;: &quot;call_5361c4ccd38741749c7e6f&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag2 started at 10:26:22.200288 and ended at 10:26:25.204017. &quot;
+            &quot;text&quot;: &quot;Tag tag2 started at 12:38:15.479279 and ended at 12:38:18.482168. &quot;
         }
     ]
 }
-Jarvis: The `example_tool_function` has been executed in parallel with two different tags. Here are the results:
+Jarvis: The &#39;example_tool_function&#39; was called in parallel with two different tags.
 
-- For tag &#39;tag1&#39;, it started at 10:26:22.200216 and ended at 10:26:25.203461.
-- For tag &#39;tag2&#39;, it started at 10:26:22.200288 and ended at 10:26:25.204017.
+For the tag &#39;tag1&#39;, the function started at 12:38:15.479187 and ended at 12:38:18.481563.
 
-Both functions ran for approximately the same duration, indicating that they were processed concurrently.
+For the tag &#39;tag2&#39;, the function started at 12:38:15.479279 and ended at 12:38:18.482168.
 </pre></div>
 </div>
 </section>
@@ -619,11 +618,11 @@ Then we can get the structured output from the <code class="docutils literal not
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_a3fd9db476e54ab0935197&quot;,
+    &quot;id&quot;: &quot;call_c9c5550e8db64bc0a0b646&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;name&quot;: &quot;Albert Einstein&quot;,
-        &quot;description&quot;: &quot;A renowned theoretical physicist, best known for developing the theory of relativity.&quot;,
+        &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
             &quot;Nobel Prize in Physics (1921)&quot;,
@@ -634,7 +633,7 @@ Then we can get the structured output from the <code class="docutils literal not
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a3fd9db476e54ab0935197&quot;,
+    &quot;id&quot;: &quot;call_c9c5550e8db64bc0a0b646&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -643,12 +642,12 @@ system: {
         }
     ]
 }
-Jarvis: Albert Einstein was a renowned theoretical physicist, celebrated for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein&#39;s contributions to science have had a lasting impact on both the scientific community and popular culture. He was awarded the Nobel Prize in Physics in 1921, not for his work on relativity, but for his discovery of the law of the photoelectric effect, which is a pivotal foundation for quantum theory. In addition to the Nobel Prize, Einstein received numerous other honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. His life was dedicated to exploring the mysteries of the universe, and he passed away at the age of 76, leaving behind a legacy that continues to inspire scientists and thinkers around the world.
+Jarvis: Albert Einstein was a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two cornerstones of modern physics. Born in 1879 and passing away in 1955 at the age of 76, Einstein&#39;s contributions to science have left an indelible mark on our understanding of the universe. His work not only advanced the field of physics but also influenced philosophy and popular culture. Among his many honors, Einstein was awarded the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929, recognizing his profound impact on the scientific community.
 
 The structured output:
 {
     &quot;name&quot;: &quot;Albert Einstein&quot;,
-    &quot;description&quot;: &quot;A renowned theoretical physicist, best known for developing the theory of relativity.&quot;,
+    &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
         &quot;Nobel Prize in Physics (1921)&quot;,
@@ -742,7 +741,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">Tool</span></a></p></li>
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">Agent Hooks</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 21.364 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 17.668 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>
