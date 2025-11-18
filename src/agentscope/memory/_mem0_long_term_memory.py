@@ -419,10 +419,22 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 for keyword in keywords
             ]
             search_results = await asyncio.gather(*search_coroutines)
+            print(search_results)
             for result in search_results:
                 if result:
                     results.extend(
                         [item["memory"] for item in result["results"]],
+                    )
+                if "relations" in result.keys():
+                    results.extend(
+                        [
+                            (
+                                f"{relation['source']} -- "
+                                f"{relation['relationship']} -- "
+                                f"{relation['destination']}"
+                            )
+                            for relation in result["relations"]
+                        ],
                     )
 
             return ToolResponse(
@@ -584,10 +596,22 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             for item in msg_strs
         ]
         search_results = await asyncio.gather(*search_coroutines)
+        print(search_results)
         for result in search_results:
             if result:
                 results.extend(
                     [memory["memory"] for memory in result["results"]],
+                )
+            if "relations" in result.keys():
+                results.extend(
+                    [
+                        (
+                            f"{relation['source']} -- "
+                            f"{relation['relationship']} -- "
+                            f"{relation['destination']}"
+                        )
+                        for relation in result["relations"]
+                    ],
                 )
 
         return "\n".join(results)
