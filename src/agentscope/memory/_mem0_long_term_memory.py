@@ -426,14 +426,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                     )
                 if "relations" in result.keys():
                     results.extend(
-                        [
-                            (
-                                f"{relation['source']} -- "
-                                f"{relation['relationship']} -- "
-                                f"{relation['destination']}"
-                            )
-                            for relation in result["relations"]
-                        ],
+                        self._format_relations(result),
                     )
 
             return ToolResponse(
@@ -500,6 +493,17 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             infer=infer,
             **kwargs,
         )
+
+    def _format_relations(self, result: dict) -> list:
+        """Format relations from search result."""
+        if "relations" not in result:
+            return []
+        return [
+            f"{relation['source']} -- "
+            f"{relation['relationship']} -- "
+            f"{relation['destination']}"
+            for relation in result["relations"]
+        ]
 
     async def _mem0_record(
         self,
@@ -602,14 +606,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 )
             if "relations" in result.keys():
                 results.extend(
-                    [
-                        (
-                            f"{relation['source']} -- "
-                            f"{relation['relationship']} -- "
-                            f"{relation['destination']}"
-                        )
-                        for relation in result["relations"]
-                    ],
+                    self._format_relations(result),
                 )
 
         return "\n".join(results)

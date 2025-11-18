@@ -49,8 +49,8 @@ async def main() -> None:
         ),
     )
 
-    # If you want to also user graph memory in mem0,
-    # the follow is an example of using Neo4j graph store.
+    # If you want to also use graph memory in mem0,
+    # the following is an example of using Neo4j graph store.
     # from mem0.configs.base import MemoryConfig
     # from mem0.graphs.configs import GraphStoreConfig
     # long_term_memory = Mem0LongTermMemory(
