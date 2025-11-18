@@ -65,12 +65,12 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-forked",
     "sphinx-gallery",
     "furo",
     "myst_parser",
     "matplotlib",
     "pymilvus[milvus_lite]",
-    # Long-term memory
 ]
 
 [project.urls]

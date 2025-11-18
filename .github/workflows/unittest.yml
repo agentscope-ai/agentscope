@@ -27,7 +27,7 @@ jobs:
         pip install coverage pytest
     - name: Run tests with coverage
       run: |
-        coverage run -m pytest tests
+        coverage run -m pytest tests --forked
     - name: Generate coverage report
       run: |
         coverage report -m
