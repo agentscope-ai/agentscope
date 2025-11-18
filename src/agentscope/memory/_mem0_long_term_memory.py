@@ -419,7 +419,6 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 for keyword in keywords
             ]
             search_results = await asyncio.gather(*search_coroutines)
-            print(search_results)
             for result in search_results:
                 if result:
                     results.extend(
@@ -596,7 +595,6 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             for item in msg_strs
         ]
         search_results = await asyncio.gather(*search_coroutines)
-        print(search_results)
         for result in search_results:
             if result:
                 results.extend(
