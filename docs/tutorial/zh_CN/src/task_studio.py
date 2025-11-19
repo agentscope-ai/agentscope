@@ -48,6 +48,21 @@ AgentScope Studio 通过 ``npm`` 安装：
     # 应用程序代码
     ...
 
+.. note:: 默认情况下，连接到 Studio 会自动启用追踪功能。如果您只想使用 Studio 的项目管理功能而不需要追踪数据，可以设置 ``enable_tracing=False``：
+
+.. code-block:: python
+
+    import agentscope
+
+    # 连接到 Studio 但禁用追踪
+    agentscope.init(
+        studio_url="http://localhost:8000",
+        enable_tracing=False,
+    )
+
+    # 应用程序代码
+    ...
+
 然后可以在 Studio 中看到该应用程序，如下所示：
 
 .. figure:: ../../_static/images/studio_project.webp
