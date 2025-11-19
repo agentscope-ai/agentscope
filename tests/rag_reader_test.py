@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader
+from agentscope.rag import TextReader, PDFReader, WordReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -92,4 +92,65 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 "Johannes Gutenberg's innovation democratized knowledge and "
                 "made books \naccessible to the common people.",
             ],
+        )
+
+    async def test_word_reader_with_images_and_tables(self) -> None:
+        """Test the WordReader implementation with images and table
+        separation."""
+        # Test with images and table separation enabled
+        reader = WordReader(
+            chunk_size=200,
+            split_by="sentence",
+            include_image=True,
+            separate_table=True,
+        )
+        word_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.docx",
+        )
+        docs = await reader(word_path=word_path)
+
+        self.assertListEqual(
+            [_.metadata.content["type"] for _ in docs],
+            ["text"] * 4 + ["image"] * 2 + ["text", "image", "text", "text"],
+        )
+
+        import json
+
+        print(
+            json.dumps(
+                [_.metadata.content.get("text") for _ in docs],
+                indent=4,
+                ensure_ascii=False,
+            ),
+        )
+
+        self.assertEqual(
+            [_.metadata.content.get("text") for _ in docs],
+            [
+                "AgentScope\n"
+                "标题2\n"
+                "This is a test file for AgentScope word reader.",
+                "标题3\nTest table:",
+                "| Header1 | Header2 | Header3 | Header4 |\n"
+                "| --- | --- | --- | --- |\n"
+                "| 1 | 2 | 3 | 4 |\n"
+                "| 5 | 6 | 7 | 8 |",
+                "\nTest list:\nAlice\nBob\nCharlie\nDavid\nTest image:",
+                None,  # image
+                None,  # image
+                "\nText between images",
+                None,  # image
+                "\nText between image and table",
+                "| a | b | c |\n| --- | --- | --- |\n| d\ne | f | g |",
+            ],
+        )
+
+        self.assertEqual(
+            [
+                _.metadata.content["source"]["media_type"]
+                for _ in docs
+                if _.metadata.content["type"] == "image"
+            ],
+            ["image/png", "image/png", "image/png"],
         )

@@ -5,7 +5,7 @@ from typing import Any
 import requests
 import shortuuid
 
-from ..agent import AgentBase
+from ..agent import AgentBase, UserAgent
 
 
 def as_studio_forward_message_pre_print_hook(
@@ -32,8 +32,10 @@ def as_studio_forward_message_pre_print_hook(
                 json={
                     "runId": run_id,
                     "replyId": reply_id,
-                    "name": reply_id,
-                    "role": "assistant",
+                    "name": getattr(self, "name", msg.name),
+                    "role": "user"
+                    if isinstance(self, UserAgent)
+                    else "assistant",
                     "msg": message_data,
                 },
             )

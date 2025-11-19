@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# mypy: disable-error-code="index"
 """Test toolkit module in agentscope."""
 import asyncio
 import time
@@ -70,6 +71,21 @@ def sync_func(
     )
 
 
+class TestCls:
+    """A test class for testing."""
+
+    def sync_func(self) -> ToolResponse:
+        """A duplicate sync function for testing."""
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text="test",
+                ),
+            ],
+        )
+
+
 async def async_generator_func(
     raise_cancel: bool,
 ) -> AsyncGenerator[ToolResponse, None]:
@@ -118,6 +134,184 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         """Set up the test environment before each test."""
         self.toolkit = Toolkit()
 
+        self.sync_func_schema = {
+            "type": "function",
+            "function": {
+                "name": "sync_func",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "description": "Test argument 1.",
+                            "type": "integer",
+                        },
+                        "arg2": {
+                            "anyOf": [
+                                {
+                                    "items": {
+                                        "anyOf": [
+                                            {"type": "string"},
+                                            {"type": "integer"},
+                                        ],
+                                    },
+                                    "type": "array",
+                                },
+                                {"type": "null"},
+                            ],
+                            "default": None,
+                            "description": "Test argument 2.",
+                        },
+                    },
+                    "required": ["arg1"],
+                    "type": "object",
+                },
+                "description": "A sync function for testing.\n\n"
+                "Long description.",
+            },
+        }
+
+    async def test_duplicate_tool_registration(self) -> None:
+        """Test duplicate tool function registration."""
+        tool_call = ToolUseBlock(
+            type="tool_use",
+            id="123",
+            name="sync_func",
+            input={
+                "arg1": 55,
+            },
+        )
+
+        # Add a function
+        self.toolkit.register_tool_function(
+            sync_func,
+        )
+        self.assertListEqual(
+            [self.sync_func_schema],
+            self.toolkit.get_json_schemas(),
+        )
+        async for chunk in await self.toolkit.call_tool_function(tool_call):
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="arg1: 55, arg2: None",
+                    ),
+                ],
+            )
+
+        test = TestCls()
+
+        # Try to add the same function with raise strategy
+        with self.assertRaises(ValueError):
+            self.toolkit.register_tool_function(test.sync_func)
+
+        # Try to add the same function with skip strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="skip",
+        )
+        self.assertListEqual(
+            [self.sync_func_schema],
+            self.toolkit.get_json_schemas(),
+        )
+
+        # Try to add the same function with rename strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="rename",
+        )
+        new_func_name = list(self.toolkit.tools.keys())[1]
+        new_func_schema = {
+            "type": "function",
+            "function": {
+                "name": new_func_name,
+                "parameters": {
+                    "properties": {},
+                    "type": "object",
+                },
+                "description": "A duplicate sync function for testing.",
+            },
+        }
+        self.assertListEqual(
+            [
+                self.sync_func_schema,
+                new_func_schema,
+            ],
+            self.toolkit.get_json_schemas(),
+        )
+        self.assertTrue(new_func_name.startswith("sync_func_"))
+        res = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                type="tool_use",
+                id="123",
+                name=new_func_name,
+                input={},
+            ),
+        )
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="test",
+                    ),
+                ],
+            )
+        res = await self.toolkit.call_tool_function(tool_call)
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="arg1: 55, arg2: None",
+                    ),
+                ],
+            )
+
+        # Try to add the same function with override strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="override",
+        )
+        self.assertListEqual(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "sync_func",
+                        "parameters": {
+                            "properties": {},
+                            "type": "object",
+                        },
+                        "description": "A duplicate sync function "
+                        "for testing.",
+                    },
+                },
+                new_func_schema,
+            ],
+            self.toolkit.get_json_schemas(),
+        )
+        res = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                type="tool_use",
+                id="123",
+                name="sync_func",
+                input={},
+            ),
+        )
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="test",
+                    ),
+                ],
+            )
+
     async def test_basic_functionalities(self) -> None:
         """Test sync function:
         1. register tool function
@@ -129,44 +323,11 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             tool_func=sync_func,
             preset_kwargs={"arg1": 55},
         )
+        sync_func_schema = deepcopy(self.sync_func_schema)
+        sync_func_schema["function"]["parameters"]["properties"].pop("arg1")
+        sync_func_schema["function"]["parameters"].pop("required")
         self.assertListEqual(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {
-                                                        "type": "string",
-                                                    },
-                                                    {
-                                                        "type": "integer",
-                                                    },
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {
-                                            "type": "null",
-                                        },
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [sync_func_schema],
             self.toolkit.get_json_schemas(),
         )
 
@@ -225,43 +386,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
         self.toolkit.set_extended_model("sync_func", None)
         self.assertListEqual(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {
-                                                        "type": "string",
-                                                    },
-                                                    {
-                                                        "type": "integer",
-                                                    },
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {
-                                            "type": "null",
-                                        },
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [sync_func_schema],
             self.toolkit.get_json_schemas(),
         )
 
@@ -581,42 +706,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         self.toolkit.update_tool_groups(["my_group"], True)
         self.assertListEqual(
             self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg1": {
-                                    "description": "Test argument 1.",
-                                    "type": "integer",
-                                },
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {"type": "string"},
-                                                    {"type": "integer"},
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {"type": "null"},
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "required": ["arg1"],
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [self.sync_func_schema],
         )
 
         # Deactivate the tool group
@@ -664,7 +754,45 @@ class ToolkitTest(IsolatedAsyncioTestCase):
         res = await self.toolkit.call_tool_function(tool_use_block)
 
         async for chunk in res:
-            print(chunk)
+            self.assertEqual(
+                chunk.content,
+                [
+                    TextBlock(type="text", text="arg1: 10, arg2: ['test']"),
+                    TextBlock(type="text", text="Processed"),
+                ],
+            )
+
+    async def test_async_postprocess_func(self) -> None:
+        """Test async postprocess function."""
+        tool_use_block = ToolUseBlock(
+            type="tool_use",
+            id="123",
+            name="sync_func",
+            input={"arg1": 10, "arg2": ["test"]},
+        )
+
+        async def async_postprocess_func(
+            tool_use: ToolUseBlock,
+            tool_response: ToolResponse,
+        ) -> ToolResponse | None:
+            """Postprocess function to modify tool response."""
+
+            self.assertEqual(tool_use, tool_use_block)
+
+            if tool_response.content:
+                tool_response.content.append(
+                    TextBlock(type="text", text="Processed"),
+                )
+            return tool_response
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            postprocess_func=async_postprocess_func,
+        )
+
+        res = await self.toolkit.call_tool_function(tool_use_block)
+
+        async for chunk in res:
             self.assertEqual(
                 chunk.content,
                 [

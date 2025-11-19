@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The ollama text embedding model class."""
-import asyncio
 from datetime import datetime
 from typing import List, Any
 
@@ -68,6 +67,13 @@ class OllamaTextEmbedding(EmbeddingModelBase):
                     "Input text must be a list of strings or TextBlock dicts.",
                 )
 
+        kwargs = {
+            "input": gather_text,
+            "model": self.model_name,
+            "dimensions": self.dimensions,
+            **kwargs,
+        }
+
         if self.embedding_cache:
             cached_embeddings = await self.embedding_cache.retrieve(
                 identifier=kwargs,
@@ -83,22 +89,17 @@ class OllamaTextEmbedding(EmbeddingModelBase):
                 )
 
         start_time = datetime.now()
-        response = await asyncio.gather(
-            *[
-                self.client.embeddings(self.model_name, _, **kwargs)
-                for _ in gather_text
-            ],
-        )
+        response = await self.client.embed(**kwargs)
         time = (datetime.now() - start_time).total_seconds()
 
         if self.embedding_cache:
             await self.embedding_cache.store(
                 identifier=kwargs,
-                embeddings=[_.embedding for _ in response],
+                embeddings=response.embeddings,
             )
 
         return EmbeddingResponse(
-            embeddings=[_.embedding for _ in response],
+            embeddings=response.embeddings,
             usage=EmbeddingUsage(
                 time=time,
             ),

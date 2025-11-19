@@ -42,7 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 full = [
     # Model
-    "ollama",
+    "ollama>=0.5.4",
     "google-genai",
     "Pillow",
     "transformers",
@@ -52,10 +52,14 @@ full = [
     # Long-term memory
     "mem0ai",
     "packaging",
+    "reme-ai>=0.2.0.0",
     # RAG
     "pypdf",
+    "python-docx",
     "nltk",
-    "qdrant-client",
+    # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
+    # the version to 1.15.1 here.
+    "qdrant-client==1.15.1",
 ]
 dev = [
     # Include full dependencies from local package
@@ -63,6 +67,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-forked",
     "sphinx-gallery",
     "furo",
     "myst_parser",
