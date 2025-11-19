@@ -330,7 +330,6 @@
           <h1>Source code for agentscope.tracing._setup</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="sd">&quot;&quot;&quot;The tracing interface class in agentscope.&quot;&quot;&quot;</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope</span><span class="w"> </span><span class="kn">import</span> <span class="n">_config</span>
 
 
 <div class="viewcode-block" id="setup_tracing">
@@ -354,9 +353,7 @@
     <span class="n">exporter</span> <span class="o">=</span> <span class="n">OTLPSpanExporter</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">endpoint</span><span class="p">)</span>
     <span class="n">span_processor</span> <span class="o">=</span> <span class="n">BatchSpanProcessor</span><span class="p">(</span><span class="n">exporter</span><span class="p">)</span>
     <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
-    <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span>
-
-    <span class="n">_config</span><span class="o">.</span><span class="n">trace_enabled</span> <span class="o">=</span> <span class="kc">True</span></div>
+    <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span></div>
 
 </pre></div>
         </article>
