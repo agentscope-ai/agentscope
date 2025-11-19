@@ -329,10 +329,47 @@
         <article role="main" id="furo-main-content">
           <h1>agentscope 源代码</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
+<span class="c1"># flake8: noqa: E402</span>
+<span class="c1"># pylint: disable=wrong-import-position</span>
 <span class="sd">&quot;&quot;&quot;The agentscope serialization module&quot;&quot;&quot;</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextvars</span><span class="w"> </span><span class="kn">import</span> <span class="n">ContextVar</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">._run_config</span><span class="w"> </span><span class="kn">import</span> <span class="n">_ConfigCls</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_generate_random_suffix</span><span class="p">(</span><span class="n">length</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate a random suffix.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">()[:</span><span class="n">length</span><span class="p">]</span>
+
+
+<span class="c1"># A thread and async safe global configuration instance</span>
+<span class="n">_config</span> <span class="o">=</span> <span class="n">_ConfigCls</span><span class="p">(</span>
+    <span class="n">run_id</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span><span class="s2">&quot;run_id&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">shortuuid</span><span class="o">.</span><span class="n">uuid</span><span class="p">()),</span>
+    <span class="n">project</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
+        <span class="s2">&quot;project&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="s2">&quot;UnnamedProject_At&quot;</span> <span class="o">+</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y%m</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
+        <span class="s2">&quot;name&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%H%M%S_&quot;</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">_generate_random_suffix</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">created_at</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
+        <span class="s2">&quot;created_at&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%H%M%S_&quot;</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">_generate_random_suffix</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">trace_enabled</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
+        <span class="s2">&quot;trace_enabled&quot;</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">exception</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">module</span>
@@ -363,6 +400,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">init</span><span class="p">(</span>
     <span class="n">project</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">logging_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">logging_level</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
     <span class="n">studio_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
@@ -375,6 +413,10 @@
 <span class="sd">            The project name.</span>
 <span class="sd">        name (`str | None`, optional):</span>
 <span class="sd">            The name of the run.</span>
+<span class="sd">        run_id (`str | None`, optional):</span>
+<span class="sd">            The identity of a running instance, which can be an agent, or a</span>
+<span class="sd">            multi-agent system. The `run_id` is used in AgentScope-Studio to</span>
+<span class="sd">            distinguish different runs.</span>
 <span class="sd">        logging_path (`str | None`, optional):</span>
 <span class="sd">            The path to saving the log file. If not provided, logs will not be</span>
 <span class="sd">            saved.</span>
@@ -389,13 +431,14 @@
 <span class="sd">            to the AgentScope Studio&#39;s tracing endpoint.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">_config</span>
-
     <span class="k">if</span> <span class="n">project</span><span class="p">:</span>
         <span class="n">_config</span><span class="o">.</span><span class="n">project</span> <span class="o">=</span> <span class="n">project</span>
 
     <span class="k">if</span> <span class="n">name</span><span class="p">:</span>
         <span class="n">_config</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+    <span class="k">if</span> <span class="n">run_id</span><span class="p">:</span>
+        <span class="n">_config</span><span class="o">.</span><span class="n">run_id</span> <span class="o">=</span> <span class="n">run_id</span>
 
     <span class="n">setup_logger</span><span class="p">(</span><span class="n">logging_level</span><span class="p">,</span> <span class="n">logging_path</span><span class="p">)</span>
 
@@ -437,7 +480,8 @@
     <span class="k">if</span> <span class="n">endpoint</span><span class="p">:</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">.tracing</span><span class="w"> </span><span class="kn">import</span> <span class="n">setup_tracing</span>
 
-        <span class="n">setup_tracing</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">endpoint</span><span class="p">)</span></div>
+        <span class="n">setup_tracing</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">endpoint</span><span class="p">)</span>
+        <span class="n">_config</span><span class="o">.</span><span class="n">trace_enabled</span> <span class="o">=</span> <span class="kc">True</span></div>
 
 
 
