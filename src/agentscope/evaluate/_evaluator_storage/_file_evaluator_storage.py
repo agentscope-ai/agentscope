@@ -21,8 +21,8 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
     - save_dir/
         - evaluation_result.json
         - evaluation_meta.json
-        - {task_id}/
-            - {repeat_id}/
+        - {repeat_id}/
+            - {task_id}/
                 - solution.json
                 - evaluation/
                     - {metric_name}.json
@@ -40,7 +40,7 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
 
     def _get_save_path(self, task_id: str, repeat_id: str, *args: str) -> str:
         """Get the save path for a given task and repeat ID."""
-        return os.path.join(self.save_dir, task_id, repeat_id, *args)
+        return os.path.join(self.save_dir, repeat_id, task_id, *args)
 
     def save_solution_result(
         self,
