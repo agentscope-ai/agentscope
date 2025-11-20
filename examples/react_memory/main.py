@@ -1,23 +1,33 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=wrong-import-position
 """The main entry point of the ReActMemory example."""
 import asyncio
 import os
+import sys
+from pathlib import Path
 
-from typing import Literal
+# Add the project root to Python path to enable imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from agentscope.agent import ReActAgent
-from agentscope.formatter import DashScopeChatFormatter
-from agentscope.message import Msg
-from agentscope.model import DashScopeChatModel
-from agentscope.tool import Toolkit
+# Imports must come after sys.path manipulation
+from typing import Literal  # noqa: E402
 
-from examples.react_memory._react_memory import ReActMemory
-from examples.react_memory.config.prompts import (
+from agentscope.agent import ReActAgent  # noqa: E402
+from agentscope.formatter import DashScopeChatFormatter  # noqa: E402
+from agentscope.message import Msg  # noqa: E402
+from agentscope.model import DashScopeChatModel  # noqa: E402
+from agentscope.tool import Toolkit  # noqa: E402
+from agentscope.token import OpenAITokenCounter  # noqa: E402
+
+from examples.react_memory._react_memory import ReActMemory  # noqa: E402
+from examples.react_memory.config.prompts import (  # noqa: E402
     SUMMARIZE_WORKING_LOG_PROMPT_W_QUERY,
     SUMMARIZE_WORKING_LOG_PROMPT_v2,
     UPDATE_MEMORY_PROMPT_DEFAULT,
 )
-from examples.react_memory.vector_factories.qdrant import Qdrant
+from examples.react_memory.vector_factories.qdrant import Qdrant  # noqa: E402
 
 
 async def main() -> None:
@@ -45,6 +55,7 @@ async def main() -> None:
         ),
         global_update_allowed=False,
         process_w_llm=False,
+        token_counter=OpenAITokenCounter(model_name="qwen-max"),
     )
     agent = ReActAgent(
         name="Friday",

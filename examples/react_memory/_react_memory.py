@@ -8,8 +8,10 @@ import os
 import json
 from datetime import datetime
 import uuid
+import asyncio
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Iterable,
     List,
@@ -17,25 +19,258 @@ from typing import (
     Optional,
     Sequence,
     Union,
+    cast,
 )
 import copy
 import re
-from vector_factories.base import VectorStoreBase
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from transformers import AutoTokenizer
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.agent import AgentBase
 from agentscope.memory import MemoryBase
 from agentscope.message import Msg
-from _mem_record import (
+from agentscope.token import TokenCounterBase, OpenAITokenCounter
+from ._mem_record import (  # pylint: disable=relative-beyond-top-level
     MemRecord,
     VectorStruct,
     serialize_list,
     deserialize_memrecord_list,
     deserialize_msg_list,
 )
+from .vector_factories.base import VectorStoreBase
+
+
+def _split_text_with_regex(
+    text: str,
+    separator: str,
+    keep_separator: Union[bool, Literal["start", "end"]],
+) -> List[str]:
+    """Split text with regex separator."""
+    # Now that we have the separator, split the text
+    if separator:
+        if keep_separator:
+            # The parentheses in the pattern keep the delimiters in the result.
+            _splits = re.split(f"({separator})", text)
+            splits = (
+                (
+                    [
+                        _splits[i] + _splits[i + 1]
+                        for i in range(0, len(_splits) - 1, 2)
+                    ]
+                )
+                if keep_separator == "end"
+                else (
+                    [
+                        _splits[i] + _splits[i + 1]
+                        for i in range(1, len(_splits), 2)
+                    ]
+                )
+            )
+            if len(_splits) % 2 == 0:
+                splits += _splits[-1:]
+            splits = (
+                (splits + [_splits[-1]])
+                if keep_separator == "end"
+                else ([_splits[0]] + splits)
+            )
+        else:
+            splits = re.split(separator, text)
+    else:
+        splits = list(text)
+    return [s for s in splits if s != ""]
+
+
+def _merge_splits(
+    splits: List[str],
+    separator: str,
+    chunk_size: int,
+    chunk_overlap: int,
+    length_function: Callable[[str], int],
+) -> List[str]:
+    """Merge splits into chunks with overlap."""
+    separator_len = length_function(separator)
+
+    docs = []
+    current_doc: List[str] = []
+    total = 0
+    for d in splits:
+        _len = length_function(d)
+        if (
+            total + _len + (separator_len if len(current_doc) > 0 else 0)
+            > chunk_size
+        ):
+            if total > chunk_size:
+                logging.warning(
+                    f"Created a chunk of size {total}, "
+                    f"which is larger than the specified {chunk_size}",
+                )
+            if current_doc:
+                doc = separator.join(current_doc).strip()
+                if doc:
+                    docs.append(doc)
+                # Keep on popping if:
+                # - we have a larger chunk than in the chunk overlap
+                # - or if we still have any chunks and the length is long
+                while total > chunk_overlap or (
+                    total
+                    + _len
+                    + (separator_len if len(current_doc) > 0 else 0)
+                    > chunk_size
+                    and total > 0
+                ):
+                    total -= length_function(current_doc[0]) + (
+                        separator_len if len(current_doc) > 1 else 0
+                    )
+                    current_doc.pop(0)
+        current_doc.append(d)
+        total += _len + (separator_len if len(current_doc) > 1 else 0)
+    doc = separator.join(current_doc).strip()
+    if doc:
+        docs.append(doc)
+    return docs
+
+
+def create_recursive_text_splitter(
+    chunk_size: int = 4000,
+    chunk_overlap: int = 200,
+    length_function: Optional[
+        Union[Callable[[str], int], Callable[[str], Awaitable[int]]]
+    ] = None,
+    separators: Optional[List[str]] = None,
+    keep_separator: Union[bool, Literal["start", "end"]] = True,
+    is_separator_regex: bool = False,
+) -> Callable[[str], Awaitable[List[str]]]:
+    """Create a recursive text splitter function.
+
+    Returns a function that splits text into chunks based on the
+    provided configuration.
+
+    Args:
+        chunk_size: Maximum size of each chunk
+        chunk_overlap: Overlap size between chunks
+        length_function: Function to calculate text length
+            (can be sync or async, default: len)
+        separators: List of separators to try
+            (default: ["\n\n", "\n", " ", ""])
+        keep_separator: Whether to keep separators in the output
+        is_separator_regex: Whether separators are regex patterns
+
+    Returns:
+        A function that takes text and returns a list of text chunks
+    """
+    if length_function is None:
+        length_function = len
+    separators = separators or ["\n\n", "\n", " ", ""]
+
+    # Check if length_function is async by inspecting if it's a
+    # coroutine function
+    import inspect
+
+    is_async_length = inspect.iscoroutinefunction(length_function)
+
+    # Create sync wrapper for _merge_splits if needed
+    if is_async_length:
+
+        def sync_length_func(text: str) -> int:
+            """Synchronous wrapper for async length function."""
+            try:
+                # Try to get running loop - if this succeeds, we're in async
+                # context and cannot use asyncio.run
+                asyncio.get_running_loop()
+                # We're in an async context, but _merge_splits needs sync
+                # This should not happen in practice, but handle it
+                raise RuntimeError(
+                    "Cannot use async length_function in sync context",
+                )
+            except RuntimeError as e:
+                # Check if it's our error (re-raise) or "no running loop" error
+                if "Cannot use async length_function" in str(e):
+                    raise
+                # No running loop (get_running_loop raised RuntimeError),
+                # can use asyncio.run
+                coro = length_function(text)
+                # Type checker doesn't know it's always a coroutine here
+                if isinstance(coro, asyncio.Coroutine):
+                    return asyncio.run(coro)
+                # If not a coroutine, it must be an int (sync function)
+                assert isinstance(coro, int), "Expected int or coroutine"
+                return coro
+
+    else:
+        sync_length_func = length_function
+
+    async def _split_text(text: str, separators: List[str]) -> List[str]:
+        """Split incoming text and return chunks."""
+        final_chunks = []
+        # Get appropriate separator to use
+        separator = separators[-1]
+        new_separators = []
+        for i, _s in enumerate(separators):
+            _separator = _s if is_separator_regex else re.escape(_s)
+            if _s == "":
+                separator = _s
+                break
+            if re.search(_separator, text):
+                separator = _s
+                new_separators = separators[i + 1 :]
+                break
+
+        _separator = separator if is_separator_regex else re.escape(separator)
+        splits = _split_text_with_regex(text, _separator, keep_separator)
+
+        # Now go merging things, recursively splitting longer texts.
+        _good_splits = []
+        _separator = "" if keep_separator else separator
+        for s in splits:
+            if is_async_length:
+                # length_function is a coroutine function, so await it
+                # Type narrowing: if is_async_length is True, length_function
+                # must be Callable[[str], Awaitable[int]]
+                result = cast(
+                    Callable[[str], Awaitable[int]],
+                    length_function,
+                )(s)
+                total = await result
+            else:
+                # length_function is sync, so call it directly
+                # Type narrowing: if is_async_length is False, length_function
+                # must be Callable[[str], int]
+                total = cast(Callable[[str], int], length_function)(s)
+            if total < chunk_size:
+                _good_splits.append(s)
+            else:
+                if _good_splits:
+                    merged_text = _merge_splits(
+                        _good_splits,
+                        _separator,
+                        chunk_size,
+                        chunk_overlap,
+                        sync_length_func,
+                    )
+                    final_chunks.extend(merged_text)
+                    _good_splits = []
+                if not new_separators:
+                    final_chunks.append(s)
+                else:
+                    other_info = await _split_text(s, new_separators)
+                    final_chunks.extend(other_info)
+        if _good_splits:
+            merged_text = _merge_splits(
+                _good_splits,
+                _separator,
+                chunk_size,
+                chunk_overlap,
+                sync_length_func,
+            )
+            final_chunks.extend(merged_text)
+        return final_chunks
+
+    async def split_text(text: str) -> List[str]:
+        """Split text into chunks."""
+        return await _split_text(text, separators)
+
+    return split_text
+
 
 # Default values
 DEFAULT_MAX_CHAT_HISTORY_LEN = 28000
@@ -128,19 +363,44 @@ def format_msgs(
     return json.dumps(results)
 
 
-def count_words(tokenizer: AutoTokenizer, text: Any) -> int:
-    """Count the number of tokens in the text.
+async def count_words(
+    token_counter: TokenCounterBase,
+    text: str | list[dict],
+) -> int:
+    """Count the number of tokens using TokenCounter.count interface.
 
     Args:
-        text (Any):
-            the text to count the number of tokens
+        token_counter (TokenCounterBase):
+            the token counter to use for counting tokens
+        text (str|list[dict]):
+            the text to count the number of tokens. If str, can be plain
+            text or JSON string.
 
     Returns:
         int: the number of tokens in the text
     """
-    if not isinstance(text, str):
-        text = str(text)
-    return len(tokenizer.encode(text, add_special_tokens=False))
+    print(f"Counting words for text: {text}")
+    if isinstance(text, list):
+        # text is already a list of dicts
+        messages = text
+    elif isinstance(text, str):
+        # text is a string - try to parse as JSON first
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                # It's a JSON array of messages
+                messages = parsed
+            else:
+                # It's a JSON object or other type, wrap it
+                messages = [{"role": "user", "content": text}]
+        except (json.JSONDecodeError, TypeError):
+            # Not valid JSON, treat as plain text
+            messages = [{"role": "user", "content": text}]
+    else:
+        # Fallback: wrap in a message
+        messages = [{"role": "user", "content": str(text)}]
+
+    return await token_counter.count(messages)
 
 
 def no_user_msg(mem: MemRecord) -> bool:
@@ -159,8 +419,6 @@ class ReActMemory(MemoryBase):
         self,
         model_config_name: str = "gpt-4o-2024-11-20",
         embedding_model: Union[str, Callable] = "text-embedding-v4",
-        emb_tokenizer_model: str = "Qwen/Qwen-7B",
-        chat_tokenizer_model: str = "openai-gpt",
         retrieve_type: Optional[
             Literal["source", "processed", "auto"]
         ] = "auto",
@@ -176,6 +434,7 @@ class ReActMemory(MemoryBase):
         process_w_llm: Optional[bool] = False,
         mount_dir: Optional[str] = "./",
         compressed_ratio: float = 0.5,
+        token_counter: Optional[TokenCounterBase] = OpenAITokenCounter,
     ) -> None:
         """
         Initialize the ReActMemory.
@@ -231,19 +490,12 @@ class ReActMemory(MemoryBase):
         self.tmp_tool_use_log = []
         self.cur_chat_len, self.cur_memory_len = 0, 0
         self.max_chat_len, self.max_memory_len = max_chat_len, max_memory_len
-        self.emb_tokenizer = AutoTokenizer.from_pretrained(
-            emb_tokenizer_model,
-            trust_remote_code=True,
-        )
-        self.chat_tokenizer = AutoTokenizer.from_pretrained(
-            chat_tokenizer_model,
-            trust_remote_code=True,
-        )
         self.update_memory_prompt = update_memory_prompt
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.token_counter = token_counter
+        self.text_splitter = create_recursive_text_splitter(
             chunk_size=MAX_CHAT_MODEL_TOKEN_SIZE,
             chunk_overlap=OVERLAP_SIZE,
-            length_function=lambda x: count_words(self.emb_tokenizer, x),
+            length_function=lambda x: count_words(self.token_counter, x),
         )
         self.summary_working_log_prompt = summary_working_log_prompt
         self.summary_working_log_w_query_prompt = (
@@ -257,17 +509,41 @@ class ReActMemory(MemoryBase):
         self.agent = AgentBase()
         self.compressed_ratio = compressed_ratio
 
-    def _truncate_text(
+    async def _truncate_text(
         self,
         text: str,
         max_token_length: int = MAX_CHUNK_SIZE,
     ) -> str:
-        tokens = self.emb_tokenizer.encode(text, add_special_tokens=False)
-        if len(tokens) > max_token_length:
-            tokens = tokens[:max_token_length]
-            truncated_text = self.emb_tokenizer.decode(tokens)
-            return truncated_text
-        return text
+        """Truncate text to fit within max_token_length using binary search.
+
+        Args:
+            text (str): The text to truncate
+            max_token_length (int): Maximum number of tokens allowed
+
+        Returns:
+            str: Truncated text that fits within the token limit
+        """
+        # Check if text already fits within the limit
+        current_tokens = await count_words(self.token_counter, text)
+        if current_tokens <= max_token_length:
+            return text
+
+        # Use binary search to find the appropriate truncation point
+        left, right = 0, len(text)
+        best_text = text
+
+        while left < right:
+            mid = (left + right + 1) // 2
+            truncated = text[:mid]
+            token_count = await count_words(self.token_counter, truncated)
+
+            if token_count <= max_token_length:
+                best_text = truncated
+                left = mid
+            else:
+                right = mid - 1
+
+        return best_text
 
     async def get_memory(
         self,
@@ -471,10 +747,10 @@ class ReActMemory(MemoryBase):
             else:
                 query_str = query
             if query_embedding is None and query_str is not None:
-                query_str = self._truncate_text(query_str)
+                query_str = await self._truncate_text(query_str)
                 try:
                     embedding_response = await self.embedding_model(
-                        query_str,
+                        [query_str],
                         return_embedding_only=True,
                     )
                     query_embedding = embedding_response.embeddings[0]
@@ -512,21 +788,23 @@ class ReActMemory(MemoryBase):
             msgs (Union[Sequence[Msg], Msg, None]):
                 the messages to add to the chat history
         """
+        print(f"Direct adding chat history: {msgs}")
         if msgs is None:
             return
         if not isinstance(msgs, Sequence):
             msgs = [msgs]
         deep_copied_msgs = copy.deepcopy(msgs)
         self._chat_history.extend(deep_copied_msgs)
-        self.cur_chat_len += sum(
-            [
+        token_counts = await asyncio.gather(
+            *[
                 count_words(
-                    self.chat_tokenizer,
-                    format_msgs(msg),
+                    self.token_counter,
+                    format_msgs(msg, with_id=False),
                 )
                 for msg in msgs
             ],
         )
+        self.cur_chat_len += sum(token_counts)
 
     async def _retrieve_concerned_messages(
         self,
@@ -603,8 +881,8 @@ class ReActMemory(MemoryBase):
             if not isinstance(content, str):
                 for c in content:
                     if c.get("type", None) == "tool_result":
-                        cnt = count_words(
-                            self.chat_tokenizer,
+                        cnt = await count_words(
+                            self.token_counter,
                             c.get("output", None),
                         )
                         if cnt > ALLOWED_MAX_TOOL_RESULT_LEN:
@@ -627,10 +905,11 @@ class ReActMemory(MemoryBase):
                                 f"{summary}. The original tool result is "
                                 f"saved in {path}."
                             )
-            if (
-                count_words(self.chat_tokenizer, format_msgs(msg))
-                > MAX_CHUNK_SIZE
-            ):
+            msg_token_count = await count_words(
+                self.token_counter,
+                format_msgs(msg, with_id=False),
+            )
+            if msg_token_count > MAX_CHUNK_SIZE:
                 logging.warning(
                     f"The message is too long even after storing tool result "
                     f"in files, the message is: {format_msgs(msg)}",
@@ -660,11 +939,13 @@ class ReActMemory(MemoryBase):
                         )
                         msg.content.append(c)
                 max_retry = 3
-                while (
-                    count_words(self.chat_tokenizer, format_msgs(msg))
-                    > MAX_CHUNK_SIZE
-                    and max_retry > 0
-                ):
+                while max_retry > 0:
+                    msg_token_count = await count_words(
+                        self.token_counter,
+                        format_msgs(msg, with_id=False),
+                    )
+                    if msg_token_count <= MAX_CHUNK_SIZE:
+                        break
                     logging.warning(
                         f"The message is too long even after storing the "
                         f"original `text` type content in files, the message "
@@ -678,11 +959,12 @@ class ReActMemory(MemoryBase):
                         "Failed to summarize the message after 3 retries, "
                         "direct add the new messages to the memory",
                     )
-                    if (
-                        count_words(self.chat_tokenizer, format_msgs(msg))
-                        > MAX_CHUNK_SIZE
-                    ):
-                        final_content = self._truncate_text(
+                    msg_token_count = await count_words(
+                        self.token_counter,
+                        format_msgs(msg, with_id=False),
+                    )
+                    if msg_token_count > MAX_CHUNK_SIZE:
+                        final_content = await self._truncate_text(
                             msg.content,
                             MAX_CHUNK_SIZE,
                         )
@@ -767,6 +1049,7 @@ class ReActMemory(MemoryBase):
             .replace("{{new_chat_message}}", format_msgs(concerned_messages))
             .replace("{{update_allowed}}", f"{update_allowed}")
         )
+        print(f"Memories prompt: {memories_prompt}")
         max_retry = 3
         new_actions, return_actions = [], []
         while max_retry > 0:
@@ -777,6 +1060,7 @@ class ReActMemory(MemoryBase):
                     # ```json\n[content]\n```
                     # and remove markers if so
                     cleaned_text = raw_response.text
+                    print(f"Cleaned text: {cleaned_text}")
                     json_block_pattern = r"^```json\s*\n(.*?)\n```$"
                     match = re.match(
                         json_block_pattern,
@@ -790,6 +1074,7 @@ class ReActMemory(MemoryBase):
                     # Remove trailing commas before closing brackets/braces
                     cleaned_text = re.sub(r",(\s*[}\]])", r"\1", cleaned_text)
                     new_actions = json.loads(cleaned_text)
+                    print(f"New actions: {new_actions}")
                     # check legality of the actions
                     if isinstance(new_actions, dict):
                         new_actions = [new_actions]
@@ -952,6 +1237,7 @@ class ReActMemory(MemoryBase):
             actions = pre_process_func(msg_to_record)
         else:
             actions = await self._pre_process_default(msg_to_record)
+        print(f"Actions: {actions}")
         await self._process_actions(actions)
         logging.info(
             f"CURRENT MEMORY:\n{format_msgs(self._memory)}",
@@ -978,7 +1264,7 @@ class ReActMemory(MemoryBase):
                                     action["action_content"],
                                 )
                             embedding_response = await self.embedding_model(
-                                action["action_content"],
+                                [action["action_content"]],
                                 return_embedding_only=True,
                             )
                             embedding = embedding_response.embeddings[0]
@@ -1029,10 +1315,17 @@ class ReActMemory(MemoryBase):
                                     )
                                     found_mem_idx = idx
                                     break
-                            self.cur_memory_len += count_words(
-                                self.chat_tokenizer,
+                            new_token_count = await count_words(
+                                self.token_counter,
                                 action["action_content"],
-                            ) - count_words(self.chat_tokenizer, old_mem)
+                            )
+                            old_token_count = await count_words(
+                                self.token_counter,
+                                old_mem,
+                            )
+                            self.cur_memory_len += (
+                                new_token_count - old_token_count
+                            )
                             if found_mem_idx != -1:
                                 # maintain the order by last_modified_timestamp
                                 self._memory.append(
@@ -1083,7 +1376,7 @@ class ReActMemory(MemoryBase):
             memories = self._memory
         min_index = len(memories)
         for id in ids:
-            for idx, mem in enumerate(memories):
+            for idx, mem in enumerate[MemRecord](memories):
                 if mem.id == id:
                     mem_to_summarize.append(mem)
                     min_index = min(min_index, idx)
@@ -1183,9 +1476,9 @@ class ReActMemory(MemoryBase):
             str: the summary of the memory list.
         """
         if isinstance(mem_to_summarize, str):
-            chunks = self.text_splitter.split_text(mem_to_summarize)
+            chunks = await self.text_splitter(mem_to_summarize)
         else:
-            chunks = self.text_splitter.split_text(
+            chunks = await self.text_splitter(
                 format_msgs(mem_to_summarize),
             )
         previous_summary = ""
@@ -1219,9 +1512,9 @@ class ReActMemory(MemoryBase):
             str: the summary of the memory list.
         """
         if isinstance(mem_to_summarize, str):
-            chunks = self.text_splitter.split_text(mem_to_summarize)
+            chunks = await self.text_splitter(mem_to_summarize)
         else:
-            chunks = self.text_splitter.split_text(
+            chunks = await self.text_splitter(
                 format_msgs(mem_to_summarize),
             )
         previous_summary = ""
@@ -1285,10 +1578,12 @@ class ReActMemory(MemoryBase):
                 removed.
         """
         end_idx = len(mem_list)
-        token_size_list = [
-            count_words(self.chat_tokenizer, format_msgs(mem))
-            for mem in mem_list
-        ]
+        token_size_list = await asyncio.gather(
+            *[
+                count_words(self.token_counter, format_msgs(mem))
+                for mem in mem_list
+            ],
+        )
         total_token_size = sum(token_size_list)
         compressed_token_size = int(total_token_size * compressed_ratio)
         current_token_size = 0
@@ -1329,8 +1624,8 @@ class ReActMemory(MemoryBase):
                     mem_list[current_end].metadata["data"] = summary_msg[
                         0
                     ].content
-                    cur_mem_size = count_words(
-                        self.chat_tokenizer,
+                    cur_mem_size = await count_words(
+                        self.token_counter,
                         json.dumps(
                             format_msgs(
                                 mem_list[current_end],
@@ -1640,7 +1935,7 @@ class ReActMemory(MemoryBase):
         found = False
         if embedding is None:
             embedding_response = await self.embedding_model(
-                new_content,
+                [new_content],
                 return_embedding_only=True,
             )
             embedding = embedding_response.embeddings[0]
@@ -1680,7 +1975,7 @@ class ReActMemory(MemoryBase):
     ) -> None:
         if embedding is None:
             embedding_response = await self.embedding_model(
-                json.dumps(content),
+                [json.dumps(content)],
                 return_embedding_only=True,
             )
             embedding = embedding_response.embeddings[0]
@@ -1715,10 +2010,11 @@ class ReActMemory(MemoryBase):
             self._memory.append(mem_to_add)
         else:
             self._memory[index:index] = [mem_to_add]
-        self.cur_memory_len += count_words(
-            self.chat_tokenizer,
-            format_msgs(mem_to_add),
+        token_count = await count_words(
+            self.token_counter,
+            format_msgs(mem_to_add, with_id=False),
         )
+        self.cur_memory_len += token_count
 
     async def direct_add_memory(
         self,
