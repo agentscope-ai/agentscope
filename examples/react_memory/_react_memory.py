@@ -18,6 +18,7 @@ from typing import (
     Optional,
     Sequence,
     Union,
+    cast,
 )
 import copy
 import re
@@ -28,9 +29,9 @@ from agentscope.agent import AgentBase
 from agentscope.memory import MemoryBase
 from agentscope.message import Msg
 from agentscope.token import TokenCounterBase, OpenAITokenCounter
+from agentscope.tool import ToolResponse, TextBlock
 from ._mem_record import (  # pylint: disable=relative-beyond-top-level
     MemRecord,
-    VectorStruct,
     serialize_list,
     deserialize_memrecord_list,
     deserialize_msg_list,
@@ -233,6 +234,8 @@ class ReActMemory(MemoryBase):
                 f"{DEFAULT_RETURN_CHAT_HISTORY_LEN} memories by default.",
             )
             recent_n = DEFAULT_RETURN_CHAT_HISTORY_LEN
+        # At this point, recent_n is guaranteed to be an int
+        recent_n = cast(int, recent_n)
         # extract the recent `recent_n` entries in memories
         if retrieve_type == "source":
             memories = self._chat_history
@@ -345,79 +348,6 @@ class ReActMemory(MemoryBase):
             msg.id = mem_record.id
             return msg
         raise TypeError(f"Expected Msg or MemRecord, got {type(mem_record)}")
-
-    async def retrieve_from_vector_store(
-        self,
-        queries: Sequence[Union[str, VectorStruct, Msg, MemRecord]],
-        top_k: int = 5,
-    ) -> list[dict]:
-        """Retrieve memory from vector store with query of
-        Msg/str/embedding/MemRecord.
-
-        Args:
-            query (Union[str, VectorStruct, Msg, MemRecord]):
-                Query to retrieve memory.
-            top_k (int, defaults to `5`):
-                The number of memory units to retrieve.
-
-        Returns:
-            list[dict]:
-                A list of retrieved memory units in their
-                `last_modified_timestamp` order.
-                Each memory unit is a dict with the following keys:
-                - id: the id of the memory unit
-                - score: the score of the memory unit
-                - payload: a dict of the metadata of the memory unit,
-                including:
-                    data (the text content), created_timestamp,
-                    last_modified_timestamp, role, etc
-                - embedding: the embedding of the memory unit
-        """
-        all_retrieved_memories = []
-        for query in queries:
-            query_str = None
-            query_embedding = None
-            if isinstance(query, MemRecord):
-                query_str = query.metadata.get("data", None)
-                query_embedding = (
-                    query.embedding if query.embedding is not None else None
-                )
-            elif isinstance(query, Msg):
-                query_str = format_msgs(query)
-            elif type(query) is VectorStruct:
-                query_embedding = query
-            else:
-                query_str = query
-            if query_embedding is None and query_str is not None:
-                query_str = await self._truncate_text(query_str)
-                try:
-                    embedding_response = await self.embedding_model(
-                        [query_str],
-                        return_embedding_only=True,
-                    )
-                    query_embedding = embedding_response.embeddings[0]
-                except Exception as e:
-                    logging.warning(
-                        "Error embedding the query content when retrieve,"
-                        f"error: {e}",
-                    )
-                    continue
-            retrieved_memories = self.vector_store.search(
-                query=query_str,
-                vectors=query_embedding,
-                limit=top_k,
-            )
-            all_retrieved_memories.extend(retrieved_memories)
-
-        id_mapping = {}
-        # remove duplicate memories
-        for mem in all_retrieved_memories:
-            id_mapping[mem.id] = mem
-        unique_retrieved_memories = list(id_mapping.values())
-        unique_retrieved_memories.sort(
-            key=lambda x: x.payload.get("last_modified_timestamp", None),
-        )
-        return unique_retrieved_memories
 
     async def direct_add_chat_history(
         self,
@@ -1018,7 +948,7 @@ class ReActMemory(MemoryBase):
             memories = self._memory
         min_index = len(memories)
         for id in ids:
-            for idx, mem in enumerate[MemRecord](memories):
+            for idx, mem in enumerate(memories):
                 if mem.id == id:
                     mem_to_summarize.append(mem)
                     min_index = min(min_index, idx)
@@ -1718,10 +1648,10 @@ class ReActMemory(MemoryBase):
             content = json.load(f)
         return content
 
-    async def retrieve_from_memory(
+    async def retrieve_from_cached_memory(
         self,
         query: str,
-        filename: Optional[str] = None,
+        filename: str,
     ) -> str:
         """
         The function is used to search for information in memory based on a
@@ -1737,10 +1667,7 @@ class ReActMemory(MemoryBase):
                 Specific file to search within. If None, searches across all
                 memory contents.
         """
-        if filename is None:
-            related_memories = await self.retrieve_from_vector_store([query])
-        else:
-            related_memories = self._load_file(filename)
+        related_memories = self._load_file(filename)
         if not isinstance(related_memories, list):
             related_memories = [related_memories]
         file_list = []
@@ -1774,5 +1701,19 @@ class ReActMemory(MemoryBase):
                 "Error in summarize_with_sequential_notes: %s",
                 str(e),
             )
-            raise e
-        return summary
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error retrieving memory: {str(e)}",
+                    ),
+                ],
+            )
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=summary,
+                ),
+            ],
+        )
