@@ -424,10 +424,10 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                     results.extend(
                         [item["memory"] for item in result["results"]],
                     )
-                if "relations" in result.keys():
-                    results.extend(
-                        self._format_relations(result),
-                    )
+                    if "relations" in result.keys():
+                        results.extend(
+                            self._format_relations(result),
+                        )
 
             return ToolResponse(
                 content=[
@@ -495,7 +495,18 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         )
 
     def _format_relations(self, result: dict) -> list:
-        """Format relations from search result."""
+        """Format relations from search result.
+
+        Args:
+            result (`dict`):
+                The result from the memory search operation.
+
+        Returns:
+            `list`:
+                The formatted relations.
+                Each relation is a string in the format of:
+                "{source} -- {relationship} -- {destination}"
+        """
         if "relations" not in result:
             return []
         return [
@@ -604,9 +615,9 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 results.extend(
                     [memory["memory"] for memory in result["results"]],
                 )
-            if "relations" in result.keys():
-                results.extend(
-                    self._format_relations(result),
-                )
+                if "relations" in result.keys():
+                    results.extend(
+                        self._format_relations(result),
+                    )
 
         return "\n".join(results)
