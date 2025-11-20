@@ -339,7 +339,7 @@ MCP 级别管理
     }
 
     函数调用结果：
-    ToolResponse(content=[{'type': 'text', 'text': '{"results":[{"country":"中国","province":"北京市","city":"北京市","citycode":"010","district":"东城区","street":[],"number":[],"adcode":"110101","location":"116.397755,39.903182","level":"兴趣点"}]}'}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-19 12:34:51.199_5e1e19')
+    ToolResponse(content=[{'type': 'text', 'text': '{"results":[{"country":"中国","province":"北京市","city":"北京市","citycode":"010","district":"东城区","street":[],"number":[],"adcode":"110101","location":"116.397755,39.903182","level":"兴趣点"}]}'}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-20 03:21:54.422_6e9ecc')
 
 
 
@@ -358,7 +358,7 @@ MCP 级别管理
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 6.801 seconds)
+   **Total running time of the script:** (0 minutes 6.727 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_mcp.py:
