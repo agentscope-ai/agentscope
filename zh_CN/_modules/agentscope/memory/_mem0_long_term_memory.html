@@ -764,6 +764,10 @@
                     <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
                         <span class="p">[</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;memory&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;results&quot;</span><span class="p">]],</span>
                     <span class="p">)</span>
+                    <span class="k">if</span> <span class="s2">&quot;relations&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+                        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_format_relations</span><span class="p">(</span><span class="n">result</span><span class="p">),</span>
+                        <span class="p">)</span>
 
             <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
                 <span class="n">content</span><span class="o">=</span><span class="p">[</span>
@@ -833,6 +837,28 @@
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span></div>
 
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_format_relations</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Format relations from search result.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            result (`dict`):</span>
+<span class="sd">                The result from the memory search operation.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `list`:</span>
+<span class="sd">                The formatted relations.</span>
+<span class="sd">                Each relation is a string in the format of:</span>
+<span class="sd">                &quot;{source} -- {relationship} -- {destination}&quot;</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="s2">&quot;relations&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">result</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">return</span> <span class="p">[</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">relation</span><span class="p">[</span><span class="s1">&#39;source&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> -- &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">relation</span><span class="p">[</span><span class="s1">&#39;relationship&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> -- &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">relation</span><span class="p">[</span><span class="s1">&#39;destination&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="k">for</span> <span class="n">relation</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;relations&quot;</span><span class="p">]</span>
+        <span class="p">]</span>
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_mem0_record</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
@@ -935,6 +961,10 @@
                 <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
                     <span class="p">[</span><span class="n">memory</span><span class="p">[</span><span class="s2">&quot;memory&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">memory</span> <span class="ow">in</span> <span class="n">result</span><span class="p">[</span><span class="s2">&quot;results&quot;</span><span class="p">]],</span>
                 <span class="p">)</span>
+                <span class="k">if</span> <span class="s2">&quot;relations&quot;</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+                    <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_format_relations</span><span class="p">(</span><span class="n">result</span><span class="p">),</span>
+                    <span class="p">)</span>
 
         <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">results</span><span class="p">)</span></div>
 </div>
