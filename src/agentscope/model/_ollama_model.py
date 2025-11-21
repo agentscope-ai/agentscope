@@ -40,6 +40,7 @@ class OllamaChatModel(ChatModelBase):
         keep_alive: str = "5m",
         enable_thinking: bool | None = None,
         host: str | None = None,
+        api_key: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama chat model.
@@ -63,6 +64,10 @@ class OllamaChatModel(ChatModelBase):
            host (`str | None`, default `None`):
                The host address of the Ollama server. If None, uses the
                default address (typically http://localhost:11434).
+            api_key (`str | None`, default `None`):
+               API key for authenticating with Ollama Cloud API.
+               Required when using the cloud API. For more details,
+               please refer to https://docs.ollama.com/cloud
            **kwargs (`Any`):
                Additional keyword arguments to pass to the base chat model
                class.
@@ -78,9 +83,24 @@ class OllamaChatModel(ChatModelBase):
 
         super().__init__(model_name, stream)
 
+        # Prepare client parameters
+        client_kwargs = dict(kwargs)
+
+        # Set authorization header if api_key is provided
+        if api_key:
+            # Get existing headers or create new ones
+            headers = client_kwargs.pop("headers", {})
+            if isinstance(headers, dict):
+                # Create a copy to avoid modifying the original dictionary
+                headers = dict(headers)
+            else:
+                headers = {}
+            headers["Authorization"] = f"Bearer {api_key}"
+            client_kwargs["headers"] = headers
+
         self.client = ollama.AsyncClient(
             host=host,
-            **kwargs,
+            **client_kwargs,
         )
         self.options = options
         self.keep_alive = keep_alive
