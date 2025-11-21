@@ -69,6 +69,7 @@ class RegisteredToolFunction:
             extended_schema,
         )
 
+        # Merge properties from extended schema
         for key, value in extended_schema["properties"].items():
             if key in self.json_schema["function"]["parameters"]["properties"]:
                 raise ValueError(
@@ -83,4 +84,43 @@ class RegisteredToolFunction:
                 if "required" not in merged_schema["function"]["parameters"]:
                     merged_schema["function"]["parameters"]["required"] = []
                 merged_schema["function"]["parameters"]["required"].append(key)
+
+        # Merge $defs from extended schema to support nested models
+        if "$defs" in extended_schema:
+            merged_params = merged_schema["function"]["parameters"]
+            if "$defs" not in merged_params:
+                merged_params["$defs"] = {}
+
+            # Check for conflicts and merge $defs
+            for def_key, def_value in extended_schema["$defs"].items():
+                def_value_copy = deepcopy(def_value)
+                _remove_title_field(
+                    def_value_copy,
+                )  # pylint: disable=protected-access
+
+                if def_key in merged_params["$defs"]:
+                    # Check if the two definitions are from the same BaseModel
+                    # by comparing their content
+                    # Create copies and remove title fields for comparison
+
+                    existing_def_copy = deepcopy(
+                        merged_params["$defs"][def_key],
+                    )
+                    _remove_title_field(
+                        existing_def_copy,
+                    )  # pylint: disable=protected-access
+
+                    if existing_def_copy != def_value_copy:
+                        # The definitions are different, raise an error
+                        raise ValueError(
+                            f"The $defs key `{def_key}` conflicts with "
+                            f"existing definition in function schema of "
+                            f"`{self.name}`.",
+                        )
+                    # The definitions are the same (from the same BaseModel),
+                    # skip merging this key
+                    continue
+
+                merged_params["$defs"][def_key] = def_value_copy
+
         return merged_schema

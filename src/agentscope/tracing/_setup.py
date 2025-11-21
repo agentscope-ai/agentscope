@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The tracing interface class in agentscope."""
-from agentscope import _config
 
 
 def setup_tracing(endpoint: str) -> None:
@@ -23,5 +22,3 @@ def setup_tracing(endpoint: str) -> None:
     span_processor = BatchSpanProcessor(exporter)
     tracer_provider.add_span_processor(span_processor)
     trace.set_tracer_provider(tracer_provider)
-
-    _config.trace_enabled = True
