@@ -231,7 +231,11 @@ class ReActAgent(ReActAgentBase):
     @property
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
-        return self._sys_prompt
+        agent_skill_prompt = self.toolkit.get_agent_skill_prompt()
+        if agent_skill_prompt:
+            return self._sys_prompt + "\n\n" + agent_skill_prompt
+        else:
+            return self._sys_prompt
 
     @trace_reply
     async def reply(  # pylint: disable=too-many-branches

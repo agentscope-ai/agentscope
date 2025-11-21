@@ -3,6 +3,7 @@
 
 import asyncio
 import inspect
+import os
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -16,12 +17,14 @@ from typing import (
     Awaitable,
 )
 
+import frontmatter
 import shortuuid
 from pydantic import (
     BaseModel,
     Field,
     create_model,
 )
+from typing_extensions import TypedDict
 
 from ._async_wrapper import (
     _async_generator_wrapper,
@@ -66,38 +69,78 @@ class ToolGroup:
     """The using notes of the tool group, to remind the agent how to use"""
 
 
+class AgentSkill(TypedDict):
+    """The agent skill typed dict class"""
+    name: str
+    """The name of the skill."""
+    description: str
+    """The description of the skill."""
+    dir: str
+    """The directory of the agent skill."""
+
+
 class Toolkit(StateModule):
-    """The class that supports both function- and group-level tool management.
+    """Toolkit is the core module to register, manage and delete tool
+    functions, MCP clients, Agent skills in AgentScope.
 
-    Use the following methods to manage the tool functions:
+    About tool functions:
 
-    - `register_tool_function`
-    - `remove_tool_function`
+    - Register and parse JSON schemas from their docstrings automatically.
+    - Group-wise tools management, and agentic tools activation/deactivation.
+    - Extend the tool function JSON schema dynamically with Pydantic BaseModel.
+    - Tool function execution with unified streaming interface.
 
-    For group-level management:
+    About MCP clients:
 
-    - `create_tool_group`
-    - `update_tool_groups`
-    - `remove_tool_groups`
+    - Register tool functions from MCP clients directly.
+    - Client-level tool functions removal.
 
-    MCP related methods:
+    About Agent skills:
 
-    - `register_mcp_server`
-    - `remove_mcp_servers`
-
-    To run the tool functions or get the data from the activated tools:
-
-    - `call_tool_function`
-    - `get_json_schemas`
-    - `get_tool_group_notes`
+    - Register agent skills from the given directory.
+    - Provide prompt for the registered skills to the agent.
     """
 
-    def __init__(self) -> None:
-        """Initialize the toolkit."""
+    _DEFAULT_AGENT_SKILL_INSTRUCTION = """# Agent Skills
+The following are the skills you can use to complete your tasks, 
+## File writing skills
+### Description
+A simple skill that greets the user
+Check the file "/Users/david/Documents/Python/skills/SKILL.md" for how to use the skills
+"""
+
+    _DEFAULT_AGENT_SKILL_TEMPLATE = """## {name}
+{description}
+Check "{dir}/SKILL.md" for how to use this skill"""
+
+    def __init__(
+        self,
+        agent_skill_instruction: str | None = None,
+        agent_skill_template: str | None = None,
+    ) -> None:
+        """Initialize the toolkit.
+
+        Args:
+            agent_skill_instruction (`str | None`, optional):
+                The instruction for agent skills in the system prompt. If not
+                provided, a default instruction will be used.
+            agent_skill_template (`str | None`, optional):
+                The template to present one agent skill in the system prompt,
+                which should contain `{name}`, `{description}`, and `{dir}`
+                placeholders. If not provided, a default template will be used.
+        """
         super().__init__()
 
         self.tools: dict[str, RegisteredToolFunction] = {}
         self.groups: dict[str, ToolGroup] = {}
+        self.skills: dict[str, AgentSkill] = {}
+
+        self._agent_skill_instruction = (
+            agent_skill_instruction or self._DEFAULT_AGENT_SKILL_INSTRUCTION
+        )
+        self._agent_skill_template = (
+            agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
+        )
 
     def create_tool_group(
         self,
@@ -950,3 +993,113 @@ class Toolkit(StateModule):
                 f"A function with name '{func_name}' is already registered "
                 "in the toolkit.",
             )
+
+    def register_agent_skill(
+        self,
+        skill_dir: str,
+    ) -> None:
+        """Register agent skills from a given directory. This function will
+        scan the directory, read metadata from the SKILL.md file, and add
+        it to the skill related prompt. Developers can obtain the
+        skills-related prompt by calling `toolkit.get_agent_skill_prompt()`.
+
+        .. note:: This directory
+         - Must include a SKILL.md file at the top level
+         - The SKILL.md must have a YAML Front Matter including `name` and
+            `description` fields
+         - All files must specify a common root directory in their paths
+
+         Args:
+             skill_dir (`str`):
+                The path to the skill directory.
+        """
+        # Check the skill directory
+        if not os.path.isdir(skill_dir):
+            raise ValueError(
+                f"The skill directory '{skill_dir}' does not exist or is "
+                "not a directory.",
+            )
+
+        # Check SKILL.md file
+        path_skill_md = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.isfile(path_skill_md):
+            raise ValueError(
+                f"The skill directory '{skill_dir}' must include a "
+                "SKILL.md file at the top level.",
+            )
+
+        # Check YAML Front Matter
+        with open(path_skill_md, "r", encoding="utf-8") as f:
+            post = frontmatter.load(f)
+
+        name = str(post.get("name", None))
+        description = str(post.get("description", None))
+
+        if not name or not description:
+            raise ValueError(
+                f"The SKILL.md file in '{skill_dir}' must have a YAML Front "
+                "Matter including `name` and `description` fields.",
+            )
+
+        if name in self.skills:
+            raise ValueError(
+                f"An agent skill with name '{name}' is already registered "
+                "in the toolkit.",
+            )
+
+        self.skills[name] = AgentSkill(
+            name=name,
+            description=description,
+            dir=skill_dir,
+        )
+
+        logger.info(
+            "Registered agent skill '%s' from directory '%s'.",
+            name,
+            skill_dir,
+        )
+
+    def remove_agent_skill(self, name: str) -> None:
+        """The name of the agent skill to be removed.
+
+        Args:
+            name (`str`):
+                The agent skill name.
+        """
+        if name in self.skills:
+            self.skills.pop(name)
+        else:
+            logger.warning(
+                "Agent skill '%s' not found in the toolkit, skipping removal.",
+                name,
+            )
+
+    def get_agent_skill_prompt(self) -> str | None:
+        """Get the prompt for all registered agent skills, which can be
+        attached to the system prompt for the agent.
+
+        The prompt is consisted of an overall instruction and the detailed
+        descriptions of each skill, including its name, description, and
+        directory.
+
+        .. note:: If no skill is registered, None will be returned.
+
+        Returns:
+            `str | None`:
+                The combined prompt for all registered agent skills, or None
+                if no skill is registered.
+        """
+        if len(self.skills) == 0:
+            return None
+
+        skill_descriptions = [
+            self._agent_skill_instruction,
+        ] + [
+            self._agent_skill_template.format(
+                name=_["name"],
+                description=_["description"],
+                dir=_["dir"],
+            )
+            for _ in self.skills.values()
+        ]
+        return "\n".join(skill_descriptions)
