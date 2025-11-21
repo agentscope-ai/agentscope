@@ -343,7 +343,10 @@
 <div class="viewcode-block" id="DeepSeekChatFormatter">
 <a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter">[文档]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">DeepSeekChatFormatter</span><span class="p">(</span><span class="n">TruncatedFormatterBase</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Formatter for DeepSeek messages.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The DeepSeek formatter class for chatbot scenario, where only a user</span>
+<span class="sd">    and an agent are involved. We use the `role` field to identify different</span>
+<span class="sd">    entities in the conversation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">support_tools_api</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether support tools API&quot;&quot;&quot;</span>
@@ -406,13 +409,14 @@
                     <span class="p">)</span>
 
                 <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;tool_result&quot;</span><span class="p">:</span>
+                    <span class="n">textual_output</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">convert_tool_result_to_string</span><span class="p">(</span>
+                        <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;output&quot;</span><span class="p">),</span>  <span class="c1"># type: ignore[arg-type]</span>
+                    <span class="p">)</span>
                     <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="p">{</span>
                             <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span>
                             <span class="s2">&quot;tool_call_id&quot;</span><span class="p">:</span> <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">),</span>
-                            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">convert_tool_result_to_string</span><span class="p">(</span>
-                                <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;output&quot;</span><span class="p">),</span>  <span class="c1"># type: ignore[arg-type]</span>
-                            <span class="p">),</span>
+                            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">textual_output</span><span class="p">,</span>
                             <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">),</span>
                         <span class="p">},</span>
                     <span class="p">)</span>

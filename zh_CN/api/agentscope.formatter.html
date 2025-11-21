@@ -378,19 +378,24 @@ API requirements.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.FormatterBase.convert_tool_result_to_string">
 <em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">convert_tool_result_to_string</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">output</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_formatter_base.html#FormatterBase.convert_tool_result_to_string"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.FormatterBase.convert_tool_result_to_string" title="Link to this definition">¶</a></dt>
 <dd><p>Turn the tool result list into a textual output to be compatible
-with the LLM API that doesn't support multimodal data.</p>
+with the LLM API that doesn't support multimodal data in the tool
+result.</p>
+<p>For URL-based images, the URL is included in the list. For
+base64-encoded images, the local file path where the image is saved
+is included in the returned list.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><p><strong>output</strong> (<cite>str | List[TextBlock | ImageBlock | AudioBlock]</cite>) -- The output of the tool response, including text and multimodal
 data like images and audio.</p>
 </dd>
 <dt class="field-even">返回<span class="colon">:</span></dt>
-<dd class="field-even"><p>A string representation of the tool result, with text blocks
-concatenated and multimodal data represented by file paths
-or URLs.</p>
+<dd class="field-even"><p>A tuple containing the textual representation of the tool
+result and a list of tuples. The first element of each tuple
+is the local file path or URL of the multimodal data, and the
+second element is the corresponding block.</p>
 </dd>
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p><cite>str</cite></p>
+<dd class="field-odd"><p><cite>tuple[str, list[Tuple[str, ImageBlock | AudioBlock |             TextBlock]]]</cite></p>
 </dd>
 </dl>
 </dd></dl>
@@ -500,7 +505,9 @@ them into the required format for the LLM API.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DashScopeChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>Formatter for DashScope messages.</p>
+<p>The DashScope formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>role</cite> field to identify different
+entities in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -523,6 +530,32 @@ them into the required format for the LLM API.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.supported_blocks">
 <span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the DashScope chat formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter._format">
@@ -594,12 +627,17 @@ is playing as.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the DashScope multi-agent formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) -- The prompt to use for the conversation history section.</p></li>
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
 <li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- The token counter used for truncation.</p></li>
 <li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
 messages. If <cite>None</cite>, no truncation will be applied.</p></li>
@@ -658,8 +696,9 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OpenAIChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>The class used to format message objects into the OpenAI API required
-format.</p>
+<p>The OpenAI formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>name</cite> field in OpenAI API to
+identify different entities in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -682,6 +721,32 @@ format.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.supported_blocks">
 <span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
 <dd><p>Supported message blocks for OpenAI API</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OpenAIChatFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIChatFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the OpenAI chat formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py method">
@@ -738,14 +803,23 @@ OpenAI-compatible services like vLLM, Azure OpenAI, and others.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.OpenAIMultiAgentFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_openai_formatter.html#OpenAIMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OpenAIMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the OpenAI multi-agent formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) -- The prompt to use for the conversation history section.</p></li>
-<li><p><strong>token_counter</strong> (<a class="reference internal" href="agentscope.token.html#agentscope.token.TokenCounterBase" title="agentscope.token._token_base.TokenCounterBase"><em>TokenCounterBase</em></a><em> | </em><em>None</em>)</p></li>
-<li><p><strong>max_tokens</strong> (<em>int</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -793,7 +867,9 @@ them into the required format for the OpenAI API.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AnthropicChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_anthropic_formatter.html#AnthropicChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>Formatter for Anthropic messages.</p>
+<p>The Anthropic formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>role</cite> field to identify different
+entities in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.AnthropicChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.AnthropicChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -931,7 +1007,9 @@ them into the required format for the Anthropic API.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">GeminiChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>The formatter for Google Gemini API.</p>
+<p>The Gemini formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>role</cite> field to identify different
+entities in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -960,6 +1038,32 @@ them into the required format for the Anthropic API.</p>
 <dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.supported_extensions">
 <span class="sig-name descname"><span class="pre">supported_extensions</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'audio':</span> <span class="pre">['mp3',</span> <span class="pre">'wav',</span> <span class="pre">'aiff',</span> <span class="pre">'aac',</span> <span class="pre">'ogg',</span> <span class="pre">'flac'],</span> <span class="pre">'image':</span> <span class="pre">['png',</span> <span class="pre">'jpeg',</span> <span class="pre">'webp',</span> <span class="pre">'heic',</span> <span class="pre">'heif'],</span> <span class="pre">'video':</span> <span class="pre">['mp4',</span> <span class="pre">'mpeg',</span> <span class="pre">'mov',</span> <span class="pre">'avi',</span> <span class="pre">'x-flv',</span> <span class="pre">'mpg',</span> <span class="pre">'webm',</span> <span class="pre">'wmv',</span> <span class="pre">'3gpp']}</span></em><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.supported_extensions" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiChatFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Gemini chat formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.GeminiChatFormatter._format">
@@ -1028,12 +1132,17 @@ is playing as.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.GeminiMultiAgentFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_gemini_formatter.html#GeminiMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.GeminiMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the Gemini multi-agent formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) -- The prompt to be used for the conversation history section.</p></li>
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
 <li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- The token counter used for truncation.</p></li>
 <li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
 messages. If <cite>None</cite>, no truncation will be applied.</p></li>
@@ -1091,7 +1200,9 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">OllamaChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>Formatter for Ollama messages.</p>
+<p>The Ollama formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>role</cite> field to identify different
+participants in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -1114,6 +1225,32 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.supported_blocks">
 <span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
 <dd><p>The list of supported message blocks</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.OllamaChatFormatter.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaChatFormatter.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Ollama chat formatter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
+If not provided, the formatter will format the messages
+without considering token limits.</p></li>
+<li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
+messages. If not provided, the formatter will not truncate
+the messages.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
 </dd></dl>
 
 <dl class="py method">
@@ -1167,12 +1304,17 @@ a user and an agent are involved.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.OllamaMultiAgentFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_ollama_formatter.html#OllamaMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.OllamaMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the Ollama multi-agent formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>conversation_history_prompt</strong> (<cite>str</cite>) -- The prompt to use for the conversation history section.</p></li>
+<li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
+Most LLM APIs don't support images in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
 <li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- The token counter used for truncation.</p></li>
 <li><p><strong>max_tokens</strong> (<cite>int | None</cite>, optional) -- The maximum number of tokens allowed in the formatted
 messages. If <cite>None</cite>, no truncation will be applied.</p></li>
@@ -1230,7 +1372,9 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DeepSeekChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_deepseek_formatter.html#DeepSeekChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.formatter.TruncatedFormatterBase" title="agentscope.formatter._truncated_formatter_base.TruncatedFormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TruncatedFormatterBase</span></code></a></p>
-<p>Formatter for DeepSeek messages.</p>
+<p>The DeepSeek formatter class for chatbot scenario, where only a user
+and an agent are involved. We use the <cite>role</cite> field to identify different
+entities in the conversation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.DeepSeekChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DeepSeekChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>
@@ -1462,6 +1606,7 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.support_multiagent</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.support_vision</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.DashScopeChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">DashScopeChatFormatter._format()</span></code></a></li>
 </ul>
 </li>
@@ -1480,6 +1625,7 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.support_multiagent</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.support_vision</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OpenAIChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">OpenAIChatFormatter._format()</span></code></a></li>
 </ul>
 </li>
@@ -1517,6 +1663,7 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.support_vision</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.supported_blocks</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.supported_extensions"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.supported_extensions</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.GeminiChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">GeminiChatFormatter._format()</span></code></a></li>
 </ul>
 </li>
@@ -1535,6 +1682,7 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.support_multiagent"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.support_multiagent</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.support_vision"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.support_vision</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.supported_blocks"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.supported_blocks</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.OllamaChatFormatter._format"><code class="docutils literal notranslate"><span class="pre">OllamaChatFormatter._format()</span></code></a></li>
 </ul>
 </li>

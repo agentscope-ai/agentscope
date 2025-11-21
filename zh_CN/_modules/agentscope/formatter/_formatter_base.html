@@ -332,7 +332,7 @@
 <span class="sd">&quot;&quot;&quot;The formatter module.&quot;&quot;&quot;</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">abstractmethod</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Sequence</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_save_base64_data</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">TextBlock</span>
@@ -376,9 +376,14 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">convert_tool_result_to_string</span><span class="p">(</span>
         <span class="n">output</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">TextBlock</span><span class="p">]]]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Turn the tool result list into a textual output to be compatible</span>
-<span class="sd">        with the LLM API that doesn&#39;t support multimodal data.</span>
+<span class="sd">        with the LLM API that doesn&#39;t support multimodal data in the tool</span>
+<span class="sd">        result.</span>
+
+<span class="sd">        For URL-based images, the URL is included in the list. For</span>
+<span class="sd">        base64-encoded images, the local file path where the image is saved</span>
+<span class="sd">        is included in the returned list.</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            output (`str | List[TextBlock | ImageBlock | AudioBlock]`):</span>
@@ -386,16 +391,19 @@
 <span class="sd">                data like images and audio.</span>
 
 <span class="sd">        Returns:</span>
-<span class="sd">            `str`:</span>
-<span class="sd">                A string representation of the tool result, with text blocks</span>
-<span class="sd">                concatenated and multimodal data represented by file paths</span>
-<span class="sd">                or URLs.</span>
+<span class="sd">            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | \</span>
+<span class="sd">            TextBlock]]]`:</span>
+<span class="sd">                A tuple containing the textual representation of the tool</span>
+<span class="sd">                result and a list of tuples. The first element of each tuple</span>
+<span class="sd">                is the local file path or URL of the multimodal data, and the</span>
+<span class="sd">                second element is the corresponding block.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-            <span class="k">return</span> <span class="n">output</span>
+            <span class="k">return</span> <span class="n">output</span><span class="p">,</span> <span class="p">[]</span>
 
         <span class="n">textual_output</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">multimodal_data</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">output</span><span class="p">:</span>
             <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;type&quot;</span> <span class="ow">in</span> <span class="n">block</span><span class="p">,</span> <span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;Invalid block: </span><span class="si">{</span><span class="n">block</span><span class="si">}</span><span class="s2">, a TextBlock, ImageBlock, or &quot;</span>
@@ -417,14 +425,16 @@
                         <span class="sa">f</span><span class="s2">&quot;at: </span><span class="si">{</span><span class="n">source</span><span class="p">[</span><span class="s1">&#39;url&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
                     <span class="p">)</span>
 
+                    <span class="n">path_multimodal_file</span> <span class="o">=</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">]</span>
+
                 <span class="k">elif</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-                    <span class="n">path_temp_file</span> <span class="o">=</span> <span class="n">_save_base64_data</span><span class="p">(</span>
+                    <span class="n">path_multimodal_file</span> <span class="o">=</span> <span class="n">_save_base64_data</span><span class="p">(</span>
                         <span class="n">source</span><span class="p">[</span><span class="s2">&quot;media_type&quot;</span><span class="p">],</span>
                         <span class="n">source</span><span class="p">[</span><span class="s2">&quot;data&quot;</span><span class="p">],</span>
                     <span class="p">)</span>
                     <span class="n">textual_output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="sa">f</span><span class="s2">&quot;The returned </span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> can be found &quot;</span>
-                        <span class="sa">f</span><span class="s2">&quot;at: </span><span class="si">{</span><span class="n">path_temp_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                        <span class="sa">f</span><span class="s2">&quot;at: </span><span class="si">{</span><span class="n">path_multimodal_file</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
                     <span class="p">)</span>
 
                 <span class="k">else</span><span class="p">:</span>
@@ -433,6 +443,10 @@
                         <span class="s2">&quot;expected &#39;url&#39; or &#39;base64&#39;.&quot;</span><span class="p">,</span>
                     <span class="p">)</span>
 
+                <span class="n">multimodal_data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="p">(</span><span class="n">path_multimodal_file</span><span class="p">,</span> <span class="n">block</span><span class="p">),</span>
+                <span class="p">)</span>
+
             <span class="k">else</span><span class="p">:</span>
                 <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
                     <span class="sa">f</span><span class="s2">&quot;Unsupported block type: </span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">, &quot;</span>
@@ -440,10 +454,10 @@
                 <span class="p">)</span>
 
         <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">textual_output</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">textual_output</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">textual_output</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">multimodal_data</span>
 
         <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;- &quot;</span> <span class="o">+</span> <span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">textual_output</span><span class="p">)</span></div>
+            <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;- &quot;</span> <span class="o">+</span> <span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">textual_output</span><span class="p">),</span> <span class="n">multimodal_data</span></div>
 </div>
 
 </pre></div>
