@@ -36,6 +36,8 @@ class MemoryWithCompress(MemoryBase):
         token_counter: Optional[TokenCounterBase] = OpenAITokenCounter,
         compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
         | None = None,
+        compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
+        | None = None,
     ) -> None:
         """Initialize the MemoryWithCompress.
 
@@ -53,6 +55,13 @@ class MemoryWithCompress(MemoryBase):
                 the function to compress the memory, it should return
                 an Awaitable[List[Msg]] object, the input is the list
                 of messages to compress
+            compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
+                Optional function to trigger compression when token count
+                is below max_token. It receives the list of messages in
+                _memory as input and returns an Awaitable[bool]. If it
+                returns True, compression will be triggered even when
+                token count hasn't exceeded max_token. If None (default),
+                compression only occurs when token count exceeds max_token.
         """
         super().__init__()
 
@@ -68,6 +77,7 @@ class MemoryWithCompress(MemoryBase):
             if compress_func is not None
             else self._compress_memory
         )
+        self.compression_trigger_func = compression_trigger_func
 
     async def add(
         self,
@@ -107,6 +117,10 @@ class MemoryWithCompress(MemoryBase):
         self,
         recent_n: Optional[int] = None,
         filter_func: Optional[Callable[[int, Msg], bool]] = None,
+        compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
+        | None = None,
+        compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
+        | None = None,
     ) -> list[Msg]:
         """
         Get memory content. If _memory token count exceeds max_token,
@@ -118,6 +132,22 @@ class MemoryWithCompress(MemoryBase):
             filter_func (Optional[Callable[[int, Msg], bool]]):
                 The function to filter memories, which takes the index and
                 message as input, and returns a boolean value.
+            compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
+                the function to compress the memory, it should return
+                an Awaitable[List[Msg]] object, the input is the list
+                of messages to compress. If None (default), the default
+                compress_func will be used. if provided, it will replace
+                the self.compress_func in the get_memory call.
+            compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
+                Optional function to trigger compression when token count
+                is below max_token. It receives the list of messages in
+                _memory as input and returns an Awaitable[bool]. If it
+                returns True, compression will be triggered even when
+                token count hasn't exceeded max_token. If None (default),
+                compression only occurs when token count exceeds max_token.
+                If None (default), the self.compression_trigger_func will be
+                used. if provided, it will replace the
+                self.compression_trigger_func in the get_memory call.
 
         Returns:
             list[Msg]: The memory content.
@@ -133,8 +163,24 @@ class MemoryWithCompress(MemoryBase):
             if total_tokens > self.max_token:
                 # Compress all messages in _memory
                 # Replace all messages with a single compressed message
-                compressed_msgs = await self.compress_func(self._memory)
-                self._memory = compressed_msgs
+                self._memory = (
+                    await self.compress_func(self._memory)
+                    if compress_func is None
+                    else await compress_func(self._memory)
+                )
+            elif self.compression_trigger_func is not None:
+                # Trigger compression if the function returns True
+                should_compress = (
+                    await self.compression_trigger_func(self._memory)
+                    if compression_trigger_func is None
+                    else await compression_trigger_func(self._memory)
+                )
+                if should_compress:
+                    self._memory = (
+                        await self.compress_func(self._memory)
+                        if compress_func is None
+                        else await compress_func(self._memory)
+                    )
 
         # Apply filter if provided
         memories = self._memory

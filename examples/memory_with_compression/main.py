@@ -36,13 +36,20 @@ async def main() -> None:
         stream=False,
     )
 
+    async def trigger_compression(msgs: list[Msg]) -> bool:
+        # Trigger compression if the number of messages in self._memory
+        # exceeds 2 and the last message is from the assistant
+        return len(msgs) > 2 and msgs[-1].role == "assistant"
+
     # Create MemoryWithCompress instance
     # max_token: maximum token count before compression
     memory_with_compress = MemoryWithCompress(
         model=model,
         formatter=DashScopeChatFormatter(),
-        max_token=300,  # Set a lower value for testing compression
+        max_token=3000,  # Set a lower value for testing compression
         token_counter=OpenAITokenCounter(model_name="qwen-max"),
+        compression_trigger_func=trigger_compression,  # Trigger compression
+        # if the number of messages in self._memory exceeds 2
     )
 
     agent = ReActAgent(
