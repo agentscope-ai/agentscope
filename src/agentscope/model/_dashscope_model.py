@@ -42,6 +42,8 @@ else:
         "MultiModalConversationResponse"
     )
 
+_warned_required = False  # Track if "required" has been warned in tool choice
+
 
 class DashScopeChatModel(ChatModelBase):
     """The DashScope chat model class, which unifies the Generation and
@@ -514,11 +516,17 @@ class DashScopeChatModel(ChatModelBase):
         if tool_choice in ["auto", "none"]:
             return tool_choice
         if tool_choice in ["any", "required"]:
-            logger.warning(
-                "tool_choice '%s' is not supported by DashScope API. "
-                "Supported options are 'auto', 'none', or specific function "
-                "name. Automatically using 'auto' instead.",
-                tool_choice,
-            )
+            global _warned_required
+            if tool_choice == "any" or (
+                tool_choice == "required" and not _warned_required
+            ):
+                logger.warning(
+                    "tool_choice '%s' is not supported by DashScope API. "
+                    "Supported options are 'auto', 'none', or specific "
+                    "function name. Automatically using 'auto' instead.",
+                    tool_choice,
+                )
+                if tool_choice == "required":
+                    _warned_required = True
             return "auto"
         return {"type": "function", "function": {"name": tool_choice}}
