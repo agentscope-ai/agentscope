@@ -43,6 +43,7 @@ async def main() -> None:
     # all the messages will be processed by llm and then store
     # in the vector store.
     # Another choices are "source" and "auto":
+    max_memory_len = 3
     react_memory = ReActMemory(
         model_config_name="qwen-max",
         embedding_model="text-embedding-v4",
@@ -53,8 +54,9 @@ async def main() -> None:
         summary_working_log_w_query_prompt=(
             SUMMARIZE_WORKING_LOG_PROMPT_W_QUERY
         ),
-        global_update_allowed=False,
-        process_w_llm=False,
+        max_memory_len=max_memory_len,
+        global_update_allowed=True,
+        process_w_llm=True,
         token_counter=OpenAITokenCounter(model_name="qwen-max"),
     )
     agent = ReActAgent(

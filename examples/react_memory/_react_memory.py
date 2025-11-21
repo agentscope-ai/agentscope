@@ -5,7 +5,9 @@
 
 import logging
 import os
+import re
 import json
+import traceback
 from datetime import datetime
 import uuid
 import asyncio
@@ -21,7 +23,6 @@ from typing import (
     cast,
 )
 import copy
-import re
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.embedding import DashScopeTextEmbedding
@@ -29,12 +30,14 @@ from agentscope.agent import AgentBase
 from agentscope.memory import MemoryBase
 from agentscope.message import Msg
 from agentscope.token import TokenCounterBase, OpenAITokenCounter
-from agentscope.tool import ToolResponse, TextBlock
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
 from ._mem_record import (  # pylint: disable=relative-beyond-top-level
     MemRecord,
     serialize_list,
     deserialize_memrecord_list,
     deserialize_msg_list,
+    VectorStruct,
 )
 from .vector_factories.base import VectorStoreBase
 from ._react_memory_utils import (  # pylint: disable=relative-beyond-top-level
@@ -50,6 +53,7 @@ from ._react_memory_utils import (  # pylint: disable=relative-beyond-top-level
     ALLOWED_MAX_TOOL_RESULT_LEN,
     DEFAULT_MAX_MEMORY_LEN,
     MAX_CHAT_MODEL_TOKEN_SIZE,
+    filter_source_file,
 )
 
 
@@ -135,10 +139,17 @@ class ReActMemory(MemoryBase):
         self.max_chat_len, self.max_memory_len = max_chat_len, max_memory_len
         self.update_memory_prompt = update_memory_prompt
         self.token_counter = token_counter
+
+        # Create an async wrapper function for count_words
+        # Python doesn't support async lambdas, so we need a proper function
+        async def length_function(text: str) -> int:
+            """Async wrapper for count_words to be used as length_function."""
+            return await count_words(self.token_counter, text)
+
         self.text_splitter = create_recursive_text_splitter(
             chunk_size=MAX_CHAT_MODEL_TOKEN_SIZE,
             chunk_overlap=OVERLAP_SIZE,
-            length_function=lambda x: count_words(self.token_counter, x),
+            length_function=length_function,
         )
         self.summary_working_log_prompt = summary_working_log_prompt
         self.summary_working_log_w_query_prompt = (
@@ -332,12 +343,16 @@ class ReActMemory(MemoryBase):
         Returns:
             Msg: the recovered Msg
         """
+        print(
+            f"in _recover_msg, mem_record: {mem_record}, "
+            f"type: {type(mem_record)}",
+        )
         if isinstance(mem_record, Msg):
             return mem_record
         elif isinstance(mem_record, MemRecord):
             msg = Msg(
-                name=mem_record.metadata.get("name", "system"),
-                role=mem_record.metadata.get("role", "system"),
+                name=mem_record.metadata.get("name", "assistant"),
+                role=mem_record.metadata.get("role", "assistant"),
                 content=[],
             )
             content = mem_record.metadata.get("data", None)
@@ -367,16 +382,20 @@ class ReActMemory(MemoryBase):
             msgs = [msgs]
         deep_copied_msgs = copy.deepcopy(msgs)
         self._chat_history.extend(deep_copied_msgs)
-        token_counts = await asyncio.gather(
-            *[
-                count_words(
-                    self.token_counter,
-                    format_msgs(msg, with_id=False),
-                )
-                for msg in msgs
-            ],
+        # token_counts = await asyncio.gather(
+        #     *[
+        #         count_words(
+        #             self.token_counter,
+        #             format_msgs(msg, with_id=False),
+        #         )
+        #         for msg in msgs
+        #     ],
+        # )
+        token_counts = await count_words(
+            self.token_counter,
+            format_msgs(msgs, with_id=False),
         )
-        self.cur_chat_len += sum(token_counts)
+        self.cur_chat_len += token_counts
 
     async def _retrieve_concerned_messages(
         self,
@@ -463,6 +482,7 @@ class ReActMemory(MemoryBase):
                                 f"{c.get('id', uuid.uuid4().hex)}.md"
                             )
                             file_list.append(path)
+                            print(f"file_list.append(path)-path: {path}")
                             self._save_to_file(path, c.get("output", None))
                             summary = (
                                 await (
@@ -501,6 +521,10 @@ class ReActMemory(MemoryBase):
                         path = f"reasoning_{c.get('id', uuid.uuid4().hex)}.md"
                         file_list.append(path)
                         self._save_to_file(path, c.get("text", None))
+                        print(
+                            f"self._save_to_file(path, c.get('text', None))-"
+                            f"path: {path}",
+                        )
                         summary = await self._tool_sequential_summarize(
                             c.get("text", None),
                         )
@@ -523,7 +547,7 @@ class ReActMemory(MemoryBase):
                         f"original `text` type content in files, the message "
                         f"is: {format_msgs(msg)}",
                     )
-                    summary_msg = self.summarize_single_message(msg)
+                    summary_msg = await self.summarize_single_message(msg)
                     msg.content = summary_msg.content
                     max_retry -= 1
                 if max_retry == 0:
@@ -536,10 +560,25 @@ class ReActMemory(MemoryBase):
                         format_msgs(msg, with_id=False),
                     )
                     if msg_token_count > MAX_CHUNK_SIZE:
-                        final_content = await self._truncate_text(
-                            msg.content,
-                            MAX_CHUNK_SIZE,
+                        print(
+                            f"in _long_context_process, "
+                            f"msg.content: {msg.content}",
                         )
+                        final_content = []
+                        for c in msg.content:
+                            if (
+                                isinstance(c, dict)
+                                and c.get("type") == "source_file"
+                            ):
+                                continue
+                            if isinstance(c, dict) and c.get("type") == "text":
+                                final_text_content = await self._truncate_text(
+                                    c.get("text", None),
+                                    MAX_CHUNK_SIZE,
+                                )
+                                final_content.append(final_text_content)
+                            else:
+                                final_content.append(c)
                         msg.content = [
                             {
                                 "type": "text",
@@ -551,6 +590,7 @@ class ReActMemory(MemoryBase):
                             },
                         ]
             if file_list:
+                print(f"file_list: {file_list}")
                 msg.content.append(
                     {
                         "type": "source_file",
@@ -621,17 +661,18 @@ class ReActMemory(MemoryBase):
             .replace("{{new_chat_message}}", format_msgs(concerned_messages))
             .replace("{{update_allowed}}", f"{update_allowed}")
         )
-        print(f"Memories prompt: {memories_prompt}")
         max_retry = 3
         new_actions, return_actions = [], []
         while max_retry > 0:
             raw_response = await self.call_model(memories_prompt)
+            print(f"Raw response: {raw_response.content}\n\n")
             if raw_response.content[0]["text"]:
                 try:
                     # Check if the text matches the pattern
                     # ```json\n[content]\n```
                     # and remove markers if so
-                    cleaned_text = raw_response.text
+                    # cleaned_text = raw_response.text
+                    cleaned_text = raw_response.content[0]["text"]
                     print(f"Cleaned text: {cleaned_text}")
                     json_block_pattern = r"^```json\s*\n(.*?)\n```$"
                     match = re.match(
@@ -643,7 +684,8 @@ class ReActMemory(MemoryBase):
                         cleaned_text = match.group(1)
                     # Prevent JSON from interpreting Unicode escape sequences
                     cleaned_text = re.sub(r"\\u", r"\\\\u", cleaned_text)
-                    # Remove trailing commas before closing brackets/braces
+                    # Remove trailing commas before closing
+                    # brackets/braces
                     cleaned_text = re.sub(r",(\s*[}\]])", r"\1", cleaned_text)
                     new_actions = json.loads(cleaned_text)
                     print(f"New actions: {new_actions}")
@@ -652,6 +694,7 @@ class ReActMemory(MemoryBase):
                         new_actions = [new_actions]
                     for action in new_actions:
                         if action["type"] == "ADD":
+                            print(f"in ADD action, action: {action}")
                             return_actions.append(
                                 {
                                     "action_type": "ADD",
@@ -709,10 +752,12 @@ class ReActMemory(MemoryBase):
                                 )
                     break
                 except Exception as e:
+                    error_traceback = traceback.format_exc()
                     logging.warning(
-                        f"Error dealing with actions: {raw_response.text},"
-                        f"error: {e}",
+                        f"Error dealing with actions: "
+                        f'{raw_response.content[0]["text"]}, error: {e}',
                     )
+                    logging.warning(f"Error traceback:\n{error_traceback}")
                     max_retry -= 1
                     continue
             max_retry -= 1
@@ -825,18 +870,24 @@ class ReActMemory(MemoryBase):
         """
 
         for action in actions:
+            print(f"in _process_actions, action: {action}")
             max_retry = 3
             while max_retry > 0:
                 try:
                     action_type = action.get("action_type", None)
+                    # Preserve the original action_content for later use
+                    original_action_content = action["action_content"]
                     if action["action_content"] is not None:
                         try:
-                            if not isinstance(action["action_content"], str):
-                                action["action_content"] = json.dumps(
-                                    action["action_content"],
+                            # Convert to string only for embedding,
+                            # but keep original for other operations
+                            content_for_embedding = action["action_content"]
+                            if not isinstance(content_for_embedding, str):
+                                content_for_embedding = json.dumps(
+                                    content_for_embedding,
                                 )
                             embedding_response = await self.embedding_model(
-                                [action["action_content"]],
+                                [content_for_embedding],
                                 return_embedding_only=True,
                             )
                             embedding = embedding_response.embeddings[0]
@@ -848,11 +899,23 @@ class ReActMemory(MemoryBase):
                     else:
                         embedding = None
                     if action_type == "ADD":
+                        print(
+                            f"in self._add_one_msg_to_memory, ADD action, "
+                            f"action: {action}",
+                        )
+                        print(
+                            f"in self._add_one_msg_to_memory: "
+                            f'{action.get("role")}',
+                        )
                         await self._add_one_msg_to_memory(
-                            action["action_content"],
+                            original_action_content,
                             action.get("role", "assistant"),
                             embedding,
                             str(uuid.uuid4().hex),
+                        )
+                        print(
+                            f"after add_one_msg_to_memory, "
+                            f"self._memory: {self._memory}",
                         )
                     elif action_type == "UPDATE":
                         try:
@@ -865,9 +928,10 @@ class ReActMemory(MemoryBase):
                                 f"action: {action}. Error: {e}",
                             ) from e
                         old_mem = existing_mem.payload.get("data", None)
+                        print(f"existing_mem: {existing_mem}")
                         if existing_mem is not None:
                             metadata = {
-                                "data": action["action_content"],
+                                "data": original_action_content,
                                 "role": action.get("role", "system"),
                                 "last_modified_timestamp": (
                                     datetime.now().isoformat()
@@ -887,13 +951,30 @@ class ReActMemory(MemoryBase):
                                     )
                                     found_mem_idx = idx
                                     break
+                            print(
+                                f"in _process_actions, "
+                                f"action['action_content']: "
+                                f"{original_action_content}, "
+                                f"type: {type(original_action_content)}",
+                            )
+                            if isinstance(original_action_content, list):
+                                content_to_count = filter_source_file(
+                                    original_action_content,
+                                )
+                            else:
+                                content_to_count = original_action_content
+                            print(
+                                f"in _process_actions, content_to_count: "
+                                f"{content_to_count}, "
+                                f"type: {type(content_to_count)}",
+                            )
                             new_token_count = await count_words(
                                 self.token_counter,
-                                action["action_content"],
+                                content_to_count,
                             )
                             old_token_count = await count_words(
                                 self.token_counter,
-                                old_mem,
+                                filter_source_file(old_mem),
                             )
                             self.cur_memory_len += (
                                 new_token_count - old_token_count
@@ -911,14 +992,16 @@ class ReActMemory(MemoryBase):
                                 )
                         logging.info(
                             f"OLD: {old_mem} \n NEW: "
-                            f"{action['action_content']}",
+                            f"{original_action_content}",
                         )
                     break
                 except Exception as e:
+                    error_traceback = traceback.format_exc()
                     print(
                         f"Got Error when _process_actions: {e}, action is"
                         f"{action}",
                     )
+                    print(f"Error traceback:\n{error_traceback}")
                     max_retry -= 1
                     continue
             if max_retry == 0:
@@ -979,7 +1062,7 @@ class ReActMemory(MemoryBase):
         path = f"msg_{uuid.uuid4().hex}.md"
         content = json.dumps(format_msgs(msg_to_summarize, with_id=False))
         self._save_to_file(path, content)
-        summary = self._tool_sequential_summarize(content)
+        summary = await self._tool_sequential_summarize(content)
         file_list = [path]
         for c in msg_to_summarize.content:
             if c.get("type", None) == "source_file":
@@ -995,12 +1078,13 @@ class ReActMemory(MemoryBase):
             ],
             role=msg_to_summarize.role,
         )
+        print(f"in summarize_single_message, file_list: {file_list}")
         new_msg.content.append(
             {"type": "source_file", "source_file": file_list},
         )
         return new_msg
 
-    def _summarize_fixed_size_content(
+    async def _summarize_fixed_size_content(
         self,
         mem_to_summarize: List[MemRecord],
     ) -> MemRecord:
@@ -1022,13 +1106,14 @@ class ReActMemory(MemoryBase):
                         file_list.extend(c.get("source_file", []))
         path = f"tracing_{uuid.uuid4().hex}.md"
         self._save_to_file(path, format_msgs(mem_to_summarize, with_id=False))
-        summary = self._tool_sequential_summarize(mem_to_summarize)
+        summary = await self._tool_sequential_summarize(mem_to_summarize)
+        print(f"in _summarize_fixed_size_content: file_list: {file_list}")
         metadata = {
             "data": [
                 {"type": "text", "text": summary},
                 {"type": "source_file", "source_file": file_list},
             ],
-            "role": "system",
+            "role": "assistant",
             "name": "memory_manager",
         }
         return MemRecord(
@@ -1051,7 +1136,7 @@ class ReActMemory(MemoryBase):
             chunks = await self.text_splitter(mem_to_summarize)
         else:
             chunks = await self.text_splitter(
-                format_msgs(mem_to_summarize),
+                format_msgs(mem_to_summarize, with_id=False),
             )
         previous_summary = ""
         tot_len = str(len(chunks))
@@ -1150,13 +1235,21 @@ class ReActMemory(MemoryBase):
                 removed.
         """
         end_idx = len(mem_list)
+
         token_size_list = await asyncio.gather(
             *[
-                count_words(self.token_counter, format_msgs(mem))
+                count_words(
+                    self.token_counter,
+                    format_msgs(mem, with_id=False),
+                )
                 for mem in mem_list
             ],
         )
+        print(f"in _summarize_memory_list, token_size_list: {token_size_list}")
         total_token_size = sum(token_size_list)
+        # total_token_size = await count_words(
+        #     self.token_counter, format_msgs(mem_list, with_id=False)
+        # )
         compressed_token_size = int(total_token_size * compressed_ratio)
         current_token_size = 0
         current_start = 0
@@ -1173,7 +1266,7 @@ class ReActMemory(MemoryBase):
             cur_mem_size = token_size_list[current_end]
             if current_token_size + cur_mem_size > MAX_CHAT_MODEL_TOKEN_SIZE:
                 if current_end > current_start:
-                    cur_summary = self._summarize_fixed_size_content(
+                    cur_summary = await self._summarize_fixed_size_content(
                         to_summarize_mems,
                     )
                     new_summary_list.append(cur_summary)
@@ -1215,7 +1308,7 @@ class ReActMemory(MemoryBase):
             and (compressed_token_size > 0)
         ):
             new_summary_list.append(
-                self._summarize_fixed_size_content(
+                await self._summarize_fixed_size_content(
                     mem_list[current_start:current_end],
                 ),
             )
@@ -1717,3 +1810,76 @@ class ReActMemory(MemoryBase):
                 ),
             ],
         )
+
+    async def retrieve_from_vector_store(
+        self,
+        queries: Sequence[Union[str, VectorStruct, Msg, MemRecord]],
+        top_k: int = 5,
+    ) -> list[dict]:
+        """Retrieve memory from vector store with query of
+        Msg/str/embedding/MemRecord.
+
+        Args:
+            query (Union[str, VectorStruct, Msg, MemRecord]):
+                Query to retrieve memory.
+            top_k (int, defaults to `5`):
+                The number of memory units to retrieve.
+
+        Returns:
+            list[dict]:
+                A list of retrieved memory units in their
+                `last_modified_timestamp` order.
+                Each memory unit is a dict with the following keys:
+                - id: the id of the memory unit
+                - score: the score of the memory unit
+                - payload: a dict of the metadata of the memory unit,
+                including:
+                    data (the text content), created_timestamp,
+                    last_modified_timestamp, role, etc
+                - embedding: the embedding of the memory unit
+        """
+        all_retrieved_memories = []
+        for query in queries:
+            query_str = None
+            query_embedding = None
+            if isinstance(query, MemRecord):
+                query_str = query.metadata.get("data", None)
+                query_embedding = (
+                    query.embedding if query.embedding is not None else None
+                )
+            elif isinstance(query, Msg):
+                query_str = format_msgs(query, with_id=False)
+            elif type(query) is VectorStruct:
+                query_embedding = query
+            else:
+                query_str = query
+            if query_embedding is None and query_str is not None:
+                query_str = await self._truncate_text(query_str)
+                try:
+                    embedding_response = await self.embedding_model(
+                        [query_str],
+                        return_embedding_only=True,
+                    )
+                    query_embedding = embedding_response.embeddings[0]
+                except Exception as e:
+                    logging.warning(
+                        "Error embedding the query content when retrieve,"
+                        f"error: {e}",
+                    )
+                    continue
+            retrieved_memories = self.vector_store.search(
+                query=query_str,
+                vectors=query_embedding,
+                limit=top_k,
+            )
+            all_retrieved_memories.extend(retrieved_memories)
+
+        id_mapping = {}
+        # remove duplicate memories
+        for mem in all_retrieved_memories:
+            id_mapping[mem.id] = mem
+        unique_retrieved_memories = list(id_mapping.values())
+        unique_retrieved_memories.sort(
+            key=lambda x: x.payload.get("last_modified_timestamp", None),
+        )
+        return unique_retrieved_memories

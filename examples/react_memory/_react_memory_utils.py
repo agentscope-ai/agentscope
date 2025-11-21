@@ -5,7 +5,6 @@
 
 import json
 import re
-import asyncio
 from typing import (
     Any,
     Awaitable,
@@ -25,7 +24,8 @@ from ._mem_record import MemRecord  # pylint: disable=relative-beyond-top-level
 # Default values
 DEFAULT_MAX_CHAT_HISTORY_LEN = 28000
 DEFAULT_RETURN_CHAT_HISTORY_LEN = 28000
-MAX_CHUNK_SIZE = 7000
+# MAX_CHUNK_SIZE = 7000
+MAX_CHUNK_SIZE = 200
 MAX_EMBEDDING_SIZE = 8000
 OVERLAP_SIZE = 500
 ALLOWED_MAX_TOOL_RESULT_LEN = 5000
@@ -73,21 +73,36 @@ def _split_text_with_regex(
     return [s for s in splits if s != ""]
 
 
-def _merge_splits(
+async def _merge_splits(
     splits: List[str],
     separator: str,
     chunk_size: int,
     chunk_overlap: int,
-    length_function: Callable[[str], int],
+    length_function: Union[
+        Callable[[str], int],
+        Callable[[str], Awaitable[int]],
+    ],
+    is_async_length: bool,
 ) -> List[str]:
     """Merge splits into chunks with overlap."""
-    separator_len = length_function(separator)
+
+    # Helper to call length_function (sync or async)
+    async def get_length(text: str) -> int:
+        if is_async_length:
+            result = cast(Callable[[str], Awaitable[int]], length_function)(
+                text,
+            )
+            return await result
+        else:
+            return cast(Callable[[str], int], length_function)(text)
+
+    separator_len = await get_length(separator)
 
     docs = []
     current_doc: List[str] = []
     total = 0
     for d in splits:
-        _len = length_function(d)
+        _len = await get_length(d)
         if (
             total + _len + (separator_len if len(current_doc) > 0 else 0)
             > chunk_size
@@ -113,7 +128,8 @@ def _merge_splits(
                     > chunk_size
                     and total > 0
                 ):
-                    total -= length_function(current_doc[0]) + (
+                    first_len = await get_length(current_doc[0])
+                    total -= first_len + (
                         separator_len if len(current_doc) > 1 else 0
                     )
                     current_doc.pop(0)
@@ -155,44 +171,13 @@ def create_recursive_text_splitter(
     """
     if length_function is None:
         length_function = len
-    separators = separators or ["\n\n", "\n", " ", ""]
+    separators = separators or ["\n\n", "\n", "."]
 
     # Check if length_function is async by inspecting if it's a
     # coroutine function
     import inspect
 
     is_async_length = inspect.iscoroutinefunction(length_function)
-
-    # Create sync wrapper for _merge_splits if needed
-    if is_async_length:
-
-        def sync_length_func(text: str) -> int:
-            """Synchronous wrapper for async length function."""
-            try:
-                # Try to get running loop - if this succeeds, we're in async
-                # context and cannot use asyncio.run
-                asyncio.get_running_loop()
-                # We're in an async context, but _merge_splits needs sync
-                # This should not happen in practice, but handle it
-                raise RuntimeError(
-                    "Cannot use async length_function in sync context",
-                )
-            except RuntimeError as e:
-                # Check if it's our error (re-raise) or "no running loop" error
-                if "Cannot use async length_function" in str(e):
-                    raise
-                # No running loop (get_running_loop raised RuntimeError),
-                # can use asyncio.run
-                coro = length_function(text)
-                # Type checker doesn't know it's always a coroutine here
-                if isinstance(coro, asyncio.Coroutine):
-                    return asyncio.run(coro)
-                # If not a coroutine, it must be an int (sync function)
-                assert isinstance(coro, int), "Expected int or coroutine"
-                return coro
-
-    else:
-        sync_length_func = length_function
 
     async def _split_text(text: str, separators: List[str]) -> List[str]:
         """Split incoming text and return chunks."""
@@ -235,12 +220,13 @@ def create_recursive_text_splitter(
                 _good_splits.append(s)
             else:
                 if _good_splits:
-                    merged_text = _merge_splits(
+                    merged_text = await _merge_splits(
                         _good_splits,
                         _separator,
                         chunk_size,
                         chunk_overlap,
-                        sync_length_func,
+                        length_function,
+                        is_async_length,
                     )
                     final_chunks.extend(merged_text)
                     _good_splits = []
@@ -250,12 +236,13 @@ def create_recursive_text_splitter(
                     other_info = await _split_text(s, new_separators)
                     final_chunks.extend(other_info)
         if _good_splits:
-            merged_text = _merge_splits(
+            merged_text = await _merge_splits(
                 _good_splits,
                 _separator,
                 chunk_size,
                 chunk_overlap,
-                sync_length_func,
+                length_function,
+                is_async_length,
             )
             final_chunks.extend(merged_text)
         return final_chunks
@@ -291,6 +278,7 @@ def time_order_check(unit: Sequence[Any]) -> bool:
 def format_msgs(
     msgs: Union[Sequence[Msg], Msg, Sequence[MemRecord], MemRecord],
     with_id: bool = True,
+    is_filter_source_file: bool = True,
 ) -> str:
     """Format a list of messages or memory units to a string in order.
 
@@ -303,13 +291,30 @@ def format_msgs(
     Returns:
         str: the formatted messages
     """
+    print(f"in format_msgs, msgs: {msgs}, type: {type(msgs)}")
     results = []
     if not isinstance(msgs, Sequence):
         msgs = [msgs]
     for idx, msg in enumerate(msgs):
         if not isinstance(msg, Msg) and not isinstance(msg, MemRecord):
             raise ValueError(f"Invalid message type: {type(msg)}")
+        print(f"in format_msgs, msg: {msg}, type: {type(msg)}")
         if isinstance(msg, MemRecord):
+            if is_filter_source_file:
+                if msg.metadata.get("data", None) is not None and isinstance(
+                    msg.metadata.get("data", None),
+                    list,
+                ):
+                    data = []
+                    for item in msg.metadata.get("data", None):
+                        if item.get("type") != "source_file":
+                            data.append(item)
+                    msg.metadata.update({"data": data})
+
+                    print(
+                        f"after filter_source_file, "
+                        f"msg.metadata: {msg.metadata}",
+                    )
             results.append(
                 {
                     "role": msg.metadata.get("role", "assistant"),
@@ -338,7 +343,14 @@ def format_msgs(
                 if with_id:
                     unit["id"] = idx
                 for c in content:
+                    if (
+                        isinstance(c, dict)
+                        and is_filter_source_file
+                        and c.get("type") == "source_file"
+                    ):
+                        continue
                     unit["content"].append(c)
+
                 if unit["role"] == "system":
                     unit["role"] = "assistant"
                 results.append(unit)
@@ -383,6 +395,7 @@ async def count_words(
     else:
         # Fallback: wrap in a message
         messages = [{"role": "user", "content": str(text)}]
+    print(f"in count_words, messages: {messages}")
 
     return await token_counter.count(messages)
 
@@ -392,3 +405,8 @@ def no_user_msg(mem: MemRecord) -> bool:
     return mem.metadata.get("role", "assistant") not in [
         "user",
     ]
+
+
+def filter_source_file(content: list[dict]) -> list[dict]:
+    """Filter source file from content"""
+    return [c for c in content if c.get("type") != "source_file"]
