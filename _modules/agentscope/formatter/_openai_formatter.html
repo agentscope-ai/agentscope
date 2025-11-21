@@ -329,7 +329,7 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for agentscope.formatter._openai_formatter</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
-<span class="c1"># pylint: disable=too-many-branches</span>
+<span class="c1"># pylint: disable=too-many-branches, too-many-nested-blocks</span>
 <span class="sd">&quot;&quot;&quot;The OpenAI formatter for agentscope.&quot;&quot;&quot;</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">base64</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
@@ -352,6 +352,43 @@
     <span class="n">ToolResultBlock</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..token</span><span class="w"> </span><span class="kn">import</span> <span class="n">TokenCounterBase</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_format_openai_image_block</span><span class="p">(</span>
+    <span class="n">image_block</span><span class="p">:</span> <span class="n">ImageBlock</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Format an image block for OpenAI API.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        image_block (`ImageBlock`):</span>
+<span class="sd">            The image block to format.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        `dict[str, Any]`:</span>
+<span class="sd">            A dictionary with &quot;type&quot; and &quot;image_url&quot; keys in OpenAI format.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        `ValueError`:</span>
+<span class="sd">            If the source type is not supported.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">source</span> <span class="o">=</span> <span class="n">image_block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;url&quot;</span><span class="p">:</span>
+        <span class="n">url</span> <span class="o">=</span> <span class="n">_to_openai_image_url</span><span class="p">(</span><span class="n">source</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">])</span>
+    <span class="k">elif</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;data&quot;</span><span class="p">]</span>
+        <span class="n">media_type</span> <span class="o">=</span> <span class="n">source</span><span class="p">[</span><span class="s2">&quot;media_type&quot;</span><span class="p">]</span>
+        <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;data:</span><span class="si">{</span><span class="n">media_type</span><span class="si">}</span><span class="s2">;base64,</span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Unsupported image source type: </span><span class="si">{</span><span class="n">source</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;image_url&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;image_url&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">}</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_to_openai_image_url</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -450,8 +487,10 @@
 <div class="viewcode-block" id="OpenAIChatFormatter">
 <a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">OpenAIChatFormatter</span><span class="p">(</span><span class="n">TruncatedFormatterBase</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The class used to format message objects into the OpenAI API required</span>
-<span class="sd">    format.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The OpenAI formatter class for chatbot scenario, where only a user</span>
+<span class="sd">    and an agent are involved. We use the `name` field in OpenAI API to</span>
+<span class="sd">    identify different entities in the conversation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">support_tools_api</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether support tools API&quot;&quot;&quot;</span>
@@ -470,6 +509,36 @@
         <span class="n">ToolResultBlock</span><span class="p">,</span>
     <span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Supported message blocks for OpenAI API&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="OpenAIChatFormatter.__init__">
+<a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">promote_tool_result_images</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">token_counter</span><span class="p">:</span> <span class="n">TokenCounterBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the OpenAI chat formatter.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            promote_tool_result_images (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote images from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support images in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, images are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            token_counter (`TokenCounterBase | None`, optional):</span>
+<span class="sd">                A token counter instance used to count tokens in the messages.</span>
+<span class="sd">                If not provided, the formatter will format the messages</span>
+<span class="sd">                without considering token limits.</span>
+<span class="sd">            max_tokens (`int | None`, optional):</span>
+<span class="sd">                The maximum number of tokens allowed in the formatted</span>
+<span class="sd">                messages. If not provided, the formatter will not truncate</span>
+<span class="sd">                the messages.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">token_counter</span><span class="o">=</span><span class="n">token_counter</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span></div>
+
 
 <div class="viewcode-block" id="OpenAIChatFormatter._format">
 <a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter._format">[docs]</a>
@@ -491,7 +560,9 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">assert_list_of_msgs</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span>
 
         <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-        <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">msgs</span><span class="p">):</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">msgs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
             <span class="n">content_blocks</span> <span class="o">=</span> <span class="p">[]</span>
             <span class="n">tool_calls</span> <span class="o">=</span> <span class="p">[]</span>
 
@@ -516,39 +587,75 @@
                     <span class="p">)</span>
 
                 <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;tool_result&quot;</span><span class="p">:</span>
+                    <span class="p">(</span>
+                        <span class="n">textual_output</span><span class="p">,</span>
+                        <span class="n">multimodal_data</span><span class="p">,</span>
+                    <span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">convert_tool_result_to_string</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;output&quot;</span><span class="p">])</span>
+
                     <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="p">{</span>
                             <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span>
                             <span class="s2">&quot;tool_call_id&quot;</span><span class="p">:</span> <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">),</span>
-                            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">convert_tool_result_to_string</span><span class="p">(</span>
-                                <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;output&quot;</span><span class="p">),</span>  <span class="c1"># type: ignore[arg-type]</span>
+                            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="p">(</span>  <span class="c1"># type: ignore[arg-type]</span>
+                                <span class="n">textual_output</span>
                             <span class="p">),</span>
                             <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">),</span>
                         <span class="p">},</span>
                     <span class="p">)</span>
 
-                <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;image&quot;</span><span class="p">:</span>
-                    <span class="n">source_type</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;type&quot;</span><span class="p">]</span>
-                    <span class="k">if</span> <span class="n">source_type</span> <span class="o">==</span> <span class="s2">&quot;url&quot;</span><span class="p">:</span>
-                        <span class="n">url</span> <span class="o">=</span> <span class="n">_to_openai_image_url</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;url&quot;</span><span class="p">])</span>
+                    <span class="c1"># Then, handle the multimodal data if any</span>
+                    <span class="n">promoted_blocks</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[]</span>
+                    <span class="k">for</span> <span class="n">url</span><span class="p">,</span> <span class="n">multimodal_block</span> <span class="ow">in</span> <span class="n">multimodal_data</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="p">(</span>
+                            <span class="n">multimodal_block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;image&quot;</span>
+                            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span>
+                        <span class="p">):</span>
+                            <span class="n">promoted_blocks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                                <span class="p">[</span>
+                                    <span class="n">TextBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                                        <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">- The image from &#39;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">&#39;: &quot;</span><span class="p">,</span>
+                                    <span class="p">),</span>
+                                    <span class="n">ImageBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;image&quot;</span><span class="p">,</span>
+                                        <span class="n">source</span><span class="o">=</span><span class="n">URLSource</span><span class="p">(</span>
+                                            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;url&quot;</span><span class="p">,</span>
+                                            <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                                        <span class="p">),</span>
+                                    <span class="p">),</span>
+                                <span class="p">],</span>
+                            <span class="p">)</span>
 
-                    <span class="k">elif</span> <span class="n">source_type</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-                        <span class="n">data</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;data&quot;</span><span class="p">]</span>
-                        <span class="n">media_type</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;media_type&quot;</span><span class="p">]</span>
-                        <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;data:</span><span class="si">{</span><span class="n">media_type</span><span class="si">}</span><span class="s2">;base64,</span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="k">if</span> <span class="n">promoted_blocks</span><span class="p">:</span>
+                        <span class="c1"># Insert promoted blocks as new user message(s)</span>
+                        <span class="n">promoted_blocks</span> <span class="o">=</span> <span class="p">[</span>
+                            <span class="n">TextBlock</span><span class="p">(</span>
+                                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                                <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&lt;system-info&gt;The following are &quot;</span>
+                                <span class="s2">&quot;the image contents from the tool &quot;</span>
+                                <span class="sa">f</span><span class="s2">&quot;result of &#39;</span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&#39;:&quot;</span><span class="p">,</span>
+                            <span class="p">),</span>
+                            <span class="o">*</span><span class="n">promoted_blocks</span><span class="p">,</span>
+                            <span class="n">TextBlock</span><span class="p">(</span>
+                                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                                <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&lt;/system-info&gt;&quot;</span><span class="p">,</span>
+                            <span class="p">),</span>
+                        <span class="p">]</span>
 
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;Unsupported image source type: </span><span class="si">{</span><span class="n">source_type</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                        <span class="n">msgs</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span>
+                            <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+                            <span class="n">Msg</span><span class="p">(</span>
+                                <span class="n">name</span><span class="o">=</span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                                <span class="n">content</span><span class="o">=</span><span class="n">promoted_blocks</span><span class="p">,</span>
+                                <span class="n">role</span><span class="o">=</span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                            <span class="p">),</span>
                         <span class="p">)</span>
 
+                <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;image&quot;</span><span class="p">:</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                        <span class="p">{</span>
-                            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;image_url&quot;</span><span class="p">,</span>
-                            <span class="s2">&quot;image_url&quot;</span><span class="p">:</span> <span class="p">{</span>
-                                <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
-                            <span class="p">},</span>
-                        <span class="p">},</span>
+                        <span class="n">_format_openai_image_block</span><span class="p">(</span>
+                            <span class="n">block</span><span class="p">,</span>  <span class="c1"># type: ignore[arg-type]</span>
+                        <span class="p">),</span>
                     <span class="p">)</span>
 
                 <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;audio&quot;</span><span class="p">:</span>
@@ -578,6 +685,9 @@
             <span class="c1"># When both content and tool_calls are None, skipped</span>
             <span class="k">if</span> <span class="n">msg_openai</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">msg_openai</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tool_calls&quot;</span><span class="p">):</span>
                 <span class="n">messages</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg_openai</span><span class="p">)</span>
+
+            <span class="c1"># Move to next message</span>
+            <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
 
         <span class="k">return</span> <span class="n">messages</span></div>
 </div>
@@ -621,6 +731,7 @@
             <span class="s2">&quot;The content between &lt;history&gt;&lt;/history&gt; tags contains &quot;</span>
             <span class="s2">&quot;your conversation history</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="p">),</span>
+        <span class="n">promote_tool_result_images</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">token_counter</span><span class="p">:</span> <span class="n">TokenCounterBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -629,9 +740,24 @@
 <span class="sd">        Args:</span>
 <span class="sd">            conversation_history_prompt (`str`):</span>
 <span class="sd">                The prompt to use for the conversation history section.</span>
+<span class="sd">            promote_tool_result_images (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote images from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support images in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, images are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            token_counter (`TokenCounterBase | None`, optional):</span>
+<span class="sd">                A token counter instance used to count tokens in the messages.</span>
+<span class="sd">                If not provided, the formatter will format the messages</span>
+<span class="sd">                without considering token limits.</span>
+<span class="sd">            max_tokens (`int | None`, optional):</span>
+<span class="sd">                The maximum number of tokens allowed in the formatted</span>
+<span class="sd">                messages. If not provided, the formatter will not truncate</span>
+<span class="sd">                the messages.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">token_counter</span><span class="o">=</span><span class="n">token_counter</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">conversation_history_prompt</span> <span class="o">=</span> <span class="n">conversation_history_prompt</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">conversation_history_prompt</span> <span class="o">=</span> <span class="n">conversation_history_prompt</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span></div>
 
 
 <div class="viewcode-block" id="OpenAIMultiAgentFormatter._format_tool_sequence">
@@ -642,7 +768,9 @@
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Given a sequence of tool call/result messages, format them into</span>
 <span class="sd">        the required format for the OpenAI API.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="k">await</span> <span class="n">OpenAIChatFormatter</span><span class="p">()</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span></div>
+        <span class="k">return</span> <span class="k">await</span> <span class="n">OpenAIChatFormatter</span><span class="p">(</span>
+            <span class="n">promote_tool_result_images</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span><span class="p">,</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="OpenAIMultiAgentFormatter._format_agent_message">
@@ -674,27 +802,7 @@
                     <span class="n">accumulated_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
                 <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;image&quot;</span><span class="p">:</span>
-                    <span class="n">source_type</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;type&quot;</span><span class="p">]</span>
-                    <span class="k">if</span> <span class="n">source_type</span> <span class="o">==</span> <span class="s2">&quot;url&quot;</span><span class="p">:</span>
-                        <span class="n">url</span> <span class="o">=</span> <span class="n">_to_openai_image_url</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;url&quot;</span><span class="p">])</span>
-
-                    <span class="k">elif</span> <span class="n">source_type</span> <span class="o">==</span> <span class="s2">&quot;base64&quot;</span><span class="p">:</span>
-                        <span class="n">data</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;data&quot;</span><span class="p">]</span>
-                        <span class="n">media_type</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">][</span><span class="s2">&quot;media_type&quot;</span><span class="p">]</span>
-                        <span class="n">url</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;data:</span><span class="si">{</span><span class="n">media_type</span><span class="si">}</span><span class="s2">;base64,</span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span>
-
-                    <span class="k">else</span><span class="p">:</span>
-                        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                            <span class="sa">f</span><span class="s2">&quot;Unsupported image source type: </span><span class="si">{</span><span class="n">source_type</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-                        <span class="p">)</span>
-                    <span class="n">images</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                        <span class="p">{</span>
-                            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;image_url&quot;</span><span class="p">,</span>
-                            <span class="s2">&quot;image_url&quot;</span><span class="p">:</span> <span class="p">{</span>
-                                <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
-                            <span class="p">},</span>
-                        <span class="p">},</span>
-                    <span class="p">)</span>
+                    <span class="n">images</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_format_openai_image_block</span><span class="p">(</span><span class="n">block</span><span class="p">))</span>
                 <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;audio&quot;</span><span class="p">:</span>
                     <span class="n">input_audio</span> <span class="o">=</span> <span class="n">_to_openai_audio_data</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>
                     <span class="n">audios</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>

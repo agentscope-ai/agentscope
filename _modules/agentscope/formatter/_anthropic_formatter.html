@@ -343,7 +343,10 @@
 <div class="viewcode-block" id="AnthropicChatFormatter">
 <a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.AnthropicChatFormatter">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">AnthropicChatFormatter</span><span class="p">(</span><span class="n">TruncatedFormatterBase</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Formatter for Anthropic messages.&quot;&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The Anthropic formatter class for chatbot scenario, where only a user</span>
+<span class="sd">    and an agent are involved. We use the `role` field to identify different</span>
+<span class="sd">    entities in the conversation.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">support_tools_api</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether support tools API&quot;&quot;&quot;</span>
