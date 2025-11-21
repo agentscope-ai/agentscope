@@ -2,7 +2,16 @@
 """The MemoryWithCompress class for memory management with compression."""
 
 import copy
-from typing import Any, Callable, Iterable, List, Optional, Sequence, Union
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Union,
+)
 
 from agentscope.formatter import FormatterBase
 from agentscope.memory import MemoryBase
@@ -10,7 +19,7 @@ from agentscope.message import Msg
 from agentscope.model import ChatModelBase
 from agentscope.token import OpenAITokenCounter, TokenCounterBase
 
-from examples.react_memory._mc_utils import count_words, format_msgs
+from examples.memory_with_compression._mc_utils import count_words, format_msgs
 
 
 class MemoryWithCompress(MemoryBase):
@@ -25,7 +34,8 @@ class MemoryWithCompress(MemoryBase):
         formatter: FormatterBase,
         max_token: int = 28000,
         token_counter: Optional[TokenCounterBase] = OpenAITokenCounter,
-        compress_func: Callable[[List[Msg]], Msg] | None = None,
+        compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
+        | None = None,
     ) -> None:
         """Initialize the MemoryWithCompress.
 
@@ -39,9 +49,10 @@ class MemoryWithCompress(MemoryBase):
                 MemoryWithCompress will compress the memory.
             token_counter (Optional[TokenCounterBase]):
                 the token counter to use for counting tokens
-            compress_func (Callable[[List[Msg]], Msg]):
-                the function to compress the memory, it should return a Msg
-                object, the input is the list of messages to compress
+            compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
+                the function to compress the memory, it should return
+                an Awaitable[List[Msg]] object, the input is the list
+                of messages to compress
         """
         super().__init__()
 
@@ -122,8 +133,8 @@ class MemoryWithCompress(MemoryBase):
             if total_tokens > self.max_token:
                 # Compress all messages in _memory
                 # Replace all messages with a single compressed message
-                compressed_msg = await self._compress_memory()
-                self._memory = [compressed_msg]
+                compressed_msgs = await self.compress_func(self._memory)
+                self._memory = compressed_msgs
 
         # Apply filter if provided
         memories = self._memory
@@ -145,18 +156,20 @@ class MemoryWithCompress(MemoryBase):
             return filtered_memories
         return filtered_memories
 
-    async def _compress_memory(self) -> Msg:
+    async def _compress_memory(self, msgs: List[Msg]) -> List[Msg]:
         """
-        Compress all messages in _memory using LLM.
+        Compress all messages using LLM.
 
         Returns:
-            Msg: The compressed message.
+            List[Msg]: The compressed messages.
         """
         # Format all messages for compression
-        messages_text = format_msgs(self._memory)
+        messages_text = format_msgs(msgs)
 
         # Create a prompt for compression
-        from examples.react_memory._mc_utils import MemoryCompressionSchema
+        from examples.memory_with_compression._mc_utils import (
+            MemoryCompressionSchema,
+        )
 
         compression_prompt = (
             f"You are a memory compression assistant. Please summarize and "
@@ -189,15 +202,18 @@ class MemoryWithCompress(MemoryBase):
             if structured_data:
                 # Validate and parse the structured output
                 parsed_schema = MemoryCompressionSchema(**structured_data)
-                return Msg(
-                    name="assistant",
-                    role="assistant",
-                    content=(
-                        f"The compressed of previous conversation is: "
-                        f"<compressed_memory>\n{parsed_schema.compressed_text}"
-                        f"\n</compressed_memory>"
+                return [
+                    Msg(
+                        name="assistant",
+                        role="assistant",
+                        content=(
+                            f"The compressed of previous conversation is: "
+                            f"<compressed_memory>\n"
+                            f"{parsed_schema.compressed_text}"
+                            f"\n</compressed_memory>"
+                        ),
                     ),
-                )
+                ]
             else:
                 raise ValueError(
                     "No structured output found in stream response",
@@ -206,15 +222,18 @@ class MemoryWithCompress(MemoryBase):
             if res.metadata:
                 # Validate and parse the structured output
                 parsed_schema = MemoryCompressionSchema(**res.metadata)
-                return Msg(
-                    name="assistant",
-                    role="assistant",
-                    content=(
-                        f"The compressed of previous conversation is: "
-                        f"<compressed_memory>\n{parsed_schema.compressed_text}"
-                        f"\n</compressed_memory>"
+                return [
+                    Msg(
+                        name="assistant",
+                        role="assistant",
+                        content=(
+                            f"The compressed of previous conversation is: "
+                            f"<compressed_memory>\n"
+                            f"{parsed_schema.compressed_text}"
+                            f"\n</compressed_memory>"
+                        ),
                     ),
-                )
+                ]
             else:
                 raise ValueError(
                     "No structured output found in response metadata",

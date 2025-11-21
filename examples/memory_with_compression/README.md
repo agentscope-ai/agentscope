@@ -95,7 +95,7 @@ from agentscope.agent import ReActAgent
 from agentscope.model import DashScopeChatModel
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.token import OpenAITokenCounter
-from examples.react_memory._memory_with_compress import MemoryWithCompress
+from examples.memory_with_compression._memory_with_compress import MemoryWithCompress
 
 # 1. Create the model for agent and memory compression
 model = DashScopeChatModel(

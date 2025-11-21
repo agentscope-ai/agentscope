@@ -19,7 +19,7 @@ from agentscope.model import DashScopeChatModel  # noqa: E402
 from agentscope.tool import Toolkit  # noqa: E402
 from agentscope.token import OpenAITokenCounter  # noqa: E402
 
-from examples.react_memory._memory_with_compress import (  # noqa: E402
+from examples.memory_with_compression._memory_with_compress import (  # noqa: E402, E501
     MemoryWithCompress,
 )
 
@@ -61,7 +61,10 @@ async def main() -> None:
     )
     await agent(query_1)
     current_memory = await memory_with_compress.get_memory()
-    print(f"The memory after the first query is: {current_memory}")
+    print(
+        f"\n\n\n******************The memory after the first query is: "
+        f"******************\n{current_memory}\n\n",
+    )
 
     query_2 = Msg(
         "user",
@@ -70,7 +73,10 @@ async def main() -> None:
     )
     await agent(query_2)
     current_memory = await memory_with_compress.get_memory()
-    print(f"The memory after the second query is: {current_memory}")
+    print(
+        f"\n\n\n******************The memory after the second query is: "
+        f"******************\n{current_memory}\n\n",
+    )
 
 
 asyncio.run(main())
