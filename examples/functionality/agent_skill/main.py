@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The main entry point of the ReAct agent example."""
+"""The main entry point of the agent skill example."""
 import asyncio
 import os
 

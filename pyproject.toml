@@ -37,6 +37,7 @@ dependencies = [
     "shortuuid",
     "tiktoken",
     "sounddevice",
+    "python-frontmatter",
 ]
 
 [project.optional-dependencies]
