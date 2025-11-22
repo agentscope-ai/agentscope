@@ -12,6 +12,7 @@ from agentscope.tool import (
     execute_shell_command,
     execute_python_code,
 )
+from agentscope.mcp import HttpStatefulClient
 
 
 def human_permit_function(
@@ -23,6 +24,7 @@ def human_permit_function(
     arg_name_dict = {
         "execute_python_code": "code",
         "execute_shell_command": "command",
+        "add_one": "a",
     }
     option = None
     while option not in ["y", "n", "e"]:
@@ -46,11 +48,12 @@ def human_permit_function(
         while expected_tool_name not in [
             "execute_python_code",
             "execute_shell_command",
+            "add_one",
         ]:
             expected_tool_name = input(
                 "Enter the expected tool name registered in the toolkit, "
                 "available options: "
-                "execute_python_code, execute_shell_command: ",
+                "execute_python_code, execute_shell_command, add_one: ",
             ).strip()
         expected_tool_args = input(
             f"Enter {arg_name_dict[expected_tool_name]} "
@@ -59,6 +62,7 @@ def human_permit_function(
 
         # modify the tool call block inplace
         tool_call["name"] = expected_tool_name
+        tool_call["input"].clear()
         tool_call["input"][
             arg_name_dict[expected_tool_name]
         ] = expected_tool_args
@@ -77,6 +81,20 @@ async def main() -> None:
         human_permit_func=human_permit_function,
     )
 
+    # Create a stateful MCP client to connect to the SSE MCP server
+    # note you can also use the stateless client
+    add_mcp_client = HttpStatefulClient(
+        name="mcp_add_one",
+        transport="sse",
+        url="http://127.0.0.1:8001/sse",
+    )
+    # The stateful client must be connected before using
+    await add_mcp_client.connect()
+    await toolkit.register_mcp_client(
+        add_mcp_client,
+        human_permit_func=human_permit_function,
+    )
+
     agent = ReActAgent(
         name="Friday",
         sys_prompt="You are a helpful assistant named Friday.",
@@ -91,12 +109,23 @@ async def main() -> None:
         memory=InMemoryMemory(),
     )
 
-    msg = Msg(
-        "user",
+    user_msgs = [
         "What is the version of the agentscope using python?",
-        "user",
-    )
-    await agent(msg)
+        "add 11 and 1 using add_one tool",
+    ]
+
+    for user_msg in user_msgs:
+        msg = Msg(
+            "user",
+            user_msg,
+            "user",
+        )
+        print(msg)
+        await agent(msg)
+
+    # The stateful MCP client should be disconnected manually to avoid
+    # errors during asyncio.run() shutdown.
+    await add_mcp_client.close()
 
 
 asyncio.run(main())

@@ -282,6 +282,12 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
+            human_permit_func (`Callable[[ToolUseBlock], bool] | None`, \
+                optional):
+                The human permit function that will be called to determine
+                whether to permit the tool function to be called. It returns \
+                - `True`, the tool function will be called normally.
+                - `False`, the tool function will be rejected.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -749,6 +755,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "raise",
             "rename",
         ] = "raise",
+        human_permit_func: (Callable[[ToolUseBlock], bool]) | None = None,
     ) -> None:
         """Register tool functions from an MCP client.
 
@@ -785,6 +792,12 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
+            human_permit_func (`Callable[[ToolUseBlock], bool] | None`, \
+                optional):
+                The human permit function that will be called to determine
+                whether to permit the tool function to be called. It returns \
+                - `True`, the tool function will be called normally.
+                - `False`, the tool function will be rejected.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)
@@ -857,6 +870,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 preset_kwargs=preset_kwargs,
                 postprocess_func=postprocess_func,
                 namesake_strategy=namesake_strategy,
+                human_permit_func=human_permit_func,
             )
 
         logger.info(
