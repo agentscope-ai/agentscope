@@ -127,9 +127,7 @@ class AnthropicChatModel(ChatModelBase):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -167,12 +165,16 @@ class AnthropicChatModel(ChatModelBase):
                         # More schemas here
                     ]
 
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
+                 Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
+
+                 .. deprecated::
+                    The "any" option is deprecated and will be automatically
+                    converted to "required".
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output. When provided, the model will be forced
@@ -209,6 +211,14 @@ class AnthropicChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
+            # Handle deprecated "any" option with warning
+            if tool_choice == "any":
+                logger.warning(
+                    'tool_choice="any" is deprecated and will be removed in a '
+                    "future version. It will be automatically converted to "
+                    '"required". Please use "required" instead.',
+                )
+                tool_choice = "required"
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
@@ -502,15 +512,15 @@ class AnthropicChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "any", "required"] | str | None,
+        tool_choice: Literal["auto", "none", "required"] | str | None,
     ) -> dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
                 | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
+                 Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
         Returns:
@@ -524,7 +534,6 @@ class AnthropicChatModel(ChatModelBase):
         type_mapping = {
             "auto": {"type": "auto"},
             "none": {"type": "none"},
-            "any": {"type": "any"},
             "required": {"type": "any"},
         }
         if tool_choice in type_mapping:
