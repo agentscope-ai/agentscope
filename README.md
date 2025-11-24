@@ -54,10 +54,11 @@
 </p>
 
 ## 📢 News
-- **[2025-11]** AgentScope open-sources [**Alias-Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [**Data-Juicer Agent**](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
-- **[2025-11]** AgentScope supports [**Agentic RL**](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) via integrating [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) library.
-- **[2025-11]** AgentScope integrates [**ReMe**](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) for enhanced long-term memory.
-- **[2025-11]** AgentScope launches [**agentscope-samples**](https://github.com/agentscope-ai/agentscope-samples) repository and upgrades [**agentscope-runtime**](https://github.com/agentscope-ai/agentscope-runtime) with Docker/K8s deployment and VNC-powered GUI sandboxes.
+- **[2025-11]** AgentScope supports [Anthropic Agent Skill](https://claude.com/blog/skills) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) and [tutorial](https://doc.agentscope.io/tutorial/task_agent_skill.html) for more details.
+- **[2025-11]** AgentScope open-sources [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
+- **[2025-11]** AgentScope supports [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) via integrating [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) library.
+- **[2025-11]** AgentScope integrates [ReMe](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) for enhanced long-term memory.
+- **[2025-11]** AgentScope launches [agentscope-samples](https://github.com/agentscope-ai/agentscope-samples) repository and upgrades [agentscope-runtime](https://github.com/agentscope-ai/agentscope-runtime) with Docker/K8s deployment and VNC-powered GUI sandboxes.
 - **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) is online now! Welcome to contribute to AgentScope.
 - **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
 - **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
@@ -381,6 +382,7 @@ as_studio
 - [Examples](https://github.com/agentscope-ai/agentscope/tree/main/examples)
   - Functionality
     - [MCP](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/mcp)
+    - [Anthropic Agent Skill](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill)
     - [Plan](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/plan)
     - [Structured Output](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/structured_output)
     - [RAG](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag)

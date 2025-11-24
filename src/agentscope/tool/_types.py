@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""The data model for registered tool functions in AgentScope."""
+"""The types for the tool module in AgentScope."""
 from copy import deepcopy
-from dataclasses import field, dataclass
-from typing import Callable, Literal, Type, Awaitable
+from dataclasses import dataclass, field
+from typing import TypedDict, Literal, Type, Callable, Awaitable
 
 from pydantic import BaseModel
 
-from ._response import ToolResponse
+from . import ToolResponse
 from .._utils._common import _remove_title_field
 from ..message import ToolUseBlock
 from ..types import ToolFunction, JSONSerializableObject
@@ -124,3 +124,31 @@ class RegisteredToolFunction:
                 merged_params["$defs"][def_key] = def_value_copy
 
         return merged_schema
+
+
+@dataclass
+class ToolGroup:
+    """The tool group class"""
+
+    name: str
+    """The group name, which will be used in the reset function as the group
+    identifier."""
+    active: bool
+    """If the tool group is active, meaning the tool functions in this group
+    is included in the JSON schema"""
+    description: str
+    """The description of the tool group to tell the agent what the tool
+    group is about."""
+    notes: str | None = None
+    """The using notes of the tool group, to remind the agent how to use"""
+
+
+class AgentSkill(TypedDict):
+    """The agent skill typed dict class"""
+
+    name: str
+    """The name of the skill."""
+    description: str
+    """The description of the skill."""
+    dir: str
+    """The directory of the agent skill."""
