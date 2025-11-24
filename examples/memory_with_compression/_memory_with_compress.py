@@ -451,13 +451,22 @@ class MemoryWithCompress(MemoryBase):
                     compressed. If compression was not triggered, the
                     compressed memory is the same as the input memory.
         """
+        # if memory is not provided, use the _memory
         if memory is None:
             memory = copy.deepcopy(self._memory)
+        # if compress_func is not provided, use the self.compress_func
         if compress_func is None:
             compress_func = self.compress_func
+        # if compression_trigger_func is not provided, use the self.
+        # compression_trigger_func
         if compression_trigger_func is None:
             compression_trigger_func = self.compression_trigger_func
 
+        # check if the memory needs compression by compression_trigger_func
+        # and compress it if needed.
+        # Notice that compression_trigger_func is optional,
+        # so if it is not provided, the memory will not be compressed
+        # by compression_trigger_func.
         if compression_trigger_func is not None:
             should_compress = await compression_trigger_func(memory)
         else:
