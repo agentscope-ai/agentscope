@@ -17,6 +17,19 @@ class MemoryCompressionSchema(BaseModel):
     compressed_text: str = Field(..., description="The compressed text")
 
 
+# Default compression prompt template
+# Placeholders: {max_token}, {messages_list_json}, {schema_json}
+DEFAULT_COMPRESSION_PROMPT_TEMPLATE = (
+    "You are a memory compression assistant. Please summarize and "
+    "compress the following conversation history into a concise "
+    "summary that preserves the key information. \n\n You should "
+    "compress the conversation into with less than {max_token} "
+    "tokens. The summary should be in the following json format:\n\n"
+    "{schema_json}"
+    "\n\nThe conversation history is:\n\n{messages_list_json}"
+)
+
+
 def format_msgs(
     msgs: Union[Sequence[Msg], Msg],
 ) -> list[dict]:
@@ -61,7 +74,7 @@ def format_msgs(
 
 
 async def count_words(
-    token_counter: TokenCounterBase,
+    token_counter: TokenCounterBase | None,
     text: str | list[dict],
 ) -> int:
     """Count the number of tokens using TokenCounter.count interface.
@@ -96,4 +109,9 @@ async def count_words(
         # Fallback: wrap in a message
         messages = [{"role": "user", "content": str(text)}]
 
+    # if token_counter is None, count the number of tokens in the messages
+    if token_counter is None:
+        return len(json.dumps(messages, ensure_ascii=False))
+
+    # if token_counter is not None, count the number of tokens in the messages
     return await token_counter.count(messages)

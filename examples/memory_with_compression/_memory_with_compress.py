@@ -2,6 +2,7 @@
 """The MemoryWithCompress class for memory management with compression."""
 
 import copy
+import json
 from typing import (
     Any,
     Awaitable,
@@ -19,7 +20,12 @@ from agentscope.message import Msg
 from agentscope.model import ChatModelBase
 from agentscope.token import OpenAITokenCounter, TokenCounterBase
 
-from examples.memory_with_compression._mc_utils import count_words, format_msgs
+from _mc_utils import (  # noqa: E402  # pylint: disable=wrong-import-order
+    count_words,
+    format_msgs,
+    DEFAULT_COMPRESSION_PROMPT_TEMPLATE,
+    MemoryCompressionSchema,
+)
 
 
 class MemoryWithCompress(MemoryBase):
@@ -38,6 +44,9 @@ class MemoryWithCompress(MemoryBase):
         | None = None,
         compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
         | None = None,
+        compression_on_add: bool = False,
+        compression_on_get: bool = True,
+        customized_compression_prompt: str | None = None,
     ) -> None:
         """Initialize the MemoryWithCompress.
 
@@ -62,11 +71,30 @@ class MemoryWithCompress(MemoryBase):
                 returns True, compression will be triggered even when
                 token count hasn't exceeded max_token. If None (default),
                 compression only occurs when token count exceeds max_token.
+            compression_on_add (bool):
+                Whether to check and compress the memory when adding messages.
+                If True, the memory will be checked for compression needs and
+                compressed if necessary. If False, the memory will not be
+                compressed on add. Default is False, because when checking
+                memory during add operations, compression may not be finished
+                yet, and get_memory will return uncompressed memory.
+            compression_on_get (bool):
+                Whether to check and compress the memory when getting messages.
+                If True, the memory will be checked for compression needs and
+                compressed if necessary. Default is True.
+            customized_compression_prompt (str | None):
+                Optional customized compression prompt template. If None
+                (default), the default compression prompt template will be
+                used. If a string is provided, it should be a template
+                string with placeholders: {max_token}, {messages_list_json},
+                {schema_json}. The template will be formatted with these
+                values when generating the prompt.
         """
         super().__init__()
 
         self._chat_history: List[Msg] = []
         self._memory: List[Msg] = []
+        self.customized_compression_prompt = customized_compression_prompt
 
         self.model = model
         self.formatter = formatter
@@ -78,10 +106,16 @@ class MemoryWithCompress(MemoryBase):
             else self._compress_memory
         )
         self.compression_trigger_func = compression_trigger_func
+        self.compression_on_add = compression_on_add
+        self.compression_on_get = compression_on_get
 
     async def add(
         self,
         msgs: Union[Sequence[Msg], Msg, None],
+        compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
+        | None = None,
+        compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
+        | None = None,
     ) -> None:
         """
         Add new messages to both _chat_history and _memory.
@@ -89,6 +123,21 @@ class MemoryWithCompress(MemoryBase):
         Args:
             msgs (Union[Sequence[Msg], Msg, None]):
                 Messages to be added.
+            compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
+                the function to compress the memory, it should return
+                an Awaitable[List[Msg]] object, the input is the list
+                of messages to compress. If None (default), the default
+                compress_func will be used. if provided, it will replace
+                the self.compress_func in the add call.
+            compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
+                Optional function to trigger compression when token count
+                is below max_token. It receives the list of messages in
+                _memory as input and returns an Awaitable[bool]. If it
+                returns True, compression will be triggered even when
+                token count hasn't exceeded max_token. If None (default),
+                compression only occurs when token count exceeds max_token.
+                If provided, it will replace the self.compression_trigger_func
+                in the add call.
         """
         if msgs is None:
             return
@@ -112,6 +161,53 @@ class MemoryWithCompress(MemoryBase):
 
         # Add to _memory (same messages, will be compressed if needed)
         self._memory.extend(deep_copied_msgs)
+
+        if self.compression_on_add:
+            # first check the total token of the memory is greater than
+            # max_token and compress it if needed
+            compressed = await self._check_length_and_compress(
+                compress_func
+                if compress_func is not None
+                else self.compress_func,
+            )
+            if not compressed:
+                # if the memory is not compressed, check if it needs
+                # compression and compress it if needed
+                compressed, compressed_memory = await self.check_and_compress(
+                    compress_func
+                    if compress_func is not None
+                    else self.compress_func,
+                    compression_trigger_func
+                    if compression_trigger_func is not None
+                    else self.compression_trigger_func,
+                )
+                if compressed:
+                    self._memory = compressed_memory
+
+    async def direct_update_memory(
+        self,
+        msgs: Union[Sequence[Msg], Msg, None],
+    ) -> None:
+        """
+        Directly update the memory with new messages.
+
+        Args:
+            msgs (Union[Sequence[Msg], Msg, None]):
+                Messages to be added.
+
+        """
+        if msgs is None:
+            return
+        if not isinstance(msgs, Sequence):
+            msgs = [msgs]
+        # Ensure all items are Msg objects
+        msg_list: List[Msg] = []
+        for msg in msgs:
+            if not isinstance(msg, Msg):
+                raise TypeError(f"Expected Msg object, got {type(msg)}")
+            msg_list.append(msg)
+        # Deep copy messages to avoid modifying originals
+        self._memory = copy.deepcopy(msg_list)
 
     async def get_memory(
         self,
@@ -152,35 +248,19 @@ class MemoryWithCompress(MemoryBase):
         Returns:
             list[Msg]: The memory content.
         """
-        # Check if _memory needs compression
-        if len(self._memory) > 0:
-            # Calculate total token count of _memory
-            total_tokens = await count_words(
-                self.token_counter,
-                format_msgs(self._memory),
-            )
-
-            if total_tokens > self.max_token:
-                # Compress all messages in _memory
-                # Replace all messages with a single compressed message
-                self._memory = (
-                    await self.compress_func(self._memory)
-                    if compress_func is None
-                    else await compress_func(self._memory)
+        if self.compression_on_get:
+            # first check the total token of the memory is greater than
+            # max_token and compress it if needed
+            compressed = await self._check_length_and_compress(compress_func)
+            if not compressed:
+                # if the memory is not compressed, check if it needs
+                # compression and compress it if needed
+                compressed, compressed_memory = await self.check_and_compress(
+                    compress_func,
+                    compression_trigger_func,
                 )
-            elif self.compression_trigger_func is not None:
-                # Trigger compression if the function returns True
-                should_compress = (
-                    await self.compression_trigger_func(self._memory)
-                    if compression_trigger_func is None
-                    else await compression_trigger_func(self._memory)
-                )
-                if should_compress:
-                    self._memory = (
-                        await self.compress_func(self._memory)
-                        if compress_func is None
-                        else await compress_func(self._memory)
-                    )
+                if compressed:
+                    self._memory = compressed_memory
 
         # Apply filter if provided
         memories = self._memory
@@ -210,21 +290,30 @@ class MemoryWithCompress(MemoryBase):
             List[Msg]: The compressed messages.
         """
         # Format all messages for compression
-        messages_text = format_msgs(msgs)
+        messages_list = format_msgs(msgs)
 
-        # Create a prompt for compression
-        from examples.memory_with_compression._mc_utils import (
-            MemoryCompressionSchema,
+        # Prepare template variables
+        messages_list_json = json.dumps(
+            messages_list,
+            ensure_ascii=False,
+            indent=2,
+        )
+        schema_json = json.dumps(
+            MemoryCompressionSchema.model_json_schema(),
+            ensure_ascii=False,
+            indent=2,
         )
 
-        compression_prompt = (
-            f"You are a memory compression assistant. Please summarize and "
-            f"compress the following conversation history into a concise "
-            f"summary that preserves the key information. \n\n You should "
-            f"compress the conversation into with less than {self.max_token} "
-            f"tokens. The summary should be in the following json format:\n\n"
-            f"{MemoryCompressionSchema.model_json_schema()}"
-            f"\n\nThe conversation history is:\n\n{messages_text}"
+        # Generate compression prompt using template
+        prompt_template = (
+            self.customized_compression_prompt
+            if self.customized_compression_prompt is not None
+            else DEFAULT_COMPRESSION_PROMPT_TEMPLATE
+        )
+        compression_prompt = prompt_template.format(
+            max_token=self.max_token,
+            messages_list_json=messages_list_json,
+            schema_json=schema_json,
         )
 
         # Call the model to compress
@@ -307,6 +396,78 @@ class MemoryWithCompress(MemoryBase):
                 self._chat_history.pop(idx)
             if 0 <= idx < len(self._memory):
                 self._memory.pop(idx)
+
+    async def _check_length_and_compress(
+        self,
+        compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
+        | None = None,
+    ) -> bool:
+        """
+        Check if the memory needs compression and compress it if needed.
+        """
+        is_compressed = False
+        if compress_func is None:
+            compress_func = self.compress_func
+        if len(self._memory) > 0:
+            total_tokens = await count_words(
+                self.token_counter,
+                format_msgs(self._memory),
+            )
+            if total_tokens > self.max_token:
+                self._memory = await compress_func(self._memory)
+                is_compressed = True
+        return is_compressed
+
+    async def check_and_compress(
+        self,
+        compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
+        | None = None,
+        compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
+        | None = None,
+        memory: List[Msg] | None = None,
+    ) -> tuple[bool, List[Msg]]:
+        """
+        Check if the memory needs compression and compress it if needed.
+
+        Args:
+            compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
+                Optional function to compress the memory, it should return
+                an Awaitable[List[Msg]] object, the input is the list
+                of messages to compress. If None (default), the
+                self.compress_func will be used.
+            compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
+                Optional function to trigger compression. If None (default),
+                the self.compression_trigger_func will be used.
+            memory (List[Msg] | None):
+                The memory to check and compress. If None (default), the
+                _memory will be used.
+
+        Returns:
+            tuple[bool, List[Msg]]: A tuple containing a boolean value
+                    indicating if compression was triggered and the
+                    compressed memory. The boolean value is True if
+                    compression was triggered, False otherwise. The
+                    compressed memory is the list of messages that were
+                    compressed. If compression was not triggered, the
+                    compressed memory is the same as the input memory.
+        """
+        if memory is None:
+            memory = copy.deepcopy(self._memory)
+        if compress_func is None:
+            compress_func = self.compress_func
+        if compression_trigger_func is None:
+            compression_trigger_func = self.compression_trigger_func
+
+        if compression_trigger_func is not None:
+            should_compress = await compression_trigger_func(memory)
+        else:
+            should_compress = False
+
+        if should_compress:
+            compressed_memory = await compress_func(memory)
+        else:
+            compressed_memory = memory
+        return should_compress, compressed_memory
 
     async def retrieve(self, *args: Any, **kwargs: Any) -> None:
         """

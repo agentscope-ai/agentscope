@@ -11,6 +11,10 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+from _memory_with_compress import (  # noqa: E402, E501
+    MemoryWithCompress,
+)
+
 # Imports must come after sys.path manipulation
 from agentscope.agent import ReActAgent  # noqa: E402
 from agentscope.formatter import DashScopeChatFormatter  # noqa: E402
@@ -18,10 +22,6 @@ from agentscope.message import Msg  # noqa: E402
 from agentscope.model import DashScopeChatModel  # noqa: E402
 from agentscope.tool import Toolkit  # noqa: E402
 from agentscope.token import OpenAITokenCounter  # noqa: E402
-
-from examples.memory_with_compression._memory_with_compress import (  # noqa: E402, E501
-    MemoryWithCompress,
-)
 
 
 async def main() -> None:
