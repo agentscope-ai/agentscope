@@ -262,6 +262,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">Agent Hooks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_eval.html">Evaluation</a></li>
@@ -566,7 +567,11 @@
     <span class="nd">@property</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">sys_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The dynamic system prompt of the agent.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sys_prompt</span>
+        <span class="n">agent_skill_prompt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_agent_skill_prompt</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">agent_skill_prompt</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sys_prompt</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="n">agent_skill_prompt</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sys_prompt</span>
 
 <div class="viewcode-block" id="ReActAgent.reply">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.reply">[docs]</a>
@@ -917,9 +922,17 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">handle_interrupt</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">_msg</span><span class="p">:</span> <span class="n">Msg</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Msg</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">_structured_model</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">BaseModel</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The post-processing logic when the reply is interrupted by the</span>
-<span class="sd">        user or something else.&quot;&quot;&quot;</span>
+<span class="sd">        user or something else.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            _msg (`Msg | list[Msg] | None`, optional):</span>
+<span class="sd">                The input message(s) to the agent.</span>
+<span class="sd">            _structured_model (`Type[BaseModel] | None`, optional):</span>
+<span class="sd">                The required structured output model.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="n">response_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
@@ -928,7 +941,7 @@
             <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
             <span class="n">metadata</span><span class="o">=</span><span class="p">{</span>
                 <span class="c1"># Expose this field to indicate the interruption</span>
-                <span class="s2">&quot;is_interrupted&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                <span class="s2">&quot;_is_interrupted&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
             <span class="p">},</span>
         <span class="p">)</span>
 

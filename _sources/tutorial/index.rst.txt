@@ -147,6 +147,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="Agent skill is an approach proposed by Anthropic to improve agent capabilities on specific tasks.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_agent_skill_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_agent_skill.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Agent Skill</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="Hooks are extension points in AgentScope that allow developers to customize agent behaviors at specific execution points, providing a flexible way to modify or extend the agent&#x27;s functionality without changing its core implementation.">
 
 .. only:: html
@@ -486,6 +503,7 @@
    /tutorial/quickstart_installation
    /tutorial/task_token
    /tutorial/workflow_concurrent_agents
+   /tutorial/task_agent_skill
    /tutorial/task_hook
    /tutorial/workflow_handoffs
    /tutorial/task_pipeline

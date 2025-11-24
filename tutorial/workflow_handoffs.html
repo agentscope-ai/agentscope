@@ -263,6 +263,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
@@ -354,22 +355,22 @@ First, we create a function to allow the orchestrator to create workers dynamica
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;Print &#39;Hello, World!&#39; using Python&quot;
+        &quot;task_description&quot;: &quot;Execute a simple Python script that prints &#39;Hello, World!&#39; to the console.&quot;
     },
-    &quot;id&quot;: &quot;call_908a2d54e11144aaa95e94&quot;
+    &quot;id&quot;: &quot;call_462df86c2f8f457f8e2e5b&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
-        &quot;timeout&quot;: 5
+        &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_602dabf986884ab39b2cb2&quot;
+    &quot;id&quot;: &quot;call_5e7a30d60a3f44a29bdd27&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_602dabf986884ab39b2cb2&quot;,
+    &quot;id&quot;: &quot;call_5e7a30d60a3f44a29bdd27&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -378,27 +379,19 @@ system: {
         }
     ]
 }
-Worker: The Python code has been executed and it printed:
-
-```
-Hello, World!
-```
+Worker: The Python script has been executed successfully and printed &#39;Hello, World!&#39; to the console.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_908a2d54e11144aaa95e94&quot;,
+    &quot;id&quot;: &quot;call_462df86c2f8f457f8e2e5b&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;The Python code has been executed and it printed:\n\n```\nHello, World!\n```&quot;
+            &quot;text&quot;: &quot;The Python script has been executed successfully and printed &#39;Hello, World!&#39; to the console.&quot;
         }
     ]
 }
-Orchestrator: The worker has successfully executed the Python code, and it printed:
-
-```
-Hello, World!
-```
+Orchestrator: The Python script has been executed successfully and it printed &#39;Hello, World!&#39; to the console.
 </pre></div>
 </div>
 <div class="line-block">
@@ -481,7 +474,7 @@ Hello, World!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.693 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 7.725 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>

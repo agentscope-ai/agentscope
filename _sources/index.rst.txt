@@ -47,6 +47,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_state
    tutorial/task_hook
    tutorial/task_mcp
+   tutorial/task_agent_skill
    tutorial/task_studio
    tutorial/task_tracing
    tutorial/task_eval

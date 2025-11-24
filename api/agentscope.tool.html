@@ -263,6 +263,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">Agent Hooks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">Evaluation</a></li>
@@ -341,36 +342,41 @@
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Toolkit</span></span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <a class="reference internal" href="agentscope.module.html#agentscope.module.StateModule" title="agentscope.module._state_module.StateModule"><code class="xref py py-class docutils literal notranslate"><span class="pre">StateModule</span></code></a></p>
-<p>The class that supports both function- and group-level tool management.</p>
-<p>Use the following methods to manage the tool functions:</p>
+<p>Toolkit is the core module to register, manage and delete tool
+functions, MCP clients, Agent skills in AgentScope.</p>
+<p>About tool functions:</p>
 <ul class="simple">
-<li><p><cite>register_tool_function</cite></p></li>
-<li><p><cite>remove_tool_function</cite></p></li>
+<li><p>Register and parse JSON schemas from their docstrings automatically.</p></li>
+<li><p>Group-wise tools management, and agentic tools activation/deactivation.</p></li>
+<li><p>Extend the tool function JSON schema dynamically with Pydantic BaseModel.</p></li>
+<li><p>Tool function execution with unified streaming interface.</p></li>
 </ul>
-<p>For group-level management:</p>
+<p>About MCP clients:</p>
 <ul class="simple">
-<li><p><cite>create_tool_group</cite></p></li>
-<li><p><cite>update_tool_groups</cite></p></li>
-<li><p><cite>remove_tool_groups</cite></p></li>
+<li><p>Register tool functions from MCP clients directly.</p></li>
+<li><p>Client-level tool functions removal.</p></li>
 </ul>
-<p>MCP related methods:</p>
+<p>About Agent skills:</p>
 <ul class="simple">
-<li><p><cite>register_mcp_server</cite></p></li>
-<li><p><cite>remove_mcp_servers</cite></p></li>
-</ul>
-<p>To run the tool functions or get the data from the activated tools:</p>
-<ul class="simple">
-<li><p><cite>call_tool_function</cite></p></li>
-<li><p><cite>get_json_schemas</cite></p></li>
-<li><p><cite>get_tool_group_notes</cite></p></li>
+<li><p>Register agent skills from the given directory.</p></li>
+<li><p>Provide prompt for the registered skills to the agent.</p></li>
 </ul>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agent_skill_instruction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">agent_skill_template</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the toolkit.</p>
 <dl class="field-list simple">
-<dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p>None</p>
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>agent_skill_instruction</strong> (<cite>str | None</cite>, optional) – The instruction for agent skills in the system prompt. If not
+provided, a default instruction will be used.</p></li>
+<li><p><strong>agent_skill_template</strong> (<cite>str | None</cite>, optional) – The template to present one agent skill in the system prompt,
+which should contain <cite>{name}</cite>, <cite>{description}</cite>, and <cite>{dir}</cite>
+placeholders. If not provided, a default template will be used.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
 </dd>
 </dl>
 </dd></dl>
@@ -719,6 +725,72 @@ will be removed first.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.tool.Toolkit.register_agent_skill">
+<span class="sig-name descname"><span class="pre">register_agent_skill</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">skill_dir</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.register_agent_skill"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.register_agent_skill" title="Link to this definition">¶</a></dt>
+<dd><p>Register agent skills from a given directory. This function will
+scan the directory, read metadata from the SKILL.md file, and add
+it to the skill related prompt. Developers can obtain the
+skills-related prompt by calling <cite>toolkit.get_agent_skill_prompt()</cite>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This directory
+- Must include a SKILL.md file at the top level
+- The SKILL.md must have a YAML Front Matter including <cite>name</cite> and</p>
+<blockquote>
+<div><p><cite>description</cite> fields</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>All files must specify a common root directory in their paths</p></li>
+</ul>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>skill_dir</strong> (<cite>str</cite>) – The path to the skill directory.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.tool.Toolkit.remove_agent_skill">
+<span class="sig-name descname"><span class="pre">remove_agent_skill</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.remove_agent_skill"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.remove_agent_skill" title="Link to this definition">¶</a></dt>
+<dd><p>Remove an agent skill by its name.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>name</strong> (<cite>str</cite>) – The name of the agent skill to be removed.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.tool.Toolkit.get_agent_skill_prompt">
+<span class="sig-name descname"><span class="pre">get_agent_skill_prompt</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.get_agent_skill_prompt"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.get_agent_skill_prompt" title="Link to this definition">¶</a></dt>
+<dd><p>Get the prompt for all registered agent skills, which can be
+attached to the system prompt for the agent.</p>
+<p>The prompt is consisted of an overall instruction and the detailed
+descriptions of each skill, including its name, description, and
+directory.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>If no skill is registered, None will be returned.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The combined prompt for all registered agent skills, or None
+if no skill is registered.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>str | None</cite></p>
 </dd>
 </dl>
 </dd></dl>
@@ -1281,6 +1353,9 @@ operation failed.</p>
 <li><a class="reference internal" href="#agentscope.tool.Toolkit.get_activated_notes"><code class="docutils literal notranslate"><span class="pre">Toolkit.get_activated_notes()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.tool.Toolkit.reset_equipped_tools"><code class="docutils literal notranslate"><span class="pre">Toolkit.reset_equipped_tools()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.tool.Toolkit.clear"><code class="docutils literal notranslate"><span class="pre">Toolkit.clear()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.tool.Toolkit.register_agent_skill"><code class="docutils literal notranslate"><span class="pre">Toolkit.register_agent_skill()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.tool.Toolkit.remove_agent_skill"><code class="docutils literal notranslate"><span class="pre">Toolkit.remove_agent_skill()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.tool.Toolkit.get_agent_skill_prompt"><code class="docutils literal notranslate"><span class="pre">Toolkit.get_agent_skill_prompt()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.tool.ToolResponse"><code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code></a><ul>
