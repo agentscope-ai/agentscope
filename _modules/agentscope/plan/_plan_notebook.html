@@ -333,7 +333,7 @@
 <span class="sd">&quot;&quot;&quot;The plan notebook class, used to manage the plan, providing hints and</span>
 <span class="sd">tool functions to the agent.&quot;&quot;&quot;</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">OrderedDict</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">Coroutine</span><span class="p">,</span> <span class="n">Any</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">Coroutine</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Awaitable</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._in_memory_storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">InMemoryPlanStorage</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._plan_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">SubTask</span><span class="p">,</span> <span class="n">Plan</span>
@@ -512,7 +512,11 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The plan notebook to manage the plan, providing hints and plan related</span>
 <span class="sd">    tool functions to the agent.&quot;&quot;&quot;</span>
 
-    <span class="n">_plan_change_hooks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span>
+    <span class="n">_plan_change_hooks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span>
+        <span class="nb">str</span><span class="p">,</span>
+        <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="n">Awaitable</span><span class="p">[</span><span class="kc">None</span><span class="p">]],</span>
+    <span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The hooks that will be triggered when the plan is changed. For example,</span>
 <span class="sd">    used to display the plan on the frontend.&quot;&quot;&quot;</span>
 
@@ -1230,7 +1234,8 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">register_plan_change_hook</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">hook_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-        <span class="n">hook</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="kc">None</span><span class="p">],</span>
+        <span class="n">hook</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="s2">&quot;PlanNotebook&quot;</span><span class="p">,</span> <span class="n">Plan</span><span class="p">],</span> <span class="n">Awaitable</span><span class="p">[</span><span class="kc">None</span><span class="p">]],</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Register a plan hook that will be triggered when the plan is</span>
 <span class="sd">        changed.</span>
@@ -1238,7 +1243,8 @@
 <span class="sd">        Args:</span>
 <span class="sd">            hook_name (`str`):</span>
 <span class="sd">                The name of the hook, should be unique.</span>
-<span class="sd">            hook (`Callable[[Plan], None]`):</span>
+<span class="sd">            hook (`Callable[[&quot;PlanNotebook&quot;, Plan], None] | \</span>
+<span class="sd">            Callable[[&quot;PlanNotebook&quot;, Plan], Awaitable[None]]):</span>
 <span class="sd">                The hook function, which takes the current plan as input and</span>
 <span class="sd">                returns nothing.</span>
 <span class="sd">        &quot;&quot;&quot;</span>

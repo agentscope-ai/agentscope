@@ -840,7 +840,7 @@ changed.</p>
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>hook_name</strong> (<cite>str</cite>) – The name of the hook, should be unique.</p></li>
-<li><p><strong>hook</strong> (<cite>Callable[[Plan], None]</cite>) – The hook function, which takes the current plan as input and
+<li><p><strong>hook</strong> (<a href="#id1"><span class="problematic" id="id2">`</span></a>Callable[[“PlanNotebook”, Plan], None] |             Callable[[“PlanNotebook”, Plan], Awaitable[None]]) – The hook function, which takes the current plan as input and
 returns nothing.</p></li>
 </ul>
 </dd>
