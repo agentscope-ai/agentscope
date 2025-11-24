@@ -191,7 +191,7 @@ Initializes the memory system. Key parameters include:
 - `max_token` (int): The maximum token count for `memory_storage`. Default: 28000. Compression is triggered when exceeded
 - `chat_history_storage` (MessageStorageBase): Storage backend for complete chat history. Default: `InMemoryMessageStorage()`
 - `memory_storage` (MessageStorageBase): Storage backend for compressed memory. Default: `InMemoryMessageStorage()`
-- `token_counter` (Optional[TokenCounterBase]): The token counter for counting tokens. Default: `OpenAITokenCounter`
+- `token_counter` (Optional[TokenCounterBase]): The token counter for counting tokens. Default: None. If None, it will return the character count of the JSON string representation of messages (i.e., len(json.dumps(messages, ensure_ascii=False))).
 - `compress_func` (Callable[[List[Msg]], Awaitable[List[Msg]]] | None): Custom compression function. Must be async and return `List[Msg]`. If None, uses the default `_compress_memory` method
 - `compression_trigger_func` (Callable[[List[Msg]], Awaitable[bool]] | None): Optional function to trigger compression when token count is below `max_token`. Must be async and return `bool`. If None, compression only occurs when token count exceeds `max_token`
 - `compression_on_add` (bool): Whether to check and compress memory when adding messages. Default: False

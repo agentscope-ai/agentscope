@@ -20,7 +20,7 @@ from agentscope.formatter import FormatterBase
 from agentscope.memory import MemoryBase
 from agentscope.message import Msg
 from agentscope.model import ChatModelBase
-from agentscope.token import OpenAITokenCounter, TokenCounterBase
+from agentscope.token import TokenCounterBase
 
 # pylint: disable=wrong-import-order
 from _mc_utils import (  # noqa: E402
@@ -48,7 +48,7 @@ class MemoryWithCompress(MemoryBase):
         max_token: int = 28000,
         chat_history_storage: MessageStorageBase = InMemoryMessageStorage(),
         memory_storage: MessageStorageBase = InMemoryMessageStorage(),
-        token_counter: Optional[TokenCounterBase] = OpenAITokenCounter,
+        token_counter: Optional[TokenCounterBase] = None,
         compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
         | None = None,
         compression_trigger_func: Callable[[List[Msg]], Awaitable[bool]]
@@ -68,7 +68,10 @@ class MemoryWithCompress(MemoryBase):
                 the maximum token count for memories in memory_storage.
                 If exceeded, MemoryWithCompress will compress the memory.
             token_counter (Optional[TokenCounterBase]):
-                the token counter to use for counting tokens
+                the token counter to use for counting tokens, default
+                is None. If None, it will return the character count of
+                the JSON string representation of messages (i.e.,
+                len(json.dumps(messages, ensure_ascii=False))).
             compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
                 the function to compress the memory, it should return
                 an Awaitable[List[Msg]] object, the input is the list
