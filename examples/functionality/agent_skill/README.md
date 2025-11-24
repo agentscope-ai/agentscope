@@ -9,7 +9,7 @@ ReAct agent in AgentScope via the `toolkit.register_agent_skill` API.
 Specifically, we prepare a demonstration skill that helps the agent to
 learn about the AgentScope framework itself in the `skill` directory.
 In `main.py`, we register this skill to the agent's toolkit, and ask it
-to answer a question about AgentScope.
+to answer questions about AgentScope.
 
 ## Quick Start
 

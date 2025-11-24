@@ -28,7 +28,7 @@ async def main() -> None:
 
     # Register the agent skill
     toolkit.register_agent_skill(
-        os.path.join(os.path.dirname(__file__), "skill")
+        os.path.join(os.path.dirname(__file__), "skill"),
     )
 
     agent = ReActAgent(
@@ -47,16 +47,17 @@ async def main() -> None:
 
     # We prepare two questions
     await agent(
-        Msg("user", "What skills do you have?", "user")
+        Msg("user", "What skills do you have?", "user"),
     )
 
     # The second question
     await agent(
         Msg(
-        "user",
-        "How does agentscope handles the tool result?",
-        "user",
-        )
+            "user",
+            "How does agentscope handles the tool result?",
+            "user",
+        ),
     )
+
 
 asyncio.run(main())

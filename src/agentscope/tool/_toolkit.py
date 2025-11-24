@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""The toolkit class for tool calls in agentscope."""
+"""The toolkit class for tool calls in agentscope.
 
+TODO: We should consider to split this `Toolkit` class in the future.
+"""
+# pylint: disable=too-many-lines
 import asyncio
 import inspect
 import os
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import partial
 from typing import (
     AsyncGenerator,
@@ -24,15 +26,14 @@ from pydantic import (
     Field,
     create_model,
 )
-from typing_extensions import TypedDict
 
 from ._async_wrapper import (
     _async_generator_wrapper,
     _object_wrapper,
     _sync_generator_wrapper,
 )
-from ._registered_tool_function import RegisteredToolFunction
 from ._response import ToolResponse
+from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
 from .._utils._common import _parse_tool_function
 from ..mcp import (
     MCPToolFunction,
@@ -50,33 +51,6 @@ from ..types import (
 )
 from ..tracing._trace import trace_toolkit
 from .._logging import logger
-
-
-@dataclass
-class ToolGroup:
-    """The tool group class"""
-
-    name: str
-    """The group name, which will be used in the reset function as the group
-    identifier."""
-    active: bool
-    """If the tool group is active, meaning the tool functions in this group
-    is included in the JSON schema"""
-    description: str
-    """The description of the tool group to tell the agent what the tool
-    group is about."""
-    notes: str | None = None
-    """The using notes of the tool group, to remind the agent how to use"""
-
-
-class AgentSkill(TypedDict):
-    """The agent skill typed dict class"""
-    name: str
-    """The name of the skill."""
-    description: str
-    """The description of the skill."""
-    dir: str
-    """The directory of the agent skill."""
 
 
 class Toolkit(StateModule):
@@ -101,13 +75,14 @@ class Toolkit(StateModule):
     - Provide prompt for the registered skills to the agent.
     """
 
-    _DEFAULT_AGENT_SKILL_INSTRUCTION = """# Agent Skills
-The following are the skills you can use to complete your tasks, 
-## File writing skills
-### Description
-A simple skill that greets the user
-Check the file "/Users/david/Documents/Python/skills/SKILL.md" for how to use the skills
-"""
+    _DEFAULT_AGENT_SKILL_INSTRUCTION = (
+        "# Agent Skills\n"
+        "The agent skills are a collection of folds of instructions, scripts, "
+        "and resources that you can load dynamically to improve performance "
+        "on specialized tasks. Each agent skill has a `SKILL.md` file in its "
+        "folder that describes how to use the skill. If you want to use a "
+        "skill, you MUST read its `SKILL.md` file carefully."
+    )
 
     _DEFAULT_AGENT_SKILL_TEMPLATE = """## {name}
 {description}
