@@ -1007,8 +1007,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         with open(path_skill_md, "r", encoding="utf-8") as f:
             post = frontmatter.load(f)
 
-        name = str(post.get("name", None))
-        description = str(post.get("description", None))
+        name = post.get("name", None)
+        description = post.get("description", None)
 
         if not name or not description:
             raise ValueError(
@@ -1016,6 +1016,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 "Matter including `name` and `description` fields.",
             )
 
+        name, description = str(name), str(description)
         if name in self.skills:
             raise ValueError(
                 f"An agent skill with name '{name}' is already registered "
