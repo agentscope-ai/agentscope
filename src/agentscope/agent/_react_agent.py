@@ -578,9 +578,17 @@ class ReActAgent(ReActAgentBase):
     async def handle_interrupt(
         self,
         _msg: Msg | list[Msg] | None = None,
+        _structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
-        user or something else."""
+        user or something else.
+
+        Args:
+            _msg (`Msg | list[Msg] | None`, optional):
+                The input message(s) to the agent.
+            _structured_model (`Type[BaseModel] | None`, optional):
+                The required structured output model.
+        """
 
         response_msg = Msg(
             self.name,
@@ -589,7 +597,7 @@ class ReActAgent(ReActAgentBase):
             "assistant",
             metadata={
                 # Expose this field to indicate the interruption
-                "is_interrupted": True,
+                "_is_interrupted": True,
             },
         )
 

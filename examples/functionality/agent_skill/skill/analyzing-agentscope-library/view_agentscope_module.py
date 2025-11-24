@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=relative-beyond-top-level
 """Get the signatures of functions and classes in the agentscope library."""
-# pylint: disable=E0402
+
 import argparse
 from typing import Literal, Callable
 import inspect
