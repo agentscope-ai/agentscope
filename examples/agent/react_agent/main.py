@@ -3,10 +3,9 @@
 import asyncio
 import os
 
-from agentscope.agent import ReActAgent
+from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
-from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import (
     Toolkit,
@@ -20,16 +19,9 @@ async def main() -> None:
     """The main entry point for the ReAct agent example."""
     toolkit = Toolkit()
 
-    # To use agent skills, your agent must be equipped with text file viewing
-    # tools.
     toolkit.register_tool_function(execute_shell_command)
     toolkit.register_tool_function(execute_python_code)
     toolkit.register_tool_function(view_text_file)
-
-    # Register the agent skill
-    toolkit.register_agent_skill(
-        os.path.join(os.path.dirname(__file__), "skill"),
-    )
 
     agent = ReActAgent(
         name="Friday",
@@ -45,19 +37,14 @@ async def main() -> None:
         memory=InMemoryMemory(),
     )
 
-    # We prepare two questions
-    await agent(
-        Msg("user", "What skills do you have?", "user"),
-    )
+    user = UserAgent("User")
 
-    # The second question
-    await agent(
-        Msg(
-            "user",
-            "How does agentscope handles the tool result?",
-            "user",
-        ),
-    )
+    msg = None
+    while True:
+        msg = await user(msg)
+        if msg.get_text_content() == "exit":
+            break
+        msg = await agent(msg)
 
 
 asyncio.run(main())

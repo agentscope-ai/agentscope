@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=relative-beyond-top-level
+# pylint: skip-file
 """Get the signatures of functions and classes in the agentscope library."""
-
-import argparse
 from typing import Literal, Callable
-import inspect
-
-from pydantic import BaseModel
 
 import agentscope
+import inspect
+from pydantic import BaseModel
 
 
 def get_class_signature(cls: type) -> str:
@@ -294,6 +291,8 @@ def view_agentscope_library(
 
 
 if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--module",

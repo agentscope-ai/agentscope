@@ -983,8 +983,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             `description` fields
          - All files must specify a common root directory in their paths
 
-         Args:
-             skill_dir (`str`):
+        Args:
+            skill_dir (`str`):
                 The path to the skill directory.
         """
         import frontmatter
@@ -1037,11 +1037,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         )
 
     def remove_agent_skill(self, name: str) -> None:
-        """The name of the agent skill to be removed.
+        """Remove an agent skill by its name.
 
         Args:
             name (`str`):
-                The agent skill name.
+                The name of the agent skill to be removed.
         """
         if name in self.skills:
             self.skills.pop(name)
