@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The MemoryWithCompress class for memory management with compression."""
 
+import asyncio
+import concurrent.futures
 import copy
 import json
 from typing import (
@@ -20,18 +22,23 @@ from agentscope.message import Msg
 from agentscope.model import ChatModelBase
 from agentscope.token import OpenAITokenCounter, TokenCounterBase
 
-from _mc_utils import (  # noqa: E402  # pylint: disable=wrong-import-order
+# pylint: disable=wrong-import-order
+from _mc_utils import (  # noqa: E402
     count_words,
     format_msgs,
     DEFAULT_COMPRESSION_PROMPT_TEMPLATE,
     MemoryCompressionSchema,
+)
+from _memory_storage import (  # noqa: E402
+    InMemoryMessageStorage,
+    MessageStorageBase,
 )
 
 
 class MemoryWithCompress(MemoryBase):
     """
     MemoryWithCompress is a memory manager that stores original messages
-    in _chat_history and compressed messages in _memory.
+    in chat_history_storage and compressed messages in memory_storage.
     """
 
     def __init__(
@@ -39,6 +46,8 @@ class MemoryWithCompress(MemoryBase):
         model: ChatModelBase,
         formatter: FormatterBase,
         max_token: int = 28000,
+        chat_history_storage: MessageStorageBase = InMemoryMessageStorage(),
+        memory_storage: MessageStorageBase = InMemoryMessageStorage(),
         token_counter: Optional[TokenCounterBase] = OpenAITokenCounter,
         compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
         | None = None,
@@ -56,8 +65,8 @@ class MemoryWithCompress(MemoryBase):
             formatter (FormatterBase):
                 the formatter to use for formatting messages
             max_token (int):
-                the maximum token count for _memory. If exceeded,
-                MemoryWithCompress will compress the memory.
+                the maximum token count for memories in memory_storage.
+                If exceeded, MemoryWithCompress will compress the memory.
             token_counter (Optional[TokenCounterBase]):
                 the token counter to use for counting tokens
             compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
@@ -67,7 +76,7 @@ class MemoryWithCompress(MemoryBase):
             compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
                 Optional function to trigger compression when token count
                 is below max_token. It receives the list of messages in
-                _memory as input and returns an Awaitable[bool]. If it
+                memory_storage as input and returns an Awaitable[bool]. If it
                 returns True, compression will be triggered even when
                 token count hasn't exceeded max_token. If None (default),
                 compression only occurs when token count exceeds max_token.
@@ -92,8 +101,8 @@ class MemoryWithCompress(MemoryBase):
         """
         super().__init__()
 
-        self._chat_history: List[Msg] = []
-        self._memory: List[Msg] = []
+        self.chat_history_storage = chat_history_storage
+        self.memory_storage = memory_storage
         self.customized_compression_prompt = customized_compression_prompt
 
         self.model = model
@@ -118,7 +127,7 @@ class MemoryWithCompress(MemoryBase):
         | None = None,
     ) -> None:
         """
-        Add new messages to both _chat_history and _memory.
+        Add new messages to both chat_history_storage and memory_storage.
 
         Args:
             msgs (Union[Sequence[Msg], Msg, None]):
@@ -132,7 +141,7 @@ class MemoryWithCompress(MemoryBase):
             compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
                 Optional function to trigger compression when token count
                 is below max_token. It receives the list of messages in
-                _memory as input and returns an Awaitable[bool]. If it
+                memory_storage as input and returns an Awaitable[bool]. If it
                 returns True, compression will be triggered even when
                 token count hasn't exceeded max_token. If None (default),
                 compression only occurs when token count exceeds max_token.
@@ -156,11 +165,11 @@ class MemoryWithCompress(MemoryBase):
         # Deep copy messages to avoid modifying originals
         deep_copied_msgs: List[Msg] = copy.deepcopy(msg_list)
 
-        # Add to _chat_history (original messages)
-        self._chat_history.extend(deep_copied_msgs)
+        # Add to chat_history_storage (original messages)
+        await self.chat_history_storage.add(deep_copied_msgs)
 
-        # Add to _memory (same messages, will be compressed if needed)
-        self._memory.extend(deep_copied_msgs)
+        # Add to memory_storage (same messages, will be compressed if needed)
+        await self.memory_storage.add(deep_copied_msgs)
 
         if self.compression_on_add:
             # first check the total token of the memory is greater than
@@ -182,7 +191,7 @@ class MemoryWithCompress(MemoryBase):
                     else self.compression_trigger_func,
                 )
                 if compressed:
-                    self._memory = compressed_memory
+                    await self.memory_storage.update_all(compressed_memory)
 
     async def direct_update_memory(
         self,
@@ -207,7 +216,7 @@ class MemoryWithCompress(MemoryBase):
                 raise TypeError(f"Expected Msg object, got {type(msg)}")
             msg_list.append(msg)
         # Deep copy messages to avoid modifying originals
-        self._memory = copy.deepcopy(msg_list)
+        await self.memory_storage.update_all(msg_list)
 
     async def get_memory(
         self,
@@ -219,7 +228,7 @@ class MemoryWithCompress(MemoryBase):
         | None = None,
     ) -> list[Msg]:
         """
-        Get memory content. If _memory token count exceeds max_token,
+        Get memory content. If memory_storage token count exceeds max_token,
         compress all messages into a single message.
 
         Args:
@@ -237,7 +246,7 @@ class MemoryWithCompress(MemoryBase):
             compression_trigger_func (Callable[[List[Msg]], Awaitable[bool]]):
                 Optional function to trigger compression when token count
                 is below max_token. It receives the list of messages in
-                _memory as input and returns an Awaitable[bool]. If it
+                memory_storage as input and returns an Awaitable[bool]. If it
                 returns True, compression will be triggered even when
                 token count hasn't exceeded max_token. If None (default),
                 compression only occurs when token count exceeds max_token.
@@ -260,10 +269,10 @@ class MemoryWithCompress(MemoryBase):
                     compression_trigger_func,
                 )
                 if compressed:
-                    self._memory = compressed_memory
+                    await self.memory_storage.update_all(compressed_memory)
 
         # Apply filter if provided
-        memories = self._memory
+        memories = await self.memory_storage.get()
         if filter_func is not None:
             filtered_memories = [
                 msg for i, msg in enumerate(memories) if filter_func(i, msg)
@@ -374,28 +383,15 @@ class MemoryWithCompress(MemoryBase):
                     "No structured output found in response metadata",
                 )
 
-    async def delete(self, index: Union[Iterable, int]) -> None:
+    async def delete(self, indices: Union[Iterable[int], int]) -> None:
         """
         Delete memory fragments.
 
         Args:
-            index (Union[Iterable, int]):
+            indices (Union[Iterable[int], int]):
                 indices of the memory fragments to delete
         """
-        if isinstance(index, int):
-            indices = [index]
-        else:
-            indices = list(index)
-
-        # Sort indices in descending order to avoid index shifting
-        indices.sort(reverse=True)
-
-        # Delete from both _chat_history and _memory
-        for idx in indices:
-            if 0 <= idx < len(self._chat_history):
-                self._chat_history.pop(idx)
-            if 0 <= idx < len(self._memory):
-                self._memory.pop(idx)
+        await self.memory_storage.delete(indices)
 
     async def _check_length_and_compress(
         self,
@@ -408,13 +404,15 @@ class MemoryWithCompress(MemoryBase):
         is_compressed = False
         if compress_func is None:
             compress_func = self.compress_func
-        if len(self._memory) > 0:
+        if len(await self.memory_storage.get()) > 0:
             total_tokens = await count_words(
                 self.token_counter,
-                format_msgs(self._memory),
+                format_msgs(await self.memory_storage.get()),
             )
             if total_tokens > self.max_token:
-                self._memory = await compress_func(self._memory)
+                await self.memory_storage.update_all(
+                    await compress_func(await self.memory_storage.get()),
+                )
                 is_compressed = True
         return is_compressed
 
@@ -440,7 +438,7 @@ class MemoryWithCompress(MemoryBase):
                 the self.compression_trigger_func will be used.
             memory (List[Msg] | None):
                 The memory to check and compress. If None (default), the
-                _memory will be used.
+                memory_storage will be used.
 
         Returns:
             tuple[bool, List[Msg]]: A tuple containing a boolean value
@@ -453,7 +451,7 @@ class MemoryWithCompress(MemoryBase):
         """
         # if memory is not provided, use the _memory
         if memory is None:
-            memory = copy.deepcopy(self._memory)
+            memory = await self.memory_storage.get()
         # if compress_func is not provided, use the self.compress_func
         if compress_func is None:
             compress_func = self.compress_func
@@ -492,29 +490,51 @@ class MemoryWithCompress(MemoryBase):
         Get the size of the memory.
 
         Returns:
-            int: The number of messages in _chat_history.
+            int: The number of messages in chat_history_storage.
         """
-        return len(self._chat_history)
+        return len(await self.chat_history_storage.get())
 
     async def clear(self) -> None:
         """
         Clear all memory.
         """
-        self._chat_history = []
-        self._memory = []
+        await self.chat_history_storage.delete()
+        await self.memory_storage.delete()
 
     def state_dict(self) -> dict:
         """
         Get the state dictionary of the memory.
 
         Returns:
-            dict: The state dictionary containing _chat_history and _memory.
+            dict: The state dictionary containing chat_history_storage
+                and memory_storage.
         """
-        return {
-            "chat_history": [msg.to_dict() for msg in self._chat_history],
-            "memory": [msg.to_dict() for msg in self._memory],
-            "max_token": self.max_token,
-        }
+
+        async def _get_state_dict() -> dict:
+            chat_history_state_dict = [
+                _.to_dict() for _ in await self.chat_history_storage.get()
+            ]
+            memory_state_dict = [
+                _.to_dict() for _ in await self.memory_storage.get()
+            ]
+            return {
+                "max_token": self.max_token,
+                "chat_history_storage": chat_history_state_dict,
+                "memory_storage": memory_state_dict,
+            }
+
+        try:
+            # Try to get the running event loop
+            asyncio.get_running_loop()
+            # If we're in a running event loop, we need to create a new one
+            # in a separate thread or use nest_asyncio
+            # For simplicity, we'll create a new event loop
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _get_state_dict())
+                return future.result()
+        except RuntimeError:
+            # No running event loop, safe to use asyncio.run
+            return asyncio.run(_get_state_dict())
 
     def load_state_dict(
         self,
@@ -531,11 +551,34 @@ class MemoryWithCompress(MemoryBase):
                 Whether to strictly enforce that the keys in state_dict
                 match the keys returned by state_dict().
         """
-        if "chat_history" in state_dict:
-            self._chat_history = [
-                Msg.from_dict(msg) for msg in state_dict["chat_history"]
-            ]
-        if "memory" in state_dict:
-            self._memory = [Msg.from_dict(msg) for msg in state_dict["memory"]]
-        if "max_token" in state_dict:
-            self.max_token = state_dict["max_token"]
+
+        async def _load_state_dict() -> None:
+            if "chat_history_storage" in state_dict:
+                await self.chat_history_storage.update_all(
+                    [
+                        Msg.from_dict(msg)
+                        for msg in state_dict["chat_history_storage"]
+                    ],
+                )
+            if "memory_storage" in state_dict:
+                await self.memory_storage.update_all(
+                    [
+                        Msg.from_dict(msg)
+                        for msg in state_dict["memory_storage"]
+                    ],
+                )
+            if "max_token" in state_dict:
+                self.max_token = state_dict["max_token"]
+
+        try:
+            # Try to get the running event loop
+            asyncio.get_running_loop()
+            # If we're in a running event loop, we need to create a new one
+            # in a separate thread or use nest_asyncio
+            # For simplicity, we'll create a new event loop
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, _load_state_dict())
+                future.result()
+        except RuntimeError:
+            # No running event loop, safe to use asyncio.run
+            asyncio.run(_load_state_dict())

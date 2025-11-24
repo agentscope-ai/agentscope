@@ -70,7 +70,7 @@ async def main() -> None:
     current_memory = await memory_with_compress.get_memory()
     print(
         f"\n\n\n******************The memory after the first query is: "
-        f"******************\n{current_memory}\n\n",
+        f"******************\n{current_memory}\n\n******************",
     )
 
     query_2 = Msg(
@@ -82,8 +82,14 @@ async def main() -> None:
     current_memory = await memory_with_compress.get_memory()
     print(
         f"\n\n\n******************The memory after the second query is: "
-        f"******************\n{current_memory}\n\n",
+        f"******************\n{current_memory}\n\n******************",
     )
+
+    print("The state dictionary of the memory with compression:")
+    import json
+
+    state_dict = memory_with_compress.state_dict()
+    print(json.dumps(state_dict, indent=4))
 
 
 asyncio.run(main())
