@@ -330,7 +330,7 @@ In ``Toolkit``, the ``call_tool_function`` method takes a tool use block as inpu
  .. code-block:: none
 
     Tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': "Searching for 'AgentScope' with API key 'xxx'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-21 15:53:27.159_264397')
+    ToolResponse(content=[{'type': 'text', 'text': "Searching for 'AgentScope' with API key 'xxx'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-24 02:32:18.858_28a29a')
 
 
 
@@ -495,7 +495,7 @@ An example of async tool function that can be interrupted is as follows:
  .. code-block:: none
 
     Tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-21 15:53:28.162_14e92f')
+    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-24 02:32:19.862_c2b797')
     The interrupted flag:
     True
 
@@ -576,11 +576,11 @@ The example of interrupting a streaming tool function is as follows:
  .. code-block:: none
 
     Chunk 0:
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-21 15:53:28.165_11b819')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-24 02:32:19.864_e6aa65')
     The interrupted flag:  False 
 
     Chunk 1:
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-21 15:53:28.165_11b819')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-24 02:32:19.864_e6aa65')
     The interrupted flag:  True 
 
 
@@ -904,7 +904,7 @@ contain the notes of the activated tool groups.
  .. code-block:: none
 
     Text content in tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': "Active tool groups successfully: ['browser_user']. You MUST follow these notes to use the tools:\n<notes>## About browser_use Tools\n1. Use ``navigate`` to open a web page.\n2. When requiring user authentication, ask the user for the credentials\n3. ...</notes>"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-21 15:53:28.172_280158')
+    ToolResponse(content=[{'type': 'text', 'text': "Active tool groups successfully: ['browser_user']. You MUST follow these notes to use the tools:\n<notes>## About browser_use Tools\n1. Use ``navigate`` to open a web page.\n2. When requiring user authentication, ask the user for the credentials\n3. ...</notes>"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-24 02:32:19.872_2ed37b')
 
 
 
@@ -965,7 +965,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.020 seconds)
+   **Total running time of the script:** (0 minutes 1.021 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tool.py:
