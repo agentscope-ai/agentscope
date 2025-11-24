@@ -262,6 +262,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">智能体钩子函数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_eval.html">智能体评测</a></li>
@@ -329,12 +330,15 @@
         <article role="main" id="furo-main-content">
           <h1>agentscope.tool._toolkit 源代码</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
-<span class="sd">&quot;&quot;&quot;The toolkit class for tool calls in agentscope.&quot;&quot;&quot;</span>
+<span class="sd">&quot;&quot;&quot;The toolkit class for tool calls in agentscope.</span>
 
+<span class="sd">TODO: We should consider to split this `Toolkit` class in the future.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="c1"># pylint: disable=too-many-lines</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">deepcopy</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">AsyncGenerator</span><span class="p">,</span>
@@ -358,8 +362,8 @@
     <span class="n">_object_wrapper</span><span class="p">,</span>
     <span class="n">_sync_generator_wrapper</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._registered_tool_function</span><span class="w"> </span><span class="kn">import</span> <span class="n">RegisteredToolFunction</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._response</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolResponse</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolGroup</span><span class="p">,</span> <span class="n">AgentSkill</span><span class="p">,</span> <span class="n">RegisteredToolFunction</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_parse_tool_function</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..mcp</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">MCPToolFunction</span><span class="p">,</span>
@@ -379,59 +383,73 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 
 
-<span class="nd">@dataclass</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">ToolGroup</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The tool group class&quot;&quot;&quot;</span>
-
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The group name, which will be used in the reset function as the group</span>
-<span class="sd">    identifier.&quot;&quot;&quot;</span>
-    <span class="n">active</span><span class="p">:</span> <span class="nb">bool</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;If the tool group is active, meaning the tool functions in this group</span>
-<span class="sd">    is included in the JSON schema&quot;&quot;&quot;</span>
-    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The description of the tool group to tell the agent what the tool</span>
-<span class="sd">    group is about.&quot;&quot;&quot;</span>
-    <span class="n">notes</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The using notes of the tool group, to remind the agent how to use&quot;&quot;&quot;</span>
-
-
 <div class="viewcode-block" id="Toolkit">
 <a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit">[文档]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">Toolkit</span><span class="p">(</span><span class="n">StateModule</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The class that supports both function- and group-level tool management.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Toolkit is the core module to register, manage and delete tool</span>
+<span class="sd">    functions, MCP clients, Agent skills in AgentScope.</span>
 
-<span class="sd">    Use the following methods to manage the tool functions:</span>
+<span class="sd">    About tool functions:</span>
 
-<span class="sd">    - `register_tool_function`</span>
-<span class="sd">    - `remove_tool_function`</span>
+<span class="sd">    - Register and parse JSON schemas from their docstrings automatically.</span>
+<span class="sd">    - Group-wise tools management, and agentic tools activation/deactivation.</span>
+<span class="sd">    - Extend the tool function JSON schema dynamically with Pydantic BaseModel.</span>
+<span class="sd">    - Tool function execution with unified streaming interface.</span>
 
-<span class="sd">    For group-level management:</span>
+<span class="sd">    About MCP clients:</span>
 
-<span class="sd">    - `create_tool_group`</span>
-<span class="sd">    - `update_tool_groups`</span>
-<span class="sd">    - `remove_tool_groups`</span>
+<span class="sd">    - Register tool functions from MCP clients directly.</span>
+<span class="sd">    - Client-level tool functions removal.</span>
 
-<span class="sd">    MCP related methods:</span>
+<span class="sd">    About Agent skills:</span>
 
-<span class="sd">    - `register_mcp_server`</span>
-<span class="sd">    - `remove_mcp_servers`</span>
-
-<span class="sd">    To run the tool functions or get the data from the activated tools:</span>
-
-<span class="sd">    - `call_tool_function`</span>
-<span class="sd">    - `get_json_schemas`</span>
-<span class="sd">    - `get_tool_group_notes`</span>
+<span class="sd">    - Register agent skills from the given directory.</span>
+<span class="sd">    - Provide prompt for the registered skills to the agent.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">_DEFAULT_AGENT_SKILL_INSTRUCTION</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;# Agent Skills</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="s2">&quot;The agent skills are a collection of folds of instructions, scripts, &quot;</span>
+        <span class="s2">&quot;and resources that you can load dynamically to improve performance &quot;</span>
+        <span class="s2">&quot;on specialized tasks. Each agent skill has a `SKILL.md` file in its &quot;</span>
+        <span class="s2">&quot;folder that describes how to use the skill. If you want to use a &quot;</span>
+        <span class="s2">&quot;skill, you MUST read its `SKILL.md` file carefully.&quot;</span>
+    <span class="p">)</span>
+
+    <span class="n">_DEFAULT_AGENT_SKILL_TEMPLATE</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;## </span><span class="si">{name}</span>
+<span class="si">{description}</span>
+<span class="s2">Check &quot;</span><span class="si">{dir}</span><span class="s2">/SKILL.md&quot; for how to use this skill&quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="Toolkit.__init__">
 <a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.__init__">[文档]</a>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the toolkit.&quot;&quot;&quot;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">agent_skill_instruction</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">agent_skill_template</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the toolkit.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            agent_skill_instruction (`str | None`, optional):</span>
+<span class="sd">                The instruction for agent skills in the system prompt. If not</span>
+<span class="sd">                provided, a default instruction will be used.</span>
+<span class="sd">            agent_skill_template (`str | None`, optional):</span>
+<span class="sd">                The template to present one agent skill in the system prompt,</span>
+<span class="sd">                which should contain `{name}`, `{description}`, and `{dir}`</span>
+<span class="sd">                placeholders. If not provided, a default template will be used.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">RegisteredToolFunction</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">groups</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ToolGroup</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">groups</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ToolGroup</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AgentSkill</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_agent_skill_instruction</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">agent_skill_instruction</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_DEFAULT_AGENT_SKILL_INSTRUCTION</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_agent_skill_template</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">agent_skill_template</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_DEFAULT_AGENT_SKILL_TEMPLATE</span>
+        <span class="p">)</span></div>
 
 
 <div class="viewcode-block" id="Toolkit.create_tool_group">
@@ -1329,7 +1347,129 @@
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
                 <span class="sa">f</span><span class="s2">&quot;A function with name &#39;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">&#39; is already registered &quot;</span>
                 <span class="s2">&quot;in the toolkit.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+<div class="viewcode-block" id="Toolkit.register_agent_skill">
+<a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.register_agent_skill">[文档]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">register_agent_skill</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">skill_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Register agent skills from a given directory. This function will</span>
+<span class="sd">        scan the directory, read metadata from the SKILL.md file, and add</span>
+<span class="sd">        it to the skill related prompt. Developers can obtain the</span>
+<span class="sd">        skills-related prompt by calling `toolkit.get_agent_skill_prompt()`.</span>
+
+<span class="sd">        .. note:: This directory</span>
+<span class="sd">         - Must include a SKILL.md file at the top level</span>
+<span class="sd">         - The SKILL.md must have a YAML Front Matter including `name` and</span>
+<span class="sd">            `description` fields</span>
+<span class="sd">         - All files must specify a common root directory in their paths</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            skill_dir (`str`):</span>
+<span class="sd">                The path to the skill directory.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">frontmatter</span>
+
+        <span class="c1"># Check the skill directory</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">skill_dir</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The skill directory &#39;</span><span class="si">{</span><span class="n">skill_dir</span><span class="si">}</span><span class="s2">&#39; does not exist or is &quot;</span>
+                <span class="s2">&quot;not a directory.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Check SKILL.md file</span>
+        <span class="n">path_skill_md</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">skill_dir</span><span class="p">,</span> <span class="s2">&quot;SKILL.md&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">path_skill_md</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The skill directory &#39;</span><span class="si">{</span><span class="n">skill_dir</span><span class="si">}</span><span class="s2">&#39; must include a &quot;</span>
+                <span class="s2">&quot;SKILL.md file at the top level.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Check YAML Front Matter</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_skill_md</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">post</span> <span class="o">=</span> <span class="n">frontmatter</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+        <span class="n">name</span> <span class="o">=</span> <span class="n">post</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">description</span> <span class="o">=</span> <span class="n">post</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;description&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">name</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">description</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The SKILL.md file in &#39;</span><span class="si">{</span><span class="n">skill_dir</span><span class="si">}</span><span class="s2">&#39; must have a YAML Front &quot;</span>
+                <span class="s2">&quot;Matter including `name` and `description` fields.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="n">name</span><span class="p">,</span> <span class="n">description</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">description</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;An agent skill with name &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; is already registered &quot;</span>
+                <span class="s2">&quot;in the toolkit.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">AgentSkill</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+            <span class="n">description</span><span class="o">=</span><span class="n">description</span><span class="p">,</span>
+            <span class="nb">dir</span><span class="o">=</span><span class="n">skill_dir</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">&quot;Registered agent skill &#39;</span><span class="si">%s</span><span class="s2">&#39; from directory &#39;</span><span class="si">%s</span><span class="s2">&#39;.&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="p">,</span>
+            <span class="n">skill_dir</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Toolkit.remove_agent_skill">
+<a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.remove_agent_skill">[文档]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">remove_agent_skill</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove an agent skill by its name.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name (`str`):</span>
+<span class="sd">                The name of the agent skill to be removed.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;Agent skill &#39;</span><span class="si">%s</span><span class="s2">&#39; not found in the toolkit, skipping removal.&quot;</span><span class="p">,</span>
+                <span class="n">name</span><span class="p">,</span>
             <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Toolkit.get_agent_skill_prompt">
+<a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.get_agent_skill_prompt">[文档]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_agent_skill_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the prompt for all registered agent skills, which can be</span>
+<span class="sd">        attached to the system prompt for the agent.</span>
+
+<span class="sd">        The prompt is consisted of an overall instruction and the detailed</span>
+<span class="sd">        descriptions of each skill, including its name, description, and</span>
+<span class="sd">        directory.</span>
+
+<span class="sd">        .. note:: If no skill is registered, None will be returned.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `str | None`:</span>
+<span class="sd">                The combined prompt for all registered agent skills, or None</span>
+<span class="sd">                if no skill is registered.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="n">skill_descriptions</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_agent_skill_instruction</span><span class="p">,</span>
+        <span class="p">]</span> <span class="o">+</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_agent_skill_template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">_</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">],</span>
+                <span class="n">description</span><span class="o">=</span><span class="n">_</span><span class="p">[</span><span class="s2">&quot;description&quot;</span><span class="p">],</span>
+                <span class="nb">dir</span><span class="o">=</span><span class="n">_</span><span class="p">[</span><span class="s2">&quot;dir&quot;</span><span class="p">],</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">skills</span><span class="o">.</span><span class="n">values</span><span class="p">()</span>
+        <span class="p">]</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">skill_descriptions</span><span class="p">)</span></div>
+</div>
 
 </pre></div>
         </article>

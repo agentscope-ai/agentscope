@@ -147,6 +147,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="智能体技能（Agent skill） 是 Anthropic 提出的一种提升智能体在特定任务上能力的方法。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_agent_skill_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_tutorial_task_agent_skill.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">智能体技能</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="钩子（Hook）是 AgentScope 中的扩展点，允许开发者在特定位置自定义智能体行为，提供了一种灵活的方式来修改或扩展智能体的功能，而无需更改其核心实现。">
 
 .. only:: html
@@ -486,6 +503,7 @@
    /tutorial/quickstart_installation
    /tutorial/task_token
    /tutorial/workflow_concurrent_agents
+   /tutorial/task_agent_skill
    /tutorial/task_hook
    /tutorial/workflow_handoffs
    /tutorial/task_pipeline

@@ -263,6 +263,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
@@ -796,12 +797,15 @@ field of the output message.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.handle_interrupt">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">handle_interrupt</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.handle_interrupt"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.handle_interrupt" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">handle_interrupt</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.handle_interrupt"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.handle_interrupt" title="Link to this definition">¶</a></dt>
 <dd><p>The post-processing logic when the reply is interrupted by the
 user or something else.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>_msg</strong> (<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em> | </em><em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>] </em><em>| </em><em>None</em>)</p>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>_msg</strong> (<cite>Msg | list[Msg] | None</cite>, optional) -- The input message(s) to the agent.</p></li>
+<li><p><strong>_structured_model</strong> (<cite>Type[BaseModel] | None</cite>, optional) -- The required structured output model.</p></li>
+</ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
 <dd class="field-even"><p><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a></p>
