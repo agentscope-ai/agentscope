@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Get the signatures of functions and classes in the agentscope library."""
-import inspect
-from typing import Literal, Callable
-
+# pylint: disable=E0402
 import argparse
+from typing import Literal, Callable
+import inspect
+
 from pydantic import BaseModel
 
 import agentscope
@@ -102,15 +103,30 @@ class FuncOrCls(BaseModel):
 
 
 def _truncate_docstring(docstring: str, max_length: int = 200) -> str:
-    """Truncate the docstring to a maximum length."""
+    """Truncate the docstring to a maximum length.
+
+    Args:
+        docstring (`str`):
+            The docstring to truncate.
+        max_length (`int`, *optional*, defaults to 200):
+            The maximum length of the docstring.
+
+    Returns:
+        `str`:
+            The truncated docstring.
+    """
     if len(docstring) > max_length:
         return docstring[:max_length] + "..."
     return docstring
 
 
 def get_agentscope_module_signatures() -> list[FuncOrCls]:
-    """
-    Get the signatures of functions and classes in the agentscope library.
+    """Get the signatures of functions and classes in the agentscope library.
+
+    Returns:
+        `list[FuncOrCls]`:
+            A list of FuncOrCls instances representing the functions and
+            classes in the agentscope library.
     """
     signatures = []
     for module in agentscope.__all__:
@@ -153,7 +169,10 @@ def get_agentscope_module_signatures() -> list[FuncOrCls]:
                             docstring=_truncate_docstring(
                                 func_or_cls.__doc__ or "",
                             ),
-                            reference=inspect.getfile(func_or_cls),
+                            reference=(
+                                f"{file}: {start_line}-"
+                                f"{start_line + len(source_lines)}"
+                            ),
                             type="class",
                         ),
                     )

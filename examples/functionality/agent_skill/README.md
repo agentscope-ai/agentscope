@@ -1,6 +1,6 @@
 # Agent Skills in AgentScope
 
-[Agent SKill](https://claude.com/blog/skills) is an approach proposed by
+[Agent Skill](https://claude.com/blog/skills) is an approach proposed by
 Anthropic to improve agent capabilities on specific tasks.
 
 In this example, we demonstrate how to integrate Agent Skills into an

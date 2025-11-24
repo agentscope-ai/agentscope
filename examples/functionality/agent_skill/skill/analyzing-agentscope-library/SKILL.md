@@ -34,7 +34,7 @@ First decide which of the three scripts to use based on the user's question.
 First ask for the user's permission to clone the agentscope GitHub repository if you haven't done so:
 
 ```bash
-git clone -b https://github.com/agentscope-ai/agentscope
+git clone -b main https://github.com/agentscope-ai/agentscope
 ```
 
 In this repo, the `examples` folder contains various examples demonstrating how to use different features of the

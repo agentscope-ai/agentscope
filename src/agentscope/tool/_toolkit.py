@@ -19,7 +19,6 @@ from typing import (
     Awaitable,
 )
 
-import frontmatter
 import shortuuid
 from pydantic import (
     BaseModel,
@@ -988,6 +987,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
              skill_dir (`str`):
                 The path to the skill directory.
         """
+        import frontmatter
+
         # Check the skill directory
         if not os.path.isdir(skill_dir):
             raise ValueError(

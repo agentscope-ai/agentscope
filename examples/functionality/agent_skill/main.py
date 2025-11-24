@@ -33,7 +33,7 @@ async def main() -> None:
 
     agent = ReActAgent(
         name="Friday",
-        sys_prompt="""You are a helpful assistant named Friday."
+        sys_prompt="""You are a helpful assistant named Friday.
 
 # IMPORTANT
 - Don't make any assumptions. All your knowledge about AgentScope library must come from your equipped skills.
