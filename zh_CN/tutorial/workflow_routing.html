@@ -423,13 +423,13 @@ to download the full example code.</p>
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;your_choice&quot;: &quot;Content Generation&quot;,
-        &quot;task_description&quot;: &quot;用户请求创作一首诗&quot;
+        &quot;task_description&quot;: &quot;写一首诗&quot;
     },
-    &quot;id&quot;: &quot;call_2f915ccadcbb4d6dbe1235&quot;
+    &quot;id&quot;: &quot;call_100b58716f4043af89d4b0&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_2f915ccadcbb4d6dbe1235&quot;,
+    &quot;id&quot;: &quot;call_100b58716f4043af89d4b0&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -438,11 +438,13 @@ system: {
         }
     ]
 }
-Router: 我将把您的请求转给我们的内容创作团队，他们很快就会帮您创作一首诗。请您稍等片刻。
+Router: 我将为您转接到我们的诗歌创作助手，它会根据您的需求来帮助您完成这首诗的创作。请稍等片刻。
+
+[调用任务: 诗歌创作]
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;用户请求创作一首诗&quot;
+    &quot;task_description&quot;: &quot;写一首诗&quot;
 }
 </pre></div>
 </div>
@@ -541,9 +543,9 @@ Router: 我将把您的请求转给我们的内容创作团队，他们很快就
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_ca6d0a7c6d2b453e981a7b&quot;
+    &quot;id&quot;: &quot;call_a45cd653baa549d59db00d&quot;
 }
-PythonAgent: 当然！快速排序是一种非常高效的排序算法，其平均时间复杂度为 O(n log n)。以下是一个用 Python 实现的快速排序函数：
+PythonAgent: 当然！快速排序是一种非常高效的排序算法，它使用分治法策略来把一个序列分为较小和较大的两个子序列，然后递归地排序这两个子序列。以下是一个用 Python 实现的快速排序函数：
 
 ```python
 def quicksort(arr):
@@ -562,9 +564,9 @@ sorted_arr = quicksort(arr)
 print(sorted_arr)
 ```
 
-这个实现使用了递归的方法，并且选择中间元素作为基准（pivot）。数组被分为三部分：小于基准的部分、等于基准的部分和大于基准的部分。然后对小于基准和大于基准的部分递归地进行快速排序。
+这个实现使用了列表推导式来创建左、中、右三个子序列。`pivot` 选择为数组的中间元素。然后递归地对左子序列和右子序列进行排序，并将结果合并。
 
-如果你需要一个更高效的实现，可以使用原地分区的方法来减少空间复杂度。以下是一个使用原地分区的快速排序实现：
+如果你想要一个更传统的实现方式，可以使用 `in-place` 排序，这样可以减少额外的空间开销。以下是一个 `in-place` 的快速排序实现：
 
 ```python
 def quicksort_inplace(arr, low, high):
@@ -577,7 +579,7 @@ def partition(arr, low, high):
     pivot = arr[high]
     i = low - 1
     for j in range(low, high):
-        if arr[j] &lt; pivot:
+        if arr[j] &lt;= pivot:
             i += 1
             arr[i], arr[j] = arr[j], arr[i]
     arr[i + 1], arr[high] = arr[high], arr[i + 1]
@@ -589,21 +591,21 @@ quicksort_inplace(arr, 0, len(arr) - 1)
 print(arr)
 ```
 
-这个实现使用了原地分区的方法，减少了额外的空间开销。`partition` 函数用于将数组分成两部分，并返回基准的位置。`quicksort_inplace` 函数递归地对这两部分进行排序。
+在这个实现中，`partition` 函数用于将数组分成两部分，并返回枢轴的位置。`quicksort_inplace` 函数递归地对枢轴左右两边的子数组进行排序。这种方式不需要额外的空间来存储子数组，因此在空间效率上更优。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_ca6d0a7c6d2b453e981a7b&quot;,
+    &quot;id&quot;: &quot;call_a45cd653baa549d59db00d&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;当然！快速排序是一种非常高效的排序算法，其平均时间复杂度为 O(n log n)。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(sorted_arr)\n```\n\n这个实现使用了递归的方法，并且选择中间元素作为基准（pivot）。数组被分为三部分：小于基准的部分、等于基准的部分和大于基准的部分。然后对小于基准和大于基准的部分递归地进行快速排序。\n\n如果你需要一个更高效的实现，可以使用原地分区的方法来减少空间复杂度。以下是一个使用原地分区的快速排序实现：\n\n```python\ndef quicksort_inplace(arr, low, high):\n    if low &lt; high:\n        pi = partition(arr, low, high)\n        quicksort_inplace(arr, low, pi - 1)\n        quicksort_inplace(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] &lt; pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nquicksort_inplace(arr, 0, len(arr) - 1)\nprint(arr)\n```\n\n这个实现使用了原地分区的方法，减少了额外的空间开销。`partition` 函数用于将数组分成两部分，并返回基准的位置。`quicksort_inplace` 函数递归地对这两部分进行排序。&quot;
+            &quot;text&quot;: &quot;当然！快速排序是一种非常高效的排序算法，它使用分治法策略来把一个序列分为较小和较大的两个子序列，然后递归地排序这两个子序列。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(sorted_arr)\n```\n\n这个实现使用了列表推导式来创建左、中、右三个子序列。`pivot` 选择为数组的中间元素。然后递归地对左子序列和右子序列进行排序，并将结果合并。\n\n如果你想要一个更传统的实现方式，可以使用 `in-place` 排序，这样可以减少额外的空间开销。以下是一个 `in-place` 的快速排序实现：\n\n```python\ndef quicksort_inplace(arr, low, high):\n    if low &lt; high:\n        pi = partition(arr, low, high)\n        quicksort_inplace(arr, low, pi - 1)\n        quicksort_inplace(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] &lt;= pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nquicksort_inplace(arr, 0, len(arr) - 1)\nprint(arr)\n```\n\n在这个实现中，`partition` 函数用于将数组分成两部分，并返回枢轴的位置。`quicksort_inplace` 函数递归地对枢轴左右两边的子数组进行排序。这种方式不需要额外的空间来存储子数组，因此在空间效率上更优。&quot;
         }
     ]
 }
-Router: 这里提供了一个快速排序函数的 Python 实现，包括两个版本：
+Router: 这里有两个 Python 中快速排序的实现版本。第一个版本使用了列表推导式，创建了新的子序列；第二个版本则实现了原地（`in-place`）排序，减少了额外的空间开销。
 
-首先是使用递归方法，并且选择中间元素作为基准（pivot）的实现。这个版本易于理解和编写，但可能会占用较多的额外空间。
+首先是一个不使用原地操作的快速排序函数：
 
 ```python
 def quicksort(arr):
@@ -619,10 +621,10 @@ def quicksort(arr):
 # 示例用法
 arr = [3, 6, 8, 10, 1, 2, 1]
 sorted_arr = quicksort(arr)
-print(sorted_arr)
+print(sorted_arr)  # 输出应该是排好序的数组
 ```
 
-第二个版本是使用原地分区的方法，它减少了空间复杂度，更加高效。在这个版本中，`partition` 函数用于将数组分成两部分，并返回基准的位置。然后`quicksort_inplace` 函数递归地对这两部分进行排序。
+接下来是使用原地操作的快速排序函数，它更为高效，因为它不需要额外的空间来存储临时数组：
 
 ```python
 def quicksort_inplace(arr, low, high):
@@ -635,7 +637,7 @@ def partition(arr, low, high):
     pivot = arr[high]
     i = low - 1
     for j in range(low, high):
-        if arr[j] &lt; pivot:
+        if arr[j] &lt;= pivot:
             i += 1
             arr[i], arr[j] = arr[j], arr[i]
     arr[i + 1], arr[high] = arr[high], arr[i + 1]
@@ -644,13 +646,13 @@ def partition(arr, low, high):
 # 示例用法
 arr = [3, 6, 8, 10, 1, 2, 1]
 quicksort_inplace(arr, 0, len(arr) - 1)
-print(arr)
+print(arr)  # 输出应该是排好序的数组
 ```
 
-您可以根据自己的需求选择合适的版本来使用。如果您有任何疑问或需要进一步的帮助，请随时告诉我！
+你可以根据自己的需求选择适合的实现方式。如果你关心空间效率，那么推荐使用原地排序的版本。
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 24.874 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 34.832 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
