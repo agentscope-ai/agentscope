@@ -2,8 +2,8 @@
 """Get the signatures of functions and classes in the agentscope library."""
 import inspect
 from typing import Literal, Callable
-import argparse
 
+import argparse
 from pydantic import BaseModel
 
 import agentscope
