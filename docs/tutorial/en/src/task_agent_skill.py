@@ -60,7 +60,7 @@ from agentscope.tool import Toolkit
 #   ...
 #
 
-
+os.makedirs("sample_skill", exist_ok=True)
 with open("sample_skill/SKILL.md", "w", encoding="utf-8") as f:
     f.write(
         """---
