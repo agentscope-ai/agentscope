@@ -407,8 +407,9 @@
         <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">reasoning_effort</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">organization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">client_args</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">generate_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the openai client.</span>
 
@@ -429,13 +430,38 @@
 <span class="sd">            organization (`str`, default `None`):</span>
 <span class="sd">                The organization ID for OpenAI API. If not specified, it will</span>
 <span class="sd">                be read from the environment variable `OPENAI_ORGANIZATION`.</span>
-<span class="sd">            client_args (`dict`, default `None`):</span>
+<span class="sd">            client_kwargs (`dict`, default `None`):</span>
 <span class="sd">                The extra keyword arguments to initialize the OpenAI client.</span>
 <span class="sd">            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
 <span class="sd">             optional):</span>
 <span class="sd">               The extra keyword arguments used in OpenAI API generation,</span>
 <span class="sd">                e.g. `temperature`, `seed`.</span>
+<span class="sd">            **kwargs (`Any`):</span>
+<span class="sd">                Additional keyword arguments.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="c1"># Handle deprecated client_args parameter from kwargs</span>
+        <span class="n">client_args</span> <span class="o">=</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;client_args&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">client_args</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">client_kwargs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;Cannot specify both &#39;client_args&#39; and &#39;client_kwargs&#39;. &quot;</span>
+                <span class="s2">&quot;Please use only &#39;client_kwargs&#39; (client_args is deprecated).&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">client_args</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;The parameter &#39;client_args&#39; is deprecated and will be &quot;</span>
+                <span class="s2">&quot;removed in a future version. Please use &#39;client_kwargs&#39; &quot;</span>
+                <span class="s2">&quot;instead. Automatically converting &#39;client_args&#39; to &quot;</span>
+                <span class="s2">&quot;&#39;client_kwargs&#39;.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">client_kwargs</span> <span class="o">=</span> <span class="n">client_args</span>
+
+        <span class="k">if</span> <span class="n">kwargs</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">&quot;Unknown keyword arguments: </span><span class="si">%s</span><span class="s2">. These will be ignored.&quot;</span><span class="p">,</span>
+                <span class="nb">list</span><span class="p">(</span><span class="n">kwargs</span><span class="o">.</span><span class="n">keys</span><span class="p">()),</span>
+            <span class="p">)</span>
 
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">model_name</span><span class="p">,</span> <span class="n">stream</span><span class="p">)</span>
 
@@ -444,7 +470,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span>
             <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
             <span class="n">organization</span><span class="o">=</span><span class="n">organization</span><span class="p">,</span>
-            <span class="o">**</span><span class="p">(</span><span class="n">client_args</span> <span class="ow">or</span> <span class="p">{}),</span>
+            <span class="o">**</span><span class="p">(</span><span class="n">client_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
         <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">reasoning_effort</span> <span class="o">=</span> <span class="n">reasoning_effort</span>
