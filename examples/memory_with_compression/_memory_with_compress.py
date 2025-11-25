@@ -27,6 +27,7 @@ from _mc_utils import (  # noqa: E402
     count_words,
     format_msgs,
     DEFAULT_COMPRESSION_PROMPT_TEMPLATE,
+    MemoryWithCompressionState,
     MemoryCompressionSchema,
 )
 from _memory_storage import (  # noqa: E402
@@ -38,7 +39,12 @@ from _memory_storage import (  # noqa: E402
 class MemoryWithCompress(MemoryBase):
     """
     MemoryWithCompress is a memory manager that stores original messages
-    in chat_history_storage and compressed messages in memory_storage.
+    in chat_history_storage and compressed messages in memory_storage in the
+    current conversation session.
+    The difference between this memory and longterm memory is that this
+    memory is used to store the messages in the current conversation session,
+    while longterm memory is used to store the important information across
+    multiple conversation sessions.
     """
 
     def __init__(
@@ -67,6 +73,14 @@ class MemoryWithCompress(MemoryBase):
             max_token (int):
                 the maximum token count for memories in memory_storage.
                 If exceeded, MemoryWithCompress will compress the memory.
+            chat_history_storage (MessageStorageBase):
+                the storage to use for chat history, default is
+                InMemoryMessageStorage. It is used to store the original
+                messages in the current conversation session.
+            memory_storage (MessageStorageBase):
+                the storage to use for memory, default is
+                InMemoryMessageStorage. It is used to store the compressed
+                messages in the current conversation session.
             token_counter (Optional[TokenCounterBase]):
                 the token counter to use for counting tokens, default
                 is None. If None, it will return the character count of
@@ -194,7 +208,7 @@ class MemoryWithCompress(MemoryBase):
                     else self.compression_trigger_func,
                 )
                 if compressed:
-                    await self.memory_storage.update_all(compressed_memory)
+                    await self.memory_storage.replace(compressed_memory)
 
     async def direct_update_memory(
         self,
@@ -219,7 +233,7 @@ class MemoryWithCompress(MemoryBase):
                 raise TypeError(f"Expected Msg object, got {type(msg)}")
             msg_list.append(msg)
         # Deep copy messages to avoid modifying originals
-        await self.memory_storage.update_all(msg_list)
+        await self.memory_storage.replace(msg_list)
 
     async def get_memory(
         self,
@@ -272,7 +286,7 @@ class MemoryWithCompress(MemoryBase):
                     compression_trigger_func,
                 )
                 if compressed:
-                    await self.memory_storage.update_all(compressed_memory)
+                    await self.memory_storage.replace(compressed_memory)
 
         # Apply filter if provided
         memories = await self.memory_storage.get()
@@ -413,7 +427,7 @@ class MemoryWithCompress(MemoryBase):
                 format_msgs(await self.memory_storage.get()),
             )
             if total_tokens > self.max_token:
-                await self.memory_storage.update_all(
+                await self.memory_storage.replace(
                     await compress_func(await self.memory_storage.get()),
                 )
                 is_compressed = True
@@ -504,27 +518,27 @@ class MemoryWithCompress(MemoryBase):
         await self.chat_history_storage.delete()
         await self.memory_storage.delete()
 
-    def state_dict(self) -> dict:
+    def state_dict(self) -> MemoryWithCompressionState:
         """
         Get the state dictionary of the memory.
 
         Returns:
             dict: The state dictionary containing chat_history_storage
-                and memory_storage.
+                and memory_storage, and max_token.
         """
 
-        async def _get_state_dict() -> dict:
+        async def _get_state_dict() -> MemoryWithCompressionState:
             chat_history_state_dict = [
                 _.to_dict() for _ in await self.chat_history_storage.get()
             ]
             memory_state_dict = [
                 _.to_dict() for _ in await self.memory_storage.get()
             ]
-            return {
-                "max_token": self.max_token,
-                "chat_history_storage": chat_history_state_dict,
-                "memory_storage": memory_state_dict,
-            }
+            return MemoryWithCompressionState(
+                max_token=self.max_token,
+                chat_history_storage=chat_history_state_dict,
+                memory_storage=memory_state_dict,
+            )
 
         try:
             # Try to get the running event loop
@@ -541,14 +555,14 @@ class MemoryWithCompress(MemoryBase):
 
     def load_state_dict(
         self,
-        state_dict: dict,
+        state_dict: MemoryWithCompressionState,
         strict: bool = True,  # pylint: disable=unused-argument
     ) -> None:
         """
         Load the state dictionary of the memory.
 
         Args:
-            state_dict (dict):
+            state_dict (MemoryWithCompressionState):
                 The state dictionary to load.
             strict (bool):
                 Whether to strictly enforce that the keys in state_dict
@@ -557,21 +571,18 @@ class MemoryWithCompress(MemoryBase):
 
         async def _load_state_dict() -> None:
             if "chat_history_storage" in state_dict:
-                await self.chat_history_storage.update_all(
+                await self.chat_history_storage.replace(
                     [
                         Msg.from_dict(msg)
-                        for msg in state_dict["chat_history_storage"]
+                        for msg in state_dict.chat_history_storage
                     ],
                 )
-            if "memory_storage" in state_dict:
-                await self.memory_storage.update_all(
-                    [
-                        Msg.from_dict(msg)
-                        for msg in state_dict["memory_storage"]
-                    ],
+            if state_dict.memory_storage:
+                await self.memory_storage.replace(
+                    [Msg.from_dict(msg) for msg in state_dict.memory_storage],
                 )
-            if "max_token" in state_dict:
-                self.max_token = state_dict["max_token"]
+            if state_dict.max_token:
+                self.max_token = state_dict.max_token
 
         try:
             # Try to get the running event loop

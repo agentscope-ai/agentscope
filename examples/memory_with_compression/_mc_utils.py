@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Utility functions for memory compression."""
 import json
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,30 @@ class MemoryCompressionSchema(BaseModel):
     """
 
     compressed_text: str = Field(..., description="The compressed text")
+
+
+class MemoryWithCompressionState(BaseModel):
+    """
+    The state for the memory with compress memory.
+    """
+
+    max_token: int = Field(
+        ...,
+        description="The maximum token count for memories in memory_storage",
+    )
+    chat_history_storage: list[dict[str, Any]] = Field(
+        ...,
+        description=(
+            "The chat history storage in the current conversation session"
+        ),
+    )
+    memory_storage: list[dict[str, Any]] = Field(
+        ...,
+        description=(
+            "The compressed messages storage in the current "
+            "conversation session"
+        ),
+    )
 
 
 # Default compression prompt template

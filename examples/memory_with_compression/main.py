@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=wrong-import-position
 """The main entry point of the MemoryWithCompress example."""
 import asyncio
 import os
@@ -11,11 +10,13 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from _memory_with_compress import (  # noqa: E402, E501
+# Local imports must come after sys.path manipulation
+# pylint: disable=wrong-import-position
+from _memory_with_compress import (  # noqa: E402
     MemoryWithCompress,
 )
 
-# Imports must come after sys.path manipulation
+# Third-party imports
 from agentscope.agent import ReActAgent  # noqa: E402
 from agentscope.formatter import DashScopeChatFormatter  # noqa: E402
 from agentscope.message import Msg  # noqa: E402
@@ -86,10 +87,11 @@ async def main() -> None:
     )
 
     print("The state dictionary of the memory with compression:")
-    import json
 
     state_dict = memory_with_compress.state_dict()
-    print(json.dumps(state_dict, indent=4))
+    print(state_dict.model_dump_json(indent=4))
+
+    memory_with_compress.load_state_dict(state_dict)
 
 
 asyncio.run(main())
