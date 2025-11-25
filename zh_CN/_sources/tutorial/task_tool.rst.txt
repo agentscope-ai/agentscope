@@ -334,7 +334,7 @@ AgentScope 在 ``agentscope.tool`` 模块下提供了几个内置工具函数，
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-24 09:26:49.509_49f898')
+    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-25 05:55:25.690_f17922')
 
 
 
@@ -499,7 +499,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-24 09:26:50.514_5f09f8')
+    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-25 05:55:26.694_ea6b69')
     中断标志：
     True
 
@@ -580,11 +580,11 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     块 0：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-24 09:26:50.516_3cc1fa')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-25 05:55:26.697_935d20')
     中断标志： False 
 
     块 1：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-24 09:26:50.516_3cc1fa')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-25 05:55:26.697_935d20')
     中断标志： True 
 
 
@@ -709,7 +709,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
                     ],
                     "type": "object"
                 },
-                "description": "Execute the given python code in a temp file and capture the return\n\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution."
+                "description": "Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution."
             }
         }
     ]
@@ -800,7 +800,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
                     ],
                     "type": "object"
                 },
-                "description": "Execute the given python code in a temp file and capture the return\n\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution."
+                "description": "Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution."
             }
         }
     ]
@@ -861,7 +861,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
                 },
                 "type": "object"
             },
-            "description": "Choose appropriate tools to equip yourself with, so that you can\n\nfinish your task. Each argument in this function represents a group\nof related tools, and the value indicates whether to activate the\ngroup or not. Besides, the tool response of this function will\ncontain the precaution notes for using them, which you\n**MUST pay attention to and follow**. You can also reuse this function\nto check the notes of the tool groups.\n\nNote this function will `reset` the tools, so that the original tools\nwill be removed first."
+            "description": "This function allows you to activate or deactivate tool groups\ndynamically based on your current task requirements.\n**Important: Each call sets the absolute final state of ALL tool\ngroups, not incremental changes**. Any group not explicitly set to True\nwill be deactivated, regardless of its previous state.\n\n**Best practice**: Actively manage your tool groups——activate only\nwhat you need for the current task, and promptly deactivate groups as\nsoon as they are no longer needed to conserve context space.\n\nThe function will return the usage instructions for the activated tool\ngroups, which you **MUST pay attention to and follow**. You can also\nreuse this function to check the notes of the tool groups."
         }
     }
 
@@ -908,8 +908,8 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     工具响应中的文字返回：
-    Active tool groups successfully: ['browser_use']. You MUST follow these notes to use the tools:
-    <notes>## About browser_use Tools
+    Now tool groups 'browser_use' are activated. You MUST follow these notes to use these tools:
+    <notes>## About Tool Group 'browser_use'
     1. 使用 ``navigate`` 打开网页。
     2. 当需要用户身份验证时，请向用户询问凭据
     3. ...</notes>
@@ -950,11 +950,11 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     激活工具组的汇总注意事项：
-    ## About browser_use Tools
+    ## About Tool Group 'browser_use'
     1. 使用 ``navigate`` 打开网页。
     2. 当需要用户身份验证时，请向用户询问凭据
     3. ...
-    ## About map_service Tools
+    ## About Tool Group 'map_service'
     1. 使用 ``get_location`` 获取地点的位置。
     2. ...
 

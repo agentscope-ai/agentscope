@@ -543,7 +543,7 @@ openai_audio_to_text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2025-11-24 09:26:49.509_49f898&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2025-11-25 05:55:25.690_f17922&#39;)
 </pre></div>
 </div>
 </section>
@@ -674,7 +674,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-11-24 09:26:50.514_5f09f8&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-11-25 05:55:26.694_ea6b69&#39;)
 中断标志：
 True
 </pre></div>
@@ -735,11 +735,11 @@ True
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>块 0：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2025-11-24 09:26:50.516_3cc1fa&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2025-11-25 05:55:26.697_935d20&#39;)
 中断标志： False
 
 块 1：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-11-24 09:26:50.516_3cc1fa&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-11-25 05:55:26.697_935d20&#39;)
 中断标志： True
 </pre></div>
 </div>
@@ -826,7 +826,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234
                 ],
                 &quot;type&quot;: &quot;object&quot;
             },
-            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\n\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
+            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
         }
     }
 ]
@@ -900,7 +900,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234
                 ],
                 &quot;type&quot;: &quot;object&quot;
             },
-            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\n\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
+            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
         }
     }
 ]
@@ -945,7 +945,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234
             },
             &quot;type&quot;: &quot;object&quot;
         },
-        &quot;description&quot;: &quot;Choose appropriate tools to equip yourself with, so that you can\n\nfinish your task. Each argument in this function represents a group\nof related tools, and the value indicates whether to activate the\ngroup or not. Besides, the tool response of this function will\ncontain the precaution notes for using them, which you\n**MUST pay attention to and follow**. You can also reuse this function\nto check the notes of the tool groups.\n\nNote this function will `reset` the tools, so that the original tools\nwill be removed first.&quot;
+        &quot;description&quot;: &quot;This function allows you to activate or deactivate tool groups\ndynamically based on your current task requirements.\n**Important: Each call sets the absolute final state of ALL tool\ngroups, not incremental changes**. Any group not explicitly set to True\nwill be deactivated, regardless of its previous state.\n\n**Best practice**: Actively manage your tool groups——activate only\nwhat you need for the current task, and promptly deactivate groups as\nsoon as they are no longer needed to conserve context space.\n\nThe function will return the usage instructions for the activated tool\ngroups, which you **MUST pay attention to and follow**. You can also\nreuse this function to check the notes of the tool groups.&quot;
     }
 }
 </pre></div>
@@ -973,8 +973,8 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应中的文字返回：
-Active tool groups successfully: [&#39;browser_use&#39;]. You MUST follow these notes to use the tools:
-&lt;notes&gt;## About browser_use Tools
+Now tool groups &#39;browser_use&#39; are activated. You MUST follow these notes to use these tools:
+&lt;notes&gt;## About Tool Group &#39;browser_use&#39;
 1. 使用 ``navigate`` 打开网页。
 2. 当需要用户身份验证时，请向用户询问凭据
 3. ...&lt;/notes&gt;
@@ -999,11 +999,11 @@ Active tool groups successfully: [&#39;browser_use&#39;]. You MUST follow these 
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>激活工具组的汇总注意事项：
-## About browser_use Tools
+## About Tool Group &#39;browser_use&#39;
 1. 使用 ``navigate`` 打开网页。
 2. 当需要用户身份验证时，请向用户询问凭据
 3. ...
-## About map_service Tools
+## About Tool Group &#39;map_service&#39;
 1. 使用 ``get_location`` 获取地点的位置。
 2. ...
 </pre></div>

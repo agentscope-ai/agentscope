@@ -986,8 +986,31 @@
                 <span class="kc">None</span><span class="p">,</span>
             <span class="p">)</span>
 
-        <span class="c1"># Prepare function and keyword arguments</span>
+        <span class="c1"># Obtain the tool function</span>
         <span class="n">tool_func</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tools</span><span class="p">[</span><span class="n">tool_call</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]]</span>
+
+        <span class="c1"># Check if the tool function is in an inactive group</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">tool_func</span><span class="o">.</span><span class="n">group</span> <span class="o">!=</span> <span class="s2">&quot;basic&quot;</span>
+            <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">groups</span><span class="p">[</span><span class="n">tool_func</span><span class="o">.</span><span class="n">group</span><span class="p">]</span><span class="o">.</span><span class="n">active</span>
+        <span class="p">):</span>
+            <span class="k">return</span> <span class="n">_object_wrapper</span><span class="p">(</span>
+                <span class="n">ToolResponse</span><span class="p">(</span>
+                    <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+                        <span class="n">TextBlock</span><span class="p">(</span>
+                            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                            <span class="n">text</span><span class="o">=</span><span class="s2">&quot;FunctionInactiveError: The function &quot;</span>
+                            <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">tool_call</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&#39; is in the inactive &quot;</span>
+                            <span class="sa">f</span><span class="s2">&quot;group &#39;</span><span class="si">{</span><span class="n">tool_func</span><span class="o">.</span><span class="n">group</span><span class="si">}</span><span class="s2">&#39;. Activate the tool &quot;</span>
+                            <span class="s2">&quot;group by calling &#39;reset_equipped_tools&#39; &quot;</span>
+                            <span class="s2">&quot;first to use this tool.&quot;</span><span class="p">,</span>
+                        <span class="p">),</span>
+                    <span class="p">],</span>
+                <span class="p">),</span>
+                <span class="kc">None</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Prepare keyword arguments</span>
         <span class="n">kwargs</span> <span class="o">=</span> <span class="p">{</span>
             <span class="o">**</span><span class="n">tool_func</span><span class="o">.</span><span class="n">preset_kwargs</span><span class="p">,</span>
             <span class="o">**</span><span class="p">(</span><span class="n">tool_call</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;input&quot;</span><span class="p">,</span> <span class="p">{})</span> <span class="ow">or</span> <span class="p">{}),</span>
@@ -1279,7 +1302,7 @@
             <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">active</span> <span class="ow">and</span> <span class="n">group</span><span class="o">.</span><span class="n">notes</span><span class="p">:</span>
                 <span class="n">collected_notes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                     <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-                        <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;## About </span><span class="si">{</span><span class="n">group_name</span><span class="si">}</span><span class="s2"> Tools&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">.</span><span class="n">notes</span><span class="p">],</span>
+                        <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;## About Tool Group &#39;</span><span class="si">{</span><span class="n">group_name</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">.</span><span class="n">notes</span><span class="p">],</span>
                     <span class="p">),</span>
                 <span class="p">)</span>
         <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">collected_notes</span><span class="p">)</span></div>
@@ -1288,17 +1311,22 @@
 <div class="viewcode-block" id="Toolkit.reset_equipped_tools">
 <a class="viewcode-back" href="../../../api/agentscope.tool.html#agentscope.tool.Toolkit.reset_equipped_tools">[文档]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">reset_equipped_tools</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Choose appropriate tools to equip yourself with, so that you can</span>
-<span class="sd">        finish your task. Each argument in this function represents a group</span>
-<span class="sd">        of related tools, and the value indicates whether to activate the</span>
-<span class="sd">        group or not. Besides, the tool response of this function will</span>
-<span class="sd">        contain the precaution notes for using them, which you</span>
-<span class="sd">        **MUST pay attention to and follow**. You can also reuse this function</span>
-<span class="sd">        to check the notes of the tool groups.</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;This function allows you to activate or deactivate tool groups</span>
+<span class="sd">        dynamically based on your current task requirements.</span>
+<span class="sd">        **Important: Each call sets the absolute final state of ALL tool</span>
+<span class="sd">        groups, not incremental changes**. Any group not explicitly set to True</span>
+<span class="sd">        will be deactivated, regardless of its previous state.</span>
 
-<span class="sd">        Note this function will `reset` the tools, so that the original tools</span>
-<span class="sd">        will be removed first.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
+<span class="sd">        **Best practice**: Actively manage your tool groups——activate only</span>
+<span class="sd">        what you need for the current task, and promptly deactivate groups as</span>
+<span class="sd">        soon as they are no longer needed to conserve context space.</span>
+
+<span class="sd">        The function will return the usage instructions for the activated tool</span>
+<span class="sd">        groups, which you **MUST pay attention to and follow**. You can also</span>
+<span class="sd">        reuse this function to check the notes of the tool groups.&quot;&quot;&quot;</span>
+
+        <span class="c1"># Deactivate all tool groups first</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">update_tool_groups</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">groups</span><span class="o">.</span><span class="n">keys</span><span class="p">()),</span> <span class="n">active</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 
         <span class="n">to_activate</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
@@ -1320,13 +1348,28 @@
 
         <span class="n">notes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_activated_notes</span><span class="p">()</span>
 
+        <span class="n">text_response</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">to_activate</span><span class="p">:</span>
+            <span class="n">text_response</span> <span class="o">+=</span> <span class="p">(</span>
+                <span class="s2">&quot;Now tool groups &quot;</span>
+                <span class="o">+</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">_</span><span class="si">}</span><span class="s2">&#39;&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">to_activate</span><span class="p">])</span>
+                <span class="o">+</span> <span class="s2">&quot; are activated.&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">notes</span><span class="p">:</span>
+            <span class="n">text_response</span> <span class="o">+=</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot; You MUST follow these notes to use these tools:</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&lt;notes&gt;</span><span class="si">{</span><span class="n">notes</span><span class="si">}</span><span class="s2">&lt;/notes&gt;&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">text_response</span><span class="p">:</span>
+            <span class="n">text_response</span> <span class="o">=</span> <span class="s2">&quot;All tool groups are now deactivated currently.&quot;</span>
+
         <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
             <span class="n">content</span><span class="o">=</span><span class="p">[</span>
                 <span class="n">TextBlock</span><span class="p">(</span>
                     <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
-                    <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Active tool groups successfully: </span><span class="si">{</span><span class="n">to_activate</span><span class="si">}</span><span class="s2">. &quot;</span>
-                    <span class="s2">&quot;You MUST follow these notes to use the tools:</span><span class="se">\n</span><span class="s2">&quot;</span>
-                    <span class="sa">f</span><span class="s2">&quot;&lt;notes&gt;</span><span class="si">{</span><span class="n">notes</span><span class="si">}</span><span class="s2">&lt;/notes&gt;&quot;</span><span class="p">,</span>
+                    <span class="n">text</span><span class="o">=</span><span class="n">text_response</span><span class="p">,</span>
                 <span class="p">),</span>
             <span class="p">],</span>
         <span class="p">)</span></div>
