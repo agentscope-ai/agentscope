@@ -10,10 +10,6 @@ class MessageStorageBase:
     """The message storage base class."""
 
     @abstractmethod
-    async def get_storage_client(self) -> Any:
-        """Get the storage client."""
-
-    @abstractmethod
     async def add(self, messages: list[Msg], **kwargs: Any) -> None:
         """Record the messages into the message storage."""
 
@@ -48,10 +44,6 @@ class InMemoryMessageStorage(MessageStorageBase):
         super().__init__()
         self._storage_client = []
 
-    async def get_storage_client(self) -> Any:
-        """Get the storage client."""
-        return self._storage_client
-
     async def add(self, messages: list[Msg], **kwargs: Any) -> None:
         """Record the messages into the message storage."""
         self._storage_client.extend(messages)
@@ -84,7 +76,5 @@ class InMemoryMessageStorage(MessageStorageBase):
         self._storage_client = messages
 
     def get_client(self) -> list[Msg]:
-        """get the underlying storage client, so that developers can
-        access the full functionality
-        """
+        """get the underlying storage client."""
         return self._storage_client
