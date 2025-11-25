@@ -16,6 +16,8 @@ from typing import (
     Union,
 )
 
+from pydantic import ValidationError
+
 from agentscope.formatter import FormatterBase
 from agentscope.memory import MemoryBase
 from agentscope.message import Msg
@@ -362,7 +364,21 @@ class MemoryWithCompress(MemoryBase):
                     structured_data = content_chunk.metadata
             if structured_data:
                 # Validate and parse the structured output
-                parsed_schema = MemoryCompressionSchema(**structured_data)
+                if not isinstance(structured_data, dict):
+                    raise ValueError(
+                        f"Expected structured_data to be a dict, "
+                        f"got {type(structured_data)}: {structured_data}",
+                    )
+                try:
+                    parsed_schema = MemoryCompressionSchema(**structured_data)
+                except ValidationError as e:
+                    raise ValueError(
+                        f"Failed to parse memory compression schema "
+                        f"from stream metadata. "
+                        f"Metadata: {structured_data}. "
+                        f"Validation errors: "
+                        f"{e.errors() if hasattr(e, 'errors') else str(e)}",
+                    ) from e
                 return [
                     Msg(
                         name="assistant",
@@ -382,7 +398,21 @@ class MemoryWithCompress(MemoryBase):
         else:
             if res.metadata:
                 # Validate and parse the structured output
-                parsed_schema = MemoryCompressionSchema(**res.metadata)
+                if not isinstance(res.metadata, dict):
+                    raise ValueError(
+                        f"Expected metadata to be a dict, "
+                        f"got {type(res.metadata)}: {res.metadata}",
+                    )
+                try:
+                    parsed_schema = MemoryCompressionSchema(**res.metadata)
+                except ValidationError as e:
+                    raise ValueError(
+                        f"Failed to parse memory compression schema "
+                        f"from metadata. "
+                        f"Metadata: {res.metadata}. "
+                        f"Validation errors: "
+                        f"{e.errors() if hasattr(e, 'errors') else str(e)}",
+                    ) from e
                 return [
                     Msg(
                         name="assistant",
@@ -416,7 +446,17 @@ class MemoryWithCompress(MemoryBase):
         | None = None,
     ) -> bool:
         """
-        Check if the memory needs compression and compress it if needed.
+        Check if the memory needs compression by the provided
+        compress_func and compress it if needed. If compress_func is called,
+        the self._memory_storage will be replaced with the compressed memory.
+
+        Args:
+            compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
+                the function to compress the memory, it should return
+                an Awaitable[List[Msg]] object, the input is the list
+                of messages to compress. If None (default), the
+                self.compress_func will be used. if provided, it will replace
+                the self.compress_func in the check_length_and_compress call.
         """
         is_compressed = False
         if compress_func is None:
@@ -442,7 +482,9 @@ class MemoryWithCompress(MemoryBase):
         memory: List[Msg] | None = None,
     ) -> tuple[bool, List[Msg]]:
         """
-        Check if the memory needs compression and compress it if needed.
+        Check if the memory needs compression by the provided
+        compression_trigger_func and compress it by the provided
+        compress_func if needed.
 
         Args:
             compress_func (Callable[[List[Msg]], Awaitable[List[Msg]]]):
@@ -455,7 +497,7 @@ class MemoryWithCompress(MemoryBase):
                 the self.compression_trigger_func will be used.
             memory (List[Msg] | None):
                 The memory to check and compress. If None (default), the
-                memory_storage will be used.
+                self.memory_storage will be used.
 
         Returns:
             tuple[bool, List[Msg]]: A tuple containing a boolean value
