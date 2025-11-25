@@ -133,7 +133,7 @@ class ReMeShortTermMemory(InMemoryMemory):
             chat_id=uuid4().hex,
         )
         logger.info(
-            "result123=%s",
+            "summary_working_memory_for_as.result=%s",
             json.dumps(result, ensure_ascii=False, indent=2),
         )
 

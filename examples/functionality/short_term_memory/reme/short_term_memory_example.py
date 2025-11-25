@@ -63,6 +63,9 @@ async def main() -> None:
         'limit' parameters. Use offset and limit to paginate through large
         files.
 
+        Note: It's recommended to use the `grep` tool first to locate the line
+        numbers of interest before calling this function.
+
         Args:
             file_path (`str`):
                 The path to the file to read. Can be an absolute or relative
@@ -88,14 +91,21 @@ async def main() -> None:
             ],
         )
 
+    # These two tools are provided as examples. You can replace them with your
+    # own retrieval tools, such as vector database embedding retrieval or other
+    # search solutions that fit your use case.
     toolkit.register_tool_function(grep)
     toolkit.register_tool_function(read_file)
 
     llm = DashScopeChatModel(
-        model_name="qwen3-coder-30b-a3b-instruct",
         # model_name="qwen3-max",
+        model_name="qwen3-coder-30b-a3b-instruct",
         api_key=os.environ.get("DASHSCOPE_API_KEY"),
         stream=False,
+        generate_kwargs={
+            "temperature": 0.001,
+            "seed": 0,
+        },
     )
 
     short_term_memory = ReMeShortTermMemory(
@@ -151,10 +161,10 @@ async def main() -> None:
             name="react",
             sys_prompt=(
                 "You are a helpful assistant. "
-                "工具调用的调用可能会被缓存到本地"
+                "工具调用的调用可能会被缓存到本地。"
                 "可以先使用`Grep`匹配关键词或者正则表达式所在行数，然后通过`ReadFile`读取位置附近的代码。"
                 "如果没有找到匹配项，永远不要放弃尝试，尝试其他的参数，或者放松匹配条件，比如只搜索部分关键词。"
-                "`Grep`之后通过 `ReadFile` 命令，你可以从指定偏移位置`offset`+长度`limit`开始查看内容, "
+                "`Grep`之后通过`ReadFile`命令，你可以从指定偏移位置`offset`+长度`limit`开始查看内容, "
                 "limit最大100。"
                 "如果当前内容不足，`ReadFile` 命令也可以不断尝试不同的`offset`和`limit`参数"
             ),
