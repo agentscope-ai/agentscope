@@ -112,3 +112,13 @@ ContentBlock = (
     | AudioBlock
     | VideoBlock
 )
+
+ContentBlockTypes = Literal[
+    "text",
+    "thinking",
+    "tool_use",
+    "tool_result",
+    "image",
+    "audio",
+    "video",
+]

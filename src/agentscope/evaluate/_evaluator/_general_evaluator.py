@@ -116,8 +116,10 @@ class GeneralEvaluator(EvaluatorBase):
 
         await self._save_evaluation_meta()
 
-        for repeat_id in range(self.n_repeat):
-            for task in self.benchmark:
+        for task in self.benchmark:
+            await self._save_task_meta(task)
+
+            for repeat_id in range(self.n_repeat):
                 await self.run_solution(
                     str(repeat_id),
                     task,

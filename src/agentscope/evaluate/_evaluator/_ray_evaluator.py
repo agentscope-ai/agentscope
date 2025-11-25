@@ -120,7 +120,7 @@ class RaySolutionActor:
                 solution_result,
             )
 
-        # Evaluate the solution with the
+        # Evaluate the solution with the metrics
         futures = []
         for metric in task.metrics:
             if not storage.evaluation_result_exists(
@@ -191,12 +191,19 @@ class RayEvaluator(EvaluatorBase):
 
         await self._save_evaluation_meta()
 
+        # Create solution actors
         futures = []
         solution_actor = RaySolutionActor.options(
             max_concurrency=self.n_workers,
         ).remote(n_workers=self.n_workers)
-        for repeat_id in range(self.n_repeat):
-            for task in self.benchmark:
+
+        # Iterate over all tasks in the benchmark
+        for task in self.benchmark:
+            # Save the task meta information
+            await self._save_task_meta(task)
+
+            # Run n_repeat times
+            for repeat_id in range(self.n_repeat):
                 futures.append(
                     solution_actor.run.remote(
                         self.storage,
@@ -205,7 +212,10 @@ class RayEvaluator(EvaluatorBase):
                         solution,
                     ),
                 )
+
+        # Await all the futures
         if futures:
             await asyncio.gather(*futures)
 
+        # Aggregate the results
         await self.aggregate()

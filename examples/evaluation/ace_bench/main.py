@@ -13,7 +13,6 @@ from agentscope.evaluate import (
     ACEBenchmark,
     Task,
     SolutionOutput,
-    RayEvaluator,
     FileEvaluatorStorage,
     ACEPhone,
 )
@@ -46,7 +45,7 @@ async def react_agent_solution(
         "Try to solve the task as best as you can.",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen-max",
+            model_name="qwen3-max",
             stream=False,
         ),
         formatter=DashScopeChatFormatter(),
@@ -65,12 +64,8 @@ async def react_agent_solution(
     await agent.print(msg_input)
     await agent(msg_input)
 
-    # Obtain tool calls sequence
-    memory_msgs = await agent.memory.get_memory()
-    # Obtain tool_use blocks as trajectory
-    traj = []
-    for msg in memory_msgs:
-        traj.extend(msg.get_content_blocks("tool_use"))
+    # Obtain the trajectory of the agent's memory
+    traj = [_.to_dict() for _ in await agent.memory.get_memory()]
 
     # Obtain the final state of the phone and travel system
     phone: ACEPhone = ace_task.metadata["phone"]
@@ -111,7 +106,9 @@ async def main() -> None:
 
     # Create the evaluator
     #  or GeneralEvaluator, which more suitable for local debug
-    evaluator = RayEvaluator(
+    from agentscope.evaluate import GeneralEvaluator
+
+    evaluator = GeneralEvaluator(
         name="ACEbench evaluation",
         benchmark=ACEBenchmark(
             data_dir=args.data_dir,

@@ -7,6 +7,7 @@ from typing import Any, Callable
 from .._metric_base import MetricResult
 from .._solution import SolutionOutput
 from ...agent import AgentBase
+from ...types import JSONSerializableObject
 
 
 class EvaluatorStorageBase:
@@ -169,6 +170,22 @@ class EvaluatorStorageBase:
         Args:
             meta_info (`dict`):
                 A dictionary containing the meta information.
+        """
+
+    @abstractmethod
+    def save_task_meta(
+        self,
+        task_id: str,
+        meta_info: dict[str, JSONSerializableObject],
+    ) -> None:
+        """Save the task meta information.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            meta_info (`dict[str, JSONSerializableObject]`):
+                The task meta information to be saved, which should be JSON
+                serializable.
         """
 
     @abstractmethod

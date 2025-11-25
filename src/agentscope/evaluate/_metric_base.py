@@ -43,8 +43,22 @@ class MetricType(str, Enum):
     """The metric result is a numerical value, e.g. 0.95 or 100."""
 
 
+@dataclass
 class MetricBase(ABC):
     """The base class for _metric in evaluation."""
+
+    name: str
+    """The name of the Metric"""
+
+    metric_type: MetricType
+    """The metric type"""
+
+    description: str | None
+    """The description of the metric"""
+
+    categories: list[str] | None
+    """The candidate categories. If `metric_type` is "category", the
+    categories must be provided, otherwise it should be `None`."""
 
     def __init__(
         self,

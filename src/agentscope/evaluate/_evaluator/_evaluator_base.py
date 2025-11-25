@@ -3,6 +3,7 @@
 import collections
 import json
 from abc import abstractmethod
+from dataclasses import asdict
 from typing import Callable, Coroutine, Any
 
 from .._solution import SolutionOutput
@@ -74,6 +75,15 @@ class EvaluatorBase:
                 },
                 "schema_version": 1,
             },
+        )
+
+    async def _save_task_meta(self, task: Task) -> None:
+        """Save the task meta information."""
+        meta_info = asdict(task)
+        meta_info.pop("metadata")
+        self.storage.save_task_meta(
+            task.id,
+            meta_info,
         )
 
     async def aggregate(self) -> None:  # pylint: disable=too-many-branches
