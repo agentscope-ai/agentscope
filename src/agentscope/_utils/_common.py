@@ -321,7 +321,7 @@ def _parse_tool_function(
     if include_long_description and docstring.long_description is not None:
         descriptions.append(docstring.long_description)
 
-    func_description = "\n\n".join(descriptions)
+    func_description = "\n".join(descriptions)
 
     # Create a dynamic model with the function signature
     fields = {}

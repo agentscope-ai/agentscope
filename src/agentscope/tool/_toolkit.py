@@ -624,8 +624,31 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 None,
             )
 
-        # Prepare function and keyword arguments
+        # Obtain the tool function
         tool_func = self.tools[tool_call["name"]]
+
+        # Check if the tool function is in an inactive group
+        if (
+            tool_func.group != "basic"
+            and not self.groups[tool_func.group].active
+        ):
+            return _object_wrapper(
+                ToolResponse(
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text="FunctionInactiveError: The function "
+                            f"'{tool_call['name']}' is in the inactive "
+                            f"group '{tool_func.group}'. Active the tool "
+                            "group by calling 'reset_equipped_tools' "
+                            "first to use this tool.",
+                        ),
+                    ],
+                ),
+                None,
+            )
+
+        # Prepare keyword arguments
         kwargs = {
             **tool_func.preset_kwargs,
             **(tool_call.get("input", {}) or {}),
@@ -905,23 +928,28 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             if group.active and group.notes:
                 collected_notes.append(
                     "\n".join(
-                        [f"## About {group_name} Tools", group.notes],
+                        [f"## About Tool Group '{group_name}'", group.notes],
                     ),
                 )
         return "\n".join(collected_notes)
 
     def reset_equipped_tools(self, **kwargs: Any) -> ToolResponse:
-        """Choose appropriate tools to equip yourself with, so that you can
-        finish your task. Each argument in this function represents a group
-        of related tools, and the value indicates whether to activate the
-        group or not. Besides, the tool response of this function will
-        contain the precaution notes for using them, which you
-        **MUST pay attention to and follow**. You can also reuse this function
-        to check the notes of the tool groups.
+        """This function allows you to active or deactivate tool groups
+        dynamically based on your current task requirements.
+        **Important: Each call sets the absolute final state of ALL tool
+        groups, not incremental changes**. Any group not explicitly set to True
+        will be deactivated, regardless of its previous state.
 
-        Note this function will `reset` the tools, so that the original tools
-        will be removed first.
-        """
+        **Best practice**: Actively manage your tool groups——activate only
+        what you need for the current task, and promptly deactivate groups as
+        soon as they are no longer needed to conserve context space.
+
+        The function will return the usage instructions for the activated tool
+        groups, which you **MUST pay attention to and follow**. You can also
+        reuse this function to check the notes of the tool groups."""
+
+        # Deactivate all tool groups first
+        self.update_tool_groups(list(self.groups.keys()), active=False)
 
         to_activate = []
         for key, value in kwargs.items():
@@ -943,13 +971,28 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         notes = self.get_activated_notes()
 
+        text_response = ""
+        if to_activate:
+            text_response += (
+                "Now tool groups "
+                + ", ".join([f"'{_}'" for _ in to_activate])
+                + " are activated."
+            )
+
+        if notes:
+            text_response += (
+                f" You MUST follow these notes to use these tools:\n"
+                f"<notes>{notes}</notes>"
+            )
+
+        if not text_response:
+            text_response = "All tool groups are now deactivated currently."
+
         return ToolResponse(
             content=[
                 TextBlock(
                     type="text",
-                    text=f"Active tool groups successfully: {to_activate}. "
-                    "You MUST follow these notes to use the tools:\n"
-                    f"<notes>{notes}</notes>",
+                    text=text_response,
                 ),
             ],
         )
