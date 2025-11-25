@@ -11,7 +11,10 @@ from ..token import TokenCounterBase
 
 
 class DeepSeekChatFormatter(TruncatedFormatterBase):
-    """Formatter for DeepSeek messages."""
+    """The DeepSeek formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `role` field to identify different
+    entities in the conversation.
+    """
 
     support_tools_api: bool = True
     """Whether support tools API"""
@@ -72,13 +75,14 @@ class DeepSeekChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
+                    textual_output, _ = self.convert_tool_result_to_string(
+                        block.get("output"),  # type: ignore[arg-type]
+                    )
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": block.get("id"),
-                            "content": self.convert_tool_result_to_string(
-                                block.get("output"),  # type: ignore[arg-type]
-                            ),
+                            "content": textual_output,
                             "name": block.get("name"),
                         },
                     )

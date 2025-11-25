@@ -231,7 +231,11 @@ class ReActAgent(ReActAgentBase):
     @property
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
-        return self._sys_prompt
+        agent_skill_prompt = self.toolkit.get_agent_skill_prompt()
+        if agent_skill_prompt:
+            return self._sys_prompt + "\n\n" + agent_skill_prompt
+        else:
+            return self._sys_prompt
 
     @trace_reply
     async def reply(  # pylint: disable=too-many-branches
@@ -574,9 +578,17 @@ class ReActAgent(ReActAgentBase):
     async def handle_interrupt(
         self,
         _msg: Msg | list[Msg] | None = None,
+        _structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
-        user or something else."""
+        user or something else.
+
+        Args:
+            _msg (`Msg | list[Msg] | None`, optional):
+                The input message(s) to the agent.
+            _structured_model (`Type[BaseModel] | None`, optional):
+                The required structured output model.
+        """
 
         response_msg = Msg(
             self.name,
@@ -585,7 +597,7 @@ class ReActAgent(ReActAgentBase):
             "assistant",
             metadata={
                 # Expose this field to indicate the interruption
-                "is_interrupted": True,
+                "_is_interrupted": True,
             },
         )
 

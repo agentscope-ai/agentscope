@@ -79,7 +79,7 @@ from agentscope.tool import Toolkit, execute_python_code
 #
 #       - ``agent_control``: allow agent to control the long-term memory by itself
 #       - ``static_control``: retrieving and recording from/to long-term memory will happen in the beginning/end of each reply.
-#       - ``both``: active the above two modes at the same time
+#       - ``both``: activate the above two modes at the same time
 #   * - ``enable_meta_tool``
 #     - :ref:`tool`
 #     - Whether to enable the meta tool, which allows the agent to manage tools by itself
