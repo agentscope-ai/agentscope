@@ -4,6 +4,7 @@
 import asyncio
 import concurrent.futures
 import copy
+import functools
 import json
 from typing import (
     Any,
@@ -13,18 +14,10 @@ from typing import (
     List,
     Optional,
     Sequence,
+    TypeVar,
     Union,
 )
-
 from pydantic import ValidationError
-
-from agentscope.formatter import FormatterBase
-from agentscope.memory import MemoryBase
-from agentscope.message import Msg
-from agentscope.model import ChatModelBase
-from agentscope.token import TokenCounterBase
-
-# pylint: disable=wrong-import-order
 from _mc_utils import (  # noqa: E402
     count_words,
     format_msgs,
@@ -36,6 +29,29 @@ from _memory_storage import (  # noqa: E402
     InMemoryMessageStorage,
     MessageStorageBase,
 )
+from agentscope.formatter import FormatterBase
+from agentscope.memory import MemoryBase
+from agentscope.message import Msg
+from agentscope.model import ChatModelBase
+from agentscope.token import TokenCounterBase
+
+T = TypeVar("T")
+
+
+def ensure_health(
+    func: Callable[..., Awaitable[T]],
+) -> Callable[..., Awaitable[T]]:
+    """
+    Async decorator that ensures the MemoryWithCompress health check
+    passes before method execution.
+    """
+
+    @functools.wraps(func)
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> T:
+        await self.check_health()
+        return await func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class MemoryWithCompress(MemoryBase):
@@ -137,6 +153,18 @@ class MemoryWithCompress(MemoryBase):
         self.compression_on_add = compression_on_add
         self.compression_on_get = compression_on_get
 
+    async def check_health(self) -> None:
+        """
+        Check if the memory system is healthy.
+        Verifies that storage backends and model are accessible.
+        """
+        # Check if chat_history_storage is accessible
+        if not await self.chat_history_storage.health():
+            await self.chat_history_storage.start()
+        if not await self.memory_storage.health():
+            await self.memory_storage.start()
+
+    @ensure_health
     async def add(
         self,
         msgs: Union[Sequence[Msg], Msg, None],
@@ -212,6 +240,7 @@ class MemoryWithCompress(MemoryBase):
                 if compressed:
                     await self.memory_storage.replace(compressed_memory)
 
+    @ensure_health
     async def direct_update_memory(
         self,
         msgs: Union[Sequence[Msg], Msg, None],
@@ -237,6 +266,7 @@ class MemoryWithCompress(MemoryBase):
         # Deep copy messages to avoid modifying originals
         await self.memory_storage.replace(msg_list)
 
+    @ensure_health
     async def get_memory(
         self,
         recent_n: Optional[int] = None,
@@ -430,6 +460,7 @@ class MemoryWithCompress(MemoryBase):
                     "No structured output found in response metadata",
                 )
 
+    @ensure_health
     async def delete(self, indices: Union[Iterable[int], int]) -> None:
         """
         Delete memory fragments.
@@ -440,6 +471,7 @@ class MemoryWithCompress(MemoryBase):
         """
         await self.memory_storage.delete(indices)
 
+    @ensure_health
     async def _check_length_and_compress(
         self,
         compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
@@ -473,6 +505,7 @@ class MemoryWithCompress(MemoryBase):
                 is_compressed = True
         return is_compressed
 
+    @ensure_health
     async def check_and_compress(
         self,
         compress_func: Callable[[List[Msg]], Awaitable[List[Msg]]]
@@ -535,6 +568,7 @@ class MemoryWithCompress(MemoryBase):
             compressed_memory = memory
         return should_compress, compressed_memory
 
+    @ensure_health
     async def retrieve(self, *args: Any, **kwargs: Any) -> None:
         """
         Retrieve items from the memory.
@@ -544,6 +578,7 @@ class MemoryWithCompress(MemoryBase):
             "Use get_memory() instead of retrieve() for MemoryWithCompress",
         )
 
+    @ensure_health
     async def size(self) -> int:
         """
         Get the size of the memory.
@@ -553,6 +588,7 @@ class MemoryWithCompress(MemoryBase):
         """
         return len(await self.chat_history_storage.get())
 
+    @ensure_health
     async def clear(self) -> None:
         """
         Clear all memory.
