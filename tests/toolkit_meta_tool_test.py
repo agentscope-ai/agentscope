@@ -70,7 +70,7 @@ class ToolkitMetaToolTest(IsolatedAsyncioTestCase):
                     "properties": {},
                     "type": "object",
                 },
-                "description": """This function allows you to active or \
+                "description": """This function allows you to activate or \
 deactivate tool groups
 dynamically based on your current task requirements.
 **Important: Each call sets the absolute final state of ALL tool
@@ -267,7 +267,7 @@ reuse this function to check the notes of the tool groups.""",
                 chunk.content[0]["text"],
                 "FunctionInactiveError: The function 'tool_function_1' "
                 "is in the inactive group 'browser_use'. "
-                "Active the tool group by calling 'reset_equipped_tools' "
+                "Activate the tool group by calling 'reset_equipped_tools' "
                 "first to use this tool.",
             )
 

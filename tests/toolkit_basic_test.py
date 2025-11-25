@@ -183,7 +183,7 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                     "required": ["arg1"],
                     "type": "object",
                 },
-                "description": "A sync function for testing.\n\n"
+                "description": "A sync function for testing.\n"
                 "Long description.",
             },
         }
@@ -395,7 +395,7 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                                 "arg3",
                             ],
                         },
-                        "description": "A sync function for testing.\n\n"
+                        "description": "A sync function for testing.\n"
                         "Long description.",
                     },
                 },
@@ -549,7 +549,7 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                             "properties": {},
                             "type": "object",
                         },
-                        "description": "A test function.\n\n"
+                        "description": "A test function.\n"
                         "Note this function is test.",
                     },
                 },
@@ -809,7 +809,7 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
             [],
         )
 
-        # Active the tool group
+        # Activate the tool group
         self.toolkit.update_tool_groups(["my_group"], True)
         self.assertListEqual(
             self.toolkit.get_json_schemas(),

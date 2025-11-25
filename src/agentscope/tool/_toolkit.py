@@ -639,7 +639,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                             type="text",
                             text="FunctionInactiveError: The function "
                             f"'{tool_call['name']}' is in the inactive "
-                            f"group '{tool_func.group}'. Active the tool "
+                            f"group '{tool_func.group}'. Activate the tool "
                             "group by calling 'reset_equipped_tools' "
                             "first to use this tool.",
                         ),
@@ -934,7 +934,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         return "\n".join(collected_notes)
 
     def reset_equipped_tools(self, **kwargs: Any) -> ToolResponse:
-        """This function allows you to active or deactivate tool groups
+        """This function allows you to activate or deactivate tool groups
         dynamically based on your current task requirements.
         **Important: Each call sets the absolute final state of ALL tool
         groups, not incremental changes**. Any group not explicitly set to True
