@@ -7,6 +7,59 @@ This example demonstrates how to
 - integrate short-term memory with ReAct agents for efficient tool usage and context management, and
 - configure DashScope models for memory operations.
 
+## Why Context Management (Short-Term Memory)?
+
+### The Challenge: From Prompt Engineering to Context Engineering
+
+As AI agents evolved from simple chatbots to sophisticated autonomous systems, the focus shifted from "prompt engineering" to "context engineering". While prompt engineering focused on crafting effective instructions for language models, context engineering addresses a more fundamental challenge: **managing the ever-growing conversation and tool execution history that agents accumulate**.
+
+### The Core Problem: Context Explosion
+
+Agentic systems work by binding LLMs with tools and running them in a loop where the agent decides which tools to call and feeds results back into the message history. This creates a snowball effect:
+
+- **Rapid Growth**: A seemingly simple task can trigger 50+ tool calls, with production agents often running hundreds of conversation turns
+- **Large Outputs**: Each tool call can return substantial text, consuming massive amounts of tokens
+- **Memory Pressure**: The context window quickly fills up as messages and tool results accumulate chronologically
+
+### The Consequence: Context Rot
+
+When context grows too large, model performance degrades significantly—a phenomenon known as **"context rot"**:
+
+- **Repetitive Responses**: The model starts generating redundant or circular answers
+- **Slower Reasoning**: Inference becomes noticeably slower as context length increases
+- **Quality Degradation**: Overall response quality and coherence decline
+- **Lost Focus**: The model struggles to identify relevant information in the bloated context
+
+### The Fundamental Paradox
+
+Agents face a critical tension:
+
+- **Need Rich Context**: Agents require comprehensive historical information to make informed decisions
+- **Suffer from Large Context**: Excessive context causes performance degradation and inefficiency
+
+**Context management aims to keep "just enough" information in the window**—sufficient for effective decision-making while leaving room for retrieval and expansion, without overwhelming the model.
+
+### Why Short-Term Memory Management Matters
+
+Effective short-term memory management is essential for:
+
+1. **Maintaining Performance**: Keeping context within optimal size prevents quality degradation
+2. **Enabling Long-Running Tasks**: Agents can handle complex, multi-step workflows without hitting context limits
+3. **Cost Efficiency**: Reducing token usage directly lowers API costs
+4. **Preserving Reasoning Quality**: Clean, focused context helps models maintain coherent reasoning chains
+5. **Scalability**: Proper memory management allows agents to scale to production workloads
+
+### The Solution: Intelligent Context Management
+
+ReMeShortTermMemory implements proven context management strategies:
+
+- **Context Offloading**: Moving large tool outputs to external storage while keeping references
+- **Context Reduction**: Compacting tool results into minimal representations and summarizing when necessary
+- **Smart Retention**: Keeping recent messages intact to maintain continuity and provide usage examples
+- **Automatic Triggering**: Monitoring token usage and applying strategies before performance degrades
+
+By implementing these strategies, ReMeShortTermMemory enables agents to handle arbitrarily long conversations and complex tasks while maintaining optimal performance throughout.
+
 ## Prerequisites
 
 - Python 3.10 or higher
