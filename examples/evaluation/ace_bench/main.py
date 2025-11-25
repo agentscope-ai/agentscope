@@ -15,6 +15,7 @@ from agentscope.evaluate import (
     SolutionOutput,
     FileEvaluatorStorage,
     ACEPhone,
+    RayEvaluator,
 )
 from agentscope.tool import Toolkit
 
@@ -65,7 +66,9 @@ async def react_agent_solution(
     await agent(msg_input)
 
     # Obtain the trajectory of the agent's memory
-    traj = [_.to_dict() for _ in await agent.memory.get_memory()]
+    traj = []
+    for msg in await agent.memory.get_memory():
+        traj.extend(msg.get_content_blocks(["tool_use", "tool_result"]))
 
     # Obtain the final state of the phone and travel system
     phone: ACEPhone = ace_task.metadata["phone"]
@@ -106,9 +109,7 @@ async def main() -> None:
 
     # Create the evaluator
     #  or GeneralEvaluator, which more suitable for local debug
-    from agentscope.evaluate import GeneralEvaluator
-
-    evaluator = GeneralEvaluator(
+    evaluator = RayEvaluator(
         name="ACEbench evaluation",
         benchmark=ACEBenchmark(
             data_dir=args.data_dir,

@@ -97,6 +97,9 @@ class RaySolutionActor:
                 (Callable[[Task, Callable], Awaitable[SolutionOutput, Any]]):
                 callable function to execute agents and generate results.
         """
+        # TODO: Setup a exporter here to save the token usage
+
+
         if storage.solution_result_exists(task.id, repeat_id):
             # Obtain from storage
             solution_result = storage.get_solution_result(
