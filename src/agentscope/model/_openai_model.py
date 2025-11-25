@@ -74,6 +74,7 @@ class OpenAIChatModel(ChatModelBase):
         organization: str = None,
         client_args: dict = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        enable_web_search: bool = True,
     ) -> None:
         """Initialize the openai client.
 
@@ -100,6 +101,11 @@ class OpenAIChatModel(ChatModelBase):
              optional):
                The extra keyword arguments used in OpenAI API generation,
                 e.g. `temperature`, `seed`.
+            enable_web_search (`bool`, default `True`):
+                Whether to enable OpenAI's builtin web search tool. When True
+                and using the newer Responses API, `{ "type": "web_search" }`
+                will be included automatically. For legacy Chat Completions the
+                tool type is not supported and will be omitted.
         """
 
         super().__init__(model_name, stream)
@@ -114,6 +120,7 @@ class OpenAIChatModel(ChatModelBase):
 
         self.reasoning_effort = reasoning_effort
         self.generate_kwargs = generate_kwargs or {}
+        self.enable_web_search = enable_web_search
 
     @trace_llm
     async def __call__(
@@ -183,6 +190,89 @@ class OpenAIChatModel(ChatModelBase):
         if "omni" in self.model_name.lower():
             _format_audio_data_for_qwen_omni(messages)
 
+        # Decide whether to use Responses API (needed for native web_search)
+        use_responses_api = (
+            self.enable_web_search
+            and not structured_model
+            and hasattr(self.client, "responses")
+        )
+
+        start_datetime = datetime.now()
+
+        if use_responses_api:
+            # Convert chat messages to responses input blocks
+            responses_input = []
+            for m in messages:
+                if isinstance(m.get("content"), list):
+                    # Remap any 'text' blocks to 'input_text' per Responses API
+                    remapped = []
+                    for block in m["content"]:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            new_block = dict(block)
+                            new_block["type"] = "input_text"
+                            # field name expected is 'text'
+                            remapped.append(new_block)
+                        else:
+                            remapped.append(block)
+                    content_items = remapped
+                else:
+                    content_items = [
+                        {"type": "input_text", "text": m["content"]}]
+                responses_input.append(
+                    {
+                        "role": m.get("role", "user"),
+                        "content": content_items,
+                    },
+                )
+
+            tools_to_send: list[dict] = []
+            if tools:
+                tools_to_send.extend(tools)
+            # Native web_search tool
+            if not any(t.get("type") == "web_search" for t in tools_to_send):
+                tools_to_send.append({"type": "web_search"})
+
+            resp_kwargs = {
+                "model": self.model_name,
+                "input": responses_input,
+                **self.generate_kwargs,
+                **kwargs,
+            }
+            if self.reasoning_effort and "reasoning_effort" not in resp_kwargs:
+                resp_kwargs["reasoning_effort"] = self.reasoning_effort
+            if tools_to_send:
+                resp_kwargs["tools"] = tools_to_send
+            if tool_choice:
+                self._validate_tool_choice(tool_choice, tools_to_send)
+                resp_kwargs["tool_choice"] = self._format_tool_choice(
+                    tool_choice,
+                    responses_api=True,
+                )
+            try:
+                logger.debug(
+                    "Using Responses API (web_search enabled) model=%s", self.model_name)
+                if self.stream:
+                    # responses.stream returns a manager directly (not awaited)
+                    stream = self.client.responses.stream(**resp_kwargs)
+                    return self._parse_openai_responses_stream(
+                        start_datetime,
+                        stream,
+                    )
+                else:
+                    resp = await self.client.responses.create(**resp_kwargs)
+                    return self._parse_openai_responses_response(
+                        start_datetime,
+                        resp,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Responses API failed (%s). Falling back to chat completions.",
+                    e,
+                )
+                # fall through to chat completions
+
+        # Legacy Chat Completions path
+        logger.debug("Using Chat Completions API model=%s", self.model_name)
         kwargs = {
             "model": self.model_name,
             "messages": messages,
@@ -193,25 +283,25 @@ class OpenAIChatModel(ChatModelBase):
         if self.reasoning_effort and "reasoning_effort" not in kwargs:
             kwargs["reasoning_effort"] = self.reasoning_effort
 
+        tools_to_send: list[dict] = []
         if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
+            tools_to_send.extend(tools)
+        # Do NOT append web_search here (unsupported in chat completions)
+        if tools_to_send:
+            kwargs["tools"] = self._format_tools_json_schemas(tools_to_send)
         if tool_choice:
-            self._validate_tool_choice(tool_choice, tools)
-            kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
-
+            self._validate_tool_choice(tool_choice, tools_to_send)
+            kwargs["tool_choice"] = self._format_tool_choice(
+                tool_choice,
+                responses_api=False,
+            )
         if self.stream:
             kwargs["stream_options"] = {"include_usage": True}
-
-        start_datetime = datetime.now()
 
         if structured_model:
             if tools or tool_choice:
                 logger.warning(
-                    "structured_model is provided. Both 'tools' and "
-                    "'tool_choice' parameters will be overridden and "
-                    "ignored. The model will only perform structured output "
-                    "generation without calling any other tools.",
+                    "structured_model is provided. Both 'tools' and 'tool_choice' will be ignored.",
                 )
             kwargs.pop("stream", None)
             kwargs.pop("tools", None)
@@ -235,15 +325,11 @@ class OpenAIChatModel(ChatModelBase):
                 response,
                 structured_model,
             )
-
-        # Non-streaming response
-        parsed_response = self._parse_openai_completion_response(
+        return self._parse_openai_completion_response(
             start_datetime,
             response,
             structured_model,
         )
-
-        return parsed_response
 
     async def _parse_openai_stream_response(
         self,
@@ -517,6 +603,7 @@ class OpenAIChatModel(ChatModelBase):
     def _format_tool_choice(
         self,
         tool_choice: Literal["auto", "none", "any", "required"] | str | None,
+        responses_api: bool = False,
     ) -> str | dict | None:
         """Format tool_choice parameter for API compatibility.
 
@@ -542,4 +629,149 @@ class OpenAIChatModel(ChatModelBase):
         }
         if tool_choice in mode_mapping:
             return mode_mapping[tool_choice]
-        return {"type": "function", "function": {"name": tool_choice}}
+        if isinstance(tool_choice, str):
+            if tool_choice == "web_search" and responses_api:
+                return {"type": "web_search"}
+            return {"type": "function", "function": {"name": tool_choice}}
+        return None
+
+    async def _parse_openai_responses_stream(
+        self,
+        start_datetime: datetime,
+        response: Any,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Parse streaming Responses API output into ChatResponse objects."""
+        text = ""
+        audio = ""
+        tool_calls = OrderedDict()
+        usage = None
+        async with response as stream:
+            async for event in stream:
+                et = getattr(event, "type", None)
+                if et == "response.error":
+                    logger.error("Responses stream error: %s",
+                                 getattr(event, "error", None))
+                    continue
+                if et == "response.completed":
+                    resp = getattr(event, "response", None)
+                    if resp and getattr(resp, "usage", None):
+                        u = resp.usage
+                        # ResponseUsage uses input_text_tokens/output_text_tokens
+                        input_tokens = (
+                            getattr(u, "input_text_tokens", None)
+                            or getattr(u, "prompt_tokens", None)
+                            or 0
+                        )
+                        output_tokens = (
+                            getattr(u, "output_text_tokens", None)
+                            or getattr(u, "completion_tokens", None)
+                            or 0
+                        )
+                        usage = ChatUsage(
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            time=(datetime.now() -
+                                  start_datetime).total_seconds(),
+                        )
+                if et == "response.output_text.delta":
+                    text += event.delta
+                if et == "response.output_audio.delta":
+                    audio += event.delta
+                if et == "response.output_tool_calls.delta":
+                    for tc in event.delta:
+                        idx = tc.get("index")
+                        fn = tc.get("function", {})
+                        if idx in tool_calls:
+                            if fn.get("arguments"):
+                                tool_calls[idx]["input"] += fn["arguments"]
+                        else:
+                            tool_calls[idx] = {
+                                "type": "tool_use",
+                                "id": tc.get("id"),
+                                "name": fn.get("name"),
+                                "input": fn.get("arguments", ""),
+                            }
+                if et and et.startswith("response."):
+                    contents: list[Any] = []
+                    if audio:
+                        contents.append(
+                            AudioBlock(
+                                type="audio",
+                                source=Base64Source(
+                                    data=audio,
+                                    media_type="audio/wav",
+                                    type="base64",
+                                ),
+                            ),
+                        )
+                    if text:
+                        contents.append(TextBlock(type="text", text=text))
+                    for tc in tool_calls.values():
+                        contents.append(
+                            ToolUseBlock(
+                                type="tool_use",
+                                id=tc["id"],
+                                name=tc["name"],
+                                input=_json_loads_with_repair(
+                                    tc["input"] or "{}"),
+                            ),
+                        )
+                    if not contents:
+                        continue
+                    yield ChatResponse(content=contents, usage=usage)
+
+    def _parse_openai_responses_response(
+        self,
+        start_datetime: datetime,
+        response: Any,
+    ) -> ChatResponse:
+        """Parse non-streaming Responses API output into ChatResponse."""
+        contents: list[Any] = []
+        usage = None
+        output = getattr(response, "output", None)
+        if output:
+            for item in output:
+                if item.type == "output_text":
+                    contents.append(TextBlock(type="text", text=item.text))
+                if item.type == "output_audio":
+                    contents.append(
+                        AudioBlock(
+                            type="audio",
+                            source=Base64Source(
+                                data=item.audio.get("data", ""),
+                                media_type="audio/wav",
+                                type="base64",
+                            ),
+                        ),
+                    )
+                if item.type == "output_tool_calls":
+                    for tc in item.tool_calls:
+                        fn = tc.get("function", {})
+                        contents.append(
+                            ToolUseBlock(
+                                type="tool_use",
+                                id=tc.get("id"),
+                                name=fn.get("name"),
+                                input=_json_loads_with_repair(
+                                    fn.get("arguments", "{}")),
+                            ),
+                        )
+        if getattr(response, "usage", None):
+            u = response.usage
+            # ResponseUsage uses input_text_tokens/output_text_tokens
+            input_tokens = (
+                getattr(u, "input_text_tokens", None)
+                or getattr(u, "prompt_tokens", None)
+                or 0
+            )
+            output_tokens = (
+                getattr(u, "output_text_tokens", None)
+                or getattr(u, "completion_tokens", None)
+                or 0
+            )
+            usage = ChatUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+            )
+        return ChatResponse(content=contents, usage=usage)

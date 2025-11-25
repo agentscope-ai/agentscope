@@ -47,6 +47,7 @@ class AnthropicChatModel(ChatModelBase):
         thinking: dict | None = None,
         client_args: dict | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        enable_web_search: bool = True,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -76,6 +77,11 @@ class AnthropicChatModel(ChatModelBase):
              optional):
                 The extra keyword arguments used in Gemini API generation,
                 e.g. `temperature`, `seed`.
+            enable_web_search (`bool`, default `True`):
+                Whether to enable Anthropic's builtin web search tool.
+                When True, the tools list will include
+                `{"name": "web_search", "type": "web_search_20250305"}`
+                in addition to any function tools registered via Toolkit.
         """
 
         try:
@@ -95,6 +101,7 @@ class AnthropicChatModel(ChatModelBase):
         self.max_tokens = max_tokens
         self.thinking = thinking
         self.generate_kwargs = generate_kwargs or {}
+        self.enable_web_search = enable_web_search
 
     @trace_llm
     async def __call__(
@@ -179,11 +186,27 @@ class AnthropicChatModel(ChatModelBase):
         if self.thinking and "thinking" not in kwargs:
             kwargs["thinking"] = self.thinking
 
+        # Prepare tools list with optional web_search
+        tools_to_send: list[dict] = []
         if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
+            tools_to_send.extend(tools)
+
+        # Add Anthropic's native web_search tool if enabled
+        if self.enable_web_search:
+            if not any(
+                isinstance(t, dict) and t.get("name") == "web_search"
+                for t in tools_to_send
+            ):
+                tools_to_send.append({
+                    "name": "web_search",
+                    "type": "web_search_20250305",
+                })
+
+        if tools_to_send:
+            kwargs["tools"] = self._format_tools_json_schemas(tools_to_send)
 
         if tool_choice:
-            self._validate_tool_choice(tool_choice, tools)
+            self._validate_tool_choice(tool_choice, tools_to_send)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
         if structured_model:
@@ -455,6 +478,11 @@ class AnthropicChatModel(ChatModelBase):
         Anthropic API expects."""
         formatted_schemas = []
         for schema in schemas:
+            # Handle native web_search tool (already in Anthropic format)
+            if schema.get("type") == "web_search_20250305":
+                formatted_schemas.append(schema)
+                continue
+
             assert (
                 "function" in schema
             ), f"Invalid schema: {schema}, expect key 'function'."
@@ -504,4 +532,5 @@ class AnthropicChatModel(ChatModelBase):
         if tool_choice in type_mapping:
             return type_mapping[tool_choice]
 
+        # Handle specific tool names including web_search
         return {"type": "tool", "name": tool_choice}

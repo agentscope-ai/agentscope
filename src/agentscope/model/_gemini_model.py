@@ -40,6 +40,7 @@ class GeminiChatModel(ChatModelBase):
         thinking_config: dict | None = None,
         client_args: dict = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        enable_google_search: bool = True,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -69,6 +70,11 @@ class GeminiChatModel(ChatModelBase):
              optional):
                The extra keyword arguments used in Gemini API generation,
                e.g. `temperature`, `seed`.
+            enable_google_search (`bool`, default `True`):
+                Whether to enable Google Search grounding tool.
+                When True, a grounding tool will be added using
+                `types.Tool(google_search=types.GoogleSearch())`
+                to provide search capabilities to the model.
         """
         try:
             from google import genai
@@ -86,6 +92,7 @@ class GeminiChatModel(ChatModelBase):
         )
         self.thinking_config = thinking_config
         self.generate_kwargs = generate_kwargs or {}
+        self.enable_google_search = enable_google_search
 
     @trace_llm
     async def __call__(
@@ -134,11 +141,25 @@ class GeminiChatModel(ChatModelBase):
             **config_kwargs,
         }
 
+        # Prepare tools list with optional Google Search grounding
+        from google.genai import types
+
+        tools_to_send: list = []
         if tools:
-            config["tools"] = self._format_tools_json_schemas(tools)
+            tools_to_send.extend(tools)
+
+        # Add Google Search grounding tool if enabled
+        if self.enable_google_search:
+            grounding_tool = types.Tool(
+                google_search=types.GoogleSearch()
+            )
+            tools_to_send.append(grounding_tool)
+
+        if tools_to_send:
+            config["tools"] = self._format_tools_json_schemas(tools_to_send)
 
         if tool_choice:
-            self._validate_tool_choice(tool_choice, tools)
+            self._validate_tool_choice(tool_choice, tools_to_send)
             config["tool_config"] = self._format_tool_choice(tool_choice)
 
         if structured_model:
@@ -441,6 +462,7 @@ class GeminiChatModel(ChatModelBase):
                 ]
         """
         import copy
+        from google.genai import types
 
         def remove_additional_properties(obj):
             """Recursively remove additionalProperties from schema."""
@@ -456,19 +478,29 @@ class GeminiChatModel(ChatModelBase):
                 for item in obj:
                     remove_additional_properties(item)
 
-        # Deep copy and clean schemas
+        # Separate Google Search tools from function tools
+        result_tools = []
         cleaned_functions = []
+
         for schema in schemas:
-            if "function" in schema:
+            # Check if it's a Google Search grounding tool (types.Tool object)
+            if isinstance(schema, types.Tool):
+                result_tools.append(schema)
+            # Otherwise it's a function tool schema
+            elif "function" in schema:
                 func_copy = copy.deepcopy(schema["function"])
                 remove_additional_properties(func_copy)
                 cleaned_functions.append(func_copy)
 
-        return [
-            {
-                "function_declarations": cleaned_functions,
-            },
-        ]
+        # Add function declarations if any
+        if cleaned_functions:
+            result_tools.append(
+                {
+                    "function_declarations": cleaned_functions,
+                }
+            )
+
+        return result_tools
 
     def _format_tool_choice(
         self,
