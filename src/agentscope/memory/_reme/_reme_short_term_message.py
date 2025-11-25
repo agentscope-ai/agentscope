@@ -17,8 +17,23 @@ from ...tool import write_text_file
 class ReMeShortTermMemory(InMemoryMemory):
     """Short-term memory implementation using ReMe for message management.
 
-    This class provides automatic memory management with working memory
-    summarization and compaction capabilities.
+    This class provides automatic working-memory management through a
+    multi-stage pipeline that reduces token usage while preserving
+    essential information:
+
+    1. **Compaction**: Truncates large tool messages by storing full
+       content in external files and keeping only short previews in the
+       active context.
+    2. **Compression**: Uses LLM to generate dense summaries of older
+       conversation history, creating a compact state snapshot.
+    3. **Offload**: Orchestrates compaction and optional compression
+       based on the configured working_summary_mode (COMPACT, COMPRESS,
+       or AUTO).
+
+    The memory management is triggered automatically when `get_memory()`
+    is called, ensuring the agent's context stays within token limits
+    while maintaining access to detailed historical information through
+    external storage.
     """
 
     def __init__(
@@ -34,6 +49,53 @@ class ReMeShortTermMemory(InMemoryMemory):
         store_dir: str = "working_memory",
         **kwargs: Any,
     ) -> None:
+        """Initialize ReMe-based short-term memory.
+
+        Args:
+            model: Language model for compression operations. Must be
+                either DashScopeChatModel or OpenAIChatModel.
+            reme_config_path: Optional path to ReMe configuration file
+                for custom settings.
+            working_summary_mode: Strategy for working memory management.
+                - "compact": Only compact verbose tool messages by
+                  storing full content externally and keeping short
+                  previews.
+                - "compress": Only apply LLM-based compression to
+                  generate compact state snapshots.
+                - "auto": First run compaction, then optionally run
+                  compression if the compaction ratio exceeds
+                  compact_ratio_threshold.
+                Defaults to "auto".
+            compact_ratio_threshold: Threshold for compaction
+                effectiveness in AUTO mode. If (compacted_tokens /
+                original_tokens) > this threshold, compression is
+                applied. Defaults to 0.75.
+            max_total_tokens: Maximum token count threshold before
+                compression is triggered. Does not include
+                keep_recent_count messages or system messages.
+                Defaults to 20000.
+            max_tool_message_tokens: Maximum token count for individual
+                tool messages before compaction. Tool messages exceeding
+                this are stored externally. Defaults to 2000.
+            group_token_threshold: Maximum token count per compression
+                group when splitting messages for LLM compression. If
+                None or 0, all messages are compressed in a single
+                group. Defaults to None.
+            keep_recent_count: Number of most recent messages to
+                preserve without compression or compaction. These
+                messages remain in full in the active context.
+                Defaults to 1.
+            store_dir: Directory path for storing offloaded message
+                content and compressed history files. Defaults to
+                "working_memory".
+            **kwargs: Additional arguments passed to ReMeApp
+                initialization.
+
+        Raises:
+            ValueError: If model is not a DashScopeChatModel or
+                OpenAIChatModel.
+            ImportError: If reme_ai library is not installed.
+        """
         super().__init__()
 
         # Store working memory parameters
@@ -92,6 +154,10 @@ class ReMeShortTermMemory(InMemoryMemory):
         self._app_started = False
 
     async def __aenter__(self) -> "ReMeShortTermMemory":
+        """Async context manager entry.
+
+        Initializes the ReMe application for async operations.
+        """
         if self.app is not None:
             await self.app.__aenter__()
             self._app_started = True
@@ -103,11 +169,50 @@ class ReMeShortTermMemory(InMemoryMemory):
         exc_val: Any = None,
         exc_tb: Any = None,
     ) -> None:
+        """Async context manager exit.
+
+        Cleans up the ReMe application resources.
+        """
         if self.app is not None:
             await self.app.__aexit__(exc_type, exc_val, exc_tb)
         self._app_started = False
 
     async def get_memory(self) -> list[Msg]:
+        """Retrieve and manage working memory with automatic summarization.
+
+        This method performs the core working-memory management pipeline:
+
+        1. **Format messages**: Converts internal Msg objects to standard
+           message format using the appropriate formatter (DashScope or
+           OpenAI).
+        2. **Execute offload pipeline**: Calls ReMe's
+           summary_working_memory_for_as operation which orchestrates:
+           - Message compaction: Large tool messages are truncated and
+             stored externally with only previews kept in context.
+           - Message compression: If needed (based on
+             working_summary_mode), older messages are compressed using
+             LLM into dense summaries.
+           - File storage: Offloaded content is written to external
+             files for potential retrieval.
+        3. **Update content**: Replaces the internal message list with
+           the managed version, ensuring subsequent operations work with
+           the optimized context.
+
+        The operation respects configuration parameters like
+        max_total_tokens, keep_recent_count, and working_summary_mode to
+        balance context size with information preservation.
+
+        Returns:
+            List of Msg objects representing the managed working memory,
+            with large tool messages compacted and/or older history
+            compressed as needed.
+
+        Note:
+            This method automatically writes offloaded content to files
+            in the configured store_dir. The write_file_dict metadata
+            contains paths and content for all externally stored
+            messages.
+        """
         messages: list[dict[str, Any]] = await self.formatter.format(
             msgs=self.content,  # type: ignore[has-type]
         )
@@ -120,6 +225,9 @@ class ReMeShortTermMemory(InMemoryMemory):
                 )
                 message["content"] = ""
 
+        # Execute ReMe's working memory offload pipeline
+        # This orchestrates compaction and/or compression based on
+        # working_summary_mode
         result: dict = await self.app.async_execute(
             name="summary_working_memory_for_as",
             messages=messages,
@@ -137,11 +245,15 @@ class ReMeShortTermMemory(InMemoryMemory):
             json.dumps(result, ensure_ascii=False, indent=2),
         )
 
+        # Extract managed messages and file write operations from result
         messages = result.get("answer", [])
         write_file_dict: dict = result.get("metadata", {}).get(
             "write_file_dict",
             {},
         )
+        # Write offloaded content to external files
+        # This includes full tool message content and compressed message
+        # history
         if write_file_dict:
             for path, content_str in write_file_dict.items():
                 file_dir = Path(path).parent
@@ -149,6 +261,7 @@ class ReMeShortTermMemory(InMemoryMemory):
                     file_dir.mkdir(parents=True, exist_ok=True)
                 await write_text_file(path, content_str)
 
+        # Update internal content with managed messages
         self.content = self.list_to_msg(messages)
         return self.content
 
@@ -156,11 +269,19 @@ class ReMeShortTermMemory(InMemoryMemory):
     def list_to_msg(messages: list[dict[str, Any]]) -> list[Msg]:
         """Convert a list of message dictionaries to Msg objects.
 
+        This method handles the conversion from standard message format
+        (used by ReMe and LLM APIs) back to AgentScope's Msg objects.
+        It properly handles:
+        - Text content for user, system, and assistant messages
+        - Tool result blocks (converting role="tool" to role="system")
+        - Tool use blocks from tool_calls in assistant messages
+
         Args:
-            messages: List of message dictionaries with role and content.
+            messages: List of message dictionaries with role, content,
+                and optional tool_calls or tool-related fields.
 
         Returns:
-            List of Msg objects.
+            List of Msg objects with properly structured content blocks.
         """
         msg_list: list[Msg] = []
         for msg_dict in messages:
@@ -170,10 +291,13 @@ class ReMeShortTermMemory(InMemoryMemory):
             ] = []
             content = msg_dict.get("content")
 
+            # Convert text content to appropriate content blocks
             if content:
                 if role in ["user", "system", "assistant"]:
                     content_blocks.append(TextBlock(type="text", text=content))
                 elif role in ["tool"]:
+                    # Tool messages are converted to system messages with
+                    # ToolResultBlock
                     role = "system"
                     content_blocks.append(
                         ToolResultBlock(
@@ -184,8 +308,10 @@ class ReMeShortTermMemory(InMemoryMemory):
                         ),
                     )
 
+            # Convert tool_calls to ToolUseBlock content blocks
             if msg_dict.get("tool_calls"):
                 for tool_call in msg_dict["tool_calls"]:
+                    # Parse tool arguments with repair for malformed JSON
                     input_ = _json_loads_with_repair(
                         tool_call["function"].get(
                             "arguments",
@@ -212,4 +338,12 @@ class ReMeShortTermMemory(InMemoryMemory):
         return msg_list
 
     async def retrieve(self, *args: Any, **kwargs: Any) -> None:
+        """Retrieve operation is not implemented for ReMe short-term memory.
+
+        ReMe focuses on working memory management (compaction and compression)
+        rather than retrieval from long-term storage.
+
+        Raises:
+            NotImplementedError: This operation is not supported.
+        """
         raise NotImplementedError
