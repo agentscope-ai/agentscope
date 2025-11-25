@@ -233,16 +233,11 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             embedding_api_key = embedding_model.api_key
 
         elif isinstance(embedding_model, OpenAITextEmbedding):
-            base_url = getattr(
-                embedding_model.client,
-                "base_url",
-                None,
+            embedding_api_base = str(
+                getattr(embedding_model.client, "base_url", None),
             )
-            embedding_api_base = str(base_url) if base_url else None
-            embedding_api_key = getattr(
-                embedding_model.client,
-                "api_key",
-                None,
+            embedding_api_key = str(
+                getattr(embedding_model.client, "api_key", None),
             )
 
         else:
@@ -331,9 +326,9 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
     async def __aexit__(
         self,
-        exc_type: Any,
-        exc_val: Any,
-        exc_tb: Any,
+        exc_type: Any = None,
+        exc_val: Any = None,
+        exc_tb: Any = None,
     ) -> None:
         """Async context manager exit point.
 
