@@ -699,15 +699,17 @@ construct the system prompt for the agent.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.tool.Toolkit.reset_equipped_tools">
 <span class="sig-name descname"><span class="pre">reset_equipped_tools</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tool/_toolkit.html#Toolkit.reset_equipped_tools"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.tool.Toolkit.reset_equipped_tools" title="Link to this definition">¶</a></dt>
-<dd><p>Choose appropriate tools to equip yourself with, so that you can
-finish your task. Each argument in this function represents a group
-of related tools, and the value indicates whether to activate the
-group or not. Besides, the tool response of this function will
-contain the precaution notes for using them, which you
-<strong>MUST pay attention to and follow</strong>. You can also reuse this function
-to check the notes of the tool groups.</p>
-<p>Note this function will <cite>reset</cite> the tools, so that the original tools
-will be removed first.</p>
+<dd><p>This function allows you to activate or deactivate tool groups
+dynamically based on your current task requirements.
+<strong>Important: Each call sets the absolute final state of ALL tool
+groups, not incremental changes</strong>. Any group not explicitly set to True
+will be deactivated, regardless of its previous state.</p>
+<p><strong>Best practice</strong>: Actively manage your tool groups——activate only
+what you need for the current task, and promptly deactivate groups as
+soon as they are no longer needed to conserve context space.</p>
+<p>The function will return the usage instructions for the activated tool
+groups, which you <strong>MUST pay attention to and follow</strong>. You can also
+reuse this function to check the notes of the tool groups.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><p><strong>kwargs</strong> (<em>Any</em>)</p>
