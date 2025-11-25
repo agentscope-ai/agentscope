@@ -2,27 +2,13 @@
 """The main entry point of the MemoryWithCompress example."""
 import asyncio
 import os
-import sys
-from pathlib import Path
-
-# Add the project root to Python path to enable imports
-project_root = Path(__file__).parent.parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
-# Local imports must come after sys.path manipulation
-# pylint: disable=wrong-import-position
-from _memory_with_compress import (  # noqa: E402
-    MemoryWithCompress,
-)
-
-# Third-party imports
-from agentscope.agent import ReActAgent  # noqa: E402
-from agentscope.formatter import DashScopeChatFormatter  # noqa: E402
-from agentscope.message import Msg  # noqa: E402
-from agentscope.model import DashScopeChatModel  # noqa: E402
-from agentscope.tool import Toolkit  # noqa: E402
-from agentscope.token import OpenAITokenCounter  # noqa: E402
+from _memory_with_compress import MemoryWithCompress
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import DashScopeChatModel
+from agentscope.tool import Toolkit
+from agentscope.token import OpenAITokenCounter
 
 
 async def main() -> None:
