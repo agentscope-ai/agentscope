@@ -117,6 +117,50 @@ The example will:
 
 This section provides a detailed walkthrough of the `short_term_memory_example.py` code, explaining how each component works together to create an agent with intelligent context management.
 
+### Configuration Parameters
+
+#### `ReMeShortTermMemory` Class Parameters
+
+The `ReMeShortTermMemory` class accepts the following initialization parameters:
+
+- **`model`** (`DashScopeChatModel | OpenAIChatModel | None`): Language model for compression operations. Must be either `DashScopeChatModel` or `OpenAIChatModel`. This model is used for LLM-based compression when generating compact state snapshots. **Required**.
+
+- **`reme_config_path`** (`str | None`): Optional path to ReMe configuration file for custom settings. Use this to provide advanced ReMe configurations beyond the standard parameters. Default: `None`.
+
+- **`working_summary_mode`** (`str`): Strategy for working memory management. Controls how the memory system handles context overflow:
+  - `"compact"`: Only compact verbose tool messages by storing full content externally and keeping short previews in the active context.
+  - `"compress"`: Only apply LLM-based compression to generate compact state snapshots of conversation history.
+  - `"auto"`: First run compaction, then optionally run compression if the compaction ratio exceeds `compact_ratio_threshold`. This is the recommended mode for most use cases.
+
+  Default: `"auto"`.
+
+- **`compact_ratio_threshold`** (`float`): Threshold for compaction effectiveness in AUTO mode. If `(compacted_tokens / original_tokens) > compact_ratio_threshold`, compression is applied after compaction. This ensures compression only runs when compaction alone isn't sufficient. Valid range: 0.0 to 1.0. Default: `0.75`.
+
+- **`max_total_tokens`** (`int`): Maximum token count threshold before compression is triggered. This limit does **not** include `keep_recent_count` messages or system messages, which are always preserved. Should be set to 20%-50% of your model's context window size to leave room for new tool calls and responses. Default: `20000`.
+
+- **`max_tool_message_tokens`** (`int`): Maximum token count for individual tool messages before compaction. Tool messages exceeding this limit are stored externally in files, with only a short preview kept in the active context. This is the maximum tolerable length for a single tool response. Default: `2000`.
+
+- **`group_token_threshold`** (`int | None`): Maximum token count per compression group when splitting messages for LLM compression. When set to a positive integer, long message sequences are split into smaller batches for compression. If `None` or `0`, all messages are compressed in a single group. Use this to control the granularity of compression operations. Default: `None`.
+
+- **`keep_recent_count`** (`int`): Number of most recent messages to preserve without compression or compaction. These messages remain in full in the active context to maintain conversation continuity and provide usage examples for the agent. The example uses `1` for demonstration purposes; **in production, a value of `10` is recommended** to maintain better conversation flow. Default: `10`.
+
+- **`store_dir`** (`str`): Directory path for storing offloaded message content and compressed history files. This is where external files containing full tool responses and compressed message history are saved. The directory will be created automatically if it doesn't exist. Default: `"inmemory"`.
+
+- **`**kwargs`** (`Any`): Additional arguments passed to `ReMeApp` initialization. Use this to pass any extra configuration options supported by the underlying ReMe application.
+
+#### Parameter Relationships and Best Practices
+
+- **Token Budget Strategy**: Set `max_total_tokens` to 20%-50% of your model's context window. For example, if your model has a 128K context window, set `max_total_tokens` between 25,600 and 64,000 tokens.
+
+- **Compaction vs Compression**:
+  - Compaction is fast and lossless (full content is stored externally)
+  - Compression is slower but more aggressive (uses LLM to summarize)
+  - Use `"auto"` mode to benefit from both strategies
+
+- **Recent Message Retention**: Higher `keep_recent_count` values (e.g., 10) provide better context continuity but consume more tokens. Lower values (e.g., 1) are more aggressive but may lose important recent context.
+
+- **Tool Message Handling**: Adjust `max_tool_message_tokens` based on your typical tool response sizes. If your tools frequently return large outputs (e.g., file contents, API responses), consider a higher threshold or ensure compaction is enabled.
+
 ### Code Flow Diagram
 
 ```mermaid
@@ -399,50 +443,6 @@ finally:
 ```
 
 > **Note**: It's recommended to use the `async with` statement as it ensures proper resource cleanup even if an exception occurs.
-
-## Configuration Parameters
-
-### `ReMeShortTermMemory` Class Parameters
-
-The `ReMeShortTermMemory` class accepts the following initialization parameters:
-
-- **`model`** (`DashScopeChatModel | OpenAIChatModel | None`): Language model for compression operations. Must be either `DashScopeChatModel` or `OpenAIChatModel`. This model is used for LLM-based compression when generating compact state snapshots. **Required**.
-
-- **`reme_config_path`** (`str | None`): Optional path to ReMe configuration file for custom settings. Use this to provide advanced ReMe configurations beyond the standard parameters. Default: `None`.
-
-- **`working_summary_mode`** (`str`): Strategy for working memory management. Controls how the memory system handles context overflow:
-  - `"compact"`: Only compact verbose tool messages by storing full content externally and keeping short previews in the active context.
-  - `"compress"`: Only apply LLM-based compression to generate compact state snapshots of conversation history.
-  - `"auto"`: First run compaction, then optionally run compression if the compaction ratio exceeds `compact_ratio_threshold`. This is the recommended mode for most use cases.
-
-  Default: `"auto"`.
-
-- **`compact_ratio_threshold`** (`float`): Threshold for compaction effectiveness in AUTO mode. If `(compacted_tokens / original_tokens) > compact_ratio_threshold`, compression is applied after compaction. This ensures compression only runs when compaction alone isn't sufficient. Valid range: 0.0 to 1.0. Default: `0.75`.
-
-- **`max_total_tokens`** (`int`): Maximum token count threshold before compression is triggered. This limit does **not** include `keep_recent_count` messages or system messages, which are always preserved. Should be set to 20%-50% of your model's context window size to leave room for new tool calls and responses. Default: `20000`.
-
-- **`max_tool_message_tokens`** (`int`): Maximum token count for individual tool messages before compaction. Tool messages exceeding this limit are stored externally in files, with only a short preview kept in the active context. This is the maximum tolerable length for a single tool response. Default: `2000`.
-
-- **`group_token_threshold`** (`int | None`): Maximum token count per compression group when splitting messages for LLM compression. When set to a positive integer, long message sequences are split into smaller batches for compression. If `None` or `0`, all messages are compressed in a single group. Use this to control the granularity of compression operations. Default: `None`.
-
-- **`keep_recent_count`** (`int`): Number of most recent messages to preserve without compression or compaction. These messages remain in full in the active context to maintain conversation continuity and provide usage examples for the agent. The example uses `1` for demonstration purposes; **in production, a value of `10` is recommended** to maintain better conversation flow. Default: `10`.
-
-- **`store_dir`** (`str`): Directory path for storing offloaded message content and compressed history files. This is where external files containing full tool responses and compressed message history are saved. The directory will be created automatically if it doesn't exist. Default: `"inmemory"`.
-
-- **`**kwargs`** (`Any`): Additional arguments passed to `ReMeApp` initialization. Use this to pass any extra configuration options supported by the underlying ReMe application.
-
-### Parameter Relationships and Best Practices
-
-- **Token Budget Strategy**: Set `max_total_tokens` to 20%-50% of your model's context window. For example, if your model has a 128K context window, set `max_total_tokens` between 25,600 and 64,000 tokens.
-
-- **Compaction vs Compression**:
-  - Compaction is fast and lossless (full content is stored externally)
-  - Compression is slower but more aggressive (uses LLM to summarize)
-  - Use `"auto"` mode to benefit from both strategies
-
-- **Recent Message Retention**: Higher `keep_recent_count` values (e.g., 10) provide better context continuity but consume more tokens. Lower values (e.g., 1) are more aggressive but may lose important recent context.
-
-- **Tool Message Handling**: Adjust `max_tool_message_tokens` based on your typical tool response sizes. If your tools frequently return large outputs (e.g., file contents, API responses), consider a higher threshold or ensure compaction is enabled.
 
 ## Advanced Configuration
 
