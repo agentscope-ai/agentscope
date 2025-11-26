@@ -108,7 +108,7 @@ Quick overview of important features in **AgentScope 1.0**:
 |            | Support agent-controlled long-term memory                                          |                                                                         |
 |            | Support agent hooks                                                                |                                                                         |
 | tracing    | Support OpenTelemetry-based tracing in LLM, tools, agent and formatter             | [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)         |
-|            | Support connecting to third-party tracing platforms (e.g. Arize-Phoenix, Langfuse) |                                                                         |
+|            | Support connecting to third-party tracing platforms (e.g. Alibaba Cloud CloudMonitor, Arize-Phoenix, Langfuse) |                                                                         |
 | memory     | Support long-term memory                                                           | [Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html) |
 | session    | Provide session/application-level automatic state management                       | [Session](https://doc.agentscope.io/tutorial/task_state.html)           |
 | evaluation | Provide distributed and parallel evaluation                                        | [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)         |
