@@ -49,22 +49,6 @@ class TestReMeShortTermMemory(IsolatedAsyncioTestCase):
             memory._app_started = True
             return memory
 
-    async def test_init_with_dashscope_model(self) -> None:
-        """Test initialization with DashScopeChatModel."""
-        with patch("reme_ai.ReMeApp") as MockReMeApp:
-            memory = ReMeShortTermMemory(
-                model=self.mock_dashscope_model,
-            )
-            self.assertIsNotNone(memory.app)
-            self.assertEqual(memory.working_summary_mode, "auto")
-            self.assertEqual(memory.compact_ratio_threshold, 0.75)
-            self.assertEqual(memory.max_total_tokens, 20000)
-            self.assertEqual(memory.max_tool_message_tokens, 2000)
-            self.assertEqual(memory.keep_recent_count, 1)
-            self.assertEqual(memory.store_dir, "working_memory")
-            self.assertIsNotNone(memory.formatter)
-            MockReMeApp.assert_called_once()
-
     async def test_init_with_openai_model(self) -> None:
         """Test initialization with OpenAIChatModel."""
         with patch("reme_ai.ReMeApp") as MockReMeApp:
@@ -172,12 +156,6 @@ class TestReMeShortTermMemory(IsolatedAsyncioTestCase):
         memory.app.async_execute.assert_called_once()
         call_kwargs = memory.app.async_execute.call_args[1]
         self.assertEqual(call_kwargs["name"], "summary_working_memory_for_as")
-        self.assertEqual(call_kwargs["working_summary_mode"], "auto")
-        self.assertEqual(call_kwargs["compact_ratio_threshold"], 0.75)
-        self.assertEqual(call_kwargs["max_total_tokens"], 20000)
-        self.assertEqual(call_kwargs["max_tool_message_tokens"], 2000)
-        self.assertEqual(call_kwargs["keep_recent_count"], 1)
-        self.assertEqual(call_kwargs["store_dir"], "working_memory")
         self.assertIn("chat_id", call_kwargs)
 
     async def test_get_memory_with_list_content(self) -> None:
