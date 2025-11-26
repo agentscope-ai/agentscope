@@ -35,6 +35,7 @@ class OllamaChatModel(ChatModelBase):
     def __init__(
         self,
         model_name: str,
+        api_key: str | None = None,
         stream: bool = False,
         options: dict = None,
         keep_alive: str = "5m",
@@ -47,6 +48,11 @@ class OllamaChatModel(ChatModelBase):
         Args:
            model_name (`str`):
                The name of the model.
+           api_key (`str`, default `None`):
+               The API key for Ollama API. If not specified, it will
+               be read from the environment variable `OLLAMA_API_KEY`.
+               This is required when using ollama_web_search or 
+               ollama_web_fetch tools from the toolkit.
            stream (`bool`, default `True`):
                Streaming mode or not.
            options (`dict`, default `None`):
@@ -78,9 +84,17 @@ class OllamaChatModel(ChatModelBase):
 
         super().__init__(model_name, stream)
 
+        # Set OLLAMA_API_KEY environment variable if provided
+        if api_key:
+            import os
+            os.environ["OLLAMA_API_KEY"] = api_key
+
+        # Remove api_key from kwargs if present to avoid passing it to the client
+        client_kwargs = {k: v for k, v in kwargs.items() if k != 'api_key'}
+
         self.client = ollama.AsyncClient(
             host=host,
-            **kwargs,
+            **client_kwargs,
         )
         self.options = options
         self.keep_alive = keep_alive
@@ -136,6 +150,8 @@ class OllamaChatModel(ChatModelBase):
         if self.think is not None and "think" not in kwargs:
             kwargs["think"] = self.think
 
+        # Format tools - Ollama web tools should be registered in the toolkit
+        # not passed as native callable objects
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
@@ -341,5 +357,12 @@ class OllamaChatModel(ChatModelBase):
         self,
         schemas: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Format the tools JSON schemas to the Ollama format."""
+        """Format the tools JSON schemas to the Ollama format.
+
+        Args:
+            schemas: List of tool function JSON schemas
+
+        Returns:
+            List of formatted tool schemas for Ollama
+        """
         return schemas

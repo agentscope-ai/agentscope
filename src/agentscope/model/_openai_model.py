@@ -200,55 +200,69 @@ class OpenAIChatModel(ChatModelBase):
         start_datetime = datetime.now()
 
         if use_responses_api:
-            # Convert chat messages to responses input blocks
-            responses_input = []
-            for m in messages:
-                if isinstance(m.get("content"), list):
-                    # Remap any 'text' blocks to 'input_text' per Responses API
-                    remapped = []
-                    for block in m["content"]:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            new_block = dict(block)
-                            new_block["type"] = "input_text"
-                            # field name expected is 'text'
-                            remapped.append(new_block)
-                        else:
-                            remapped.append(block)
-                    content_items = remapped
-                else:
-                    content_items = [
-                        {"type": "input_text", "text": m["content"]}]
-                responses_input.append(
-                    {
-                        "role": m.get("role", "user"),
-                        "content": content_items,
-                    },
-                )
-
-            tools_to_send: list[dict] = []
-            if tools:
-                tools_to_send.extend(tools)
-            # Native web_search tool
-            if not any(t.get("type") == "web_search" for t in tools_to_send):
-                tools_to_send.append({"type": "web_search"})
-
-            resp_kwargs = {
-                "model": self.model_name,
-                "input": responses_input,
-                **self.generate_kwargs,
-                **kwargs,
-            }
-            if self.reasoning_effort and "reasoning_effort" not in resp_kwargs:
-                resp_kwargs["reasoning_effort"] = self.reasoning_effort
-            if tools_to_send:
-                resp_kwargs["tools"] = tools_to_send
-            if tool_choice:
-                self._validate_tool_choice(tool_choice, tools_to_send)
-                resp_kwargs["tool_choice"] = self._format_tool_choice(
-                    tool_choice,
-                    responses_api=True,
-                )
             try:
+                # Convert chat messages to responses input blocks
+                # The Responses API uses different block types than Chat Completions:
+                # - Input: 'input_text', 'input_image', etc.
+                # - Output: 'output_text', 'refusal', etc.
+                responses_input = []
+                for m in messages:
+                    role = m.get("role", "user")
+
+                    if isinstance(m.get("content"), list):
+                        # Content is structured blocks - need to convert types
+                        content_items = []
+                        for block in m["content"]:
+                            block_copy = {**block}
+                            # Convert 'text' to 'input_text' or 'output_text' based on role
+                            if block.get("type") == "text":
+                                if role == "assistant":
+                                    block_copy["type"] = "output_text"
+                                else:
+                                    block_copy["type"] = "input_text"
+                            elif block.get("type") == "image_url":
+                                block_copy["type"] = "input_image"
+                                # Responses API expects 'source' not 'image_url'
+                                if "image_url" in block_copy:
+                                    block_copy["source"] = block_copy.pop(
+                                        "image_url")
+                            content_items.append(block_copy)
+                    else:
+                        # Simple string content - wrap in input_text block
+                        content_items = [
+                            {"type": "input_text", "text": m["content"]}]
+
+                    responses_input.append(
+                        {
+                            "role": role,
+                            "content": content_items,
+                        },
+                    )
+
+                tools_to_send: list[dict] = []
+                if tools:
+                    tools_to_send.extend(tools)
+                # Native web_search tool
+                if not any(t.get("type") == "web_search" for t in tools_to_send):
+                    tools_to_send.append({"type": "web_search"})
+
+                resp_kwargs = {
+                    "model": self.model_name,
+                    "input": responses_input,
+                    **self.generate_kwargs,
+                    **kwargs,
+                }
+                if self.reasoning_effort and "reasoning_effort" not in resp_kwargs:
+                    resp_kwargs["reasoning_effort"] = self.reasoning_effort
+                if tools_to_send:
+                    resp_kwargs["tools"] = tools_to_send
+                if tool_choice:
+                    self._validate_tool_choice(tool_choice, tools_to_send)
+                    resp_kwargs["tool_choice"] = self._format_tool_choice(
+                        tool_choice,
+                        responses_api=True,
+                    )
+
                 logger.debug(
                     "Using Responses API (web_search enabled) model=%s", self.model_name)
                 if self.stream:
@@ -269,7 +283,7 @@ class OpenAIChatModel(ChatModelBase):
                     "Responses API failed (%s). Falling back to chat completions.",
                     e,
                 )
-                # fall through to chat completions
+                # fall through to chat completions with original messages format
 
         # Legacy Chat Completions path
         logger.debug("Using Chat Completions API model=%s", self.model_name)
