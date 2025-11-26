@@ -53,7 +53,7 @@ full = [
     # Long-term memory
     "mem0ai",
     "packaging",
-    "reme-ai>=0.2.0.0",
+    "reme-ai>=0.2.0.2",
     # RAG
     "pypdf",
     "python-docx",
