@@ -3,20 +3,20 @@
 # noqa: E402
 import asyncio
 import os
-
 from dotenv import load_dotenv
+
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg, TextBlock
+from agentscope.model import DashScopeChatModel
+from agentscope.tool import ToolResponse, Toolkit
 
 load_dotenv()
 
 
 async def main() -> None:
     """Main function demonstrating ReMeShortTermMemory with tool usage."""
-    from agentscope.agent import ReActAgent
-    from agentscope.formatter import DashScopeChatFormatter
-    from agentscope.memory import ReMeShortTermMemory
-    from agentscope.message import Msg, TextBlock
-    from agentscope.model import DashScopeChatModel
-    from agentscope.tool import ToolResponse, Toolkit
+    from reme_short_term_memory import ReMeShortTermMemory
 
     toolkit = Toolkit()
 
@@ -181,8 +181,6 @@ async def main() -> None:
         )
         msg = await agent(msg)
         print(f"✓ Agent response: {msg.get_text_content()}\n")
-
-        # react_content = agent.memory.content
 
     # await short_term_memory.__aexit__()
 

@@ -9,7 +9,6 @@ from ._reme import (
     ReMePersonalLongTermMemory,
     ReMeTaskLongTermMemory,
     ReMeToolLongTermMemory,
-    ReMeShortTermMemory,
 )
 
 __all__ = [
@@ -20,5 +19,4 @@ __all__ = [
     "ReMePersonalLongTermMemory",
     "ReMeTaskLongTermMemory",
     "ReMeToolLongTermMemory",
-    "ReMeShortTermMemory",
 ]

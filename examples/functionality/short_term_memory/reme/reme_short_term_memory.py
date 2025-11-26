@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any, List
 from uuid import uuid4
 
-from .._in_memory_memory import InMemoryMemory
-from ..._logging import logger
-from ..._utils._common import _json_loads_with_repair
-from ...formatter import DashScopeChatFormatter, OpenAIChatFormatter
-from ...message import Msg, TextBlock, ToolUseBlock, ToolResultBlock
-from ...model import DashScopeChatModel, OpenAIChatModel
-from ...tool import write_text_file
+from agentscope import logger
+from agentscope._utils._common import _json_loads_with_repair
+from agentscope.formatter import DashScopeChatFormatter, OpenAIChatFormatter
+from agentscope.memory import InMemoryMemory
+from agentscope.message import Msg, TextBlock, ToolUseBlock, ToolResultBlock
+from agentscope.model import DashScopeChatModel, OpenAIChatModel
+from agentscope.tool import write_text_file
 
 
 class ReMeShortTermMemory(InMemoryMemory):
