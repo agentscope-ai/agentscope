@@ -107,16 +107,15 @@ async def main() -> None:
             "seed": 0,
         },
     )
-
     short_term_memory = ReMeShortTermMemory(
         model=llm,
         working_summary_mode="auto",
         compact_ratio_threshold=0.75,
         max_total_tokens=20000,
         max_tool_message_tokens=2000,
-        group_token_threshold=None,
-        keep_recent_count=1,
-        store_dir="working_memory",
+        group_token_threshold=None,  # Max tokens per compression batch
+        keep_recent_count=1,  # Set to 1 for demo; use 10 in production
+        store_dir="inmemory",
     )
     # await short_term_memory.__aenter__()
 

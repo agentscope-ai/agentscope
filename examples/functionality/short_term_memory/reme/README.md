@@ -7,7 +7,7 @@ This example demonstrates how to
 - integrate short-term memory with ReAct agents for efficient tool usage and context management, and
 - configure DashScope models for memory operations.
 
-## Why Context Management (Short-Term Memory)?
+## Why Short-Term Memory?
 
 ### The Challenge: From Prompt Engineering to Context Engineering
 
@@ -115,62 +115,255 @@ The example will:
 
 ## Basic Usage
 
-### Initialize Memory
+This section provides a detailed walkthrough of the `short_term_memory_example.py` code, explaining how each component works together to create an agent with intelligent context management.
+
+### Code Flow Diagram
+
+```mermaid
+flowchart TD
+    A[Start: Load Environment] --> B[Create Toolkit]
+    B --> C[Register Tools: grep & read_file]
+    C --> D[Initialize LLM Model]
+    D --> E[Create ReMeShortTermMemory]
+    E --> F[Enter Async Context Manager]
+    F --> G[Add Initial Messages with Large Tool Response]
+    G --> H[Memory Auto-Compacts Large Content]
+    H --> I[Create ReActAgent with Memory]
+    I --> J[User Sends Query]
+    J --> K[Agent Uses Tools to Search/Read]
+    K --> L[Tool Responses Added to Memory]
+    L --> M{Memory Token Limit?}
+    M -->|Exceeded| N[Auto-Compact/Summarize]
+    M -->|OK| O[Agent Generates Response]
+    N --> O
+    O --> P[Return Response to User]
+    P --> Q[Exit Context Manager]
+    Q --> End[End]
+
+    style H fill:#e1f5ff
+    style N fill:#ffe1e1
+    style O fill:#e1ffe1
+```
+
+### Step-by-Step Code Walkthrough
+
+The example demonstrates a complete workflow from tool registration to agent interaction. Here's a detailed breakdown:
+
+#### 1. Environment Setup and Imports
 
 ```python
+import asyncio
 import os
-from agentscope.memory import ReMeShortTermMemory
-from agentscope.model import DashScopeChatModel
+from dotenv import load_dotenv
 
-# Initialize with DashScope model
+load_dotenv()
+```
+
+The code starts by loading environment variables (including the DashScope API key) from a `.env` file.
+
+#### 2. Tool Registration
+
+The example defines two custom tools that demonstrate how to integrate retrieval operations:
+
+**`grep` Tool**: Searches for patterns in files using regular expressions
+```python
+async def grep(file_path: str, pattern: str, limit: str) -> ToolResponse:
+    """A powerful search tool for finding patterns in files..."""
+    from reme_ai.retrieve.working import GrepOp
+
+    op = GrepOp()
+    await op.async_call(file_path=file_path, pattern=pattern, limit=limit)
+    return ToolResponse(
+        content=[TextBlock(type="text", text=op.output)],
+    )
+```
+
+**`read_file` Tool**: Reads specific line ranges from files
+```python
+async def read_file(file_path: str, offset: int, limit: int) -> ToolResponse:
+    """Reads and returns the content of a specified file..."""
+    from reme_ai.retrieve.working import ReadFileOp
+
+    op = ReadFileOp()
+    await op.async_call(file_path=file_path, offset=offset, limit=limit)
+    return ToolResponse(
+        content=[TextBlock(type="text", text=op.output)],
+    )
+```
+
+> **Important Note on Tool Replaceability**:
+> - The `grep` and `read_file` tools shown here are **example implementations** using ReMe's built-in operations
+> - You can **replace them with your own retrieval tools**, such as:
+>   - Vector database embedding retrieval (e.g., ChromaDB, Pinecone, Weaviate)
+>   - Web search APIs (e.g., Google Search, Bing Search)
+>   - Database query tools (e.g., SQL queries, MongoDB queries)
+>   - Custom domain-specific search solutions
+> - Similarly, the **offline write operations** (used internally by ReMeShortTermMemory to store compacted content) can be customized by modifying the `write_text_file` function in AgentScope's tool system
+> - The key requirement is that your tools return `ToolResponse` objects with appropriate content blocks
+
+#### 3. LLM Model Initialization
+
+```python
 llm = DashScopeChatModel(
     model_name="qwen3-coder-30b-a3b-instruct",
     api_key=os.environ.get("DASHSCOPE_API_KEY"),
-)
-
-short_term_memory = ReMeShortTermMemory(
-    model=llm,
-    working_summary_mode="auto",
-    compact_ratio_threshold=0.75,
-    max_total_tokens=20000,
-    max_tool_message_tokens=2000,
-    keep_recent_count=1,
-    store_dir="working_memory",
+    stream=False,
+    generate_kwargs={
+        "temperature": 0.001,
+        "seed": 0,
+    },
 )
 ```
 
-### Integrate with ReAct Agent
+The model is configured with low temperature for consistent, deterministic responses. This same model will be used for both agent reasoning and memory summarization operations.
+
+#### 4. Short-Term Memory Initialization
 
 ```python
-from agentscope.agent import ReActAgent
-from agentscope.formatter import DashScopeChatFormatter
-from agentscope.tool import Toolkit
-from agentscope.message import Msg
+short_term_memory = ReMeShortTermMemory(
+    model=llm,
+    working_summary_mode="auto",           # Automatic memory management
+    compact_ratio_threshold=0.75,          # Trigger compaction at 75% capacity
+    max_total_tokens=20000,                # Set to 20%-50% of model's context window
+    max_tool_message_tokens=2000,          # Maximum tolerable tool response length
+    group_token_threshold=None,            # Max tokens per LLM compression batch; None means no splitting
+    keep_recent_count=1,                   # Keep 1 recent message intact (set to 1 for demo; use 10 in production)
+    store_dir="inmemory",            # Storage directory for offloaded content
+)
+```
 
-# Create a ReAct agent with short-term memory
-toolkit = Toolkit()
-# Register your tools here
-# toolkit.register_tool_function(your_tool_function)
+This configuration enables automatic memory management that will:
+- Monitor token usage
+- Automatically compact large tool responses when they exceed `max_tool_message_tokens`
+- Trigger summarization when total tokens exceed `max_total_tokens` and compaction ratio exceeds `compact_ratio_threshold`
 
+#### 5. Async Context Manager Usage
+
+```python
+async with short_term_memory:
+    # All memory operations happen here
+```
+
+The `async with` statement ensures proper initialization and cleanup of memory resources. This is the recommended approach for using `ReMeShortTermMemory`.
+
+#### 6. Simulating Long Context
+
+The example demonstrates memory compaction by adding a large tool response:
+
+```python
+# Read README content and multiply it 10 times to simulate a large response
+f = open("../../../../README.md", encoding="utf-8")
+readme_content = f.read()
+f.close()
+
+memories = [
+    {
+        "role": "user",
+        "content": "搜索下项目资料",
+    },
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [...],  # Tool call metadata
+    },
+    {
+        "role": "tool",
+        "content": readme_content * 10,  # Large tool response (10x README)
+        "tool_call_id": "call_6596dafa2a6a46f7a217da",
+    },
+]
+
+await short_term_memory.add(
+    ReMeShortTermMemory.list_to_msg(memories),
+    allow_duplicates=True,
+)
+```
+
+When this large content is added, `ReMeShortTermMemory` will:
+1. Detect that the tool response exceeds `max_tool_message_tokens` (the maximum tolerable tool response length, set to 2000 in this example)
+2. Automatically compact it by storing the full content in an external file
+3. Keep only a short preview in the active memory
+4. This happens transparently without manual intervention
+
+#### 7. ReAct Agent Creation
+
+```python
 agent = ReActAgent(
     name="react",
-    sys_prompt="You are a helpful assistant.",
+    sys_prompt=(
+        "You are a helpful assistant. "
+        "工具调用的调用可能会被缓存到本地。"
+        "可以先使用`Grep`匹配关键词或者正则表达式所在行数，然后通过`ReadFile`读取位置附近的代码。"
+        # ... more instructions
+    ),
     model=llm,
     formatter=DashScopeChatFormatter(),
     toolkit=toolkit,
-    memory=short_term_memory,
+    memory=short_term_memory,  # Memory is integrated here
     max_iters=20,
 )
-
-# Use the agent with async context manager
-async with short_term_memory:
-    msg = Msg(
-        role="user",
-        content="Your question here",
-        name="user"
-    )
-    response = await agent(msg)
 ```
+
+The agent is configured with:
+- The same LLM model used for memory operations
+- The toolkit containing `grep` and `read_file` tools
+- The `short_term_memory` instance for automatic context management
+- A system prompt that guides the agent on tool usage patterns
+
+#### 8. Agent Interaction
+
+```python
+msg = Msg(
+    role="user",
+    content=("项目资料中，agentscope_v1论文的一作是谁？"),
+    name="user",
+)
+msg = await agent(msg)
+print(f"✓ Agent response: {msg.get_text_content()}\n")
+```
+
+When the agent processes this message:
+1. It receives the user query
+2. Decides to use tools (e.g., `grep` to search for "agentscope_v1")
+3. Tool responses are automatically added to memory
+4. If memory grows too large, automatic compaction occurs
+5. The agent generates a response based on the managed context
+6. The response is returned to the user
+
+### Complete Example Code Structure
+
+```python
+async def main() -> None:
+    # 1. Create toolkit and register tools
+    toolkit = Toolkit()
+    toolkit.register_tool_function(grep)
+    toolkit.register_tool_function(read_file)
+
+    # 2. Initialize LLM
+    llm = DashScopeChatModel(...)
+
+    # 3. Create short-term memory
+    short_term_memory = ReMeShortTermMemory(...)
+
+    # 4. Use async context manager
+    async with short_term_memory:
+        # 5. Add initial messages (with large content to demo compaction)
+        await short_term_memory.add(messages, allow_duplicates=True)
+
+        # 6. Create agent with memory
+        agent = ReActAgent(..., memory=short_term_memory, ...)
+
+        # 7. Interact with agent
+        response = await agent(user_message)
+```
+
+### Key Takeaways
+
+1. **Automatic Memory Management**: Memory compaction and summarization happen automatically when thresholds are exceeded
+2. **Tool Integration**: Tools return `ToolResponse` objects that are seamlessly integrated into memory
+3. **Async Context Manager**: Always use `async with short_term_memory:` to ensure proper resource management
+4. **Flexible Tool System**: The `grep` and `read_file` tools are examples—you can replace them with any retrieval mechanism that fits your use case
+5. **Transparent Operation**: Memory management is transparent to the agent—it just sees a clean, focused context
 
 ### Using Async Context Manager
 
@@ -211,10 +404,10 @@ finally:
 
 - **`working_summary_mode`** (`str`): Mode for working memory summarization. Options: `"auto"`, `"manual"`, or `"off"`. Default: `"auto"`.
 - **`compact_ratio_threshold`** (`float`): Threshold ratio (0-1) that triggers memory compaction when exceeded. Default: `0.75`.
-- **`max_total_tokens`** (`int`): Maximum total tokens allowed in memory before compaction. Default: `20000`.
-- **`max_tool_message_tokens`** (`int`): Maximum tokens allowed for a single tool response message. Default: `2000`.
-- **`group_token_threshold`** (`int | None`): Token threshold for grouping messages during compaction. Default: `None`.
-- **`keep_recent_count`** (`int`): Number of recent messages to keep during compaction. Default: `1`.
+- **`max_total_tokens`** (`int`): Maximum total tokens allowed in memory before compaction. Should be set to 20%-50% of the model's context window size. Default: `20000`.
+- **`max_tool_message_tokens`** (`int`): Maximum tolerable length for a single tool response message. Tool responses exceeding this limit will be automatically compacted. Default: `2000`.
+- **`group_token_threshold`** (`int | None`): Maximum tokens per LLM compression batch. When set to `None`, messages are not split into batches during compression. Default: `None`.
+- **`keep_recent_count`** (`int`): Number of recent messages to keep during compaction. Default: `1`. Note: The example uses `1` for demonstration purposes; in production, a value of `10` is recommended to maintain better conversation continuity.
 - **`store_dir`** (`str`): Directory path for storing working memory data. Default: `"working_memory"`.
 
 ## Advanced Configuration
@@ -249,9 +442,4 @@ The example shows a typical workflow:
 3. Agent uses `read_file` tool to read specific sections
 4. Large tool responses are automatically compacted by the memory system
 5. Agent answers the user's question based on the retrieved information
-
-## Reference
-
-- [ReMe Documentation](https://github.com/agentscope-ai/ReMe)
-- [AgentScope Documentation](https://github.com/modelscope/agentscope)
 

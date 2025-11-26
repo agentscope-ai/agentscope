@@ -45,8 +45,8 @@ class ReMeShortTermMemory(InMemoryMemory):
         max_total_tokens: int = 20000,
         max_tool_message_tokens: int = 2000,
         group_token_threshold: int | None = None,
-        keep_recent_count: int = 1,
-        store_dir: str = "working_memory",
+        keep_recent_count: int = 10,
+        store_dir: str = "inmemory",
         **kwargs: Any,
     ) -> None:
         """Initialize ReMe-based short-term memory.
