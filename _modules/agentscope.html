@@ -362,8 +362,7 @@
     <span class="p">),</span>
     <span class="n">created_at</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
         <span class="s2">&quot;created_at&quot;</span><span class="p">,</span>
-        <span class="n">default</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%H%M%S_&quot;</span><span class="p">)</span>
-        <span class="o">+</span> <span class="n">_generate_random_suffix</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S.</span><span class="si">%f</span><span class="s2">&quot;</span><span class="p">)[:</span><span class="o">-</span><span class="mi">3</span><span class="p">],</span>
     <span class="p">),</span>
     <span class="n">trace_enabled</span><span class="o">=</span><span class="n">ContextVar</span><span class="p">(</span>
         <span class="s2">&quot;trace_enabled&quot;</span><span class="p">,</span>
