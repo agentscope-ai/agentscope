@@ -345,6 +345,7 @@
     <span class="n">TextBlock</span><span class="p">,</span>
     <span class="n">ImageBlock</span><span class="p">,</span>
     <span class="n">AudioBlock</span><span class="p">,</span>
+    <span class="n">VideoBlock</span><span class="p">,</span>
     <span class="n">ToolUseBlock</span><span class="p">,</span>
     <span class="n">ToolResultBlock</span><span class="p">,</span>
     <span class="n">URLSource</span><span class="p">,</span>
@@ -495,6 +496,7 @@
         <span class="n">TextBlock</span><span class="p">,</span>
         <span class="n">ImageBlock</span><span class="p">,</span>
         <span class="n">AudioBlock</span><span class="p">,</span>
+        <span class="n">VideoBlock</span><span class="p">,</span>
         <span class="n">ToolUseBlock</span><span class="p">,</span>
         <span class="n">ToolResultBlock</span><span class="p">,</span>
     <span class="p">]</span>
@@ -504,6 +506,8 @@
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">promote_tool_result_images</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">promote_tool_result_audios</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">promote_tool_result_videos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">token_counter</span><span class="p">:</span> <span class="n">TokenCounterBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -516,6 +520,18 @@
 <span class="sd">                do support them in user message blocks. When `True`, images are</span>
 <span class="sd">                extracted and appended as a separate user message with</span>
 <span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            promote_tool_result_audios (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote audios from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support audios in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, audios are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            promote_tool_result_videos (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote videos from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support videos in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, videos are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
 <span class="sd">            token_counter (`TokenCounterBase | None`, optional):</span>
 <span class="sd">                A token counter instance used to count tokens in the messages.</span>
 <span class="sd">                If not provided, the formatter will format the messages</span>
@@ -526,7 +542,9 @@
 <span class="sd">                the messages.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">token_counter</span><span class="p">,</span> <span class="n">max_tokens</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_audios</span> <span class="o">=</span> <span class="n">promote_tool_result_audios</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_videos</span> <span class="o">=</span> <span class="n">promote_tool_result_videos</span></div>
 
 
 <div class="viewcode-block" id="DashScopeChatFormatter._format">
@@ -565,7 +583,7 @@
                         <span class="p">},</span>
                     <span class="p">)</span>
 
-                <span class="k">elif</span> <span class="n">typ</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;audio&quot;</span><span class="p">]:</span>
+                <span class="k">elif</span> <span class="n">typ</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;audio&quot;</span><span class="p">,</span> <span class="s2">&quot;video&quot;</span><span class="p">]:</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="n">_format_dashscope_media_block</span><span class="p">(</span>
                             <span class="n">block</span><span class="p">,</span>  <span class="c1"># type: ignore[arg-type]</span>
@@ -625,6 +643,44 @@
                                     <span class="p">),</span>
                                 <span class="p">],</span>
                             <span class="p">)</span>
+                        <span class="k">elif</span> <span class="p">(</span>
+                            <span class="n">multimodal_block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;audio&quot;</span>
+                            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_audios</span>
+                        <span class="p">):</span>
+                            <span class="n">promoted_blocks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                                <span class="p">[</span>
+                                    <span class="n">TextBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                                        <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">- The audio from &#39;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">&#39;: &quot;</span><span class="p">,</span>
+                                    <span class="p">),</span>
+                                    <span class="n">AudioBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;audio&quot;</span><span class="p">,</span>
+                                        <span class="n">source</span><span class="o">=</span><span class="n">URLSource</span><span class="p">(</span>
+                                            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;url&quot;</span><span class="p">,</span>
+                                            <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                                        <span class="p">),</span>
+                                    <span class="p">),</span>
+                                <span class="p">],</span>
+                            <span class="p">)</span>
+                        <span class="k">elif</span> <span class="p">(</span>
+                            <span class="n">multimodal_block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;video&quot;</span>
+                            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_videos</span>
+                        <span class="p">):</span>
+                            <span class="n">promoted_blocks</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
+                                <span class="p">[</span>
+                                    <span class="n">TextBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                                        <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">- The video from &#39;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">&#39;: &quot;</span><span class="p">,</span>
+                                    <span class="p">),</span>
+                                    <span class="n">VideoBlock</span><span class="p">(</span>
+                                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;video&quot;</span><span class="p">,</span>
+                                        <span class="n">source</span><span class="o">=</span><span class="n">URLSource</span><span class="p">(</span>
+                                            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;url&quot;</span><span class="p">,</span>
+                                            <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                                        <span class="p">),</span>
+                                    <span class="p">),</span>
+                                <span class="p">],</span>
+                            <span class="p">)</span>
 
                     <span class="k">if</span> <span class="n">promoted_blocks</span><span class="p">:</span>
                         <span class="c1"># Insert promoted blocks as new user message(s)</span>
@@ -632,7 +688,7 @@
                             <span class="n">TextBlock</span><span class="p">(</span>
                                 <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
                                 <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&lt;system-info&gt;The following are &quot;</span>
-                                <span class="s2">&quot;the image contents from the tool &quot;</span>
+                                <span class="sa">f</span><span class="s2">&quot;the media contents from the tool &quot;</span>
                                 <span class="sa">f</span><span class="s2">&quot;result of &#39;</span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&#39;:&quot;</span><span class="p">,</span>
                             <span class="p">),</span>
                             <span class="o">*</span><span class="n">promoted_blocks</span><span class="p">,</span>
@@ -715,6 +771,7 @@
         <span class="c1"># Multimodal</span>
         <span class="n">ImageBlock</span><span class="p">,</span>
         <span class="n">AudioBlock</span><span class="p">,</span>
+        <span class="n">VideoBlock</span><span class="p">,</span>
         <span class="c1"># Tool use</span>
         <span class="n">ToolUseBlock</span><span class="p">,</span>
         <span class="n">ToolResultBlock</span><span class="p">,</span>
@@ -731,6 +788,8 @@
             <span class="s2">&quot;your conversation history</span><span class="se">\n</span><span class="s2">&quot;</span>
         <span class="p">),</span>
         <span class="n">promote_tool_result_images</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">promote_tool_result_audios</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">promote_tool_result_videos</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">token_counter</span><span class="p">:</span> <span class="n">TokenCounterBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -745,6 +804,18 @@
 <span class="sd">                do support them in user message blocks. When `True`, images are</span>
 <span class="sd">                extracted and appended as a separate user message with</span>
 <span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            promote_tool_result_audios (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote audios from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support audios in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, audios are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
+<span class="sd">            promote_tool_result_videos (`bool`, defaults to `False`):</span>
+<span class="sd">                Whether to promote videos from tool results to user messages.</span>
+<span class="sd">                Most LLM APIs don&#39;t support videos in tool result blocks, but</span>
+<span class="sd">                do support them in user message blocks. When `True`, videos are</span>
+<span class="sd">                extracted and appended as a separate user message with</span>
+<span class="sd">                explanatory text indicating their source.</span>
 <span class="sd">            token_counter (`TokenCounterBase | None`, optional):</span>
 <span class="sd">                The token counter used for truncation.</span>
 <span class="sd">            max_tokens (`int | None`, optional):</span>
@@ -753,7 +824,9 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">token_counter</span><span class="o">=</span><span class="n">token_counter</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="n">max_tokens</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">conversation_history_prompt</span> <span class="o">=</span> <span class="n">conversation_history_prompt</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span> <span class="o">=</span> <span class="n">promote_tool_result_images</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_audios</span> <span class="o">=</span> <span class="n">promote_tool_result_audios</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_videos</span> <span class="o">=</span> <span class="n">promote_tool_result_videos</span></div>
 
 
 <div class="viewcode-block" id="DashScopeMultiAgentFormatter._format_tool_sequence">
@@ -775,6 +848,8 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="k">await</span> <span class="n">DashScopeChatFormatter</span><span class="p">(</span>
             <span class="n">promote_tool_result_images</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_images</span><span class="p">,</span>
+            <span class="n">promote_tool_result_audios</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_audios</span><span class="p">,</span>
+            <span class="n">promote_tool_result_videos</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">promote_tool_result_videos</span><span class="p">,</span>
         <span class="p">)</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span></div>
 
 
@@ -817,7 +892,7 @@
                 <span class="k">if</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span>
                     <span class="n">accumulated_text</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">msg</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">block</span><span class="p">[</span><span class="s1">&#39;text&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
-                <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;audio&quot;</span><span class="p">]:</span>
+                <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;audio&quot;</span><span class="p">,</span> <span class="s2">&quot;video&quot;</span><span class="p">]:</span>
                     <span class="c1"># Handle the accumulated text as a single block</span>
                     <span class="k">if</span> <span class="n">accumulated_text</span><span class="p">:</span>
                         <span class="n">conversation_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>

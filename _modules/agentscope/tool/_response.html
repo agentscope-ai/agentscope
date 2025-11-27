@@ -336,7 +336,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">List</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_get_timestamp</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">TextBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">TextBlock</span><span class="p">,</span> <span class="n">VideoBlock</span>
 
 
 <div class="viewcode-block" id="ToolResponse">
@@ -345,7 +345,7 @@
 <span class="k">class</span><span class="w"> </span><span class="nc">ToolResponse</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The result chunk of a tool call.&quot;&quot;&quot;</span>
 
-    <span class="n">content</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span><span class="p">]</span>
+    <span class="n">content</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">VideoBlock</span><span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The execution output of the tool function.&quot;&quot;&quot;</span>
 
     <span class="n">metadata</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>

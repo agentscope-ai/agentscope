@@ -336,7 +336,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Sequence</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_save_base64_data</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">TextBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">TextBlock</span><span class="p">,</span> <span class="n">VideoBlock</span>
 
 
 <div class="viewcode-block" id="FormatterBase">
@@ -376,8 +376,16 @@
 <a class="viewcode-back" href="../../../api/agentscope.formatter.html#agentscope.formatter.FormatterBase.convert_tool_result_to_string">[docs]</a>
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">convert_tool_result_to_string</span><span class="p">(</span>
-        <span class="n">output</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">TextBlock</span><span class="p">]]]:</span>
+        <span class="n">output</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">VideoBlock</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span>
+        <span class="nb">str</span><span class="p">,</span>
+        <span class="n">Sequence</span><span class="p">[</span>
+            <span class="n">Tuple</span><span class="p">[</span>
+                <span class="nb">str</span><span class="p">,</span>
+                <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">TextBlock</span> <span class="o">|</span> <span class="n">VideoBlock</span><span class="p">,</span>
+            <span class="p">]</span>
+        <span class="p">],</span>
+    <span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Turn the tool result list into a textual output to be compatible</span>
 <span class="sd">        with the LLM API that doesn&#39;t support multimodal data in the tool</span>
 <span class="sd">        result.</span>
@@ -387,12 +395,13 @@
 <span class="sd">        is included in the returned list.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            output (`str | List[TextBlock | ImageBlock | AudioBlock]`):</span>
+<span class="sd">            output (`str | List[TextBlock | ImageBlock | AudioBlock | \</span>
+<span class="sd">            VideoBlock]`):</span>
 <span class="sd">                The output of the tool response, including text and multimodal</span>
 <span class="sd">                data like images and audio.</span>
 
 <span class="sd">        Returns:</span>
-<span class="sd">            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | \</span>
+<span class="sd">            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock \</span>
 <span class="sd">            TextBlock]]]`:</span>
 <span class="sd">                A tuple containing the textual representation of the tool</span>
 <span class="sd">                result and a list of tuples. The first element of each tuple</span>
@@ -407,8 +416,8 @@
         <span class="n">multimodal_data</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">output</span><span class="p">:</span>
             <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;type&quot;</span> <span class="ow">in</span> <span class="n">block</span><span class="p">,</span> <span class="p">(</span>
-                <span class="sa">f</span><span class="s2">&quot;Invalid block: </span><span class="si">{</span><span class="n">block</span><span class="si">}</span><span class="s2">, a TextBlock, ImageBlock, or &quot;</span>
-                <span class="sa">f</span><span class="s2">&quot;AudioBlock is expected.&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Invalid block: </span><span class="si">{</span><span class="n">block</span><span class="si">}</span><span class="s2">, a TextBlock, ImageBlock, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;AudioBlock, or VideoBlock is expected.&quot;</span>
             <span class="p">)</span>
             <span class="k">if</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span>
                 <span class="n">textual_output</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">])</span>
