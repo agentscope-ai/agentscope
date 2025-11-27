@@ -215,7 +215,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_3ab7d5bb33b24878b82183",
+        "id": "call_45a80b0bb9ca48ecb97961",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -223,7 +223,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_7a3094d1f28a486bafee01",
+        "id": "call_6b6c8058e1d1476c864825",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -231,32 +231,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_3ab7d5bb33b24878b82183",
+        "id": "call_45a80b0bb9ca48ecb97961",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 07:11:45.299534，结束于 07:11:48.302318。"
+                "text": "标签 tag1 开始于 07:13:26.785743，结束于 07:13:29.789070。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_7a3094d1f28a486bafee01",
+        "id": "call_6b6c8058e1d1476c864825",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 07:11:45.299631，结束于 07:11:48.302876。"
+                "text": "标签 tag2 开始于 07:13:26.785866，结束于 07:13:29.789690。"
             }
         ]
     }
     Jarvis: 两个 `example_tool_function` 函数已经并行执行完毕。下面是它们各自的运行时间：
 
-    - 标签为 'tag1' 的函数开始于 07:11:45.299534，结束于 07:11:48.302318。
-    - 标签为 'tag2' 的函数开始于 07:11:45.299631，结束于 07:11:48.302876。
+    - 标签为 'tag1' 的函数从 07:13:26.785743 开始，在 07:13:29.789070 结束。
+    - 标签为 'tag2' 的函数从 07:13:26.785866 开始，在 07:13:29.789690 结束。
 
-    看起来这两个函数几乎是同时启动和完成的。
+    看起来这两个函数几乎是同时开始和结束的，这表明并行执行成功。
 
 
 
@@ -323,7 +323,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_29703b21f3884a2cbbd773",
+        "id": "call_02d2d992da3e49099110b9",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
@@ -331,13 +331,14 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             "age": 76,
             "honor": [
                 "诺贝尔物理学奖",
-                "美国《时代周刊》世纪人物"
+                "普朗克奖章",
+                "科普利奖章"
             ]
         }
     }
     system: {
         "type": "tool_result",
-        "id": "call_29703b21f3884a2cbbd773",
+        "id": "call_02d2d992da3e49099110b9",
         "name": "generate_response",
         "output": [
             {
@@ -346,7 +347,9 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。出生于1879年的爱因斯坦，在其一生中对物理学的发展做出了巨大的贡献。他的研究不仅改变了我们对于时间、空间以及引力的理解，还为现代科技如GPS定位系统等提供了理论基础。爱因斯坦享年76岁，在他的一生中获得了许多荣誉，其中包括1921年的诺贝尔物理学奖，以及被美国《时代周刊》评选为20世纪最重要的人物之一。这些成就使得爱因斯坦成为了科学史上最受尊敬和广泛认知的名字之一。
+    Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein）是20世纪最杰出的理论物理学家之一，他最著名的贡献在于创立了相对论。爱因斯坦出生于1879年，并于1955年去世，享年76岁。他的工作彻底改变了我们对时间、空间以及重力的理解。
+
+    在众多荣誉中，爱因斯坦获得了诺贝尔物理学奖（1921年），这是对他关于光电效应的研究以及他对理论物理学服务的认可；他还被授予了普朗克奖章和科普利奖章等重要奖项。除了科学成就外，爱因斯坦也因其和平主义立场而闻名，他一生致力于推动世界和平与国际合作。
 
     结构化输出：
     {
@@ -355,7 +358,8 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
         "age": 76,
         "honor": [
             "诺贝尔物理学奖",
-            "美国《时代周刊》世纪人物"
+            "普朗克奖章",
+            "科普利奖章"
         ]
     }
 
@@ -425,7 +429,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 22.026 seconds)
+   **Total running time of the script:** (0 minutes 21.793 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
