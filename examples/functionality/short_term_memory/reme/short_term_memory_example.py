@@ -3,13 +3,14 @@
 # noqa: E402
 import asyncio
 import os
+
 from dotenv import load_dotenv
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.message import Msg, TextBlock
 from agentscope.model import DashScopeChatModel
-from agentscope.tool import ToolResponse, Toolkit
+from agentscope.tool import ToolResponse, Toolkit, view_text_file
 
 load_dotenv()
 
@@ -78,18 +79,8 @@ async def main() -> None:
                 Helps control memory usage when reading large files. Should
                 not exceed 100.
         """
-        from reme_ai.retrieve.working import ReadFileOp
 
-        op = ReadFileOp()
-        await op.async_call(file_path=file_path, offset=offset, limit=limit)
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=op.output,
-                ),
-            ],
-        )
+        return await view_text_file(file_path, ranges=[offset, offset + limit])
 
     # These two tools are provided as examples. You can replace them with your
     # own retrieval tools, such as vector database embedding retrieval or other
@@ -98,8 +89,8 @@ async def main() -> None:
     toolkit.register_tool_function(read_file)
 
     llm = DashScopeChatModel(
-        # model_name="qwen3-max",
-        model_name="qwen3-coder-30b-a3b-instruct",
+        model_name="qwen3-max",
+        # model_name="qwen3-coder-30b-a3b-instruct",
         api_key=os.environ.get("DASHSCOPE_API_KEY"),
         stream=False,
         generate_kwargs={
@@ -117,10 +108,9 @@ async def main() -> None:
         keep_recent_count=1,  # Set to 1 for demo; use 10 in production
         store_dir="inmemory",
     )
-    # await short_term_memory.__aenter__()
 
     async with short_term_memory:
-        # 模拟超长上下文
+        # Simulate ultra long context
         f = open("../../../../README.md", encoding="utf-8")
         readme_content = f.read()
         f.close()
@@ -128,7 +118,7 @@ async def main() -> None:
         memories = [
             {
                 "role": "user",
-                "content": "搜索下项目资料",
+                "content": "Search for project information",
             },
             {
                 "role": "assistant",
@@ -160,12 +150,20 @@ async def main() -> None:
             name="react",
             sys_prompt=(
                 "You are a helpful assistant. "
-                "工具调用的调用可能会被缓存到本地。"
-                "可以先使用`Grep`匹配关键词或者正则表达式所在行数，然后通过`ReadFile`读取位置附近的代码。"
-                "如果没有找到匹配项，永远不要放弃尝试，尝试其他的参数，或者放松匹配条件，比如只搜索部分关键词。"
-                "`Grep`之后通过`ReadFile`命令，你可以从指定偏移位置`offset`+长度`limit`开始查看内容, "
-                "limit最大100。"
-                "如果当前内容不足，`ReadFile` 命令也可以不断尝试不同的`offset`和`limit`参数"
+                "Tool calls may be cached locally. "
+                "You can first use `Grep` to match keywords or regular "
+                "expressions to find line numbers, then use `ReadFile` "
+                "to read the code near that location. "
+                "If no matches are found, never give up trying - try "
+                "other parameters or relax the matching conditions, such "
+                "as searching for only partial keywords. "
+                "After `Grep`, you can use the `ReadFile` command to "
+                "view content starting from a specified offset position "
+                "`offset` with length `limit`. "
+                "The maximum limit is 100. "
+                "If the current content is insufficient, the `ReadFile` "
+                "command can continuously try different `offset` and "
+                "`limit` parameters."
             ),
             model=llm,
             formatter=DashScopeChatFormatter(),
@@ -176,13 +174,14 @@ async def main() -> None:
 
         msg = Msg(
             role="user",
-            content=("项目资料中，agentscope_v1论文的一作是谁？"),
+            content=(
+                "In the project documentation, who is the first author "
+                "of the agentscope_v1 paper?"
+            ),
             name="user",
         )
         msg = await agent(msg)
         print(f"✓ Agent response: {msg.get_text_content()}\n")
-
-    # await short_term_memory.__aexit__()
 
 
 if __name__ == "__main__":
