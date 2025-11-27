@@ -337,7 +337,13 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">mcp.types</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">Base64Source</span><span class="p">,</span> <span class="n">AudioBlock</span><span class="p">,</span> <span class="n">TextBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ImageBlock</span><span class="p">,</span>
+    <span class="n">Base64Source</span><span class="p">,</span>
+    <span class="n">AudioBlock</span><span class="p">,</span>
+    <span class="n">TextBlock</span><span class="p">,</span>
+    <span class="n">VideoBlock</span><span class="p">,</span>
+<span class="p">)</span>
 
 
 <div class="viewcode-block" id="MCPClientBase">
@@ -372,7 +378,7 @@
     <span class="nd">@staticmethod</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">_convert_mcp_content_to_as_blocks</span><span class="p">(</span>
         <span class="n">mcp_content_blocks</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">VideoBlock</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert MCP content to AgentScope blocks.&quot;&quot;&quot;</span>
 
         <span class="n">as_content</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[]</span>

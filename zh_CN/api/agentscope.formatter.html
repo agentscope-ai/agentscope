@@ -386,7 +386,7 @@ base64-encoded images, the local file path where the image is saved
 is included in the returned list.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>output</strong> (<cite>str | List[TextBlock | ImageBlock | AudioBlock]</cite>) -- The output of the tool response, including text and multimodal
+<dd class="field-odd"><p><strong>output</strong> (<cite>str | List[TextBlock | ImageBlock | AudioBlock |             VideoBlock]</cite>) -- The output of the tool response, including text and multimodal
 data like images and audio.</p>
 </dd>
 <dt class="field-even">返回<span class="colon">:</span></dt>
@@ -396,7 +396,7 @@ is the local file path or URL of the multimodal data, and the
 second element is the corresponding block.</p>
 </dd>
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p><cite>tuple[str, list[Tuple[str, ImageBlock | AudioBlock |             TextBlock]]]</cite></p>
+<dd class="field-odd"><p><cite>tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock             TextBlock]]]</cite></p>
 </dd>
 </dl>
 </dd></dl>
@@ -529,12 +529,12 @@ entities in the conversation.</p>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.supported_blocks">
-<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.VideoBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_audios</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_videos</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeChatFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the DashScope chat formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -542,6 +542,16 @@ entities in the conversation.</p>
 <li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
 Most LLM APIs don't support images in tool result blocks, but
 do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>promote_tool_result_audios</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote audios from tool results to user messages.
+Most LLM APIs don't support audios in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, audios are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>promote_tool_result_videos</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote videos from tool results to user messages.
+Most LLM APIs don't support videos in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, videos are
 extracted and appended as a separate user message with
 explanatory text indicating their source.</p></li>
 <li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- A token counter instance used to count tokens in the messages.
@@ -622,13 +632,13 @@ is playing as.</p>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks">
-<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">supported_blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">type</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">[&lt;class</span> <span class="pre">'agentscope.message._message_block.TextBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ImageBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.AudioBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.VideoBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolUseBlock'&gt;,</span> <span class="pre">&lt;class</span> <span class="pre">'agentscope.message._message_block.ToolResultBlock'&gt;]</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.supported_blocks" title="Link to this definition">¶</a></dt>
 <dd><p>The list of supported message blocks</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeMultiAgentFormatter.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">conversation_history_prompt</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'#</span> <span class="pre">Conversation</span> <span class="pre">History\nThe</span> <span class="pre">content</span> <span class="pre">between</span> <span class="pre">&lt;history&gt;&lt;/history&gt;</span> <span class="pre">tags</span> <span class="pre">contains</span> <span class="pre">your</span> <span class="pre">conversation</span> <span class="pre">history\n'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_images</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_audios</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">promote_tool_result_videos</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">token_counter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_tokens</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_dashscope_formatter.html#DashScopeMultiAgentFormatter.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.DashScopeMultiAgentFormatter.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the DashScope multi-agent formatter.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -637,6 +647,16 @@ is playing as.</p>
 <li><p><strong>promote_tool_result_images</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote images from tool results to user messages.
 Most LLM APIs don't support images in tool result blocks, but
 do support them in user message blocks. When <cite>True</cite>, images are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>promote_tool_result_audios</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote audios from tool results to user messages.
+Most LLM APIs don't support audios in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, audios are
+extracted and appended as a separate user message with
+explanatory text indicating their source.</p></li>
+<li><p><strong>promote_tool_result_videos</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to promote videos from tool results to user messages.
+Most LLM APIs don't support videos in tool result blocks, but
+do support them in user message blocks. When <cite>True</cite>, videos are
 extracted and appended as a separate user message with
 explanatory text indicating their source.</p></li>
 <li><p><strong>token_counter</strong> (<cite>TokenCounterBase | None</cite>, optional) -- The token counter used for truncation.</p></li>

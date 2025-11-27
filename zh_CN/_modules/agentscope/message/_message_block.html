@@ -453,7 +453,9 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The type of the block&quot;&quot;&quot;</span>
     <span class="nb">id</span><span class="p">:</span> <span class="n">Required</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The identity of the tool call result&quot;&quot;&quot;</span>
-    <span class="n">output</span><span class="p">:</span> <span class="n">Required</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span><span class="p">]]</span>
+    <span class="n">output</span><span class="p">:</span> <span class="n">Required</span><span class="p">[</span>
+        <span class="nb">str</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span> <span class="o">|</span> <span class="n">ImageBlock</span> <span class="o">|</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="n">VideoBlock</span><span class="p">]</span>
+    <span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The output of the tool function&quot;&quot;&quot;</span>
     <span class="n">name</span><span class="p">:</span> <span class="n">Required</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The name of the tool function&quot;&quot;&quot;</span></div>
