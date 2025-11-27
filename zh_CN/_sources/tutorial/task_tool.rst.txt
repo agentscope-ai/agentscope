@@ -334,7 +334,7 @@ AgentScope 在 ``agentscope.tool`` 模块下提供了几个内置工具函数，
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-27 07:17:07.445_9456be')
+    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2025-11-27 13:31:26.473_f27bc6')
 
 
 
@@ -499,7 +499,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-27 07:17:08.449_42c0a9')
+    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-27 13:31:27.478_0cdfd5')
     中断标志：
     True
 
@@ -580,11 +580,11 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     块 0：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-27 07:17:08.452_270931')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2025-11-27 13:31:27.480_51a9ed')
     中断标志： False 
 
     块 1：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-27 07:17:08.452_270931')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2025-11-27 13:31:27.480_51a9ed')
     中断标志： True 
 
 
