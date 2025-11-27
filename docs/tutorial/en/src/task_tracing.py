@@ -64,7 +64,7 @@ Taking Alibaba Cloud CloudMonitor, Arize-Phoenix, and Langfuse as examples:
     **Get your Endpoint:** In the `ARMS Console <https://arms.console.aliyun.com/>`_ under **Access Center** > **OpenTelemetry**,
     select the **Public Endpoint** matching your deployment region. Customize your app name via the ``OTEL_SERVICE_NAME`` environment variable.
     Alibaba Cloud CloudMonitor provides zero-code instrumentation through `LoongSuite <https://github.com/alibaba/loongsuite-python-agent>`_ agent.
-    Learn more in the `CloudMonitor Documentation <https://help.aliyun.com/zh/cms/cloudmonitor-2-0/user-guide/model-application>`_.
+    Learn more in the `CloudMonitor Documentation <https://www.alibabacloud.com/help/en/cms/cloudmonitor-2-0/user-guide/model-application>`_.
 
 **Arize-Phoenix**: You need to set the ``PHOENIX_API_KEY`` in your environment variables.
 
