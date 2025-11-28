@@ -17,7 +17,6 @@ from ..message import (
     VideoBlock,
     ToolUseBlock,
     ToolResultBlock,
-    URLSource,
 )
 from ..token import TokenCounterBase
 
@@ -271,7 +270,12 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                     (
                         textual_output,
                         multimodal_data,
-                    ) = self.convert_tool_result_to_string(block["output"])
+                    ) = self.convert_tool_result_to_string(
+                        block["output"],
+                        promote_tool_result_images=self.promote_tool_result_images,  # noqa
+                        promote_tool_result_audios=self.promote_tool_result_audios,  # noqa
+                        promote_tool_result_videos=self.promote_tool_result_videos,  # noqa
+                    )
 
                     # First add the tool result message in DashScope API format
                     formatted_msgs.append(
@@ -296,13 +300,7 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                                         type="text",
                                         text=f"\n- The image from '{url}': ",
                                     ),
-                                    ImageBlock(
-                                        type="image",
-                                        source=URLSource(
-                                            type="url",
-                                            url=url,
-                                        ),
-                                    ),
+                                    multimodal_block,
                                 ],
                             )
                         elif (
@@ -315,13 +313,7 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                                         type="text",
                                         text=f"\n- The audio from '{url}': ",
                                     ),
-                                    AudioBlock(
-                                        type="audio",
-                                        source=URLSource(
-                                            type="url",
-                                            url=url,
-                                        ),
-                                    ),
+                                    multimodal_block,
                                 ],
                             )
                         elif (
@@ -334,13 +326,7 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                                         type="text",
                                         text=f"\n- The video from '{url}': ",
                                     ),
-                                    VideoBlock(
-                                        type="video",
-                                        source=URLSource(
-                                            type="url",
-                                            url=url,
-                                        ),
-                                    ),
+                                    multimodal_block,
                                 ],
                             )
 

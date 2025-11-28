@@ -16,7 +16,6 @@ from ..message import (
     ToolUseBlock,
     ToolResultBlock,
     VideoBlock,
-    URLSource,
 )
 from .._logging import logger
 from ..token import TokenCounterBase
@@ -211,7 +210,10 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                     (
                         textual_output,
                         multimodal_data,
-                    ) = self.convert_tool_result_to_string(block["output"])
+                    ) = self.convert_tool_result_to_string(
+                        block["output"],
+                        promote_tool_result_images=self.promote_tool_result_images,  # noqa
+                    )
 
                     # First add the tool result message in DashScope API format
                     messages.append(
@@ -243,13 +245,7 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                                         type="text",
                                         text=f"\n- The image from '{url}': ",
                                     ),
-                                    ImageBlock(
-                                        type="image",
-                                        source=URLSource(
-                                            type="url",
-                                            url=url,
-                                        ),
-                                    ),
+                                    multimodal_block,
                                 ],
                             )
 

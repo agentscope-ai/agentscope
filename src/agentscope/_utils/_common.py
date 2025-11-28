@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import functools
+import hashlib
 import inspect
 import json
 import os
@@ -404,3 +405,23 @@ def _parse_tool_function(
         func_json_schema["function"]["description"] = func_description
 
     return func_json_schema
+
+
+def _generate_unique_identifier(base64_data: str) -> str:
+    """Generate a unique identifier for base64 data.
+
+    Args:
+        base64_data (`str`):
+            The base64 encoded data.
+
+    Returns:
+        `str`:
+            A unique identifier based on content hash and timestamp.
+    """
+    # Generate hash from base64 data (use first 200 chars for better
+    # uniqueness)
+    data_sample = base64_data[:200] if len(base64_data) > 200 else base64_data
+    data_hash = hashlib.md5(data_sample.encode()).hexdigest()[:8]
+    # Add short timestamp suffix (last 4 digits of microseconds)
+    timestamp_suffix = datetime.now().strftime("%f")[-2:]
+    return f"{data_hash}{timestamp_suffix}"
