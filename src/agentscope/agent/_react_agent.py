@@ -7,16 +7,23 @@ from typing import Type, Any, AsyncGenerator, Literal
 
 from pydantic import BaseModel, ValidationError, Field
 
+from ._utils import _AsyncNullContext
 from ._react_agent_base import ReActAgentBase
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
-from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
+from ..message import (
+    Msg,
+    ToolUseBlock,
+    ToolResultBlock,
+    TextBlock,
+)
 from ..model import ChatModelBase
 from ..rag import KnowledgeBase, Document
 from ..plan import PlanNotebook
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
+from ..tts import TTSModelBase
 
 
 class _QueryRewriteModel(BaseModel):
@@ -63,6 +70,7 @@ class ReActAgent(ReActAgentBase):
         plan_notebook: PlanNotebook | None = None,
         print_hint_msg: bool = False,
         max_iters: int = 10,
+        tts_model: TTSModelBase | None = None,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -120,6 +128,8 @@ class ReActAgent(ReActAgentBase):
                 the long-term memory and knowledge base(s).
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
+            tts_model (`TTSModelBase | None` optional):
+                The TTS model used by the agent.
         """
         super().__init__()
 
@@ -135,6 +145,7 @@ class ReActAgent(ReActAgentBase):
         self.max_iters = max_iters
         self.model = model
         self.formatter = formatter
+        self.tts_model = tts_model
 
         # -------------- Memory management --------------
         # Record the dialogue history in the memory
@@ -390,11 +401,15 @@ class ReActAgent(ReActAgentBase):
         await self.memory.add(reply_msg)
         return reply_msg
 
+    # pylint: disable=too-many-branches
     async def _reasoning(
         self,
         tool_choice: Literal["auto", "none", "any", "required"] | None = None,
     ) -> Msg:
         """Perform the reasoning process."""
+
+        tts_context = self.tts_model or _AsyncNullContext()
+
         if self.plan_notebook:
             # Insert the reasoning hint from the plan notebook
             hint_msg = await self.plan_notebook.get_current_hint()
@@ -424,20 +439,34 @@ class ReActAgent(ReActAgentBase):
         interrupted_by_user = False
         msg = None
         try:
-            if self.model.stream:
-                msg = Msg(self.name, [], "assistant")
-                async for content_chunk in res:
-                    msg.content = content_chunk.content
-                    await self.print(msg, False)
+            async with tts_context:
+                msg = Msg(name=self.name, content=[], role="assistant")
+                if self.model.stream:
+                    async for content_chunk in res:
+                        msg.content = content_chunk.content
+                        if self.tts_model:
+                            tts_response = await self.tts_model(msg, False)
+                            msg.content.extend(tts_response.content)
+                        await self.print(msg, False)
+                else:
+                    msg.content = list(res.content)
+
+                # Call TTS at the end for all TTS models to get final audio
+                if self.tts_model:
+                    # Remove old audio blocks before adding the final one
+                    msg.content = [
+                        block
+                        for block in msg.content
+                        if block.get("type") != "audio"
+                    ]
+                    tts_response = await self.tts_model(msg, True)
+                    msg.content.extend(tts_response.content)
+
                 await self.print(msg, True)
 
                 # Add a tiny sleep to yield the last message object in the
                 # message queue
                 await asyncio.sleep(0.001)
-
-            else:
-                msg = Msg(self.name, list(res.content), "assistant")
-                await self.print(msg, True)
 
         except asyncio.CancelledError as e:
             interrupted_by_user = True
@@ -542,6 +571,9 @@ class ReActAgent(ReActAgentBase):
     async def _summarizing(self) -> Msg:
         """Generate a response when the agent fails to solve the problem in
         the maximum iterations."""
+
+        tts_context = self.tts_model or _AsyncNullContext()
+
         hint_msg = Msg(
             "user",
             "You have failed to generate response within the maximum "
@@ -562,18 +594,34 @@ class ReActAgent(ReActAgentBase):
         #  finish_function here
         res = await self.model(prompt)
 
-        res_msg = Msg(self.name, [], "assistant")
-        if isinstance(res, AsyncGenerator):
-            async for chunk in res:
-                res_msg.content = chunk.content
-                await self.print(res_msg, False)
+        async with tts_context:
+            res_msg = Msg(self.name, [], "assistant")
+            if isinstance(res, AsyncGenerator):
+                async for chunk in res:
+                    res_msg.content = chunk.content
+                    if self.tts_model:
+                        tts_response = await self.tts_model(res_msg, False)
+                        res_msg.content.extend(tts_response.content)
+
+                    await self.print(res_msg, False)
+
+            else:
+                res_msg.content = res.content
+                if self.tts_model:
+                    # Remove old audio blocks before adding the final one
+                    res_msg.content = [
+                        block
+                        for block in res_msg.content
+                        if block.get("type") != "audio"
+                    ]
+                    tts_response = await self.tts_model(res_msg, True)
+                    res_msg.content.extend(tts_response.content)
+                else:
+                    res_msg.content = list(res_msg.content)
+
             await self.print(res_msg, True)
 
-        else:
-            res_msg.content = res.content
-            await self.print(res_msg, True)
-
-        return res_msg
+            return res_msg
 
     async def handle_interrupt(
         self,
