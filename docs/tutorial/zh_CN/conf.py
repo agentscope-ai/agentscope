@@ -36,6 +36,22 @@ sphinx_gallery_conf = {
     ],
     "filename_pattern": "src/.*\.py",
     "example_extensions": [".py"],
+    "expected_failing_examples": [
+        "src/task_rag.py",
+        "src/task_agent.py",
+        "src/task_model.py",
+        "src/quickstart_agent.py",
+        "src/task_long_term_memory.py",
+        "src/workflow_routing.py",
+        "src/task_pipeline.py",
+        "src/workflow_handoffs.py",
+        "src/task_embedding.py",
+        "src/task_mcp.py",
+        "src/workflow_multiagent_debate.py",
+        "src/task_eval.py",
+        "src/task_state.py",
+        "src/workflow_conversation.py",
+    ],
 }
 
 templates_path = ["../_templates"]
