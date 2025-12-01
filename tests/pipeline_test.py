@@ -86,6 +86,37 @@ class StreamAgent(AgentBase):
         """Handle interrupt"""
 
 
+class ErrorAgent(AgentBase):
+    """Agent that raises an error during execution."""
+
+    def __init__(self, error_msg: str = "Test error") -> None:
+        """Initialize the agent"""
+        super().__init__()
+        self.name = "ErrorAgent"
+        self.error_msg = error_msg
+
+    async def reply(self) -> Msg | None:
+        """Reply function that raises an error"""
+        msg = Msg(
+            self.name,
+            "Message before error",
+            "user",
+        )
+        await self.print(msg)
+        # Raise error after printing
+        raise ValueError(self.error_msg)
+
+    async def observe(self, msg: Msg | list[Msg] | None) -> None:
+        """Observe function"""
+
+    async def handle_interrupt(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Msg:
+        """Handle interrupt"""
+
+
 class MultAgent(AgentBase):
     """Mult agent class."""
 
@@ -376,3 +407,32 @@ class PipelineTest(IsolatedAsyncioTestCase):
                 )
 
             i += 1
+
+    async def test_stream_printing_messages_with_error_after_print(
+        self,
+    ) -> None:
+        """Test stream_printing_messages function raises exception even
+        after printing some messages"""
+        error_agent = ErrorAgent("Error after printing")
+
+        messages_received = []
+        exception_raised = False
+
+        try:
+            async for msg, _ in stream_printing_messages(
+                [error_agent],
+                error_agent(),
+            ):
+                messages_received.append(msg)
+        except ValueError as e:
+            exception_raised = True
+            self.assertEqual(str(e), "Error after printing")
+
+        # Verify that we received the message before error
+        self.assertEqual(len(messages_received), 1)
+        self.assertEqual(
+            messages_received[0].content,
+            "Message before error",
+        )
+        # Verify that exception was raised
+        self.assertTrue(exception_raised)
