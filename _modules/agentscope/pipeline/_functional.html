@@ -495,17 +495,21 @@
     <span class="k">else</span><span class="p">:</span>
         <span class="n">task</span><span class="o">.</span><span class="n">add_done_callback</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="n">queue</span><span class="o">.</span><span class="n">put_nowait</span><span class="p">(</span><span class="n">end_signal</span><span class="p">))</span>
 
-    <span class="c1"># Receive the messages from the agent&#39;s message queue</span>
     <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
         <span class="c1"># The message obj, and a boolean indicating whether it&#39;s the last chunk</span>
         <span class="c1"># in a streaming message</span>
         <span class="n">printing_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="n">queue</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
 
-        <span class="c1"># End the loop when the message is None</span>
+        <span class="c1"># Check if this is the end signal</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">printing_msg</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="n">printing_msg</span> <span class="o">==</span> <span class="n">end_signal</span><span class="p">:</span>
             <span class="k">break</span>
 
-        <span class="k">yield</span> <span class="n">printing_msg</span></div>
+        <span class="k">yield</span> <span class="n">printing_msg</span>
+
+    <span class="c1"># Check exception after processing all messages</span>
+    <span class="n">exception</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">exception</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">exception</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">exception</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span></div>
 
 </pre></div>
         </article>
