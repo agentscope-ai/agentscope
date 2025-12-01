@@ -1,5 +1,7 @@
 # MemoryWithCompress
 
+- [ ] TODO: The memory module with compression will be added to the agentscope library in the future.
+
 ## Overview
 
 MemoryWithCompress is a memory management system designed for AgentScope's `ReActAgent`. It automatically compresses conversation history when the memory size exceeds a specified token limit, using a Large Language Model (LLM) to create concise summaries that preserve key information. This allows agents to maintain context over long conversations while staying within token constraints.
@@ -167,7 +169,7 @@ You can provide custom storage backends by implementing the `MessageStorageBase`
 from _memory_storage import MessageStorageBase
 
 class CustomStorage(MessageStorageBase):
-    # Implement required methods: get_storage_client, add, delete, get, update_all, get_client,clear
+    # Implement required methods: start, stop, health, add, delete, clear, get, replace, __aenter__, __aexit__
     ...
 
 memory_with_compress = MemoryWithCompress(
@@ -280,8 +282,7 @@ The `_mc_utils.py` module provides:
 The `_memory_storage.py` module provides:
 
 - **`MessageStorageBase`**: Abstract base class for message storage backends
-  - Required methods: `get_storage_client()`, `add()`, `delete()`, `get()`, `update_all()`, `get_client()`, `clear()`
-  - All methods are async
+  - Required async methods: `start()`, `stop()`, `health()`, `add()`, `delete()`, `clear()`, `get()`, `replace()`, `__aenter__()`, `__aexit__()`
 - **`InMemoryMessageStorage`**: Default in-memory implementation
   - Stores messages in a simple list
   - Suitable for most use cases

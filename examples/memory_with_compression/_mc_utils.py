@@ -47,7 +47,7 @@ DEFAULT_COMPRESSION_PROMPT_TEMPLATE = (
     "You are a memory compression assistant. Please summarize and "
     "compress the following conversation history into a concise "
     "summary that preserves the key information. \n\n You should "
-    "compress the conversation into with less than {max_token} "
+    "compress the conversation into less than {max_token} "
     "tokens. The summary should be in the following json format:\n\n"
     "{schema_json}"
     "\n\nThe conversation history is:\n\n{messages_list_json}"
@@ -57,16 +57,16 @@ DEFAULT_COMPRESSION_PROMPT_TEMPLATE = (
 def format_msgs(
     msgs: Union[Sequence[Msg], Msg],
 ) -> list[dict]:
-    """Format a list of messages or memory units to a string in order.
-
+    """Format a list of messages to a list of dicts in order.
     Args:
-        msgs (Union[Sequence[Msg], Msg, Sequence[MemRecord], MemRecord]):
-            the info to format
+        msgs (`Union[Sequence[Msg], Msg]`):
+            The messages to format. Only `Msg` objects are accepted.
+
     Raises:
-        ValueError: the message type or the content type is invalid
+        ValueError: The message type or the content type is invalid.
 
     Returns:
-        str: the formatted messages
+        `list[dict]`: The formatted messages.
     """
     results = []
     if not isinstance(msgs, Sequence):

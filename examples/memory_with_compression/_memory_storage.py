@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The memory storage base class."""
 from abc import abstractmethod
-from typing import Any, Iterable, Optional, Union
+from typing import Any, Iterable, Optional, Union, cast
 from types import TracebackType
 
 from agentscope.message import Msg
@@ -37,11 +37,28 @@ class MessageStorageBase:
 
     @abstractmethod
     async def add(self, messages: list[Msg], **kwargs: Any) -> None:
-        """Record the messages into the message storage."""
+        """Record the messages into the message storage.
+
+        Args:
+            messages (`list[Msg]`):
+                The messages to be added to storage
+        """
 
     @abstractmethod
-    async def delete(self, *args: Any, **kwargs: Any) -> None:
-        """Delete the messages from the message storage."""
+    async def delete(
+        self,
+        indices: Union[Iterable[int], int, None] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Delete the messages from the message storage.
+
+        Args:
+            indices (`Iterable[int] | int | None`, optional):
+                The indices of messages to delete. If None, no messages
+                are deleted.
+            **kwargs (`Any`):
+                Additional keyword arguments for storage-specific options.
+        """
 
     @abstractmethod
     async def clear(self, **kwargs: Any) -> None:
@@ -53,17 +70,34 @@ class MessageStorageBase:
         recent_n: Optional[int] = None,
         **kwargs: Any,
     ) -> list[Msg]:
-        """Get the messages from the memory storage."""
+        """Get the messages from the memory storage.
+
+        Args:
+            recent_n (`Optional[int]`, optional):
+                The number of recent messages to retrieve
+
+        Returns:
+            `list[Msg]`:
+                The list of messages from storage
+        """
 
     @abstractmethod
     async def replace(self, messages: list[Msg], **kwargs: Any) -> None:
-        """Update the messages in the message storage."""
+        """Update the messages in the message storage.
+
+        Args:
+            messages (`list[Msg]`):
+                The new messages to replace existing storage content
+        """
 
     @abstractmethod
     async def __aenter__(self) -> "MessageStorageBase":
-        """Async context manager entry."""
-        await self.start()
-        return self
+        """Async context manager entry.
+
+        Returns:
+            `MessageStorageBase`:
+                The storage instance
+        """
 
     @abstractmethod
     async def __aexit__(
@@ -72,9 +106,20 @@ class MessageStorageBase:
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> bool:
-        """Async context manager exit."""
-        await self.stop()
-        return False
+        """Async context manager exit.
+
+        Args:
+            exc_type (`Optional[type[BaseException]]`):
+                The exception type if an exception occurred
+            exc_val (`Optional[BaseException]`):
+                The exception value if an exception occurred
+            exc_tb (`Optional[TracebackType]`):
+                The exception traceback if an exception occurred
+
+        Returns:
+            `bool`:
+                False to propagate exceptions
+        """
 
 
 class InMemoryMessageStorage(MessageStorageBase):
@@ -122,15 +167,30 @@ class InMemoryMessageStorage(MessageStorageBase):
         return hasattr(self, "_connected") and self._connected is True
 
     async def add(self, messages: list[Msg], **kwargs: Any) -> None:
-        """Record the messages into the message storage."""
+        """Record the messages into the message storage.
+
+        Args:
+            messages (`list[Msg]`):
+                The messages to be added to storage
+        """
         self._storage_client.extend(messages)
 
     async def delete(
         self,
-        indices: Union[Iterable[int], int],
+        indices: Union[Iterable[int], int, None] = None,
         **kwargs: Any,
     ) -> None:
-        """Delete the messages from the message storage."""
+        """Delete the messages from the message storage.
+
+        Args:
+            indices (`Iterable[int] | int | None`, optional):
+                The indices of messages to delete. If None, no messages
+                are deleted.
+            **kwargs (`Any`):
+                Additional keyword arguments for storage-specific options.
+        """
+        if indices is None:
+            return
         if isinstance(indices, int):
             indices = [indices]
         indices_set = set(indices)
@@ -149,21 +209,43 @@ class InMemoryMessageStorage(MessageStorageBase):
         recent_n: Optional[int] = None,
         **kwargs: Any,
     ) -> list[Msg]:
-        """Get the messages from the message storage."""
+        """Get the messages from the memory storage.
+
+        Args:
+            recent_n (`Optional[int]`, optional):
+                The number of recent messages to retrieve. If None,
+                returns all messages.
+
+        Returns:
+            `list[Msg]`:
+                The list of messages from storage
+        """
         if recent_n is None:
             return self._storage_client
-        else:
-            if recent_n > len(self._storage_client):
-                return self._storage_client
-            else:
-                return self._storage_client[-recent_n:]
+        # Type narrowing: recent_n is guaranteed to be int at this point
+        n = cast(int, recent_n)
+        if n > len(self._storage_client):
+            return self._storage_client
+        # Use positive index to avoid unary minus operator
+        start_idx = len(self._storage_client) - n
+        return self._storage_client[start_idx:]
 
     async def replace(self, messages: list[Msg], **kwargs: Any) -> None:
-        """Replace the messages in the message storage."""
+        """Replace the messages in the message storage.
+
+        Args:
+            messages (`list[Msg]`):
+                The new messages to replace the existing storage content
+        """
         self._storage_client = messages
 
     async def __aenter__(self) -> "InMemoryMessageStorage":
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        Returns:
+            `InMemoryMessageStorage`:
+                The storage instance
+        """
         await self.start()
         return self
 
@@ -173,6 +255,19 @@ class InMemoryMessageStorage(MessageStorageBase):
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> bool:
-        """Async context manager exit."""
+        """Async context manager exit.
+
+        Args:
+            exc_type (`Optional[type[BaseException]]`):
+                The exception type if an exception occurred
+            exc_val (`Optional[BaseException]`):
+                The exception value if an exception occurred
+            exc_tb (`Optional[TracebackType]`):
+                The exception traceback if an exception occurred
+
+        Returns:
+            `bool`:
+                False to propagate exceptions
+        """
         await self.stop()
         return False
