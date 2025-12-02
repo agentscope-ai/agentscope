@@ -83,6 +83,10 @@ Repository = "https://github.com/agentscope-ai/agentscope"
 
 [tool.setuptools]
 packages = { find = { where = ["src"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]

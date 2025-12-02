@@ -38,7 +38,7 @@ class GeminiChatModel(ChatModelBase):
         api_key: str,
         stream: bool = True,
         thinking_config: dict | None = None,
-        client_kwargs: dict = None,
+        client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -64,7 +64,8 @@ class GeminiChatModel(ChatModelBase):
                         "thinking_budget": 1024   # Max tokens for reasoning
                     }
 
-            client_kwargs (`dict`, default `None`):
+            client_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
                 The extra keyword arguments to initialize the Gemini client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
