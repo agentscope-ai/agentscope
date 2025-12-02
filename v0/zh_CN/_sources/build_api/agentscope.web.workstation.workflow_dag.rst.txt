@@ -1,0 +1,6 @@
+agentscope.web.workstation.workflow_dag
+=======================================
+.. automodule:: agentscope.web.workstation.workflow_dag
+   :members:
+   :undoc-members:
+   :show-inheritance:

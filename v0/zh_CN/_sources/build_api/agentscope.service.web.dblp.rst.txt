@@ -1,0 +1,6 @@
+agentscope.service.web.dblp
+===========================
+.. automodule:: agentscope.service.web.dblp
+   :members:
+   :undoc-members:
+   :show-inheritance:

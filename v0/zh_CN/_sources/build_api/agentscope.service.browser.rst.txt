@@ -1,0 +1,7 @@
+agentscope.service.browser
+==========================
+
+.. automodule:: agentscope.service.browser
+   :members:
+   :undoc-members:
+   :show-inheritance:

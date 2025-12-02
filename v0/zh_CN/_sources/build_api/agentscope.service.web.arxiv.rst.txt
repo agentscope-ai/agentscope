@@ -1,0 +1,6 @@
+agentscope.service.web.arxiv
+============================
+.. automodule:: agentscope.service.web.arxiv
+   :members:
+   :undoc-members:
+   :show-inheritance:

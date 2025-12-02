@@ -1,0 +1,6 @@
+agentscope.models.gemini_model
+==============================
+.. automodule:: agentscope.models.gemini_model
+   :members:
+   :undoc-members:
+   :show-inheritance:

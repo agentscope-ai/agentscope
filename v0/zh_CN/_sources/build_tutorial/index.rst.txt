@@ -1,0 +1,407 @@
+:orphan:
+
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="本教程介绍如何在AgentScope Workstation中通过拖拽界面构建多智能体应用程序。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_low_code_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_low_code.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">低代码开发</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="配置类 ------------------------">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_examples_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_examples.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">样例</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="本节重定向到 conversation_with_web_browser_agent/README.md。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_web_browser_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_web_browser.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">浏览器控制</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="本节介绍 AgentScope 分布式的使用方法。AgentScope 原生提供了基于 gRPC 的分布式模式， 在这种模式下，一个应用程序中的多个智能体可以部署到不同的进程或者甚至不同的机器上，从而充分利用计算资源，提高效率。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_distribution_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_distribution.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">分布式</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 需要 Python 3.9 或更高版本。你可以从源码或 pypi 安装。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_quickstart_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_quickstart.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">快速入门</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 支持在终端和 AgentScope Studio 中以打字机效果显示流式输出。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_streaming_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_streaming.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">流式输出</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在本节中，我们将展示如何在 AgentScope 中构建多模态应用程序。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_multimodality_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_multimodality.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">多模态</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 实现了一个用于优化智能体系统提示的模块。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_prompt_optimization_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_prompt_optimization.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">系统提示优化</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="消息是一种用于智能体间信息交换的数据结构。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_message_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_message.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">消息</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 的主入口是 agentscope.init，在这里您可以配置应用程序。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_monitor_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_monitor.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">配置和监控</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 支持基于 AgentScope Studio 和 Gradio 的网页可视化，同时支持用户对接自定义或第三方的可视化平台。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_visual_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_visual.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">可视化</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="在本教程中，我们将简要介绍什么是 MCP，并展示如何在 AgentScope 中使用 MCP。此外，我们将演示如何将现有的 AgentScope 多智能体应用配置为 MCP 服务器。最后，为了帮助高级开发者更深入地理解，我们将讨论 MCP 是如何与 AgentScope 集成的。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_MCP_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_MCP.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">MCP</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中，不同智能体之间通过“显式的消息交换”来构建对话。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_conversation_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_conversation.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">构建对话</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Agentscope 内置了对检索增强生成（RAG）的支持。AgentScope 中与 RAG 相关的两个关键模块是：Knowledge 和 KnowledgeBank。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_rag_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_rag.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">检索增强生成（RAG）</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中，可以通过继承基类`agentscope.agents.AgentBase`来构建智能体">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">构建智能体</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="背景介绍 --------------------">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_tool_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_tool.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">工具</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 内置若干智能体类，以支持不同使用场景，同时展示如何使用 AgentScope 构建智能体。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_builtin_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_builtin_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">内置智能体</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 已集成了许多不同模态的模型 API 。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_model_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_model.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">模型 API</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="智能体应用中，重要的一点是构建符合模型 API 要求的输入（prompt）。AgentScope 中，我们为开 发者提供了一些列的内置策略，以支持不同的模型 API 和场景（chat 和 multi-agent）。">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_prompt_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_prompt.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Prompt 格式化</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="如下图所示，AgentScope 支持以下两种结构化输出方式：">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_structured_output_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_structured_output.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">结构化输出</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 围绕三个核心智能体函数实现了钩子函数：">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_hook_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_hook.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">钩子函数（Hooks）允许开发人员在特定执行点自定义智能体行为。它们提供了一种灵活的方式来修改或扩展智能体的功能，而无需更改其核心实现。</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /build_tutorial/low_code
+   /build_tutorial/examples
+   /build_tutorial/web_browser
+   /build_tutorial/distribution
+   /build_tutorial/quickstart
+   /build_tutorial/streaming
+   /build_tutorial/multimodality
+   /build_tutorial/prompt_optimization
+   /build_tutorial/message
+   /build_tutorial/monitor
+   /build_tutorial/visual
+   /build_tutorial/MCP
+   /build_tutorial/conversation
+   /build_tutorial/rag
+   /build_tutorial/agent
+   /build_tutorial/tool
+   /build_tutorial/builtin_agent
+   /build_tutorial/model
+   /build_tutorial/prompt
+   /build_tutorial/structured_output
+   /build_tutorial/hook
+
+
+
+.. only:: html
+
+ .. rst-class:: sphx-glr-signature
+
+    `Gallery generated by Sphinx-Gallery <https://sphinx-gallery.github.io>`_

@@ -1,0 +1,7 @@
+agentscope.service.sql_query
+============================
+
+.. automodule:: agentscope.service.sql_query
+   :members:
+   :undoc-members:
+   :show-inheritance:

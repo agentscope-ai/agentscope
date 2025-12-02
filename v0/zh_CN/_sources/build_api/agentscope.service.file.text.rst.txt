@@ -1,0 +1,6 @@
+agentscope.service.file.text
+============================
+.. automodule:: agentscope.service.file.text
+   :members:
+   :undoc-members:
+   :show-inheritance:

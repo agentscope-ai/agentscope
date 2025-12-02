@@ -1,0 +1,862 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="MCP" href="MCP.html"><link rel="prev" title="配置和监控" href="monitor.html">
+        <link rel="canonical" href="/v0/build_tutorial/tool.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>工具 - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=a9cd5911" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="搜索" name="q" aria-label="搜索">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV1(this.value)">
+                    <option value="v1">Stable(v1.0)</option>
+                    <option value="v0" selected>v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">快速入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message.html">消息</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agent.html">构建智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conversation.html">构建对话</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FQA</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">常见问题解答</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="model.html">模型 API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt.html">Prompt 格式化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="structured_output.html">结构化输出</a></li>
+<li class="toctree-l1"><a class="reference internal" href="streaming.html">流式输出</a></li>
+<li class="toctree-l1"><a class="reference internal" href="builtin_agent.html">内置智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multimodality.html">多模态</a></li>
+<li class="toctree-l1"><a class="reference internal" href="visual.html">可视化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="monitor.html">配置和监控</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="MCP.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rag.html">检索增强生成（RAG）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hook.html">钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="distribution.html">分布式</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt_optimization.html">系统提示优化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="web_browser.html">浏览器控制</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_code.html">低代码开发</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">样例</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Applications</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/swe.html">SWE-Bench</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.models.html">agentscope.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.agents.html">agentscope.agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.parsers.html">agentscope.parsers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.service.html">agentscope.service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.prompt.html">agentscope.prompt</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.tokens.html">agentscope.tokens</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV0Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/build_tutorial/tool.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">备注</p>
+<p><a class="reference internal" href="#sphx-glr-download-build-tutorial-tool-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="tools">
+<span id="sphx-glr-build-tutorial-tool-py"></span><span id="id1"></span><h1>工具<a class="headerlink" href="#tools" title="Link to this heading">¶</a></h1>
+<section id="id2">
+<h2>背景介绍<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
+<p>工具调用根据实现方式不同分为两种类型：</p>
+<a class="reference internal image-reference" href="https://img.alicdn.com/imgextra/i3/O1CN01iizvjY1UjKCE3q5FR_!!6000000002553-0-tps-1830-792.jpg"><img alt="两种不同实现方式" class="align-center" src="https://img.alicdn.com/imgextra/i3/O1CN01iizvjY1UjKCE3q5FR_!!6000000002553-0-tps-1830-792.jpg" style="width: 80%;" />
+</a>
+<ul class="simple">
+<li><p>基于 prompt 的工具调用: 开发人员在 prompt 中介绍工具，并从 LLM 响应中手动提取工具调用。</p></li>
+<li><p>基于 API 的工具调用：开发人员提供 JSON Schema 格式的工具描述，LLM API 将直接返回特定格</p></li>
+</ul>
+<blockquote>
+<div><p>式的工具调用。</p>
+</div></blockquote>
+<p>AgentScope 同时兼容两种方式，在本教程中，将展示如何使用 AgentScope 中内置的工具函数，
+以及如何创建自定义工具。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">agentscope</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">DashScopeChatWrapper</span>
+</pre></div>
+</div>
+</section>
+<section id="id3">
+<h2>内置工具函数<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<p>AgentScope 提供了一个 <cite>ServiceToolkit</cite> 模块，支持以下功能:</p>
+<ul class="simple">
+<li><p>自动解析工具函数为 JSON Schema 格式</p></li>
+<li><p>提供一套默认的调用格式,</p></li>
+<li><p>参数检查和调用函数</p></li>
+</ul>
+<p>在使用 <cite>ServiceToolkit</cite> 之前,我们可以先看一下 <cite>agentscope.service</cite> 模块中可用的工具。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_help</span><span class="p">,</span> <span class="n">ServiceResponse</span><span class="p">,</span> <span class="n">ServiceExecStatus</span>
+
+<span class="n">get_help</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>以上所有函数都是用 Python 实现的，可以通过调用 <cite>add</cite> 方法注册到 <cite>ServiceToolkit</cite> 中。
+<cite>ServiceToolkit</cite> 将自动将工具函数解析为 JSON Schema 格式。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceToolkit</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">bing_search</span><span class="p">,</span> <span class="n">execute_shell_command</span>
+
+<span class="n">toolkit</span> <span class="o">=</span> <span class="n">ServiceToolkit</span><span class="p">()</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">execute_shell_command</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>注意,一些工具函数的参数（例如 api_key）应该由开发人员处理。
+你可以直接在 add 方法中以关键字参数的形式传递这些参数，保留其他参数留给智能体填写。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">toolkit</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">bing_search</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;xxx&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;工具说明:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">tools_instruction</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具说明:
+## Tool Functions:
+The following tool functions are available in the format of
+```
+{index}. {function name}: {function description}
+{argument1 name} ({argument type}): {argument description}
+{argument2 name} ({argument type}): {argument description}
+...
+```
+
+1. execute_shell_command: Execute given command and return the return code, standard output and
+
+error within &lt;returncode&gt;&lt;/returncode&gt;, &lt;stdout&gt;&lt;/stdout&gt; and
+&lt;stderr&gt;&lt;/stderr&gt; tags.
+        command (string): The shell command to execute.
+        timeout (number): The maximum time (in seconds) allowed for the command to run.
+2. bing_search: Search question in Bing Search API and return the searching results
+        question (string): The search query string.
+        num_results (integer): The number of search results to return.
+</pre></div>
+</div>
+<p>内置的默认调用格式:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">tools_calling_format</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>[{&quot;name&quot;: &quot;{function name}&quot;, &quot;arguments&quot;: {&quot;{argument1 name}&quot;: xxx, &quot;{argument2 name}&quot;: xxx}}]
+</pre></div>
+</div>
+<p>自动生成的工具函数 JSON Schema 格式说明:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">json_schemas</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>{
+  &quot;execute_shell_command&quot;: {
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+      &quot;name&quot;: &quot;execute_shell_command&quot;,
+      &quot;parameters&quot;: {
+        &quot;properties&quot;: {
+          &quot;command&quot;: {
+            &quot;description&quot;: &quot;The shell command to execute.&quot;,
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;timeout&quot;: {
+            &quot;default&quot;: 300,
+            &quot;description&quot;: &quot;The maximum time (in seconds) allowed for the command to run.&quot;,
+            &quot;type&quot;: &quot;number&quot;
+          }
+        },
+        &quot;required&quot;: [
+          &quot;command&quot;
+        ],
+        &quot;type&quot;: &quot;object&quot;
+      },
+      &quot;description&quot;: &quot;Execute given command and return the return code, standard output and\n\nerror within &lt;returncode&gt;&lt;/returncode&gt;, &lt;stdout&gt;&lt;/stdout&gt; and\n&lt;stderr&gt;&lt;/stderr&gt; tags.&quot;
+    }
+  },
+  &quot;bing_search&quot;: {
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+      &quot;name&quot;: &quot;bing_search&quot;,
+      &quot;parameters&quot;: {
+        &quot;properties&quot;: {
+          &quot;question&quot;: {
+            &quot;description&quot;: &quot;The search query string.&quot;,
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;num_results&quot;: {
+            &quot;default&quot;: 10,
+            &quot;description&quot;: &quot;The number of search results to return.&quot;,
+            &quot;type&quot;: &quot;integer&quot;
+          }
+        },
+        &quot;required&quot;: [
+          &quot;question&quot;
+        ],
+        &quot;type&quot;: &quot;object&quot;
+      },
+      &quot;description&quot;: &quot;Search question in Bing Search API and return the searching results&quot;
+    }
+  }
+}
+</pre></div>
+</div>
+</section>
+<section id="prompt">
+<h2>基于 prompt 的工具调用<a class="headerlink" href="#prompt" title="Link to this heading">¶</a></h2>
+<p>在基于 prompt 的工具调用中，开发人员需要:
+- 在 prompt 中介绍工具和调用格式
+- 从 LLM 响应中手动提取工具调用</p>
+<p>关于从字符串中提取工具调用，可以参考 <a class="reference internal" href="structured_output.html#structured-output"><span class="std std-ref">结构化输出</span></a> 章节中的解析器介绍。
+<a href="#id4"><span class="problematic" id="id5">`</span></a>ServiceToolkit.parse_and_call_func`方法接受的工具调用格式如下：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolUseBlock</span>
+
+<span class="n">tool_call</span> <span class="o">=</span> <span class="n">ToolUseBlock</span><span class="p">(</span>
+    <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
+    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;xxx&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;bing_search&quot;</span><span class="p">,</span>
+    <span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;AgentScope&quot;</span><span class="p">},</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p><cite>ServiceToolkit</cite> 注册工具函数后，可以将其集成到智能体中。</p>
+<p>AgentScope 提供了 <cite>ReActAgent</cite> 智能体类来使用工具，只需要将 <cite>ServiceToolkit</cite> 对象传递给这个智能体。
+有关该智能体的实现细节，请参阅 <a class="reference internal" href="builtin_agent.html#builtin-agent"><span class="std std-ref">内置智能体</span></a>。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>ReActAgent</cite> 采用的是 prompt 本地拼接和解析的方式调用工具，而不是通过
+模型 API 的 tools API 进行调用。关于 tools API 的使用，请参考 <span class="xref std std-ref">tools-api</span>.</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgent</span>
+
+<span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span>
+    <span class="n">model_configs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;config_name&quot;</span><span class="p">:</span> <span class="s2">&quot;my-qwen-max&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;dashscope_chat&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="s2">&quot;qwen-max&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+
+<span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Friday&quot;</span><span class="p">,</span>
+    <span class="n">model_config_name</span><span class="o">=</span><span class="s2">&quot;my-qwen-max&quot;</span><span class="p">,</span>
+    <span class="n">service_toolkit</span><span class="o">=</span><span class="n">toolkit</span><span class="p">,</span>
+    <span class="n">sys_prompt</span><span class="o">=</span><span class="s2">&quot;你是一个名为 Friday 的助手。&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">msg_task</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;帮我计算一下 1615114134*4343434343&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)</span>
+
+<span class="n">res</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="n">msg_task</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>system: Respond with specific tags as outlined below:
+&lt;thought&gt;{what you thought}&lt;/thought&gt;
+&lt;function&gt;{the function name you want to call}&lt;/function&gt;
+&lt;{argument name}&gt;{argument value}&lt;/{argument name}&gt;
+&lt;{argument name}&gt;{argument value}&lt;/{argument name}&gt;
+...
+Friday: &lt;thought&gt;用户想要计算一个乘法表达式的结果。我可以直接使用Python的eval函数来计算这个结果，但是这里没有提供这样的工具函数。因此我将使用execute_shell_command函数来执行这个计算。&lt;/thought&gt;
+&lt;function&gt;execute_shell_command&lt;/function&gt;
+&lt;command&gt;echo &quot;1615114134*4343434343&quot; | bc&lt;/command&gt;
+&lt;timeout&gt;60&lt;/timeout&gt;
+system: 1. Execute function execute_shell_command
+   [ARGUMENTS]:
+       {&quot;command&quot;: &quot;echo \&quot;1615114134*4343434343\&quot; | bc&quot;, &quot;timeout&quot;: 60}
+   [RESULT]: &lt;returncode&gt;0&lt;/returncode&gt;
+&lt;stdout&gt;7015142197480303962
+&lt;/stdout&gt;
+&lt;stderr&gt;&lt;/stderr&gt;
+
+system: Respond with specific tags as outlined below:
+&lt;thought&gt;{what you thought}&lt;/thought&gt;
+&lt;function&gt;{the function name you want to call}&lt;/function&gt;
+&lt;{argument name}&gt;{argument value}&lt;/{argument name}&gt;
+&lt;{argument name}&gt;{argument value}&lt;/{argument name}&gt;
+...
+Friday: &lt;thought&gt;我已经得到了计算结果，现在可以将结果告诉用户。&lt;/thought&gt;
+&lt;function&gt;finish&lt;/function&gt;
+&lt;response&gt;计算结果是 7015142197480303962。&lt;/response&gt;
+system: 1. Execute function finish
+   [ARGUMENTS]:
+       {&quot;response&quot;: &quot;计算结果是 7015142197480303962。&quot;}
+   [RESULT]: 计算结果是 7015142197480303962。
+</pre></div>
+</div>
+</section>
+<section id="api">
+<h2>基于 API 的工具调用<a class="headerlink" href="#api" title="Link to this heading">¶</a></h2>
+<p>基于 API 的工具调用中，开发者只需要提供 JSON Schema 格式的工具描述。但是不同的模型 API
+- 要求的 JSON Schema 格式不同
+- 将工具调用，执行结果集成到prompt中的方式也不同</p>
+<a class="reference internal image-reference" href="build_tutorial/api_based_tool_calling.png"><img alt="API-based tool calling" class="align-center" src="build_tutorial/api_based_tool_calling.png" style="width: 80%;" />
+</a>
+<p>上图以 OpenAI 为例展示了基于 API 的工具调用如何工作。通过`agentscope.formatter`和
+<cite>ModelResponse`的封装，我们隐藏了 API 的格式要求和转化细节，开发者只需要专注应用的开发。
+开发者需要了解的是：
+- `ServiceToolkit</cite> 支持自动将函数解析为标准 JSON Schema 格式
+- <cite>Formatter</cite> 模块支持将 JSON Schema 和消息列表转化成 API 需要的格式
+- 不同模型 API 返回的工具调用会在 <cite>ModelResponse</cite> 中统一格式（<cite>ToolUseBlock</cite>)</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>新的智能体类 <cite>ReActAgentV2</cite> 已上线，使用基于 API 的工具调用方法。
+其使用方法与 <cite>ReActAgent</cite> 保持高度一致。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>目前 <cite>Formatter</cite> 模块只有 <cite>format_chat</cite> 函数支持工具调用，</p>
+</div>
+<p><cite>format_multi_agent</cite> 函数的支持还在开发中。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>tools API目前还不支持流式返回，相关功能处于开发中。</p>
+</div>
+<p>我们以 DashScope API 为例展示如何使用 tools API.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.formatters</span><span class="w"> </span><span class="kn">import</span> <span class="n">DashScopeFormatter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">TextBlock</span><span class="p">,</span> <span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResultBlock</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">DashScopeChatWrapper</span><span class="p">(</span>
+    <span class="n">config_name</span><span class="o">=</span><span class="s2">&quot;_&quot;</span><span class="p">,</span>
+    <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;qwen-max&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>图中的 3 -&gt; 4 步，将 JSON schemas 和 messages 转化成模型 API 需要的格式:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">msgs</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;Help me to execute shell cmd &#39;whoami&#39;&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+<span class="p">]</span>
+
+<span class="n">formatted_msgs</span> <span class="o">=</span> <span class="n">DashScopeFormatter</span><span class="o">.</span><span class="n">format_chat</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span>
+<span class="n">formatted_schemas</span> <span class="o">=</span> <span class="n">DashScopeFormatter</span><span class="o">.</span><span class="n">format_tools_json_schemas</span><span class="p">(</span>
+    <span class="n">toolkit</span><span class="o">.</span><span class="n">json_schemas</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">formatted_msgs</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>[
+    {
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: [
+            {
+                &quot;text&quot;: &quot;Help me to execute shell cmd &#39;whoami&#39;&quot;
+            }
+        ]
+    }
+]
+</pre></div>
+</div>
+<p>图中 5 -&gt; 6 -&gt; 7 步，获取模型响应:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">response</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">formatted_msgs</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="n">formatted_schemas</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;tool_calls:&quot;</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>tool_calls: [
+    {
+        &quot;type&quot;: &quot;tool_use&quot;,
+        &quot;id&quot;: &quot;call_b262be2e5e814eee9d1bb8&quot;,
+        &quot;name&quot;: &quot;execute_shell_command&quot;,
+        &quot;input&quot;: {
+            &quot;command&quot;: &quot;whoami&quot;,
+            &quot;timeout&quot;: 300
+        }
+    }
+]
+</pre></div>
+</div>
+<p>图中 8 步，创建一个包含工具调用的新消息:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 创建带有工具调用的新消息</span>
+<span class="n">content</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">:</span>
+    <span class="n">content</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">TextBlock</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">))</span>
+<span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">:</span>
+    <span class="n">content</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">)</span>
+<span class="n">msgs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="n">content</span><span class="p">,</span> <span class="s2">&quot;assistant&quot;</span><span class="p">,</span> <span class="n">echo</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+
+<span class="c1"># 执行工具调用</span>
+<span class="n">msg_execution</span> <span class="o">=</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">parse_and_call_func</span><span class="p">(</span>
+    <span class="n">response</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">,</span>
+    <span class="n">tools_api_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># 基于 API 的工具调用必须为 True</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>assistant: [
+    {
+        &quot;type&quot;: &quot;tool_use&quot;,
+        &quot;id&quot;: &quot;call_b262be2e5e814eee9d1bb8&quot;,
+        &quot;name&quot;: &quot;execute_shell_command&quot;,
+        &quot;input&quot;: {
+            &quot;command&quot;: &quot;whoami&quot;,
+            &quot;timeout&quot;: 300
+        }
+    }
+]
+</pre></div>
+</div>
+<p>图中 9 步，将执行结果添加到消息列表中:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">msgs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg_execution</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>在完成了一轮工具调用之后，让我们再次尝试将包含工具调用和结果的消息列表格式化:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">formatted_msgs</span> <span class="o">=</span> <span class="n">DashScopeFormatter</span><span class="o">.</span><span class="n">format_chat</span><span class="p">(</span><span class="n">msgs</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">formatted_msgs</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>[
+    {
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: [
+            {
+                &quot;text&quot;: &quot;Help me to execute shell cmd &#39;whoami&#39;&quot;
+            }
+        ]
+    },
+    {
+        &quot;role&quot;: &quot;assistant&quot;,
+        &quot;content&quot;: null,
+        &quot;tool_calls&quot;: [
+            {
+                &quot;id&quot;: &quot;call_b262be2e5e814eee9d1bb8&quot;,
+                &quot;type&quot;: &quot;function&quot;,
+                &quot;function&quot;: {
+                    &quot;name&quot;: &quot;execute_shell_command&quot;,
+                    &quot;arguments&quot;: &quot;{\&quot;command\&quot;: \&quot;whoami\&quot;, \&quot;timeout\&quot;: 300}&quot;
+                }
+            }
+        ]
+    },
+    {
+        &quot;role&quot;: &quot;tool&quot;,
+        &quot;tool_call_id&quot;: &quot;call_b262be2e5e814eee9d1bb8&quot;,
+        &quot;content&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;\n&lt;stdout&gt;runner\n&lt;/stdout&gt;\n&lt;stderr&gt;&lt;/stderr&gt;&quot;,
+        &quot;name&quot;: &quot;execute_shell_command&quot;
+    }
+]
+</pre></div>
+</div>
+<p>目前，我们已经完成了基于 API 的工具调用全过程。在智能体内的具体实现可以参
+考 <cite>agentscope.agents.ReActAgentV2</cite>。</p>
+</section>
+<section id="servicetoolkit-mcp">
+<h2>在 ServiceToolkit 中使用 MCP<a class="headerlink" href="#servicetoolkit-mcp" title="Link to this heading">¶</a></h2>
+<p>AgentScope 支持集成 MCP (Model Context Protocol) 服务器，使模型和工具具有增强的功能。
+您可以使用 <cite>add_mcp_servers</cite> 方法将 MCP 服务器添加到 <cite>ServiceToolkit</cite> 中，并在其中指定每个服务器的配置。
+请注意，MCP 要求 Python 版本&gt;=3.10。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">configs</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;mcpServers&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;puppeteer&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;command&quot;</span><span class="p">:</span> <span class="s2">&quot;npx&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;-y&quot;</span><span class="p">,</span> <span class="s2">&quot;@modelcontextprotocol/server-puppeteer&quot;</span><span class="p">],</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>将 MCP 服务器配置添加到 ServiceToolkit
+<cite>toolkit.add_mcp_servers(server_configs=configs)</cite></p>
+</section>
+<section id="id6">
+<h2>创建工具函数<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
+<p>自定义工具函数必须遵循以下规则:</p>
+<ul class="simple">
+<li><p>参数使用 typing 指定类型</p></li>
+<li><p>使用 Google 风格书写完整的 docstring</p></li>
+<li><p>函数返回值必须用 <cite>ServiceResponse</cite> 包装</p></li>
+</ul>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">new_function</span><span class="p">(</span><span class="n">arg1</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">arg2</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ServiceResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;简单介绍该函数。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        arg1 (`str`):</span>
+<span class="sd">            对 arg1 的简单描述</span>
+<span class="sd">        arg2 (`int`):</span>
+<span class="sd">            对 arg2 的简单描述</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">ServiceResponse</span><span class="p">(</span>
+        <span class="n">status</span><span class="o">=</span><span class="n">ServiceExecStatus</span><span class="o">.</span><span class="n">SUCCESS</span><span class="p">,</span>
+        <span class="n">content</span><span class="o">=</span><span class="s2">&quot;完成!&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.357 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-build-tutorial-tool-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/9682e4a38fd7e8b6971e1afe68e967ff/tool.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">tool.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/ede26fc984fd5f12a4ede3580d57b877/tool.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">tool.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/6456442ff90fd4cee044c2493d6e351b/tool.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">tool.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="MCP.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">MCP</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="monitor.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">配置和监控</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">工具</a><ul>
+<li><a class="reference internal" href="#id2">背景介绍</a></li>
+<li><a class="reference internal" href="#id3">内置工具函数</a></li>
+<li><a class="reference internal" href="#prompt">基于 prompt 的工具调用</a></li>
+<li><a class="reference internal" href="#api">基于 API 的工具调用</a></li>
+<li><a class="reference internal" href="#servicetoolkit-mcp">在 ServiceToolkit 中使用 MCP</a></li>
+<li><a class="reference internal" href="#id6">创建工具函数</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=7d86a446"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/language_switch.js?v=9fc19426"></script>
+    </body>
+</html>

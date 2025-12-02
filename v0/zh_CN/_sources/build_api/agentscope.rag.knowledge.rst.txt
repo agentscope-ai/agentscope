@@ -1,0 +1,6 @@
+agentscope.rag.knowledge
+========================
+.. automodule:: agentscope.rag.knowledge
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -1,0 +1,993 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="流式输出" href="streaming.html"><link rel="prev" title="Prompt 格式化" href="prompt.html">
+        <link rel="canonical" href="/v0/build_tutorial/structured_output.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>结构化输出 - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=a9cd5911" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="搜索" name="q" aria-label="搜索">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV1(this.value)">
+                    <option value="v1">Stable(v1.0)</option>
+                    <option value="v0" selected>v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">快速入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message.html">消息</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agent.html">构建智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conversation.html">构建对话</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FQA</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">常见问题解答</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="model.html">模型 API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt.html">Prompt 格式化</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">结构化输出</a></li>
+<li class="toctree-l1"><a class="reference internal" href="streaming.html">流式输出</a></li>
+<li class="toctree-l1"><a class="reference internal" href="builtin_agent.html">内置智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multimodality.html">多模态</a></li>
+<li class="toctree-l1"><a class="reference internal" href="visual.html">可视化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="monitor.html">配置和监控</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="MCP.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rag.html">检索增强生成（RAG）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hook.html">钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="distribution.html">分布式</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt_optimization.html">系统提示优化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="web_browser.html">浏览器控制</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_code.html">低代码开发</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">样例</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Applications</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/swe.html">SWE-Bench</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.models.html">agentscope.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.agents.html">agentscope.agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.parsers.html">agentscope.parsers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.service.html">agentscope.service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.prompt.html">agentscope.prompt</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.tokens.html">agentscope.tokens</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV0Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/build_tutorial/structured_output.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">备注</p>
+<p><a class="reference internal" href="#sphx-glr-download-build-tutorial-structured-output-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="structured-output">
+<span id="sphx-glr-build-tutorial-structured-output-py"></span><span id="id1"></span><h1>结构化输出<a class="headerlink" href="#structured-output" title="Link to this heading">¶</a></h1>
+<p>如下图所示，AgentScope 支持以下两种结构化输出方式：</p>
+<ul class="simple">
+<li><p>工具 API：构造一个函数，其输入参数是所需要的结构化数据的字段，然后要求大模型调用该函数，从而获得结构化数据</p></li>
+<li><p>文本解析：调用大模型 API 获得纯文本数据，然后本地从纯文本中解析出结构化数据</p></li>
+</ul>
+<a class="reference internal image-reference" href="https://img.alicdn.com/imgextra/i4/O1CN01TLx5qg1tcmx3cKCNN_!!6000000005923-55-tps-661-391.svg"><img alt="两种不同结构化输出方式" src="https://img.alicdn.com/imgextra/i4/O1CN01TLx5qg1tcmx3cKCNN_!!6000000005923-55-tps-661-391.svg" style="width: 100%;" />
+</a>
+<p>两种方式的优缺点如下：</p>
+<div class="table-wrapper docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>方式</p></th>
+<th class="head"><p>优点</p></th>
+<th class="head"><p>缺点</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>工具 API</p></td>
+<td><ol class="arabic simple">
+<li><p>模型 <strong>自主</strong> 决定何时调用该函数/产生结构化输出，能够很好与 ReAct 算法结合</p></li>
+<li><p>数据解析发生在大模型 API 提供方，本地开发难度低</p></li>
+<li><p>支持基于 JSON Schema 的复杂约束条件</p></li>
+</ol>
+</td>
+<td><p>需要支持工具调用的大模型 API</p></td>
+</tr>
+<tr class="row-odd"><td><p>文本解析</p></td>
+<td><ol class="arabic simple">
+<li><p>简单易用</p></li>
+<li><p>可以根据模型能力、所需结构化数据的不同，调整格式和解析方法</p></li>
+</ol>
+</td>
+<td><ol class="arabic simple">
+<li><p>依赖模型能力，可能一直无法产生符合要求的结构化数据</p></li>
+<li><p>模型 <strong>被动</strong> 产生结构化数据，由开发者决定何时提示大模型产生结构化数据</p></li>
+</ol>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>下面我们详细介绍 AgentScope 如何支持两种不同的解析方式。</p>
+<section id="api">
+<h2>工具 API<a class="headerlink" href="#api" title="Link to this heading">¶</a></h2>
+<p>工具 API 方式将工具调用和结构化输出结合在一起，例如我们需要 <cite>&quot;thought&quot;</cite>，<cite>&quot;choice&quot;</cite>，<cite>&quot;number&quot;</cite>
+三个字段，那么我们可以构建如下的函数</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">generate_response</span><span class="p">(</span>
+    <span class="n">thought</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;apple&quot;</span><span class="p">,</span> <span class="s2">&quot;banana&quot;</span><span class="p">],</span>
+    <span class="n">number</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</pre></div>
+</div>
+<p>这里函数签名起到了提供约束条件的作用，模型在正确调用该函数时，我们就可以获得对应的结构化数据。</p>
+<p>在了解基本思路后，进一步考虑到一些复杂的约束条件无法使用 Python 的类型注解来表达，
+在 AgentScope 中，我们支持通过 Pydantic 的 <cite>BaseModel</cite> 的子类来定义复杂的约束条件。
+例如下面的两个类</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Model1</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">min_length</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;姓名&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">min_length</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;简短的介绍&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+        <span class="n">le</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;年龄&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Model2</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;apple&quot;</span><span class="p">,</span> <span class="s2">&quot;banana&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;你的选择&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>AgentScope 中的 <cite>ReActAgentV2</cite> 会将 <cite>BaseModel</cite> 子类的 JSON Schema 和一个名
+为 <cite>generate_response</cite> 函数的 schema 结合在一起，生成一个新的 schema，在模型调用
+该函数的时候，可以利用该函数的 Schema 来约束模型的输出。</p>
+<p>例如下面我们展示如何使用 <cite>ReActAgentV2</cite> 实现 ReAct 算法和结构化输出的结合</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgentV2</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">ServiceToolkit</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">agentscope</span>
+
+<span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span>
+    <span class="n">model_configs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;config_name&quot;</span><span class="p">:</span> <span class="s2">&quot;my_config&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;dashscope_chat&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="s2">&quot;qwen-max&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+
+<span class="n">toolkit</span> <span class="o">=</span> <span class="n">ServiceToolkit</span><span class="p">()</span>
+
+<span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgentV2</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Friday&quot;</span><span class="p">,</span>
+    <span class="n">model_config_name</span><span class="o">=</span><span class="s2">&quot;my_config&quot;</span><span class="p">,</span>
+    <span class="n">service_toolkit</span><span class="o">=</span><span class="n">toolkit</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">msg1</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;介绍下爱因斯坦&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)</span>
+<span class="n">res_msg</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="n">msg1</span><span class="p">,</span> <span class="n">structured_model</span><span class="o">=</span><span class="n">Model1</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;结构化输出的内容: &quot;</span><span class="p">,</span> <span class="n">res_msg</span><span class="o">.</span><span class="n">metadata</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: [
+    {
+        &quot;type&quot;: &quot;tool_use&quot;,
+        &quot;id&quot;: &quot;call_06acb38df21f4ae1adedb7&quot;,
+        &quot;name&quot;: &quot;generate_response&quot;,
+        &quot;input&quot;: {
+            &quot;response&quot;: &quot;阿尔伯特·爱因斯坦（Albert Einstein, 1879-1955）是一位理论物理学家，以其相对论而闻名于世。他提出了著名的质能方程E=mc²，并且在光电效应的研究上获得了诺贝尔物理学奖。爱因斯坦的工作对现代科学有着深远的影响。&quot;,
+            &quot;name&quot;: &quot;Albert Einstein&quot;,
+            &quot;description&quot;: &quot;一位杰出的理论物理学家&quot;,
+            &quot;age&quot;: 76
+        }
+    }
+]
+system: Execute function generate_response:
+Success
+Friday: 阿尔伯特·爱因斯坦（Albert Einstein, 1879-1955）是一位理论物理学家，以其相对论而闻名于世。他提出了著名的质能方程E=mc²，并且在光电效应的研究上获得了诺贝尔物理学奖。爱因斯坦的工作对现代科学有着深远的影响。
+结构化输出的内容:  {&#39;name&#39;: &#39;Albert Einstein&#39;, &#39;description&#39;: &#39;一位杰出的理论物理学家&#39;, &#39;age&#39;: 76}
+</pre></div>
+</div>
+<p>可以通过切换不同的 <cite>structured_model</cite> 来实现不同的结构化输出</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">msg2</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;选择一种水果&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)</span>
+<span class="n">res_msg</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="n">msg2</span><span class="p">,</span> <span class="n">structured_model</span><span class="o">=</span><span class="n">Model2</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;结构化输出的内容: &quot;</span><span class="p">,</span> <span class="n">res_msg</span><span class="o">.</span><span class="n">metadata</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: [
+    {
+        &quot;type&quot;: &quot;tool_use&quot;,
+        &quot;id&quot;: &quot;call_2d27bdddeab24fb7aaf67c&quot;,
+        &quot;name&quot;: &quot;generate_response&quot;,
+        &quot;input&quot;: {
+            &quot;response&quot;: &quot;我选择了苹果。&quot;,
+            &quot;choice&quot;: &quot;apple&quot;
+        }
+    }
+]
+system: Execute function generate_response:
+Success
+Friday: 我选择了苹果。
+结构化输出的内容:  {&#39;choice&#39;: &#39;apple&#39;}
+</pre></div>
+</div>
+<p>为了观察 <cite>ReActAgentV2</cite> 中如何动态的构造函数的 schema，这里我们去掉一个清理结构化输出设置的
+hook 函数，从而能够打印出对应的加工后的函数 schema</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 清空记忆</span>
+<span class="n">agent</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+<span class="c1"># 去掉清理结构化输出的 hook 函数</span>
+<span class="n">agent</span><span class="o">.</span><span class="n">remove_hook</span><span class="p">(</span><span class="s2">&quot;post_reply&quot;</span><span class="p">,</span> <span class="s2">&quot;as_clear_structured_output&quot;</span><span class="p">)</span>
+
+<span class="c1"># 观察当前目标函数的 schema</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+        <span class="n">toolkit</span><span class="o">.</span><span class="n">json_schemas</span><span class="p">[</span><span class="n">agent</span><span class="o">.</span><span class="n">_finish_function</span><span class="p">],</span>
+        <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>{
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+        &quot;name&quot;: &quot;generate_response&quot;,
+        &quot;parameters&quot;: {
+            &quot;properties&quot;: {
+                &quot;response&quot;: {
+                    &quot;description&quot;: &quot;The response to the user.&quot;,
+                    &quot;type&quot;: &quot;string&quot;
+                }
+            },
+            &quot;required&quot;: [
+                &quot;response&quot;
+            ],
+            &quot;type&quot;: &quot;object&quot;
+        },
+        &quot;description&quot;: &quot;Generate a response. You must call this function to interact with\n\nothers (e.g., users).&quot;
+    }
+}
+</pre></div>
+</div>
+<p>现在我们调用一次智能体，然后观察目标函数的 schema 变化情况</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">res_msg</span> <span class="o">=</span> <span class="n">agent</span><span class="p">(</span><span class="n">msg1</span><span class="p">,</span> <span class="n">structured_model</span><span class="o">=</span><span class="n">Model1</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span>
+    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+        <span class="n">toolkit</span><span class="o">.</span><span class="n">json_schemas</span><span class="p">[</span><span class="n">agent</span><span class="o">.</span><span class="n">_finish_function</span><span class="p">],</span>
+        <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: [
+    {
+        &quot;type&quot;: &quot;tool_use&quot;,
+        &quot;id&quot;: &quot;call_95322ede71b44f7a94a1a7&quot;,
+        &quot;name&quot;: &quot;generate_response&quot;,
+        &quot;input&quot;: {
+            &quot;response&quot;: &quot;阿尔伯特·爱因斯坦（1879-1955）是一位德裔瑞士籍美国理论物理学家，被认为是现代物理学的创始人之一。他最著名的贡献是相对论，包括狭义相对论和广义相对论，这改变了我们对时间、空间以及重力的理解。爱因斯坦还为量子力学的发展做出了重要贡献，并因此获得了1921年的诺贝尔物理学奖，但得奖原因是他对光电效应的理论解释而非相对论。他的工作不仅在科学领域产生了深远影响，在文化和哲学上也留下了深刻的印记。&quot;,
+            &quot;name&quot;: &quot;Albert Einstein&quot;,
+            &quot;description&quot;: &quot;著名理论物理学家，相对论创立者&quot;,
+            &quot;age&quot;: 76
+        }
+    }
+]
+system: Execute function generate_response:
+Success
+Friday: 阿尔伯特·爱因斯坦（1879-1955）是一位德裔瑞士籍美国理论物理学家，被认为是现代物理学的创始人之一。他最著名的贡献是相对论，包括狭义相对论和广义相对论，这改变了我们对时间、空间以及重力的理解。爱因斯坦还为量子力学的发展做出了重要贡献，并因此获得了1921年的诺贝尔物理学奖，但得奖原因是他对光电效应的理论解释而非相对论。他的工作不仅在科学领域产生了深远影响，在文化和哲学上也留下了深刻的印记。
+{
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+        &quot;name&quot;: &quot;generate_response&quot;,
+        &quot;parameters&quot;: {
+            &quot;properties&quot;: {
+                &quot;response&quot;: {
+                    &quot;description&quot;: &quot;The response to the user.&quot;,
+                    &quot;type&quot;: &quot;string&quot;
+                },
+                &quot;name&quot;: {
+                    &quot;description&quot;: &quot;姓名&quot;,
+                    &quot;maxLength&quot;: 20,
+                    &quot;minLength&quot;: 0,
+                    &quot;type&quot;: &quot;string&quot;
+                },
+                &quot;description&quot;: {
+                    &quot;description&quot;: &quot;简短的介绍&quot;,
+                    &quot;maxLength&quot;: 200,
+                    &quot;minLength&quot;: 0,
+                    &quot;type&quot;: &quot;string&quot;
+                },
+                &quot;age&quot;: {
+                    &quot;description&quot;: &quot;年龄&quot;,
+                    &quot;maximum&quot;: 100,
+                    &quot;minimum&quot;: 0,
+                    &quot;type&quot;: &quot;integer&quot;
+                }
+            },
+            &quot;required&quot;: [
+                &quot;response&quot;,
+                &quot;name&quot;,
+                &quot;description&quot;,
+                &quot;age&quot;
+            ],
+            &quot;type&quot;: &quot;object&quot;
+        },
+        &quot;description&quot;: &quot;Generate a response. You must call this function to interact with\n\nothers (e.g., users).&quot;
+    }
+}
+</pre></div>
+</div>
+<p>这里我们可以看出，<cite>generate_response</cite> 函数的 schema 已经与 <cite>Model1</cite> 类的 schema 结合在了一起，
+因此，当大模型调用该工具的时候，也就产生了对应的结构化数据。</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>更多实现细节可以参考 <cite>ReActAgentV2</cite> 的 <a class="reference external" href="https://github.com/modelscope/agentscope/blob/v0/src/agentscope/agents/_react_agent_v2.py">源码</a></p>
+</div>
+</section>
+<section id="id3">
+<h2>文本解析<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<p>AgentScope 中的 <cite>parsers</cite> 模块提供了多种不同的解析器类，开发者可以根据所需结构化数据的不同选用合适的解析器。</p>
+<p>以 Markdown 格式为例，我们展示如何构建一个简单的智能体，并使用 <cite>MarkdownJsonDictParser</cite> 类从文本中解析出字典类型的结构化数据。</p>
+<section id="id4">
+<h3>构建解析器<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p><cite>MarkdownJsonDictParser</cite> 要求输入的文本将结构化数据包裹在 Markdown 的代码快中，以`````作为开头和结尾，并从中解析出对应的字典数据。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">ModelResponse</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.parsers</span><span class="w"> </span><span class="kn">import</span> <span class="n">MarkdownJsonDictParser</span>
+
+
+<span class="n">parser</span> <span class="o">=</span> <span class="n">MarkdownJsonDictParser</span><span class="p">(</span>
+    <span class="n">content_hint</span><span class="o">=</span><span class="s1">&#39;{&quot;thought&quot;: &quot;你的想法&quot;, &quot;speak&quot;: &quot;你对用户说的话&quot;}&#39;</span><span class="p">,</span>
+    <span class="n">required_keys</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;thought&quot;</span><span class="p">,</span> <span class="s2">&quot;speak&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>解析器将根据你的输入生成一个格式说明。你可以在提示中使用 <cite>format_instruction</cite> 属性来指导 LLM 生成所需的输出。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">parser</span><span class="o">.</span><span class="n">format_instruction</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Respond a JSON dictionary in a markdown&#39;s fenced code block as follows:
+```json
+{&quot;thought&quot;: &quot;你的想法&quot;, &quot;speak&quot;: &quot;你对用户说的话&quot;}
+```
+</pre></div>
+</div>
+</section>
+<section id="id5">
+<h3>解析输出<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p>当从 LLM 接收到输出时，使用 <cite>parse</cite> 方法来提取结构化数据。
+它接收一个 <cite>agentscope.models.ModelResponse</cite> 对象作为输入，解析 <cite>text</cite> 字段的值，并在 <cite>parsed</cite> 字段中返回解析后的字典。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">dummy_response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;```json</span>
+<span class="s2">{</span>
+<span class="s2">    &quot;thought&quot;: &quot;我应该向用户打招呼&quot;,</span>
+<span class="s2">    &quot;speak&quot;: &quot;嗨!我能为您做些什么?&quot;</span>
+<span class="s2">}</span>
+<span class="s2">```&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;解析前parsed字段: </span><span class="si">{</span><span class="n">dummy_response</span><span class="o">.</span><span class="n">parsed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">parsed_response</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">dummy_response</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;解析后parsed字段: </span><span class="si">{</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;parsed字段类型: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>解析前parsed字段: None
+解析后parsed字段: {&#39;thought&#39;: &#39;我应该向用户打招呼&#39;, &#39;speak&#39;: &#39;嗨!我能为您做些什么?&#39;}
+parsed字段类型: &lt;class &#39;dict&#39;&gt;
+</pre></div>
+</div>
+</section>
+<section id="id6">
+<h3>错误处理<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<p>如果LLM的输出与预期格式不匹配，解析器将抛出一个包含详细信息的错误。
+开发者可以将错误信息反馈给 LLM，引导其生成正确格式的输出。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">error_response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;```json</span>
+<span class="s2">{</span>
+<span class="s2">    &quot;thought&quot;: &quot;我应该向用户打招呼&quot;</span>
+<span class="s2">}</span>
+<span class="s2">```&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">parsed_response</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">error_response</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>RequiredFieldNotFoundError: Missing required field speak in the JSON dictionary object.
+</pre></div>
+</div>
+</section>
+<section id="id7">
+<h3>进阶用法<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
+<section id="id8">
+<h4>复杂结构化输出<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h4>
+<p>要求 LLM 直接生成 JSON 字典可能具有挑战性，特别是当 JSON 内容很复杂时（例如代码片段、嵌套结构）。
+在这种情况下，你可以使用更高级的解析器来指导 LLM 生成所需的输出。
+这里是一个更复杂的解析器示例，可以处理代码片段。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.parsers</span><span class="w"> </span><span class="kn">import</span> <span class="n">RegexTaggedContentParser</span>
+
+<span class="n">parser</span> <span class="o">=</span> <span class="n">RegexTaggedContentParser</span><span class="p">(</span>
+    <span class="n">format_instruction</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;按以下格式作答:</span>
+<span class="s2">&lt;thought&gt;你的想法&lt;/thought&gt;</span>
+<span class="s2">&lt;number&gt;这里放一个随机数字&lt;/number&gt;</span>
+<span class="s2">&lt;code&gt;你的python代码&lt;/code&gt;</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">,</span>
+    <span class="n">try_parse_json</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># 会尝试将每个键值解析为JSON对象，如果失败则保留为字符串</span>
+    <span class="n">required_keys</span><span class="o">=</span><span class="p">[</span>  <span class="c1"># 解析字典中的必需键</span>
+        <span class="s2">&quot;thought&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;number&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;code&quot;</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">parser</span><span class="o">.</span><span class="n">format_instruction</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>按以下格式作答:
+&lt;thought&gt;你的想法&lt;/thought&gt;
+&lt;number&gt;这里放一个随机数字&lt;/number&gt;
+&lt;code&gt;你的python代码&lt;/code&gt;
+</pre></div>
+</div>
+<p><cite>RegexTaggedContentParser</cite> 支持使用正则表达式匹配文本中的标记内容并返回解析后的字典。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>RegexTaggedContentParser</cite> 的解析输出是一个字典，因此 key 必须唯一。
+可以通过设置 <cite>tagged_content_pattern</cite> 参数来更改正则表达式模式。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="n">dummy_response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;&lt;thought&gt;打印当前日期&lt;/thought&gt;</span>
+<span class="s2">&lt;number&gt;42&lt;/number&gt;</span>
+<span class="s2">&lt;code&gt;import datetime</span>
+<span class="s2">print(datetime.datetime.now())</span>
+<span class="s2">&lt;/code&gt;</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">parsed_response</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">dummy_response</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;解析响应的类型: &quot;</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;number的类型: &quot;</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">[</span><span class="s2">&quot;number&quot;</span><span class="p">]))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>解析响应的类型:  &lt;class &#39;dict&#39;&gt;
+number的类型:  &lt;class &#39;int&#39;&gt;
+{
+    &quot;thought&quot;: &quot;打印当前日期&quot;,
+    &quot;number&quot;: 42,
+    &quot;code&quot;: &quot;import datetime\nprint(datetime.datetime.now())\n&quot;
+}
+</pre></div>
+</div>
+</section>
+<section id="id9">
+<h4>自动后处理<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h4>
+<p>在解析后的字典中，不同的键可能需要不同的后处理步骤。
+例如，在狼人杀游戏中，LLM 扮演预言家的角色，输出应该包含以下键值:</p>
+<ul class="simple">
+<li><p><cite>thought</cite>: 预言家的想法</p></li>
+<li><p><cite>speak</cite>: 预言家的发言</p></li>
+<li><p><cite>use_ability</cite>: 一个布尔值，表示预言家是否应该使用其能力</p></li>
+</ul>
+<p>在这种情况下，<cite>thought</cite> 和 <cite>speak</cite> 内容应该存储在智能体的记忆中，以确保智能体行为/策略的一致性。
+<cite>speak</cite> 内容应该暴露给其它智能体或玩家。
+<cite>use_ability</cite> 键应该能在主流程中访问到，从而确定游戏下一步的操作（例如是否使用能力）。</p>
+<p>AgentScope 通过以下参数来自动对解析后的字典进行后处理。</p>
+<ul class="simple">
+<li><p><cite>keys_to_memory</cite>: 应存储在智能体记忆中的键</p></li>
+<li><p><cite>keys_to_content</cite>: 应存储在返回消息的 content 字段中的键，会暴露给其它智能体</p></li>
+<li><p><cite>keys_to_metadata</cite>: 应存储在返回消息的元数据（metadata）字段中的键</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>如果提供了一个字符串，解析器将从解析后的字典中提取给定键的值。如果提供了一个字符串列表，将创建一个包含给定键的子字典。</p>
+</div>
+<p>下面是使用 <cite>MarkdownJsonDictParser</cite> 自动后处理解析后字典的示例。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">parser</span> <span class="o">=</span> <span class="n">MarkdownJsonDictParser</span><span class="p">(</span>
+    <span class="n">content_hint</span><span class="o">=</span><span class="s1">&#39;{&quot;thought&quot;: &quot;你的想法&quot;, &quot;speak&quot;: &quot;你对用户说的话&quot;, &quot;use_ability&quot;: &quot;是否使用能力&quot;}&#39;</span><span class="p">,</span>
+    <span class="n">keys_to_memory</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;thought&quot;</span><span class="p">,</span> <span class="s2">&quot;speak&quot;</span><span class="p">],</span>
+    <span class="n">keys_to_content</span><span class="o">=</span><span class="s2">&quot;speak&quot;</span><span class="p">,</span>
+    <span class="n">keys_to_metadata</span><span class="o">=</span><span class="s2">&quot;use_ability&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">dummy_response</span> <span class="o">=</span> <span class="n">ModelResponse</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;```json</span>
+<span class="s2">{</span>
+<span class="s2">    &quot;thought&quot;: &quot;我应该...&quot;,</span>
+<span class="s2">    &quot;speak&quot;: &quot;我不会使用我的能力&quot;,</span>
+<span class="s2">    &quot;use_ability&quot;: false</span>
+<span class="s2">}```</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">parsed_response</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">dummy_response</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;解析后的响应: &quot;</span><span class="p">,</span> <span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;存储到记忆&quot;</span><span class="p">,</span> <span class="n">parser</span><span class="o">.</span><span class="n">to_memory</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;存储到消息 content 字段: &quot;</span><span class="p">,</span> <span class="n">parser</span><span class="o">.</span><span class="n">to_content</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;存储到消息 metadata 字段: &quot;</span><span class="p">,</span> <span class="n">parser</span><span class="o">.</span><span class="n">to_metadata</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>解析后的响应:  {&#39;thought&#39;: &#39;我应该...&#39;, &#39;speak&#39;: &#39;我不会使用我的能力&#39;, &#39;use_ability&#39;: False}
+存储到记忆 {&#39;thought&#39;: &#39;我应该...&#39;, &#39;speak&#39;: &#39;我不会使用我的能力&#39;}
+存储到消息 content 字段:  我不会使用我的能力
+存储到消息 metadata 字段:  False
+</pre></div>
+</div>
+<p>这里我们展示如何创建一个智能体，它在 <cite>reply</cite> 方法中通过以下步骤实现自动化的后处理。</p>
+<ol class="arabic simple">
+<li><p>在提示中放入格式说明，以指导 LLM 生成所需的输出</p></li>
+<li><p>解析 LLM 的返回值</p></li>
+<li><p>使用 <cite>to_memory</cite>、<cite>to_content</cite> 和 <cite>to_metadata</cite> 方法后处理解析后的字典</p></li>
+</ol>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>通过更改不同的解析器，智能体可以适应不同的场景，并以各种格式生成结构化输出。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">DashScopeChatWrapper</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentBase</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Agent</span><span class="p">(</span><span class="n">AgentBase</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;Alice&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">sys_prompt</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;你是一个名为</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">的有用助手。&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">DashScopeChatWrapper</span><span class="p">(</span>
+            <span class="n">config_name</span><span class="o">=</span><span class="s2">&quot;_&quot;</span><span class="p">,</span>
+            <span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;qwen-max&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">parser</span> <span class="o">=</span> <span class="n">MarkdownJsonDictParser</span><span class="p">(</span>
+            <span class="n">content_hint</span><span class="o">=</span><span class="s1">&#39;{&quot;thought&quot;: &quot;你的想法&quot;, &quot;speak&quot;: &quot;你对用户说的话&quot;, &quot;use_ability&quot;: &quot;是否使用能力&quot;}&#39;</span><span class="p">,</span>
+            <span class="n">keys_to_memory</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;thought&quot;</span><span class="p">,</span> <span class="s2">&quot;speak&quot;</span><span class="p">],</span>
+            <span class="n">keys_to_content</span><span class="o">=</span><span class="s2">&quot;speak&quot;</span><span class="p">,</span>
+            <span class="n">keys_to_metadata</span><span class="o">=</span><span class="s2">&quot;use_ability&quot;</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sys_prompt</span><span class="p">,</span> <span class="s2">&quot;system&quot;</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">reply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="n">prompt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(),</span>
+            <span class="c1"># 指示模型按要求的格式作答</span>
+            <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">parser</span><span class="o">.</span><span class="n">format_instruction</span><span class="p">,</span> <span class="s2">&quot;system&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="n">response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
+
+        <span class="n">parsed_response</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">parser</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="n">content</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parser</span><span class="o">.</span><span class="n">to_memory</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">),</span>
+                <span class="n">role</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">Msg</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+            <span class="n">content</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parser</span><span class="o">.</span><span class="n">to_content</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">),</span>
+            <span class="n">role</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
+            <span class="n">metadata</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parser</span><span class="o">.</span><span class="n">to_metadata</span><span class="p">(</span><span class="n">parsed_response</span><span class="o">.</span><span class="n">parsed</span><span class="p">),</span>
+        <span class="p">)</span>
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 13.860 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-build-tutorial-structured-output-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/d9e2bb7a0effd4e32a08e552ade3979e/structured_output.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">structured_output.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/85d93a8fceecab574c5f27eab2516637/structured_output.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">structured_output.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/4c5b8ba2db5cb3b71d433e434981c5ed/structured_output.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">structured_output.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="streaming.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">流式输出</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="prompt.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Prompt 格式化</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">结构化输出</a><ul>
+<li><a class="reference internal" href="#api">工具 API</a></li>
+<li><a class="reference internal" href="#id3">文本解析</a><ul>
+<li><a class="reference internal" href="#id4">构建解析器</a></li>
+<li><a class="reference internal" href="#id5">解析输出</a></li>
+<li><a class="reference internal" href="#id6">错误处理</a></li>
+<li><a class="reference internal" href="#id7">进阶用法</a><ul>
+<li><a class="reference internal" href="#id8">复杂结构化输出</a></li>
+<li><a class="reference internal" href="#id9">自动后处理</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=7d86a446"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/language_switch.js?v=9fc19426"></script>
+    </body>
+</html>
