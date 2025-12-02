@@ -99,7 +99,7 @@ class OpenAIChatModel(ChatModelBase):
                 The extra keyword arguments to initialize the OpenAI client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
-               The extra keyword arguments used in OpenAI API generation,
+                The extra keyword arguments used in OpenAI API generation,
                 e.g. `temperature`, `seed`.
         """
 
