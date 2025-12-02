@@ -352,7 +352,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._utils._common</span><span class="w"> </span><span class="kn">import</span> <span class="n">_json_loads_with_repair</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">TextBlock</span><span class="p">,</span> <span class="n">ThinkingBlock</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tracing</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace_llm</span>
-
+<span class="kn">from</span><span class="w"> </span><span class="nn">..types</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONSerializableObject</span>
 
 <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">ollama._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatResponse</span> <span class="k">as</span> <span class="n">OllamaChatResponse</span>
@@ -375,32 +375,40 @@
         <span class="n">keep_alive</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;5m&quot;</span><span class="p">,</span>
         <span class="n">enable_thinking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">generate_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the Ollama chat model.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">           model_name (`str`):</span>
-<span class="sd">               The name of the model.</span>
-<span class="sd">           stream (`bool`, default `True`):</span>
-<span class="sd">               Streaming mode or not.</span>
-<span class="sd">           options (`dict`, default `None`):</span>
-<span class="sd">               Additional parameters to pass to the Ollama API. These can</span>
-<span class="sd">               include temperature etc.</span>
-<span class="sd">           keep_alive (`str`, default `&quot;5m&quot;`):</span>
-<span class="sd">               Duration to keep the model loaded in memory. The format is a</span>
-<span class="sd">               number followed by a unit suffix (s for seconds, m for minutes</span>
-<span class="sd">               , h for hours).</span>
-<span class="sd">           enable_thinking (`bool | None`, default `None`)</span>
-<span class="sd">               Whether enable thinking or not, only for models such as qwen3,</span>
-<span class="sd">               deepseek-r1, etc. For more details, please refer to</span>
-<span class="sd">               https://ollama.com/search?c=thinking</span>
-<span class="sd">           host (`str | None`, default `None`):</span>
-<span class="sd">               The host address of the Ollama server. If None, uses the</span>
-<span class="sd">               default address (typically http://localhost:11434).</span>
-<span class="sd">           **kwargs (`Any`):</span>
-<span class="sd">               Additional keyword arguments to pass to the base chat model</span>
-<span class="sd">               class.</span>
+<span class="sd">            model_name (`str`):</span>
+<span class="sd">                The name of the model.</span>
+<span class="sd">            stream (`bool`, default `True`):</span>
+<span class="sd">                Streaming mode or not.</span>
+<span class="sd">            options (`dict`, default `None`):</span>
+<span class="sd">                Additional parameters to pass to the Ollama API. These can</span>
+<span class="sd">                include temperature etc.</span>
+<span class="sd">            keep_alive (`str`, default `&quot;5m&quot;`):</span>
+<span class="sd">                Duration to keep the model loaded in memory. The format is a</span>
+<span class="sd">                number followed by a unit suffix (s for seconds, m for minutes</span>
+<span class="sd">                , h for hours).</span>
+<span class="sd">            enable_thinking (`bool | None`, default `None`)</span>
+<span class="sd">                Whether enable thinking or not, only for models such as qwen3,</span>
+<span class="sd">                deepseek-r1, etc. For more details, please refer to</span>
+<span class="sd">                https://ollama.com/search?c=thinking</span>
+<span class="sd">            host (`str | None`, default `None`):</span>
+<span class="sd">                The host address of the Ollama server. If None, uses the</span>
+<span class="sd">                default address (typically http://localhost:11434).</span>
+<span class="sd">            client_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
+<span class="sd">             optional):</span>
+<span class="sd">                The extra keyword arguments to initialize the Ollama client.</span>
+<span class="sd">            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
+<span class="sd">             optional):</span>
+<span class="sd">                The extra keyword arguments used in Ollama API generation.</span>
+<span class="sd">            **kwargs (`Any`):</span>
+<span class="sd">                Additional keyword arguments to pass to the base chat model</span>
+<span class="sd">                class.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="k">try</span><span class="p">:</span>
@@ -415,11 +423,13 @@
 
         <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">ollama</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span>
             <span class="n">host</span><span class="o">=</span><span class="n">host</span><span class="p">,</span>
+            <span class="o">**</span><span class="p">(</span><span class="n">client_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">options</span> <span class="o">=</span> <span class="n">options</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">keep_alive</span> <span class="o">=</span> <span class="n">keep_alive</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">think</span> <span class="o">=</span> <span class="n">enable_thinking</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">think</span> <span class="o">=</span> <span class="n">enable_thinking</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generate_kwargs</span> <span class="o">=</span> <span class="n">generate_kwargs</span> <span class="ow">or</span> <span class="p">{}</span></div>
 
 
 <div class="viewcode-block" id="OllamaChatModel.__call__">
@@ -468,6 +478,7 @@
             <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">stream</span><span class="p">,</span>
             <span class="s2">&quot;options&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">options</span><span class="p">,</span>
             <span class="s2">&quot;keep_alive&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">keep_alive</span><span class="p">,</span>
+            <span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">generate_kwargs</span><span class="p">,</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">}</span>
 

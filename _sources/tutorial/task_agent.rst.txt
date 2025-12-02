@@ -225,7 +225,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_3e0f151da60b4f9dae80cd",
+        "id": "call_d6b01bc67b5d4829bc8ce7",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -233,7 +233,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_3781b47ab665455fa255cc",
+        "id": "call_19f88f395cdf47fea33da7",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -241,32 +241,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_3e0f151da60b4f9dae80cd",
+        "id": "call_d6b01bc67b5d4829bc8ce7",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 10:40:36.891939 and ended at 10:40:39.895202. "
+                "text": "Tag tag1 started at 13:59:22.399558 and ended at 13:59:25.402801. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_3781b47ab665455fa255cc",
+        "id": "call_19f88f395cdf47fea33da7",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 10:40:36.892031 and ended at 10:40:39.895816. "
+                "text": "Tag tag2 started at 13:59:22.399651 and ended at 13:59:25.403440. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called in parallel with two different tags, 'tag1' and 'tag2'. Here are the results:
+    Jarvis: The 'example_tool_function' has been called with two tags 'tag1' and 'tag2' in parallel. Here are the results:
 
-    - For 'tag1', the function started at 10:40:36.891939 and ended at 10:40:39.895202.
-    - For 'tag2', the function started at 10:40:36.892031 and ended at 10:40:39.895816.
+    - For 'tag1', the function started at 13:59:22.399558 and ended at 13:59:25.402801.
+    - For 'tag2', the function started at 13:59:22.399651 and ended at 13:59:25.403440.
 
-    Both functions executed concurrently within a similar time frame.
+    Both functions executed concurrently, as you can see from their start and end times.
 
 
 
@@ -343,7 +343,7 @@ Taking introducing Einstein as an example:
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_2fa25eb77b6041cca07e65",
+        "id": "call_ed0679228eb2418fad8cee",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
@@ -358,7 +358,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_2fa25eb77b6041cca07e65",
+        "id": "call_ed0679228eb2418fad8cee",
         "name": "generate_response",
         "output": [
             {
@@ -367,7 +367,7 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a theoretical physicist who is best known for developing the theory of relativity, which stands as one of the two pillars of modern physics. Born in 1879, Einstein made significant contributions to the scientific community throughout his life until his death at the age of 76. His work has had a profound and lasting impact on our understanding of the universe. Among his many accolades, Einstein was awarded the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. These honors reflect the immense respect and recognition he received from the global scientific community for his groundbreaking theories and discoveries.
+    Jarvis: Albert Einstein was a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two cornerstones of modern physics. Born in 1879, Einstein's contributions to science have left an indelible mark on our understanding of the universe. He was awarded the Nobel Prize in Physics in 1921, and throughout his career, he also received other prestigious honors such as the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, but his legacy continues to influence scientific thought and exploration.
 
     The structured output:
     {
@@ -449,7 +449,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 21.216 seconds)
+   **Total running time of the script:** (0 minutes 23.131 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

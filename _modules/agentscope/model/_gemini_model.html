@@ -373,7 +373,7 @@
         <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">thinking_config</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">generate_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -399,7 +399,8 @@
 <span class="sd">                        &quot;thinking_budget&quot;: 1024   # Max tokens for reasoning</span>
 <span class="sd">                    }</span>
 
-<span class="sd">            client_kwargs (`dict`, default `None`):</span>
+<span class="sd">            client_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
+<span class="sd">             optional):</span>
 <span class="sd">                The extra keyword arguments to initialize the Gemini client.</span>
 <span class="sd">            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
 <span class="sd">             optional):</span>
