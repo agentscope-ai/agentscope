@@ -141,3 +141,8 @@ docs/tutorial/zh_CN/build/
 *runs/
 agentscope.db
 tmp*.json
+
+docs/tutorial/**/doctrees/
+docs/tutorial/**/.doctrees/
+*.buildinfo
+*.pickle
