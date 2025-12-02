@@ -1,0 +1,407 @@
+:orphan:
+
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This tutorial introduces how to build multi-agent application with drag-and-drop interface in AgentScope Workstation.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_low_code_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_low_code.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Low-code Development</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Configuration ------------------------">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_examples_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_examples.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Examples</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This section is redirected to the conversation_with_web_browser_agent/README.md.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_web_browser_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_web_browser.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Web Browser Control</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This section introduces the usage of the distributed mode of AgentScope. AgentScope natively provides a distributed mode based on gRPC. In this mode, multiple agents in one application can be deployed to different processes or even different machines, thereby fully utilizing computational resources and improving efficiency.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_distribution_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_distribution.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Distribution</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope requires Python 3.9 or higher. You can install from source or pypi.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_quickstart_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_quickstart.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Quick Start</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports streaming output for the following APIs in both terminal and AgentScope Studio.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_streaming_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_streaming.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Streaming Mode</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In this section, we will show how to build multimodal applications in AgentScope with two examples.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_multimodality_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_multimodality.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">MultiModality</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope implements a module for optimizing Agent System Prompts.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_prompt_optimization_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_prompt_optimization.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">System Prompt Optimization</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Message is a specialized data structure for information exchange. In AgentScope, we use message to communicate among agents.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_message_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_message.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Message</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In this tutorial, we will briefly introduce what MCP is and show how to use MCP in AgentScope. We will also demonstrate how to configure an existing AgentScope multi-agent application as an MCP server. Finally, to help advanced developers gain a deeper understanding, we will discuss how MCP integrates with AgentScope.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_MCP_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_MCP.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">MCP</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The main entry of AgentScope is agentscope.init, where you can configure your application.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_monitor_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_monitor.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Configuring and Monitoring</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports AgentScope Studio and Gradio web visualization, and also supports users to connect to custom or third-party visualization platforms.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_visual_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_visual.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Visual Interface</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Agentscope has built-in supports for the retrieval augmentation generation (RAG). There are two key modules related to RAG in AgentScope: Knowledge and KnowledgeBank.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_rag_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_rag.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Retrieval Augmentation Generation (RAG)</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports developers to build conversation with explicit message exchange among different agents.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_conversation_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_conversation.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Build Conversation</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports to build LLM-empowered agents by providing a basic agent class agentscope.agents.AgentBase.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Build Agent</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Background --------------------">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_tool_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_tool.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tools</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope builds in several agent class to support different scenarios and show how to build agents with AgentScope.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_builtin_agent_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_builtin_agent.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Built-in Agents</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope has integrated many popular model API libraries with different modalities.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_model_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_model.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Model APIs</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports developers to build prompt that fits different model APIs by providing a set of built-in strategies for both chat and multi-agent scenarios.">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_prompt_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_prompt.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Prompt Formatting</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope supports two structured output methods, as shown in the following figure:">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_structured_output_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_structured_output.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Structured Output</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope implements hooks around three core agent functions:">
+
+.. only:: html
+
+  .. image:: /build_tutorial/images/thumb/sphx_glr_hook_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_build_tutorial_hook.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Hooks are extension points in AgentScope that allow developers to customize agent behaviors at specific execution points. They provide a flexible way to modify or extend the agent's functionality without changing its core implementation.</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /build_tutorial/low_code
+   /build_tutorial/examples
+   /build_tutorial/web_browser
+   /build_tutorial/distribution
+   /build_tutorial/quickstart
+   /build_tutorial/streaming
+   /build_tutorial/multimodality
+   /build_tutorial/prompt_optimization
+   /build_tutorial/message
+   /build_tutorial/MCP
+   /build_tutorial/monitor
+   /build_tutorial/visual
+   /build_tutorial/rag
+   /build_tutorial/conversation
+   /build_tutorial/agent
+   /build_tutorial/tool
+   /build_tutorial/builtin_agent
+   /build_tutorial/model
+   /build_tutorial/prompt
+   /build_tutorial/structured_output
+   /build_tutorial/hook
+
+
+
+.. only:: html
+
+ .. rst-class:: sphx-glr-signature
+
+    `Gallery generated by Sphinx-Gallery <https://sphinx-gallery.github.io>`_

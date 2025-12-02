@@ -1,0 +1,1428 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="agentscope.memory" href="agentscope.memory.html"><link rel="prev" title="agentscope.models" href="agentscope.models.html">
+        <link rel="canonical" href="/v0/build_api/agentscope.agents.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>agentscope.agents - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=a9cd5911" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV1(this.value)">
+                    <option value="v1">Stable(v1.0)</option>
+                    <option value="v0" selected>v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/message.html">Message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/agent.html">Build Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/conversation.html">Build Conversation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FQA</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">FQA</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/model.html">Model APIs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/prompt.html">Prompt Formatting</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/structured_output.html">Structured Output</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/streaming.html">Streaming Mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/builtin_agent.html">Built-in Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/multimodality.html">MultiModality</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/visual.html">Visual Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/monitor.html">Configuring and Monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/tool.html">Tools</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/MCP.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/rag.html">Retrieval Augmentation Generation (RAG)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/hook.html">Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/distribution.html">Distribution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/prompt_optimization.html">System Prompt Optimization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/web_browser.html">Web Browser Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/low_code.html">Low-code Development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_tutorial/examples.html">Examples</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Applications</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/swe.html">SWE-Bench</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.models.html">agentscope.models</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">agentscope.agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.parsers.html">agentscope.parsers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.service.html">agentscope.service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.prompt.html">agentscope.prompt</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tokens.html">agentscope.tokens</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV0Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/build_api/agentscope.agents.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="module-agentscope.agents">
+<span id="agentscope-agents"></span><h1>agentscope.agents<a class="headerlink" href="#module-agentscope.agents" title="Link to this heading">¶</a></h1>
+<p>Import all agent related modules in the package.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AgentBase</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Base class for all agents.</p>
+<p>All agents should inherit from this class and implement the <cite>reply</cite>
+function.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.clear_all_class_hooks">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear_all_class_hooks</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.clear_all_class_hooks"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.clear_all_class_hooks" title="Link to this definition">¶</a></dt>
+<dd><p>Clear all hooks from the agent class</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.clear_all_obj_hooks">
+<span class="sig-name descname"><span class="pre">clear_all_obj_hooks</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.clear_all_obj_hooks"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.clear_all_obj_hooks" title="Link to this definition">¶</a></dt>
+<dd><p>Clear all hooks from the agent object</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.clear_audience">
+<span class="sig-name descname"><span class="pre">clear_audience</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.clear_audience"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.clear_audience" title="Link to this definition">¶</a></dt>
+<dd><p>Remove the audience of this agent.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.clear_class_hooks">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear_class_hooks</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.clear_class_hooks"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.clear_class_hooks" title="Link to this definition">¶</a></dt>
+<dd><p>Clear the specified hooks from the agent class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>(</strong><strong>`Literal</strong><strong>[</strong><strong>&quot;pre_reply&quot;</strong> (<em>hook_type</em>) – <dl class="simple">
+<dt>”post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The name of the hooks attribute, which should be one of
+“pre_reply”, “post_reply”, “pre_speak”, “post_speak”,
+“pre_observe”, and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;post_reply&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The name of the hooks attribute, which should be one of
+“pre_reply”, “post_reply”, “pre_speak”, “post_speak”,
+“pre_observe”, and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;pre_speak&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The name of the hooks attribute, which should be one of
+“pre_reply”, “post_reply”, “pre_speak”, “post_speak”,
+“pre_observe”, and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The name of the hooks attribute, which should be one of
+“pre_reply”, “post_reply”, “pre_speak”, “post_speak”,
+“pre_observe”, and “post_observe”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.clear_hooks">
+<span class="sig-name descname"><span class="pre">clear_hooks</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.clear_hooks"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.clear_hooks" title="Link to this definition">¶</a></dt>
+<dd><p>Clear the specified hooks from the agent object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>(</strong><strong>`Literal</strong><strong>[</strong><strong>&quot;pre_reply&quot;</strong> (<em>hook_type</em>) – <dl class="simple">
+<dt>”post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;post_reply&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;pre_speak&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.generate_agent_id">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">generate_agent_id</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">str</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.generate_agent_id"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.generate_agent_id" title="Link to this definition">¶</a></dt>
+<dd><p>Generate the agent_id of this agent instance</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.observe">
+<span class="sig-name descname"><span class="pre">observe</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.observe"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.observe" title="Link to this definition">¶</a></dt>
+<dd><p>Observe the input, store it in memory without response to it.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<cite>Union[Msg, Sequence[Msg]]</cite>) – The input message to be recorded in memory.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.register_class_hook">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">register_class_hook</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Callable</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.register_class_hook"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.register_class_hook" title="Link to this definition">¶</a></dt>
+<dd><p>The universal function to register a hook to the agent class, which
+will take effect for all instances of the class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>hook_type</strong> (<cite>str</cite>) – The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p></li>
+<li><p><strong>hook_name</strong> (<cite>str</cite>) – The name of the hook. If the name is already registered, the
+hook will be overwritten.</p></li>
+<li><p><strong>hook</strong> (<cite>Callable</cite>) – The hook function.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.register_hook">
+<span class="sig-name descname"><span class="pre">register_hook</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Callable</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.register_hook"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.register_hook" title="Link to this definition">¶</a></dt>
+<dd><p>The universal function to register a hook to the agent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>(</strong><strong>`Literal</strong><strong>[</strong><strong>&quot;pre_reply&quot;</strong> (<em>hook_type</em>) – <dl class="simple">
+<dt>”post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;post_reply&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;pre_speak&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>hook_name</strong> (<cite>str</cite>) – The name of the hook. If the name is already registered, the
+hook will be overwritten.</p></li>
+<li><p><strong>hook</strong> (<cite>Callable</cite>) – The hook function.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.remove_class_hook">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">remove_class_hook</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.remove_class_hook"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.remove_class_hook" title="Link to this definition">¶</a></dt>
+<dd><p>The universal function to remove a hook from the agent class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>(</strong><strong>`Literal</strong><strong>[</strong><strong>&quot;pre_reply&quot;</strong> (<em>hook_type</em>) – <dl class="simple">
+<dt>”post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;post_reply&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;pre_speak&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>hook_name</strong> (<cite>str</cite>) – The name of the hook to be removed.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.remove_hook">
+<span class="sig-name descname"><span class="pre">remove_hook</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">hook_type</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'pre_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_reply'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_speak'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'pre_observe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'post_observe'</span></span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hook_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.remove_hook"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.remove_hook" title="Link to this definition">¶</a></dt>
+<dd><p>The universal function to remove a hook from the agent object.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>(</strong><strong>`Literal</strong><strong>[</strong><strong>&quot;pre_reply&quot;</strong> (<em>hook_type</em>) – <dl class="simple">
+<dt>”post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;post_reply&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>&quot;pre_speak&quot;</strong> – <dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>“post_speak”, “pre_observe”, “post_observe”]`):</dt><dd><p>The type of the hook, which should be one of “pre_reply”,
+“post_reply”, “pre_speak”, “post_speak”, “pre_observe”,
+and “post_observe”.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>hook_name</strong> (<cite>str</cite>) – The name of the hook to be removed.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Define the actions taken by this agent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<cite>Optional[Union[Msg, list[Msg]]]</cite>, defaults to <cite>None</cite>) – The input message(s) to the agent, which also can be omitted if
+the agent doesn’t need any input.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The output message generated by the agent.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Given that some agents are in an adversarial environment,
+their input doesn’t include the thoughts of other agents.</p>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.reset_audience">
+<span class="sig-name descname"><span class="pre">reset_audience</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">audience</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><span class="pre">AgentBase</span></a><span class="p"><span class="pre">]</span></span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.reset_audience"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.reset_audience" title="Link to this definition">¶</a></dt>
+<dd><p>Set the audience of this agent, which means if this agent
+generates a response, it will be passed to all audiences.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>audience</strong> (<cite>Sequence[AgentBase]</cite>) – The audience of this agent, which will be notified when this
+agent generates a response message.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.rm_audience">
+<span class="sig-name descname"><span class="pre">rm_audience</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">audience</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><span class="pre">AgentBase</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><span class="pre">AgentBase</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.rm_audience"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.rm_audience" title="Link to this definition">¶</a></dt>
+<dd><p>Remove the given audience from the Sequence</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.speak">
+<span class="sig-name descname"><span class="pre">speak</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">content</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Generator</span><span class="p"><span class="pre">[</span></span><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">bool</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">None</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">None</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool_calls</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ToolUseBlock" title="agentscope.message.block.ToolUseBlock"><span class="pre">ToolUseBlock</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_agent.html#AgentBase.speak"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.AgentBase.speak" title="Link to this definition">¶</a></dt>
+<dd><p>Speak out the message generated by the agent. If a string is given,
+a Msg object will be created with the string as the content.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>content</strong> – <p>(<cite>Union[str, Msg, Generator[Tuple[bool, str], None, None],
+None]</cite>):</p>
+<blockquote>
+<div><p>The content of the message to be spoken out. If a string is
+given, a Msg object will be created with the agent’s name, role
+as “assistant”, and the given string as the content.
+If the content is a Generator, the agent will speak out the
+message chunk by chunk.</p>
+</div></blockquote>
+</p></li>
+<li><p><strong>tool_calls</strong> (<cite>Optional[list[ToolUseBlock]]</cite>, defaults to <cite>None</cite>) – The tool calls generated by the agent. This parameter is only
+used when the content is a string or a generator (TODO). When
+the content is a Msg object, the tool calls should be included
+in the content field of the Msg object.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.AgentBase.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="agentscope.agents.AgentBase.agent_id">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">agent_id</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.agents.AgentBase.agent_id" title="Link to this definition">¶</a></dt>
+<dd><p>The unique id of this agent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>agent_id</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.DialogAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DialogAgent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_dialog_agent.html#DialogAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.DialogAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>A simple agent used to perform a dialogue. Your can set its role by
+<cite>sys_prompt</cite>.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.DialogAgent.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_dialog_agent.html#DialogAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.DialogAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Reply function of the agent. Processes the input data,
+generates a prompt using the current dialogue memory and system
+prompt, and invokes the language model to produce a response. The
+response is then formatted and added to the dialogue memory.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<cite>Optional[Union[Msg, Sequence[Msg]]]</cite>, defaults to <cite>None</cite>) – The input message(s) to the agent, which also can be omitted if
+the agent doesn’t need any input.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The output message generated by the agent.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.DialogAgent.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.DialogAgent.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.DictDialogAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DictDialogAgent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_dict_dialog_agent.html#DictDialogAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.DictDialogAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>An agent that generates response in a dict format, where user can
+specify the required fields in the response via specifying the parser</p>
+<p>About parser, please refer to our
+[tutorial](<a class="reference external" href="https://doc.agentscope.io/v0/en/build_tutorial/structured_output.html">https://doc.agentscope.io/v0/en/build_tutorial/structured_output.html</a>)</p>
+<p>For usage example, please refer to the example of werewolf in
+<cite>examples/game_werewolf</cite></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.DictDialogAgent.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_dict_dialog_agent.html#DictDialogAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.DictDialogAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Reply function of the agent.
+Processes the input data, generates a prompt using the current
+dialogue memory and system prompt, and invokes the language
+model to produce a response. The response is then formatted
+and added to the dialogue memory.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<cite>Optional[Union[Msg, Sequence[Msg]]]</cite>, defaults to <cite>None</cite>) – The input message(s) to the agent, which also can be omitted if
+the agent doesn’t need any input.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The output message generated by the agent.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>json.decoder.JSONDecodeError</strong> – If the response from the language model is not valid JSON,
+    it defaults to treating the response as plain text.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.DictDialogAgent.set_parser">
+<span class="sig-name descname"><span class="pre">set_parser</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parser</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.parsers.parser_base.html#agentscope.parsers.parser_base.ParserBase" title="agentscope.parsers.parser_base.ParserBase"><span class="pre">ParserBase</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_dict_dialog_agent.html#DictDialogAgent.set_parser"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.DictDialogAgent.set_parser" title="Link to this definition">¶</a></dt>
+<dd><p>Set response parser, which will provide 1) format instruction; 2)
+response parsing; 3) filtering fields when returning message, storing
+message in memory. So developers only need to change the
+parser, and the agent will work as expected.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.DictDialogAgent.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.DictDialogAgent.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.LlamaIndexAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">LlamaIndexAgent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_rag_agent.html#LlamaIndexAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.LlamaIndexAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>A LlamaIndex agent build on LlamaIndex.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.LlamaIndexAgent.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_rag_agent.html#LlamaIndexAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.LlamaIndexAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Reply function of the RAG agent.
+Processes the input data,
+1) use the input data to retrieve with RAG function;
+2) generates a prompt using the current memory and system
+prompt;
+3) invokes the language model to produce a response. The
+response is then formatted and added to the dialogue memory.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>x</strong> (<cite>Optional[Union[Msg, Sequence[Msg]]]</cite>, defaults to <cite>None</cite>) – The input message(s) to the agent, which also can be omitted if
+the agent doesn’t need any input.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The output message generated by the agent.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.LlamaIndexAgent.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.LlamaIndexAgent.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReActAgent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent.html#ReActAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>An agent class that implements the ReAct algorithm. More details refer
+to <a class="reference external" href="https://arxiv.org/abs/2210.03629">https://arxiv.org/abs/2210.03629</a>.</p>
+<p>This is an example implementation of ReAct algorithm in AgentScope.
+We follow the idea within the paper, but the detailed prompt engineering
+maybe different. Developers are encouraged to modify the prompt to fit
+their own needs.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>1. We use the “thought” field in the response to support
+Chain-of-Thought, which means the tool functions cannot use “thought”
+as their argument name.
+2. The function name “finish” is also a reserved name when using this
+agent, which will be used to end the reasoning-acting loop.</p>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgent.finish">
+<em class="property"><span class="pre">static</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">finish</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">response</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.service.service_response.html#agentscope.service.service_response.ServiceResponse" title="agentscope.service.service_response.ServiceResponse"><span class="pre">ServiceResponse</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent.html#ReActAgent.finish"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgent.finish" title="Link to this definition">¶</a></dt>
+<dd><p>Finish reasoning and generate a response to the user.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The function won’t be executed, actually.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>response</strong> (<cite>str</cite>) – The response to the user.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgent.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent.html#ReActAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>The reply method of the agent.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgent.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.ReActAgent.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgentV2">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReActAgentV2</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent_v2.html#ReActAgentV2"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgentV2" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>The ReAct Agent V2, which use the tools API of the LLM service providers
+rather than assembling the prompt manually.</p>
+<p>The currently supported LLM providers include:
+- Anthropic
+- DashScope
+- OpenAI</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgentV2.generate_response">
+<span class="sig-name descname"><span class="pre">generate_response</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">response</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Any</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.service.service_response.html#agentscope.service.service_response.ServiceResponse" title="agentscope.service.service_response.ServiceResponse"><span class="pre">ServiceResponse</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent_v2.html#ReActAgentV2.generate_response"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgentV2.generate_response" title="Link to this definition">¶</a></dt>
+<dd><p>Generate a response. You must call this function to interact with
+others (e.g., users).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>response</strong> (<cite>str</cite>) – The response to the user.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgentV2.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Type</span><span class="p"><span class="pre">[</span></span><span class="pre">BaseModel</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_react_agent_v2.html#ReActAgentV2.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.ReActAgentV2.reply" title="Link to this definition">¶</a></dt>
+<dd><p>The reply method of the agent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<cite>Optional[Union[Msg, list[Msg]]]</cite>) – The input message(s) to the agent.</p></li>
+<li><p><strong>(</strong><strong>Optional</strong><strong>[</strong><strong>Type</strong><strong>[</strong><strong>BaseModel</strong><strong>]</strong><strong>]</strong> (<em>structured_model</em>) – <dl class="simple">
+<dt>defaults to <cite>None</cite>):</dt><dd><p>A Pydantic model class that defines the structured output. If
+provided, the schema of the structured output will be merged
+with the <cite>generate_response</cite> function, and the argument
+<cite>exit_reply_without_tool_calls</cite> will be invalid. The agent
+must call the <cite>generate_response</cite> function to end the reply
+with a structured output.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="simple">
+<dt>:param :</dt><dd><dl class="simple">
+<dt>defaults to <cite>None</cite>):</dt><dd><p>A Pydantic model class that defines the structured output. If
+provided, the schema of the structured output will be merged
+with the <cite>generate_response</cite> function, and the argument
+<cite>exit_reply_without_tool_calls</cite> will be invalid. The agent
+must call the <cite>generate_response</cite> function to end the reply
+with a structured output.</p>
+</dd>
+</dl>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The response message from the agent.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.ReActAgentV2.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.ReActAgentV2.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.StudioUserInput">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">StudioUserInput</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">studio_url</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">run_id</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_retries</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reconnect_attempts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reconnection_delay</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reconnection_delay_max</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_user_input.html#StudioUserInput"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.StudioUserInput" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.UserInputBase" title="agentscope.agents._user_input.UserInputBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">UserInputBase</span></code></a></p>
+<p>The agentscope studio user input.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.TerminalUserInput">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">TerminalUserInput</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_prefix</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'User</span> <span class="pre">Input:</span> <span class="pre">'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_user_input.html#TerminalUserInput"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.TerminalUserInput" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.UserInputBase" title="agentscope.agents._user_input.UserInputBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">UserInputBase</span></code></a></p>
+<p>The terminal user input.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.UserAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">UserAgent</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">tuple</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_user_agent.html#UserAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agents.AgentBase" title="agentscope.agents._agent.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>User agent class</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.UserAgent.override_class_input_method">
+<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">override_class_input_method</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_method</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#agentscope.agents.UserInputBase" title="agentscope.agents._user_input.UserInputBase"><span class="pre">UserInputBase</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_user_agent.html#UserAgent.override_class_input_method"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserAgent.override_class_input_method" title="Link to this definition">¶</a></dt>
+<dd><p>Override the input method of the current UserAgent instance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>input_method</strong> (<cite>UserInputBase</cite>) – The callable input method, which should be an object of a
+class that inherits from <cite>UserInputBase</cite>.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.UserAgent.override_input_method">
+<span class="sig-name descname"><span class="pre">override_input_method</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_method</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="#agentscope.agents.UserInputBase" title="agentscope.agents._user_input.UserInputBase"><span class="pre">UserInputBase</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/agentscope/agents/_user_agent.html#UserAgent.override_input_method"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserAgent.override_input_method" title="Link to this definition">¶</a></dt>
+<dd><p>Override the input method of the current UserAgent instance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>input_method</strong> (<cite>UserInputBase</cite>) – The callable input method, which should be an object of a
+class that inherits from <cite>UserInputBase</cite>.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.UserAgent.reply">
+<span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_output</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Type</span><span class="p"><span class="pre">[</span></span><span class="pre">BaseModel</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="agentscope.message.msg.html#agentscope.message.msg.Msg" title="agentscope.message.msg.Msg"><span class="pre">Msg</span></a></span></span><a class="reference internal" href="../_modules/agentscope/agents/_user_agent.html#UserAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Receive input message(s) and generate a reply message from the user.
+The input source can be set by calling <cite>override_input_method</cite> and
+<cite>override_class_input_method</cite> methods.</p>
+<p>For example, if you want to receive user input from your own source,
+you can create a class that inherits from <cite>UserInputBase</cite> and
+override the input method of the <cite>UserAgent</cite> class.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<cite>Optional[Union[Msg, list[Msg]]]</cite>, defaults to <cite>None</cite>) – The input message(s) to the agent, which also can be omitted if
+the agent doesn’t need any input.</p></li>
+<li><p><strong>(</strong><strong>Optional</strong><strong>[</strong><strong>Type</strong><strong>[</strong><strong>BaseModel</strong><strong>]</strong><strong>]</strong> (<em>structured_output</em>) – <dl class="simple">
+<dt>to <cite>None</cite>):</dt><dd><p>A child class of <cite>pydantic.BaseModel</cite> that defines the
+structured output format. If provided, the user will be
+prompted to fill in the required fields. The output will be
+placed in the <cite>metadata</cite> field of the output message.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>defaults</strong> – <dl class="simple">
+<dt>to <cite>None</cite>):</dt><dd><p>A child class of <cite>pydantic.BaseModel</cite> that defines the
+structured output format. If provided, the user will be
+prompted to fill in the required fields. The output will be
+placed in the <cite>metadata</cite> field of the output message.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The output message generated by the agent.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agents.UserAgent.to_dist">
+<span class="sig-name descname"><span class="pre">to_dist</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host:</span> <span class="pre">str</span> <span class="pre">=</span> <span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port:</span> <span class="pre">int</span> <span class="pre">|</span> <span class="pre">None</span> <span class="pre">=</span> <span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_pool_size:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">8192</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_expire_time:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">7200</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_timeout_seconds:</span> <span class="pre">int</span> <span class="pre">=</span> <span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">local_mode:</span> <span class="pre">bool</span> <span class="pre">=</span> <span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retry_strategy:</span> <span class="pre">~agentscope.rpc.retry_strategy.RetryBase</span> <span class="pre">=</span> <span class="pre">&lt;agentscope.rpc.retry_strategy.RetryFixedTimes</span> <span class="pre">object&gt;</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Any</span></span></span><a class="headerlink" href="#agentscope.agents.UserAgent.to_dist" title="Link to this definition">¶</a></dt>
+<dd><p>Convert current object into its distributed version.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Hostname of the rpc agent server.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>None</cite>) – Port of the rpc agent server.</p></li>
+<li><p><strong>max_pool_size</strong> (<cite>int</cite>, defaults to <cite>8192</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+The max number of agent reply messages that the started agent
+server can accommodate. Note that the oldest message will be
+deleted after exceeding the pool size.</p></li>
+<li><p><strong>max_expire_time</strong> (<cite>int</cite>, defaults to <cite>7200</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Maximum time for reply messages to be cached in the launched
+agent server. Note that expired messages will be deleted.</p></li>
+<li><p><strong>max_timeout_seconds</strong> (<cite>int</cite>, defaults to <cite>5</cite>) – Max timeout seconds for the rpc call.</p></li>
+<li><p><strong>local_mode</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Only takes effect when <cite>host</cite> and <cite>port</cite> are not filled in.
+Whether the started agent server only listens to local
+requests.</p></li>
+<li><p><strong>retry_strategy</strong> (<cite>RetryBase</cite>, defaults to <cite>_DEFAULT_RETRY_STRATEGY</cite>) – The retry strategy for the async rpc call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>the wrapped agent instance with distributed
+functionality</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>RpcObject</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.UserInputBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">UserInputBase</span></span><a class="reference internal" href="../_modules/agentscope/agents/_user_input.html#UserInputBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserInputBase" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
+<p>The base class for user input.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agents.UserInputData">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">UserInputData</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">blocks_input</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ToolUseBlock" title="agentscope.message.block.ToolUseBlock"><span class="pre">ToolUseBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ToolResultBlock" title="agentscope.message.block.ToolResultBlock"><span class="pre">ToolResultBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.TextBlock" title="agentscope.message.block.TextBlock"><span class="pre">TextBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ImageBlock" title="agentscope.message.block.ImageBlock"><span class="pre">ImageBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.AudioBlock" title="agentscope.message.block.AudioBlock"><span class="pre">AudioBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.VideoBlock" title="agentscope.message.block.VideoBlock"><span class="pre">VideoBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.FileBlock" title="agentscope.message.block.FileBlock"><span class="pre">FileBlock</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_input</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agents/_user_input.html#UserInputData"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agents.UserInputData" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">BaseModel</span></code></p>
+<p>The user input data.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agents.UserInputData.blocks_input">
+<span class="sig-name descname"><span class="pre">blocks_input</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ToolUseBlock" title="agentscope.message.block.ToolUseBlock"><span class="pre">ToolUseBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ToolResultBlock" title="agentscope.message.block.ToolResultBlock"><span class="pre">ToolResultBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.TextBlock" title="agentscope.message.block.TextBlock"><span class="pre">TextBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.ImageBlock" title="agentscope.message.block.ImageBlock"><span class="pre">ImageBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.AudioBlock" title="agentscope.message.block.AudioBlock"><span class="pre">AudioBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.VideoBlock" title="agentscope.message.block.VideoBlock"><span class="pre">VideoBlock</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="agentscope.message.block.html#agentscope.message.block.FileBlock" title="agentscope.message.block.FileBlock"><span class="pre">FileBlock</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.agents.UserInputData.blocks_input" title="Link to this definition">¶</a></dt>
+<dd><p>The text input from the user.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agents.UserInputData.model_config">
+<span class="sig-name descname"><span class="pre">model_config</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ClassVar</span><span class="p"><span class="pre">[</span></span><span class="pre">ConfigDict</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{}</span></em><a class="headerlink" href="#agentscope.agents.UserInputData.model_config" title="Link to this definition">¶</a></dt>
+<dd><p>Configuration for the model, should be a dictionary conforming to [<cite>ConfigDict</cite>][pydantic.config.ConfigDict].</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agents.UserInputData.structured_input">
+<span class="sig-name descname"><span class="pre">structured_input</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.agents.UserInputData.structured_input" title="Link to this definition">¶</a></dt>
+<dd><p>The structured input from the user.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="agentscope.memory.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">agentscope.memory</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="agentscope.models.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">agentscope.models</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">agentscope.agents</a><ul>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase"><code class="docutils literal notranslate"><span class="pre">AgentBase</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.clear_all_class_hooks"><code class="docutils literal notranslate"><span class="pre">AgentBase.clear_all_class_hooks()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.clear_all_obj_hooks"><code class="docutils literal notranslate"><span class="pre">AgentBase.clear_all_obj_hooks()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.clear_audience"><code class="docutils literal notranslate"><span class="pre">AgentBase.clear_audience()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.clear_class_hooks"><code class="docutils literal notranslate"><span class="pre">AgentBase.clear_class_hooks()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.clear_hooks"><code class="docutils literal notranslate"><span class="pre">AgentBase.clear_hooks()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.generate_agent_id"><code class="docutils literal notranslate"><span class="pre">AgentBase.generate_agent_id()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.observe"><code class="docutils literal notranslate"><span class="pre">AgentBase.observe()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.register_class_hook"><code class="docutils literal notranslate"><span class="pre">AgentBase.register_class_hook()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.register_hook"><code class="docutils literal notranslate"><span class="pre">AgentBase.register_hook()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.remove_class_hook"><code class="docutils literal notranslate"><span class="pre">AgentBase.remove_class_hook()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.remove_hook"><code class="docutils literal notranslate"><span class="pre">AgentBase.remove_hook()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.reply"><code class="docutils literal notranslate"><span class="pre">AgentBase.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.reset_audience"><code class="docutils literal notranslate"><span class="pre">AgentBase.reset_audience()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.rm_audience"><code class="docutils literal notranslate"><span class="pre">AgentBase.rm_audience()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.speak"><code class="docutils literal notranslate"><span class="pre">AgentBase.speak()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.to_dist"><code class="docutils literal notranslate"><span class="pre">AgentBase.to_dist()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.AgentBase.agent_id"><code class="docutils literal notranslate"><span class="pre">AgentBase.agent_id</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.DialogAgent"><code class="docutils literal notranslate"><span class="pre">DialogAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.DialogAgent.reply"><code class="docutils literal notranslate"><span class="pre">DialogAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.DialogAgent.to_dist"><code class="docutils literal notranslate"><span class="pre">DialogAgent.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.DictDialogAgent"><code class="docutils literal notranslate"><span class="pre">DictDialogAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.DictDialogAgent.reply"><code class="docutils literal notranslate"><span class="pre">DictDialogAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.DictDialogAgent.set_parser"><code class="docutils literal notranslate"><span class="pre">DictDialogAgent.set_parser()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.DictDialogAgent.to_dist"><code class="docutils literal notranslate"><span class="pre">DictDialogAgent.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.LlamaIndexAgent"><code class="docutils literal notranslate"><span class="pre">LlamaIndexAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.LlamaIndexAgent.reply"><code class="docutils literal notranslate"><span class="pre">LlamaIndexAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.LlamaIndexAgent.to_dist"><code class="docutils literal notranslate"><span class="pre">LlamaIndexAgent.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgent"><code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgent.finish"><code class="docutils literal notranslate"><span class="pre">ReActAgent.finish()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgent.reply"><code class="docutils literal notranslate"><span class="pre">ReActAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgent.to_dist"><code class="docutils literal notranslate"><span class="pre">ReActAgent.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgentV2"><code class="docutils literal notranslate"><span class="pre">ReActAgentV2</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgentV2.generate_response"><code class="docutils literal notranslate"><span class="pre">ReActAgentV2.generate_response()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgentV2.reply"><code class="docutils literal notranslate"><span class="pre">ReActAgentV2.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.ReActAgentV2.to_dist"><code class="docutils literal notranslate"><span class="pre">ReActAgentV2.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.StudioUserInput"><code class="docutils literal notranslate"><span class="pre">StudioUserInput</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.TerminalUserInput"><code class="docutils literal notranslate"><span class="pre">TerminalUserInput</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserAgent"><code class="docutils literal notranslate"><span class="pre">UserAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.UserAgent.override_class_input_method"><code class="docutils literal notranslate"><span class="pre">UserAgent.override_class_input_method()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserAgent.override_input_method"><code class="docutils literal notranslate"><span class="pre">UserAgent.override_input_method()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserAgent.reply"><code class="docutils literal notranslate"><span class="pre">UserAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserAgent.to_dist"><code class="docutils literal notranslate"><span class="pre">UserAgent.to_dist()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agents.UserInputBase"><code class="docutils literal notranslate"><span class="pre">UserInputBase</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserInputData"><code class="docutils literal notranslate"><span class="pre">UserInputData</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agents.UserInputData.blocks_input"><code class="docutils literal notranslate"><span class="pre">UserInputData.blocks_input</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserInputData.model_config"><code class="docutils literal notranslate"><span class="pre">UserInputData.model_config</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agents.UserInputData.structured_input"><code class="docutils literal notranslate"><span class="pre">UserInputData.structured_input</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/language_switch.js?v=9fc19426"></script>
+    </body>
+</html>

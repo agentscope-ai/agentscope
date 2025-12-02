@@ -1,0 +1,6 @@
+agentscope.service.sql_query.sqlite
+===================================
+.. automodule:: agentscope.service.sql_query.sqlite
+   :members:
+   :undoc-members:
+   :show-inheritance:

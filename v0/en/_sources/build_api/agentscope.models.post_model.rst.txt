@@ -1,0 +1,6 @@
+agentscope.models.post_model
+============================
+.. automodule:: agentscope.models.post_model
+   :members:
+   :undoc-members:
+   :show-inheritance:

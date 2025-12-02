@@ -1,0 +1,97 @@
+
+:orphan:
+
+.. _sphx_glr_sg_execution_times:
+
+
+Computation times
+=================
+**03:32.094** total execution time for 21 files **from all galleries**:
+
+.. container::
+
+  .. raw:: html
+
+    <style scoped>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet" />
+    </style>
+    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script type="text/javascript" class="init">
+    $(document).ready( function () {
+        $('table.sg-datatable').DataTable({order: [[1, 'desc']]});
+    } );
+    </script>
+
+  .. list-table::
+   :header-rows: 1
+   :class: table table-striped sg-datatable
+
+   * - Example
+     - Time
+     - Mem (MB)
+   * - :ref:`sphx_glr_build_tutorial_prompt_optimization.py` (``tutorial/prompt_optimization.py``)
+     - 00:55.492
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_rag.py` (``tutorial/rag.py``)
+     - 00:38.354
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_builtin_agent.py` (``tutorial/builtin_agent.py``)
+     - 00:28.603
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_conversation.py` (``tutorial/conversation.py``)
+     - 00:26.547
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_structured_output.py` (``tutorial/structured_output.py``)
+     - 00:22.585
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_tool.py` (``tutorial/tool.py``)
+     - 00:12.807
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_multimodality.py` (``tutorial/multimodality.py``)
+     - 00:08.616
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_monitor.py` (``tutorial/monitor.py``)
+     - 00:04.027
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_quickstart.py` (``tutorial/quickstart.py``)
+     - 00:03.755
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_hook.py` (``tutorial/hook.py``)
+     - 00:03.126
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_streaming.py` (``tutorial/streaming.py``)
+     - 00:02.783
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_model.py` (``tutorial/model.py``)
+     - 00:02.567
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_agent.py` (``tutorial/agent.py``)
+     - 00:01.416
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_prompt.py` (``tutorial/prompt.py``)
+     - 00:01.386
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_MCP.py` (``tutorial/MCP.py``)
+     - 00:00.026
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_message.py` (``tutorial/message.py``)
+     - 00:00.002
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_visual.py` (``tutorial/visual.py``)
+     - 00:00.001
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_distribution.py` (``tutorial/distribution.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_low_code.py` (``tutorial/low_code.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_web_browser.py` (``tutorial/web_browser.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_build_tutorial_examples.py` (``tutorial/examples.py``)
+     - 00:00.000
+     - 0.0

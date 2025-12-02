@@ -1,0 +1,7 @@
+agentscope.pipelines
+====================
+
+.. automodule:: agentscope.pipelines
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -1,0 +1,6 @@
+agentscope.rpc.rpc_agent_pb2
+============================
+.. automodule:: agentscope.rpc.rpc_agent_pb2
+   :members:
+   :undoc-members:
+   :show-inheritance:

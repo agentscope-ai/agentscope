@@ -1,0 +1,7 @@
+agentscope.service.retrieval
+============================
+
+.. automodule:: agentscope.service.retrieval
+   :members:
+   :undoc-members:
+   :show-inheritance:

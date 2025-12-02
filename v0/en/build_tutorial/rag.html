@@ -1,0 +1,758 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Hooks" href="hook.html"><link rel="prev" title="MCP" href="MCP.html">
+        <link rel="canonical" href="/v0/build_tutorial/rag.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+        <title>Retrieval Augmentation Generation (RAG) - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=a9cd5911" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV1(this.value)">
+                    <option value="v1">Stable(v1.0)</option>
+                    <option value="v0" selected>v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="message.html">Message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agent.html">Build Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conversation.html">Build Conversation</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FQA</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">FQA</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="model.html">Model APIs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt.html">Prompt Formatting</a></li>
+<li class="toctree-l1"><a class="reference internal" href="structured_output.html">Structured Output</a></li>
+<li class="toctree-l1"><a class="reference internal" href="streaming.html">Streaming Mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="builtin_agent.html">Built-in Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="multimodality.html">MultiModality</a></li>
+<li class="toctree-l1"><a class="reference internal" href="visual.html">Visual Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="monitor.html">Configuring and Monitoring</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tool.html">Tools</a></li>
+<li class="toctree-l1"><a class="reference internal" href="MCP.html">MCP</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Retrieval Augmentation Generation (RAG)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hook.html">Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="distribution.html">Distribution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prompt_optimization.html">System Prompt Optimization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="web_browser.html">Web Browser Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="low_code.html">Low-code Development</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Examples</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="examples.html">Examples</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Applications</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/swe.html">SWE-Bench</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.html">agentscope</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.message.html">agentscope.message</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.models.html">agentscope.models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.agents.html">agentscope.agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.memory.html">agentscope.memory</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.parsers.html">agentscope.parsers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.rag.html">agentscope.rag</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.service.html">agentscope.service</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.prompt.html">agentscope.prompt</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.tokens.html">agentscope.tokens</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../build_api/agentscope.exception.html">agentscope.exception</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV0Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/build_tutorial/rag.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-build-tutorial-rag-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="retrieval-augmentation-generation-rag">
+<span id="rag"></span><span id="sphx-glr-build-tutorial-rag-py"></span><h1>Retrieval Augmentation Generation (RAG)<a class="headerlink" href="#retrieval-augmentation-generation-rag" title="Link to this heading">¶</a></h1>
+<p>Agentscope has built-in supports for the retrieval augmentation generation
+(RAG). There are two key modules related to RAG in AgentScope: <cite>Knowledge</cite> and
+<cite>KnowledgeBank</cite>.</p>
+<section id="create-and-use-knowledge-instances">
+<h2>Create and Use Knowledge Instances<a class="headerlink" href="#create-and-use-knowledge-instances" title="Link to this heading">¶</a></h2>
+<p>While <cite>Knowledge</cite> is a base class, a specific built-in knowledge class is in
+the AgentScope now. (Online search is coming soon.)</p>
+<ul class="simple">
+<li><p><cite>LlamaIndexKnowledge</cite>: Designed to work with one of the most popular RAG library <a class="reference external" href="https://www.llamaindex.ai/">LlamaIndex</a> as local knowledge, and supporting most of LlamaIndex functionality by configuration.</p></li>
+</ul>
+<section id="create-a-llamaindexknowledge-instance">
+<h3>Create a <cite>LlamaIndexKnowledge</cite> instance<a class="headerlink" href="#create-a-llamaindexknowledge-instance" title="Link to this heading">¶</a></h3>
+<p>A quick start to create a <cite>LlamaIndexKnowledge</cite> instance is to use the <cite>build_knowledge_instance</cite> function.
+There are three parameters need to be passed to the function.</p>
+<ul class="simple">
+<li><p><cite>knowledge_id</cite>: a unique identifier for this knowledge instance</p></li>
+<li><p><cite>data_dirs_and_types</cite>: a dictionary whose keys are strings of directories of the data, and values are the file extensions of the data</p></li>
+<li><p><cite>emb_model_config_name</cite>: name of the configuration of a embedding model in AgentScope (need to be initialized in AgentScope beforehand)</p></li>
+</ul>
+<p>A simple example is as follows.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">agentscope</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.rag.llama_index_knowledge</span><span class="w"> </span><span class="kn">import</span> <span class="n">LlamaIndexKnowledge</span>
+
+<span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span>
+    <span class="n">model_configs</span><span class="o">=</span><span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;model_type&quot;</span><span class="p">:</span> <span class="s2">&quot;dashscope_text_embedding&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;config_name&quot;</span><span class="p">:</span> <span class="s2">&quot;qwen_emb_config&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="s2">&quot;text-embedding-v2&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;api_key&quot;</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;DASHSCOPE_API_KEY&quot;</span><span class="p">),</span>
+        <span class="p">},</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+<span class="n">local_knowledge</span> <span class="o">=</span> <span class="n">LlamaIndexKnowledge</span><span class="o">.</span><span class="n">build_knowledge_instance</span><span class="p">(</span>
+    <span class="n">knowledge_id</span><span class="o">=</span><span class="s2">&quot;agentscope_qa&quot;</span><span class="p">,</span>
+    <span class="n">data_dirs_and_types</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;./&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;.md&quot;</span><span class="p">]},</span>
+    <span class="n">emb_model_config_name</span><span class="o">=</span><span class="s2">&quot;qwen_emb_config&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="n">nodes</span> <span class="o">=</span> <span class="n">local_knowledge</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span>
+    <span class="s2">&quot;what is agentscope?&quot;</span><span class="p">,</span>
+    <span class="n">similarity_top_k</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">The retrieved content:</span><span class="se">\n</span><span class="si">{</span><span class="n">nodes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>[nltk_data] Downloading package punkt_tab to /opt/hostedtoolcache/Pyth
+[nltk_data]     on/3.10.19/x64/lib/python3.10/site-
+[nltk_data]     packages/llama_index/core/_static/nltk_cache...
+[nltk_data]   Unzipping tokenizers/punkt_tab.zip.
+
+Parsing nodes:   0%|          | 0/17 [00:00&lt;?, ?it/s]
+Parsing nodes: 100%|██████████| 17/17 [00:00&lt;00:00, 3245.63it/s]
+
+Generating embeddings:   0%|          | 0/17 [00:00&lt;?, ?it/s]
+Generating embeddings:   6%|▌         | 1/17 [00:00&lt;00:14,  1.14it/s]
+Generating embeddings:  12%|█▏        | 2/17 [00:01&lt;00:13,  1.11it/s]
+Generating embeddings:  18%|█▊        | 3/17 [00:02&lt;00:12,  1.10it/s]
+Generating embeddings:  24%|██▎       | 4/17 [00:03&lt;00:13,  1.02s/it]
+Generating embeddings:  29%|██▉       | 5/17 [00:04&lt;00:11,  1.01it/s]
+Generating embeddings:  35%|███▌      | 6/17 [00:05&lt;00:11,  1.04s/it]
+Generating embeddings:  41%|████      | 7/17 [00:07&lt;00:11,  1.19s/it]
+Generating embeddings:  47%|████▋     | 8/17 [00:08&lt;00:09,  1.10s/it]
+Generating embeddings:  53%|█████▎    | 9/17 [00:09&lt;00:08,  1.06s/it]
+Generating embeddings:  59%|█████▉    | 10/17 [00:10&lt;00:07,  1.02s/it]
+Generating embeddings:  65%|██████▍   | 11/17 [00:11&lt;00:06,  1.09s/it]
+Generating embeddings:  71%|███████   | 12/17 [00:12&lt;00:05,  1.04s/it]
+Generating embeddings:  76%|███████▋  | 13/17 [00:13&lt;00:04,  1.07s/it]
+Generating embeddings:  82%|████████▏ | 14/17 [00:14&lt;00:03,  1.11s/it]
+Generating embeddings:  88%|████████▊ | 15/17 [00:15&lt;00:02,  1.06s/it]
+Generating embeddings:  94%|█████████▍| 16/17 [00:16&lt;00:01,  1.02s/it]
+Generating embeddings: 100%|██████████| 17/17 [00:17&lt;00:00,  1.00it/s]
+Generating embeddings: 100%|██████████| 17/17 [00:17&lt;00:00,  1.04s/it]
+
+The retrieved content:
+About AgentScope
+_**Q**: What&#39;s the difference between AgentScope and other agent platforms/frameworks/packages?_
+
+**A**: AgentScope is a developer-centric and multi-agent platform, aiming to ease the development, deployment and monitoring of **multi-agent applications**.
+</pre></div>
+</div>
+<p>If one wants to have more control on how the data are preprocessing,
+a knowledge configuration can be passed to the function.
+Especially, <cite>SimpleDirectoryReader</cite> is the class in LlamaIndex library, and <cite>init_args</cite> is the initialization parameters of <cite>SimpleDirectoryReader</cite>.
+As for the data preprocessing, developers can choose different LlamaIndex <a class="reference external" href="https://docs.llamaindex.ai/en/stable/module_guides/loading/ingestion_pipeline/transformations/">transformation operations</a> to preprocess the data.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">flex_knowledge_config</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;knowledge_id&quot;</span><span class="p">:</span> <span class="s2">&quot;agentscope_qa_flex&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;knowledge_type&quot;</span><span class="p">:</span> <span class="s2">&quot;llamaindex_knowledge&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;emb_model_config_name&quot;</span><span class="p">:</span> <span class="s2">&quot;qwen_emb_config&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;chunk_size&quot;</span><span class="p">:</span> <span class="mi">1024</span><span class="p">,</span>
+    <span class="s2">&quot;chunk_overlap&quot;</span><span class="p">:</span> <span class="mi">40</span><span class="p">,</span>
+    <span class="s2">&quot;data_processing&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;load_data&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;loader&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;create_object&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                    <span class="s2">&quot;module&quot;</span><span class="p">:</span> <span class="s2">&quot;llama_index.core&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;SimpleDirectoryReader&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;init_args&quot;</span><span class="p">:</span> <span class="p">{</span>
+                        <span class="s2">&quot;input_dir&quot;</span><span class="p">:</span> <span class="s2">&quot;./&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;required_exts&quot;</span><span class="p">:</span> <span class="p">[</span>
+                            <span class="s2">&quot;.md&quot;</span><span class="p">,</span>
+                        <span class="p">],</span>
+                    <span class="p">},</span>
+                <span class="p">},</span>
+            <span class="p">},</span>
+            <span class="s2">&quot;store_and_index&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;transformations&quot;</span><span class="p">:</span> <span class="p">[</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;create_object&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+                        <span class="s2">&quot;module&quot;</span><span class="p">:</span> <span class="s2">&quot;llama_index.core.node_parser&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;SentenceSplitter&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;init_args&quot;</span><span class="p">:</span> <span class="p">{</span>
+                            <span class="s2">&quot;chunk_size&quot;</span><span class="p">:</span> <span class="mi">1024</span><span class="p">,</span>
+                        <span class="p">},</span>
+                    <span class="p">},</span>
+                <span class="p">],</span>
+            <span class="p">},</span>
+        <span class="p">},</span>
+    <span class="p">],</span>
+<span class="p">}</span>
+
+<span class="n">local_knowledge_flex</span> <span class="o">=</span> <span class="n">LlamaIndexKnowledge</span><span class="o">.</span><span class="n">build_knowledge_instance</span><span class="p">(</span>
+    <span class="n">knowledge_id</span><span class="o">=</span><span class="s2">&quot;agentscope_qa_flex&quot;</span><span class="p">,</span>
+    <span class="n">knowledge_config</span><span class="o">=</span><span class="n">flex_knowledge_config</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="n">nodes</span> <span class="o">=</span> <span class="n">local_knowledge</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span>
+    <span class="s2">&quot;what is agentscope?&quot;</span><span class="p">,</span>
+    <span class="n">similarity_top_k</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">The retrieved content:</span><span class="se">\n</span><span class="si">{</span><span class="n">nodes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Parsing nodes:   0%|          | 0/17 [00:00&lt;?, ?it/s]
+Parsing nodes: 100%|██████████| 17/17 [00:00&lt;00:00, 3499.89it/s]
+
+Generating embeddings:   0%|          | 0/17 [00:00&lt;?, ?it/s]
+Generating embeddings:   6%|▌         | 1/17 [00:01&lt;00:19,  1.19s/it]
+Generating embeddings:  12%|█▏        | 2/17 [00:02&lt;00:15,  1.03s/it]
+Generating embeddings:  18%|█▊        | 3/17 [00:02&lt;00:13,  1.04it/s]
+Generating embeddings:  24%|██▎       | 4/17 [00:03&lt;00:11,  1.09it/s]
+Generating embeddings:  29%|██▉       | 5/17 [00:04&lt;00:11,  1.00it/s]
+Generating embeddings:  35%|███▌      | 6/17 [00:05&lt;00:10,  1.05it/s]
+Generating embeddings:  41%|████      | 7/17 [00:07&lt;00:10,  1.04s/it]
+Generating embeddings:  47%|████▋     | 8/17 [00:08&lt;00:09,  1.09s/it]
+Generating embeddings:  53%|█████▎    | 9/17 [00:09&lt;00:08,  1.03s/it]
+Generating embeddings:  59%|█████▉    | 10/17 [00:10&lt;00:07,  1.07s/it]
+Generating embeddings:  65%|██████▍   | 11/17 [00:11&lt;00:06,  1.04s/it]
+Generating embeddings:  71%|███████   | 12/17 [00:12&lt;00:05,  1.01s/it]
+Generating embeddings:  76%|███████▋  | 13/17 [00:13&lt;00:03,  1.03it/s]
+Generating embeddings:  82%|████████▏ | 14/17 [00:13&lt;00:02,  1.06it/s]
+Generating embeddings:  88%|████████▊ | 15/17 [00:14&lt;00:01,  1.07it/s]
+Generating embeddings:  94%|█████████▍| 16/17 [00:15&lt;00:00,  1.06it/s]
+Generating embeddings: 100%|██████████| 17/17 [00:16&lt;00:00,  1.08it/s]
+Generating embeddings: 100%|██████████| 17/17 [00:16&lt;00:00,  1.01it/s]
+
+The retrieved content:
+About AgentScope
+_**Q**: What&#39;s the difference between AgentScope and other agent platforms/frameworks/packages?_
+
+**A**: AgentScope is a developer-centric and multi-agent platform, aiming to ease the development, deployment and monitoring of **multi-agent applications**.
+</pre></div>
+</div>
+</section>
+</section>
+<section id="create-a-batch-of-knowledge-instances">
+<h2>Create a Batch of Knowledge Instances<a class="headerlink" href="#create-a-batch-of-knowledge-instances" title="Link to this heading">¶</a></h2>
+<p>For some cases where different knowledge sources exists and require different preprocessing and/or post-proprocess, a good strategy is to create multiple knolwedge instances.
+Thus, we introduce <cite>KnowledgeBank</cite> to better manage the knowledge instances. One can initialize a batch of knowledge with a file of mulltiple knodledge configurations.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">knowledge_bank</span> <span class="o">=</span> <span class="n">KnowledgeBank</span><span class="p">(</span><span class="n">configs</span><span class="o">=</span><span class="n">path_to_knowledge_configs_json</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Alternatively, one can add knowledge instance dynamically to knowledge bank as well.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">knowledge_bank</span><span class="o">.</span><span class="n">add_data_as_knowledge</span><span class="p">(</span>
+     <span class="n">knowledge_id</span><span class="o">=</span><span class="s2">&quot;agentscope_tutorial_rag&quot;</span><span class="p">,</span>
+     <span class="n">emb_model_name</span><span class="o">=</span><span class="s2">&quot;qwen_emb_config&quot;</span><span class="p">,</span>
+     <span class="n">data_dirs_and_types</span><span class="o">=</span><span class="p">{</span>
+         <span class="s2">&quot;../../docs/sphinx_doc/en/source/tutorial&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;.md&quot;</span><span class="p">],</span>
+     <span class="p">},</span>
+ <span class="p">)</span>
+</pre></div>
+</div>
+<p>Here, the <cite>knowledge_id</cite> should be unique.
+If developers have their new knowledge class, they can register the new class beforehand</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">your_knowledge</span><span class="w"> </span><span class="kn">import</span> <span class="n">NewKnowledgeClass1</span><span class="p">,</span> <span class="n">NewKnowledgeClass2</span>
+<span class="n">knowledge_bank</span> <span class="o">=</span> <span class="n">KnowledgeBank</span><span class="p">(</span>
+  <span class="n">configs</span><span class="o">=</span><span class="s2">&quot;configs/knowledge_config.json&quot;</span><span class="p">,</span>
+  <span class="n">new_knowledge_types</span><span class="o">=</span><span class="p">[</span><span class="n">NewKnowledgeClass1</span><span class="p">,</span> <span class="n">NewKnowledgeClass2</span><span class="p">]</span>
+<span class="p">)</span>
+<span class="c1"># or</span>
+<span class="n">knowledge_bank</span><span class="o">.</span><span class="n">register_knowledge_type</span><span class="p">(</span><span class="n">NewKnowledgeClass2</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="optional-setting-up-a-local-embedding-model-service">
+<h2>(Optional) Setting up a local embedding model service<a class="headerlink" href="#optional-setting-up-a-local-embedding-model-service" title="Link to this heading">¶</a></h2>
+<p>For those who are interested in setting up a local embedding service, we provide the following example based on the
+<cite>sentence_transformers</cite> package, which is a popular specialized package for embedding models (based on the <cite>transformer</cite> package and compatible with both HuggingFace and ModelScope models).
+In this example, we will use one of the SOTA embedding models, <cite>gte-Qwen2-7B-instruct</cite>.</p>
+<ul>
+<li><p>Step 1: Follow the instruction on <a class="reference external" href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct">HuggingFace</a> or <a href="#id1"><span class="problematic" id="id2">`</span></a>ModelScope &lt;<a class="reference external" href="https://www.modelscope.cn/models/iic/gte_Qwen2-7B-instruct">https://www.modelscope.cn/models/iic/gte_Qwen2-7B-instruct</a> &gt;”_ to download the embedding model.
+(For those who cannot access HuggingFace directly, you may want to use a HuggingFace mirror by running a bash command</p>
+<blockquote>
+<div><p><cite>export HF_ENDPOINT=https://hf-mirror.com</cite> or add a line of code <cite>os.environ[“HF_ENDPOINT”] = “https://hf-mirror.com”</cite> in your Python code.)</p>
+</div></blockquote>
+</li>
+<li><p>Step 2: Set up the server. The following code is for reference.</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">flask</span><span class="w"> </span><span class="kn">import</span> <span class="n">Flask</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flask</span><span class="w"> </span><span class="kn">import</span> <span class="n">request</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sentence_transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">SentenceTransformer</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">create_timestamp</span><span class="p">(</span><span class="n">format_</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get current timestamp.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="n">format_</span><span class="p">)</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;/embedding/&quot;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;POST&quot;</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_embedding</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Receive post request and return response&quot;&quot;&quot;</span>
+    <span class="n">json</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;inputs&quot;</span><span class="p">)</span>
+
+    <span class="k">global</span> <span class="n">model</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">inputs</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">inputs</span><span class="p">]</span>
+
+    <span class="n">embeddings</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;completion_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="p">{},</span>
+            <span class="s2">&quot;prompt_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">[</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;embedding&quot;</span><span class="p">:</span> <span class="n">emb</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+                    <span class="p">}</span>
+                    <span class="k">for</span> <span class="n">emb</span> <span class="ow">in</span> <span class="n">embeddings</span>
+                <span class="p">],</span>
+                <span class="s2">&quot;created&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="n">create_timestamp</span><span class="p">(),</span>
+                <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="s2">&quot;flask_model&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;object&quot;</span><span class="p">:</span> <span class="s2">&quot;text_completion&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;usage&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;completion_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="s2">&quot;prompt_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="s2">&quot;total_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                <span class="p">},</span>
+            <span class="p">},</span>
+            <span class="s2">&quot;total_tokens&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">}</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--model_name_or_path&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--device&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--port&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8000</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">global</span> <span class="n">model</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;setting up for embedding model....&quot;</span><span class="p">)</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">SentenceTransformer</span><span class="p">(</span>
+        <span class="n">args</span><span class="o">.</span><span class="n">model_name_or_path</span>
+    <span class="p">)</span>
+
+    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">port</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>Step 3: start server.</p></li>
+</ul>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>setup_ms_service.py<span class="w"> </span>--model_name_or_path<span class="w"> </span><span class="o">{</span><span class="nv">$PATH_TO_gte_Qwen2_7B_instruct</span><span class="o">}</span>
+</pre></div>
+</div>
+<p>Testing whether the model is running successfully.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.models.post_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostAPIEmbeddingWrapper</span>
+
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">PostAPIEmbeddingWrapper</span><span class="p">(</span>
+    <span class="n">config_name</span><span class="o">=</span><span class="s2">&quot;test_config&quot;</span><span class="p">,</span>
+    <span class="n">api_url</span><span class="o">=</span><span class="s2">&quot;http://127.0.0.1:8000/embedding/&quot;</span><span class="p">,</span>
+    <span class="n">json_args</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="mi">4096</span><span class="p">,</span>
+        <span class="s2">&quot;temperature&quot;</span><span class="p">:</span> <span class="mf">0.5</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">model</span><span class="p">(</span><span class="s2">&quot;testing&quot;</span><span class="p">))</span>
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 38.354 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-build-tutorial-rag-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/d2c568081e6a4b3dc97dff750041209a/rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">rag.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/1822b209fd81fab0e76902d3d9d90698/rag.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">rag.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/039240e84791195a937f7b28e0215d1e/rag.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">rag.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="hook.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Hooks</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="MCP.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">MCP</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Retrieval Augmentation Generation (RAG)</a><ul>
+<li><a class="reference internal" href="#create-and-use-knowledge-instances">Create and Use Knowledge Instances</a><ul>
+<li><a class="reference internal" href="#create-a-llamaindexknowledge-instance">Create a <cite>LlamaIndexKnowledge</cite> instance</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#create-a-batch-of-knowledge-instances">Create a Batch of Knowledge Instances</a></li>
+<li><a class="reference internal" href="#optional-setting-up-a-local-embedding-model-service">(Optional) Setting up a local embedding model service</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/language_switch.js?v=9fc19426"></script>
+    </body>
+</html>

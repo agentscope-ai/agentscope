@@ -1,0 +1,6 @@
+agentscope.service.web.web_digest
+=================================
+.. automodule:: agentscope.service.web.web_digest
+   :members:
+   :undoc-members:
+   :show-inheritance:

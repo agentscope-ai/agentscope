@@ -1,0 +1,7 @@
+agentscope.service.text_processing
+==================================
+
+.. automodule:: agentscope.service.text_processing
+   :members:
+   :undoc-members:
+   :show-inheritance:

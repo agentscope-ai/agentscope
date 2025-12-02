@@ -1,0 +1,6 @@
+agentscope.strategy.mixture_of_agent
+====================================
+.. automodule:: agentscope.strategy.mixture_of_agent
+   :members:
+   :undoc-members:
+   :show-inheritance:

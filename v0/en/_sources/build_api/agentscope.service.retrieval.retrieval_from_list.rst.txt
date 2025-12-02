@@ -1,0 +1,6 @@
+agentscope.service.retrieval.retrieval_from_list
+================================================
+.. automodule:: agentscope.service.retrieval.retrieval_from_list
+   :members:
+   :undoc-members:
+   :show-inheritance:

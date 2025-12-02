@@ -1,0 +1,6 @@
+agentscope.environment.event
+============================
+.. automodule:: agentscope.environment.event
+   :members:
+   :undoc-members:
+   :show-inheritance:
