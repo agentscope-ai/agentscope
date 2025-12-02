@@ -407,7 +407,7 @@
         <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">reasoning_effort</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">organization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">generate_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -430,11 +430,12 @@
 <span class="sd">            organization (`str`, default `None`):</span>
 <span class="sd">                The organization ID for OpenAI API. If not specified, it will</span>
 <span class="sd">                be read from the environment variable `OPENAI_ORGANIZATION`.</span>
-<span class="sd">            client_kwargs (`dict`, default `None`):</span>
+<span class="sd">            client_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
+<span class="sd">             optional):</span>
 <span class="sd">                The extra keyword arguments to initialize the OpenAI client.</span>
 <span class="sd">            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
 <span class="sd">             optional):</span>
-<span class="sd">               The extra keyword arguments used in OpenAI API generation,</span>
+<span class="sd">                The extra keyword arguments used in OpenAI API generation,</span>
 <span class="sd">                e.g. `temperature`, `seed`.</span>
 <span class="sd">            **kwargs (`Any`):</span>
 <span class="sd">                Additional keyword arguments.</span>
