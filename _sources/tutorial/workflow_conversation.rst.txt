@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. It's nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob. I'm into sports and I also really like history. It's cool to meet someone with such different interests!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm really into music and art. It's great to meet you both! It's awesome to see such a mix of interests here.
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hey Alice! I'm Bob, and I'm really into science and technology. I love tinkering with gadgets and learning about new innovations. It's great to meet someone who's passionate about their interests too!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I enjoy exploring different types of music and playing the guitar. It's cool to meet you both! What kind of projects or hobbies are you currently working on?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. It's nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob. I'm into sports and I also really like history. It's cool to meet someone with such different interests!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm really into music and art. It's great to meet you both! It's awesome to see such a mix of interests here.
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hey Alice! I'm Bob, and I'm really into science and technology. I love tinkering with gadgets and learning about new innovations. It's great to meet someone who's passionate about their interests too!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I enjoy exploring different types of music and playing the guitar. It's cool to meet you both! What kind of projects or hobbies are you currently working on?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 7.756 seconds)
+   **Total running time of the script:** (0 minutes 6.669 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

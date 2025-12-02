@@ -340,7 +340,7 @@ Message object can be serialized and deserialized by ``to_dict`` and ``from_dict
 
     <class 'dict'>
     {
-        "id": "ZnJ8R5zpWPrmFRnfy7rgen",
+        "id": "XRfwkTEjUvdEJKmp5VaJhM",
         "name": "Jarvis",
         "role": "assistant",
         "content": [
@@ -374,7 +374,7 @@ Message object can be serialized and deserialized by ``to_dict`` and ``from_dict
             }
         ],
         "metadata": null,
-        "timestamp": "2025-12-02 13:58:41.087"
+        "timestamp": "2025-12-02 13:59:17.849"
     }
 
 
