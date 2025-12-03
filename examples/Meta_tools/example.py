@@ -26,69 +26,6 @@ train_api_key = os.environ["TRAIN_API_KEY"]
 dashscope_api_key = os.environ["DASHSCOPE_API_KEY"]
 
 
-def init_meta_tool_from_intact_file(
-    model_config_name: str,
-    file_path: str = "Meta_tool_config.json",
-    global_toolkit: Toolkit = None,
-) -> MetaManager:
-    """
-    Initialize a meta manager from a complete tool configuration file.
-
-    All tools from the global toolkit are added to their respective category
-    managers, inheriting group information from the global toolkit. Within each
-    category manager, only tools whose groups are marked as active in the
-    global
-    toolkit are visible, following the same visibility mechanism as
-    in
-    AgentScope.
-    """
-
-    current_dir = os.path.dirname(os.path.realpath(__file__))
-    meta_tool_config_path = os.path.join(current_dir, file_path)
-    with open(meta_tool_config_path, "r", encoding="utf-8") as f:
-        meta_tool_config = json.load(f)
-
-    meta_manager = MetaManager()
-
-    model = DashScopeChatModel(
-        model_name=model_config_name,
-        api_key=dashscope_api_key,
-        stream=True,
-    )
-
-    for category_name, category_config in meta_tool_config.items():
-        category_manager = CategoryManager(
-            category_name=category_name,
-            category_description=category_config["description"],
-            tool_usage_notes=category_config["tool_usage_notes"],
-            model=model,
-            formatter=DashScopeChatFormatter(),
-        )
-        for tool_name in category_config["tools"]:
-            if tool_name not in global_toolkit.tools:
-                print(f"Tool {tool_name} not found in global toolkit")
-                continue
-
-            tool_func_obj = global_toolkit.tools[tool_name]
-            if tool_func_obj.group == "basic":
-                category_manager.add_internal_func_obj(
-                    func_obj=tool_func_obj,
-                )
-            else:
-                category_manager.add_internal_func_obj(
-                    func_obj=tool_func_obj,
-                    tool_group=global_toolkit.groups[tool_func_obj.group],
-                )
-
-        if not category_manager.internal_toolkit.tools:
-            print(f"Category {category_name} has no tools, skip it")
-            continue
-
-        meta_manager.add_category_manager(category_manager=category_manager)
-
-    return meta_manager
-
-
 async def main() -> None:
     """Main function to demonstrate Meta tools usage."""
     # Create global toolkit with your tools
@@ -138,11 +75,37 @@ async def main() -> None:
         await toolkit.register_mcp_client(train_client)
         print("12306 MCP client connected successfully")
 
-        # Initialize meta manager from configuration
-        meta_manager = init_meta_tool_from_intact_file(
-            model_config_name="qwen-max",
-            global_toolkit=toolkit,
+        # Meta tool initialization with Pydantic validation
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        meta_tool_config_path = os.path.join(current_dir, "Meta_tool_config.json")
+
+        model = DashScopeChatModel(
+            model_name="qwen-max",
+            api_key=dashscope_api_key,
+            stream=True,
         )
+
+        # Load and validate configuration
+        try:
+            from meta_config_models import MetaToolConfig
+            # Load and validate with Pydantic
+            validated_config = MetaToolConfig.from_json_file(meta_tool_config_path)
+            meta_manager = MetaManager(
+                model=model,
+                meta_tool_config=validated_config,
+                global_toolkit=toolkit,
+                formatter=DashScopeChatFormatter(),
+            )
+        except ImportError:
+            # Fallback: load as plain dict (will be validated by MetaManager if Pydantic available)
+            with open(meta_tool_config_path, "r", encoding="utf-8") as f:
+                meta_tool_config = json.load(f)
+            meta_manager = MetaManager(
+                model=model,
+                meta_tool_config=meta_tool_config,
+                global_toolkit=toolkit,
+                formatter=DashScopeChatFormatter(),
+            )
 
         # Use meta_manager directly as toolkit for ReActAgent
         agent = ReActAgent(

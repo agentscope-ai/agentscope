@@ -1,6 +1,6 @@
 {
   "Information Retrieval": {
-  "description": "The Information Retrieval category includes tools for retrieving web-based content or answering queries through external sources. These tools support tasks such as web search, open-domain fact lookup, and retrieval-augmented response generation. You can basically use this category to search and retrieve whatever you want to know.",
+  "description": "The Information Retrieval category includes tools for retrieving web-based content or answering queries through external sources. These tools support tasks such as web search, open-domain fact lookup, and retrieval-augmented response generation. Such tools can also help to check the high-speed rail information for travel. You can basically use this category to search and retrieve whatever you want to know.",
   "tool_usage_notes": "When using online search tools, the max_results parameter MUST BE AT MOST 6 per query. For queries related to China-specific topics, consider translating the query into **Chinese** to better match the search engine styles.",
   "tools": [
     "bing_search",
