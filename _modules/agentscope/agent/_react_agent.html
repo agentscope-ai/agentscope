@@ -501,7 +501,7 @@
                 <span class="n">long_term_memory</span><span class="o">.</span><span class="n">retrieve_from_memory</span><span class="p">,</span>
             <span class="p">)</span>
         <span class="c1"># Add a meta tool function to allow agent-controlled tool management</span>
-        <span class="k">if</span> <span class="n">enable_meta_tool</span> <span class="ow">or</span> <span class="n">plan_notebook</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">enable_meta_tool</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">reset_equipped_tools</span><span class="p">,</span>
             <span class="p">)</span>
