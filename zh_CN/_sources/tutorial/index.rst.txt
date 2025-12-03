@@ -18,7 +18,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_faq.py`
+  :doc:`/tutorial/faq`
 
 .. raw:: html
 
@@ -35,7 +35,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_tracing_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_tracing.py`
+  :doc:`/tutorial/task_tracing`
 
 .. raw:: html
 
@@ -52,7 +52,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_quickstart_key_concept_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_quickstart_key_concept.py`
+  :doc:`/tutorial/quickstart_key_concept`
 
 .. raw:: html
 
@@ -69,7 +69,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_memory.py`
+  :doc:`/tutorial/task_memory`
 
 .. raw:: html
 
@@ -86,7 +86,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_studio_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_studio.py`
+  :doc:`/tutorial/task_studio`
 
 .. raw:: html
 
@@ -103,7 +103,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_quickstart_installation_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_quickstart_installation.py`
+  :doc:`/tutorial/quickstart_installation`
 
 .. raw:: html
 
@@ -120,7 +120,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_token_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_token.py`
+  :doc:`/tutorial/task_token`
 
 .. raw:: html
 
@@ -137,7 +137,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_workflow_concurrent_agents_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_workflow_concurrent_agents.py`
+  :doc:`/tutorial/workflow_concurrent_agents`
 
 .. raw:: html
 
@@ -154,7 +154,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_agent_skill_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_agent_skill.py`
+  :doc:`/tutorial/task_agent_skill`
 
 .. raw:: html
 
@@ -171,7 +171,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_hook_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_hook.py`
+  :doc:`/tutorial/task_hook`
 
 .. raw:: html
 
@@ -188,7 +188,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_workflow_handoffs_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_workflow_handoffs.py`
+  :doc:`/tutorial/workflow_handoffs`
 
 .. raw:: html
 
@@ -205,7 +205,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_pipeline_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_pipeline.py`
+  :doc:`/tutorial/task_pipeline`
 
 .. raw:: html
 
@@ -222,7 +222,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_long_term_memory_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_long_term_memory.py`
+  :doc:`/tutorial/task_long_term_memory`
 
 .. raw:: html
 
@@ -239,7 +239,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_embedding_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_embedding.py`
+  :doc:`/tutorial/task_embedding`
 
 .. raw:: html
 
@@ -256,7 +256,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_mcp_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_mcp.py`
+  :doc:`/tutorial/task_mcp`
 
 .. raw:: html
 
@@ -273,7 +273,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_quickstart_message_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_quickstart_message.py`
+  :doc:`/tutorial/quickstart_message`
 
 .. raw:: html
 
@@ -290,7 +290,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_agent_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_agent.py`
+  :doc:`/tutorial/task_agent`
 
 .. raw:: html
 
@@ -307,7 +307,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_workflow_conversation_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_workflow_conversation.py`
+  :doc:`/tutorial/workflow_conversation`
 
 .. raw:: html
 
@@ -324,7 +324,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_workflow_multiagent_debate_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py`
+  :doc:`/tutorial/workflow_multiagent_debate`
 
 .. raw:: html
 
@@ -341,7 +341,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_model_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_model.py`
+  :doc:`/tutorial/task_model`
 
 .. raw:: html
 
@@ -358,7 +358,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_quickstart_agent_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_quickstart_agent.py`
+  :doc:`/tutorial/quickstart_agent`
 
 .. raw:: html
 
@@ -375,7 +375,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_plan_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_plan.py`
+  :doc:`/tutorial/task_plan`
 
 .. raw:: html
 
@@ -392,7 +392,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_state_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_state.py`
+  :doc:`/tutorial/task_state`
 
 .. raw:: html
 
@@ -409,7 +409,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_workflow_routing_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_workflow_routing.py`
+  :doc:`/tutorial/workflow_routing`
 
 .. raw:: html
 
@@ -426,7 +426,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_prompt_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_prompt.py`
+  :doc:`/tutorial/task_prompt`
 
 .. raw:: html
 
@@ -443,7 +443,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_eval_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_eval.py`
+  :doc:`/tutorial/task_eval`
 
 .. raw:: html
 
@@ -460,7 +460,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_rag_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_rag.py`
+  :doc:`/tutorial/task_rag`
 
 .. raw:: html
 
@@ -477,7 +477,7 @@
   .. image:: /tutorial/images/thumb/sphx_glr_task_tool_thumb.png
     :alt:
 
-  :ref:`sphx_glr_tutorial_task_tool.py`
+  :doc:`/tutorial/task_tool`
 
 .. raw:: html
 
