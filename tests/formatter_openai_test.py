@@ -433,6 +433,165 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         )
 
     @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_formatter_with_extract_image_blocks(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the OpenAI chat formatter with
+        promote_tool_result_images=True."""
+        mock_save_base64_data.return_value = self.mock_audio_path
+
+        formatter = OpenAIChatFormatter(promote_tool_result_images=True)
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+
+        # Expected result: image blocks should be extracted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "name": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You're a helpful assistant.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is the capital of France?",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;"
+                            "base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "name": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of France is Paris.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is the capital of Germany?",
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "ZmFrZSBhdWRpbyBjb250ZW50",
+                            "format": "wav",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "name": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of Germany is Berlin.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "What is the capital of Japan?",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "name": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": '{"country": "Japan"}',
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n"
+                "- The returned image can be found at: "
+                f"{self.image_path}\n"
+                "- The returned audio can be found at: "
+                f"{self.mock_audio_path}",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-info>The following are "
+                        "the image contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "type": "text",
+                        "text": f"\n- The image from '{self.image_path}': ",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;"
+                            "base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "name": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "The capital of Japan is Tokyo.",
+                    },
+                ],
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
     async def test_multiagent_formatter(
         self,
         mock_save_base64_data: MagicMock,
@@ -477,6 +636,139 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_multiagent_without_conversation[1:],
         )
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_multiagent_formatter_with_promote_tool_result_images(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the OpenAI multi-agent formatter with
+        promote_tool_result_images=True."""
+        mock_save_base64_data.return_value = self.mock_audio_path
+
+        formatter = OpenAIMultiAgentFormatter(
+            promote_tool_result_images=True,
+        )
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [
+                *self.msgs_system,
+                *self.msgs_conversation,
+                *self.msgs_tools,
+            ],
+        )
+
+        # Expected result: image blocks should be promoted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "You're a helpful assistant.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "# Conversation History\n"
+                        "The content between <history></history> tags contains"
+                        " your conversation history\n"
+                        "<history>\n"
+                        "user: What is the capital of France?\n"
+                        "assistant: The capital of France is Paris.\n"
+                        "user: What is the capital of Germany?\n"
+                        "assistant: The capital of Germany is Berlin.\n"
+                        "user: What is the capital of Japan?\n"
+                        "</history>",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,"
+                            "ZmFrZSBpbWFnZSBjb250ZW50",
+                        },
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": "ZmFrZSBhdWRpbyBjb250ZW50",
+                            "format": "wav",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "name": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": '{"country": "Japan"}',
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n"
+                "- The returned image can be found at: "
+                f"{self.image_path}\n"
+                "- The returned audio can be found at: "
+                f"{self.mock_audio_path}",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "name": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<system-info>The following are "
+                        "the image contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "type": "text",
+                        "text": f"\n- The image from '{self.image_path}': ",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;"
+                            "base64,ZmFrZSBpbWFnZSBjb250ZW50",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "<history>\n"
+                        "assistant: The capital of Japan is Tokyo.\n"
+                        "</history>",
+                    },
+                ],
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
 
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""

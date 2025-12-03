@@ -6,7 +6,13 @@ from typing import Callable, List
 import mcp.types
 
 from .._logging import logger
-from ..message import ImageBlock, Base64Source, AudioBlock, TextBlock
+from ..message import (
+    ImageBlock,
+    Base64Source,
+    AudioBlock,
+    TextBlock,
+    VideoBlock,
+)
 
 
 class MCPClientBase:
@@ -33,7 +39,7 @@ class MCPClientBase:
     @staticmethod
     def _convert_mcp_content_to_as_blocks(
         mcp_content_blocks: list,
-    ) -> List[TextBlock | ImageBlock | AudioBlock]:
+    ) -> List[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
         """Convert MCP content to AgentScope blocks."""
 
         as_content: list = []
@@ -67,6 +73,26 @@ class MCPClientBase:
                         ),
                     ),
                 )
+            elif isinstance(content, mcp.types.EmbeddedResource):
+                if isinstance(
+                    content.resource,
+                    mcp.types.TextResourceContents,
+                ):
+                    as_content.append(
+                        TextBlock(
+                            type="text",
+                            text=content.resource.model_dump_json(indent=2),
+                        ),
+                    )
+                else:
+                    # TODO: support the BlobResourceContents in the future,
+                    #  which is a base64-encoded string representing the
+                    #  binary data
+                    logger.error(
+                        "Unsupported EmbeddedResource content type: %s. "
+                        "Skipping this content.",
+                        type(content.resource),
+                    )
             else:
                 logger.warning(
                     "Unsupported content type: %s. Skipping this content.",

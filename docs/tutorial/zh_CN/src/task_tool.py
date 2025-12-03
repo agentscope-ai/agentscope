@@ -264,6 +264,7 @@ async def streaming_function() -> AsyncGenerator[ToolResponse, None]:
                 text="1234",
             ),
         ],
+        stream=True,
     )
 
     # 模拟中断

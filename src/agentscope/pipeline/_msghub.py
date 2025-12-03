@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """MsgHub is designed to share messages among a group of agents."""
+
+from collections.abc import Sequence
 from typing import Any
 
-from .._logging import logger
+import shortuuid
 
+from .._logging import logger
 from ..agent import AgentBase
 from ..message import Msg
 
@@ -13,7 +16,7 @@ class MsgHub:
 
     Example:
         In the following example, the reply message from `agent1`, `agent2`,
-        and `agent3` will be broadcasted to all the other agents in the MsgHub.
+        and `agent3` will be broadcast to all the other agents in the MsgHub.
 
         .. code-block:: python
 
@@ -38,20 +41,34 @@ class MsgHub:
 
     def __init__(
         self,
-        participants: list[AgentBase],
+        participants: Sequence[AgentBase],
         announcement: list[Msg] | Msg | None = None,
+        enable_auto_broadcast: bool = True,
+        name: str | None = None,
     ) -> None:
         """Initialize a MsgHub context manager.
 
         Args:
-            participants (`list[AgentBase]`):
-                A list of agents that participate in the MsgHub.
-            announcement （`list[Msg] | Msg | None`):
+            participants (`Sequence[AgentBase]`):
+                A sequence of agents that participate in the MsgHub.
+            announcement (`list[Msg] | Msg | None`):
                 The message that will be broadcast to all participants when
                 entering the MsgHub.
+            enable_auto_broadcast (`bool`, defaults to `True`):
+                Whether to enable automatic broadcasting of the replied
+                message from any participant to all other participants. If
+                disabled, the MsgHub will only serve as a manual message
+                broadcaster with the `announcement` argument and the
+                `broadcast()` method.
+            name (`str | None`):
+                The name of this MsgHub. If not provided, a random ID
+                will be generated.
         """
-        self.participants = participants
+
+        self.name = name or shortuuid.uuid()
+        self.participants = list(participants)
         self.announcement = announcement
+        self.enable_auto_broadcast = enable_auto_broadcast
 
     async def __aenter__(self) -> "MsgHub":
         """Will be called when entering the MsgHub."""
@@ -59,20 +76,21 @@ class MsgHub:
 
         # broadcast the input message to all participants
         if self.announcement is not None:
-            for agent in self.participants:
-                await agent.observe(self.announcement)
+            await self.broadcast(msg=self.announcement)
 
         return self
 
     async def __aexit__(self, *args: Any, **kwargs: Any) -> None:
         """Will be called when exiting the MsgHub."""
-        for agent in self.participants:
-            agent.reset_subscribers([])
+        if self.enable_auto_broadcast:
+            for agent in self.participants:
+                agent.remove_subscribers(self.name)
 
     def _reset_subscriber(self) -> None:
         """Reset the subscriber for agent in `self.participant`"""
-        for agent in self.participants:
-            agent.reset_subscribers(self.participants)
+        if self.enable_auto_broadcast:
+            for agent in self.participants:
+                agent.reset_subscribers(self.name, self.participants)
 
     def add(
         self,
@@ -98,9 +116,6 @@ class MsgHub:
 
         for agent in participant:
             if agent in self.participants:
-                # Clear the subscriber of the deleted agent firstly
-                agent.reset_subscribers([])
-
                 # remove agent from self.participant
                 self.participants.pop(self.participants.index(agent))
             else:
@@ -121,3 +136,21 @@ class MsgHub:
         """
         for agent in self.participants:
             await agent.observe(msg)
+
+    def set_auto_broadcast(self, enable: bool) -> None:
+        """Enable automatic broadcasting of the replied message from any
+        participant to all other participants.
+
+        Args:
+            enable (`bool`):
+                Whether to enable automatic broadcasting. If disabled, the
+                MsgHub will only serve as a manual message broadcaster with
+                the `announcement` argument and the `broadcast()` method.
+        """
+        if enable:
+            self.enable_auto_broadcast = True
+            self._reset_subscriber()
+        else:
+            self.enable_auto_broadcast = False
+            for agent in self.participants:
+                agent.remove_subscribers(self.name)

@@ -35,7 +35,7 @@ class Task:
     )
     """Additional metadata for the task."""
 
-    def evaluate(self, solution: SolutionOutput) -> list[MetricResult]:
+    async def evaluate(self, solution: SolutionOutput) -> list[MetricResult]:
         """Evaluate the task with the given solution.
 
         Args:
@@ -48,6 +48,6 @@ class Task:
         """
         evaluations = []
         for metric in self.metrics:
-            result = metric(solution)
+            result = await metric(solution)
             evaluations.append(result)
         return evaluations

@@ -88,6 +88,12 @@ from agentscope.tool import Toolkit, execute_python_code
 #   * - ``max_iters``
 #     -
 #     - 智能体生成响应的最大迭代次数
+#   * - ``plan_notebook``
+#     - :ref:`plan`
+#     - 计划模块，允许智能体制定和管理计划与子任务
+#   * - ``print_hint_msg``
+#     -
+#     - 是否在终端打印 ``plan_notebook`` 生成的提示消息
 #
 # 以 DashScope API 为例，我们创建一个智能体对象如下：
 

@@ -42,8 +42,6 @@ async def insert_text_file(
         )
 
     if not os.path.exists(file_path):
-        with open(file_path, "w", encoding="utf-8") as file:
-            file.write(content + "\n")
         return ToolResponse(
             content=[
                 TextBlock(

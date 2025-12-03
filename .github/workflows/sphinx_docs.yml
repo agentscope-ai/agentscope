@@ -44,6 +44,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: docs/tutorial/en/build/html
           cname: doc.agentscope.io
+          keep_files: true
 
   build_zh:
     needs: build_en
@@ -91,3 +92,4 @@ jobs:
           publish_dir: docs/tutorial/zh_CN/build/html
           destination_dir: zh_CN
           cname: doc.agentscope.io
+          keep_files: true

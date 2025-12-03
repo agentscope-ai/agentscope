@@ -121,15 +121,18 @@ from agentscope.tool import Toolkit, ToolResponse
 # When multiple tool calls are generated, and ``parallel_tool_calls`` is set to ``True``,
 # they will be executed in parallel by the ``asyncio.gather`` function.
 #
+# .. note:: The parallel tool execution in ``ReActAgent`` is implemented based on ``asyncio.gather``. Therefore, to maximize the effect of parallel tool execution, both the tool function itself and the logic within it must be asynchronous.
+#
+# .. note:: When running, please ensure that parallel tool calling is supported at the model level and the corresponding parameters are set correctly (can be passed through ``generate_kwargs``). For example, for the DashScope API, you need to set ``parallel_tool_calls`` to ``True``, otherwise parallel tool calling will not be possible.
 
 
 # prepare a tool function
-def example_tool_function(tag: str) -> ToolResponse:
+async def example_tool_function(tag: str) -> ToolResponse:
     """A sample example tool function"""
     start_time = datetime.now().strftime("%H:%M:%S.%f")
 
     # Sleep for 3 seconds to simulate a long-running task
-    time.sleep(3)
+    await asyncio.sleep(3)
 
     end_time = datetime.now().strftime("%H:%M:%S.%f")
     return ToolResponse(
@@ -152,6 +155,10 @@ agent = ReActAgent(
     model=DashScopeChatModel(
         model_name="qwen-max",
         api_key=os.environ["DASHSCOPE_API_KEY"],
+        # Preset the generation kwargs to enable parallel tool calls
+        generate_kwargs={
+            "parallel_tool_calls": True,
+        },
     ),
     memory=InMemoryMemory(),
     formatter=DashScopeChatFormatter(),

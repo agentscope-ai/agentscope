@@ -79,7 +79,7 @@ class MetricBase(ABC):
         self.categories = categories
 
     @abstractmethod
-    def __call__(
+    async def __call__(
         self,
         *args: Any,
         **kwargs: Any,

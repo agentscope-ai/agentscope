@@ -14,10 +14,54 @@ from ..message import (
     TextBlock,
     ImageBlock,
     AudioBlock,
+    VideoBlock,
     ToolUseBlock,
     ToolResultBlock,
+    URLSource,
 )
 from ..token import TokenCounterBase
+
+
+def _format_dashscope_media_block(
+    block: ImageBlock | AudioBlock,
+) -> dict[str, str]:
+    """Format an image or audio block for DashScope API.
+
+    Args:
+        block (`ImageBlock` | `AudioBlock`):
+            The image or audio block to format.
+
+    Returns:
+        `dict[str, str]`:
+            A dictionary with "image" or "audio" key and the formatted URL or
+            data URI as value.
+
+    Raises:
+        `NotImplementedError`:
+            If the source type is not supported.
+    """
+    typ = block["type"]
+    source = block["source"]
+    if source["type"] == "url":
+        url = source["url"]
+        if _is_accessible_local_file(url):
+            return {typ: "file://" + os.path.abspath(url)}
+        else:
+            # treat as web url
+            return {typ: url}
+
+    elif source["type"] == "base64":
+        media_type = source["media_type"]
+        base64_data = source["data"]
+        return {
+            typ: f"data:{media_type};base64,{base64_data}",
+        }
+
+    else:
+        raise NotImplementedError(
+            f"Unsupported source type '{source.get('type')}' "
+            f"for {typ} block.",
+        )
 
 
 def _reformat_messages(
@@ -101,7 +145,10 @@ def _reformat_messages(
 
 
 class DashScopeChatFormatter(TruncatedFormatterBase):
-    """Formatter for DashScope messages."""
+    """The DashScope formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `role` field to identify different
+    entities in the conversation.
+    """
 
     support_tools_api: bool = True
     """Whether support tools API"""
@@ -116,9 +163,53 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
         TextBlock,
         ImageBlock,
         AudioBlock,
+        VideoBlock,
         ToolUseBlock,
         ToolResultBlock,
     ]
+
+    def __init__(
+        self,
+        promote_tool_result_images: bool = False,
+        promote_tool_result_audios: bool = False,
+        promote_tool_result_videos: bool = False,
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize the DashScope chat formatter.
+
+        Args:
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            promote_tool_result_audios (`bool`, defaults to `False`):
+                Whether to promote audios from tool results to user messages.
+                Most LLM APIs don't support audios in tool result blocks, but
+                do support them in user message blocks. When `True`, audios are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            promote_tool_result_videos (`bool`, defaults to `False`):
+                Whether to promote videos from tool results to user messages.
+                Most LLM APIs don't support videos in tool result blocks, but
+                do support them in user message blocks. When `True`, videos are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
+        """
+        super().__init__(token_counter, max_tokens)
+        self.promote_tool_result_images = promote_tool_result_images
+        self.promote_tool_result_audios = promote_tool_result_audios
+        self.promote_tool_result_videos = promote_tool_result_videos
 
     async def _format(
         self,
@@ -137,9 +228,13 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
         self.assert_list_of_msgs(msgs)
 
         formatted_msgs: list[dict] = []
-        for msg in msgs:
-            content_blocks = []
+
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
+            content_blocks: list[dict[str, Any]] = []
             tool_calls = []
+
             for block in msg.get_content_blocks():
                 typ = block.get("type")
 
@@ -150,30 +245,12 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                         },
                     )
 
-                elif typ in ["image", "audio"]:
-                    source = block["source"]
-                    if source["type"] == "url":
-                        url = source["url"]
-                        if _is_accessible_local_file(url):
-                            content_blocks.append(
-                                {typ: "file://" + os.path.abspath(url)},
-                            )
-                        else:
-                            # treat as web url
-                            content_blocks.append({typ: url})
-
-                    elif source["type"] == "base64":
-                        media_type = source["media_type"]
-                        base64_data = source["data"]
-                        content_blocks.append(
-                            {typ: f"data:{media_type};base64,{base64_data}"},
-                        )
-
-                    else:
-                        raise NotImplementedError(
-                            f"Unsupported source type '{source.get('type')}' "
-                            f"for {typ} block.",
-                        )
+                elif typ in ["image", "audio", "video"]:
+                    content_blocks.append(
+                        _format_dashscope_media_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
 
                 elif typ == "tool_use":
                     tool_calls.append(
@@ -191,16 +268,106 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block["output"])
+
+                    # First add the tool result message in DashScope API format
                     formatted_msgs.append(
                         {
                             "role": "tool",
                             "tool_call_id": block.get("id"),
-                            "content": self.convert_tool_result_to_string(
-                                block.get("output"),  # type: ignore[arg-type]
-                            ),
+                            "content": textual_output,
                             "name": block.get("name"),
                         },
                     )
+
+                    # Then, handle the multimodal data if any
+                    promoted_blocks: list = []
+                    for url, multimodal_block in multimodal_data:
+                        if (
+                            multimodal_block["type"] == "image"
+                            and self.promote_tool_result_images
+                        ):
+                            promoted_blocks.extend(
+                                [
+                                    TextBlock(
+                                        type="text",
+                                        text=f"\n- The image from '{url}': ",
+                                    ),
+                                    ImageBlock(
+                                        type="image",
+                                        source=URLSource(
+                                            type="url",
+                                            url=url,
+                                        ),
+                                    ),
+                                ],
+                            )
+                        elif (
+                            multimodal_block["type"] == "audio"
+                            and self.promote_tool_result_audios
+                        ):
+                            promoted_blocks.extend(
+                                [
+                                    TextBlock(
+                                        type="text",
+                                        text=f"\n- The audio from '{url}': ",
+                                    ),
+                                    AudioBlock(
+                                        type="audio",
+                                        source=URLSource(
+                                            type="url",
+                                            url=url,
+                                        ),
+                                    ),
+                                ],
+                            )
+                        elif (
+                            multimodal_block["type"] == "video"
+                            and self.promote_tool_result_videos
+                        ):
+                            promoted_blocks.extend(
+                                [
+                                    TextBlock(
+                                        type="text",
+                                        text=f"\n- The video from '{url}': ",
+                                    ),
+                                    VideoBlock(
+                                        type="video",
+                                        source=URLSource(
+                                            type="url",
+                                            url=url,
+                                        ),
+                                    ),
+                                ],
+                            )
+
+                    if promoted_blocks:
+                        # Insert promoted blocks as new user message(s)
+                        promoted_blocks = [
+                            TextBlock(
+                                type="text",
+                                text="<system-info>The following are "
+                                f"the media contents from the tool "
+                                f"result of '{block['name']}':",
+                            ),
+                            *promoted_blocks,
+                            TextBlock(
+                                type="text",
+                                text="</system-info>",
+                            ),
+                        ]
+
+                        msgs.insert(
+                            i + 1,
+                            Msg(
+                                name="user",
+                                content=promoted_blocks,
+                                role="user",
+                            ),
+                        )
 
                 else:
                     logger.warning(
@@ -222,6 +389,9 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                 "tool_calls",
             ):
                 formatted_msgs.append(msg_dashscope)
+
+            # Move to next message
+            i += 1
 
         return _reformat_messages(formatted_msgs)
 
@@ -259,6 +429,7 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         # Multimodal
         ImageBlock,
         AudioBlock,
+        VideoBlock,
         # Tool use
         ToolUseBlock,
         ToolResultBlock,
@@ -272,6 +443,9 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
+        promote_tool_result_images: bool = False,
+        promote_tool_result_audios: bool = False,
+        promote_tool_result_videos: bool = False,
         token_counter: TokenCounterBase | None = None,
         max_tokens: int | None = None,
     ) -> None:
@@ -280,6 +454,24 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         Args:
             conversation_history_prompt (`str`):
                 The prompt to use for the conversation history section.
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            promote_tool_result_audios (`bool`, defaults to `False`):
+                Whether to promote audios from tool results to user messages.
+                Most LLM APIs don't support audios in tool result blocks, but
+                do support them in user message blocks. When `True`, audios are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            promote_tool_result_videos (`bool`, defaults to `False`):
+                Whether to promote videos from tool results to user messages.
+                Most LLM APIs don't support videos in tool result blocks, but
+                do support them in user message blocks. When `True`, videos are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
             token_counter (`TokenCounterBase | None`, optional):
                 The token counter used for truncation.
             max_tokens (`int | None`, optional):
@@ -288,6 +480,9 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
         """
         super().__init__(token_counter=token_counter, max_tokens=max_tokens)
         self.conversation_history_prompt = conversation_history_prompt
+        self.promote_tool_result_images = promote_tool_result_images
+        self.promote_tool_result_audios = promote_tool_result_audios
+        self.promote_tool_result_videos = promote_tool_result_videos
 
     async def _format_tool_sequence(
         self,
@@ -304,7 +499,11 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
             `list[dict[str, Any]]`:
                 A list of dictionaries formatted for the DashScope API.
         """
-        return await DashScopeChatFormatter().format(msgs)
+        return await DashScopeChatFormatter(
+            promote_tool_result_images=self.promote_tool_result_images,
+            promote_tool_result_audios=self.promote_tool_result_audios,
+            promote_tool_result_videos=self.promote_tool_result_videos,
+        ).format(msgs)
 
     async def _format_agent_message(
         self,
@@ -343,7 +542,7 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
                 if block["type"] == "text":
                     accumulated_text.append(f"{msg.name}: {block['text']}")
 
-                elif block["type"] in ["image", "audio"]:
+                elif block["type"] in ["image", "audio", "video"]:
                     # Handle the accumulated text as a single block
                     if accumulated_text:
                         conversation_blocks.append(

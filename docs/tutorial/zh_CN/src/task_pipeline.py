@@ -9,7 +9,9 @@
 作为将智能体链接在一起的语法糖，具体包括
 
 - **MsgHub**: 用于多个智能体之间消息的广播
-- **sequential_pipeline** 和 **SequentialPipeline**: 以顺序方式执行多个智能体
+- **sequential_pipeline** 和 **SequentialPipeline**: 以顺序方式执行多个智能体的函数式和类式实现
+- **fanout_pipeline** 和 **FanoutPipeline**: 将相同输入分发给多个智能体的函数式和类式实现
+- **stream_printing_messages**: 将智能体在回复过程中，调用 ``self.print`` 打印的消息转换为一个异步生成器
 
 """
 
@@ -19,7 +21,8 @@ from agentscope.formatter import DashScopeMultiAgentFormatter
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
 from agentscope.agent import ReActAgent
-from agentscope.pipeline import MsgHub
+from agentscope.pipeline import MsgHub, stream_printing_messages
+
 
 # %%
 # 使用 MsgHub 进行广播
@@ -97,6 +100,8 @@ async def check_broadcast_message():
     await david(user_msg)
 
 
+asyncio.run(check_broadcast_message())
+
 # %%
 # 现在我们观察到 Bob 和 Charlie 知道 Alice 和她的职业，而 David 对
 # Alice 一无所知，因为他没有包含在 ``MsgHub`` 上下文中。
@@ -131,7 +136,16 @@ async def check_broadcast_message():
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # 管道是 AgentScope 中多智能体编排的一种语法糖。
 #
-# 目前，AgentScope 提供了一个顺序管道实现，它按预定义的顺序逐个执行智能体。
+# 目前，AgentScope 提供三种管道，用于减轻开发者的负担：
+#
+# 1. **顺序管道 (Sequential Pipeline)**: 按预定义顺序逐个执行智能体
+# 2. **扇出管道 (Fanout Pipeline)**: 将相同输入分发给多个智能体并收集它们的响应
+# 3. **流式获取打印消息 (stream printing messages)**: 将智能体在回复过程中，调用 ``self.print`` 打印的消息转换为一个异步生成器
+#
+# 顺序管道
+# ------------------------
+# 顺序管道逐个执行智能体，前一个智能体的输出成为下一个智能体的输入。
+#
 # 例如，以下两个代码片段是等价的：
 #
 # .. code-block:: python
@@ -156,8 +170,85 @@ async def check_broadcast_message():
 #         msg=None
 #     )
 #
-# .. tip:: 通过结合 `MsgHub` 和 `sequential_pipeline`，你可以非常容易地创建更复杂的工作流。
+
+# %%
+# 扇出管道
+# ------------------------
+# 扇出管道将相同的输入消息同时分发给多个智能体并收集所有响应。当你想要收集对同一话题的不同观点或专业意见时，这非常有用。
 #
+# 例如，以下两个代码片段是等价的：
+#
+# .. code-block:: python
+#     :caption: 代码片段 3: 手动逐个调用智能体
+#
+#     from copy import deepcopy
+#
+#     msgs = []
+#     msg = None
+#     for agent in [alice, bob, charlie, david]:
+#         msgs.append(await agent(deepcopy(msg)))
+#
+#
+# .. code-block:: python
+#     :caption: 代码片段 4: 使用扇出管道
+#
+#     from agentscope.pipeline import fanout_pipeline
+#
+#     msgs = await fanout_pipeline(
+#         # 要执行的智能体列表
+#         agents=[alice, bob, charlie, david],
+#         # 输入消息，可以是 None
+#         msg=None,
+#         enable_gather=False,
+#     )
+#
+# .. note::
+#     ``enable_gather`` 参数控制扇出管道的执行模式：
+#
+#     - ``enable_gather=True`` (默认): 使用 ``asyncio.gather()`` **并发** 执行所有智能体。这为 I/O 密集型操作（如 API 调用）提供更好的性能，因为智能体并行运行。
+#     - ``enable_gather=False``: 逐个 **顺序** 执行智能体。当你需要确定性的执行顺序或想要避免并发请求压垮外部服务时，这很有用。
+#
+#     选择并发执行以获得更好的性能，或选择顺序执行以获得可预测的顺序和资源控制。
+#
+# .. tip::
+#     通过结合 ``MsgHub`` 和 ``sequential_pipeline`` 或 ``fanout_pipeline``，你可以非常容易地创建更复杂的工作流。
+
+# %%
+# 流式获取打印消息
+# ------------------------
+# ``stream_printing_messages`` 函数将智能体在回复过程中调用 ``self.print`` 打印的消息转换为一个异步生成器。
+# 可以帮助开发者快速以流式方式获取智能体的中间消息。
+#
+# 该函数接受一个或多个智能体和一个协程任务作为输入，并返回一个异步生成器。
+# 该异步生成器返回一个二元组，包含执行协程任务过程中通过 ``await self.print(...)`` 打印的消息，以及一个布尔值，表示该消息是否为一组流式消息中的最后一个。
+#
+# 需要注意的是，生成器返回的元组中，布尔值表示该消息是否为一组流式消息中的最后一个，而非此次智能体调用的最后一条消息。
+
+
+async def run_example_pipeline() -> None:
+    """运行流式打印消息的示例。"""
+    agent = create_agent("Alice", 20, "student")
+
+    # 我们关闭agent的终端打印以避免输出混乱
+    agent.set_console_output_enabled(False)
+
+    async for msg, last in stream_printing_messages(
+        agents=[agent],
+        coroutine_task=agent(
+            Msg("user", "你好，你是谁？", "user"),
+        ),
+    ):
+        print(msg, last)
+        if last:
+            print()
+
+
+asyncio.run(run_example_pipeline())
+
+
+# %%
+# 高级管道特性
+# ~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 # 此外，为了可重用性，我们还提供了基于类的实现：
 #
@@ -175,4 +266,18 @@ async def check_broadcast_message():
 #     # 使用不同输入复用管道
 #     msg = await pipeline(msg=Msg("user", "你好！", "user"))
 #
+#
+# .. code-block:: python
+#     :caption: 使用 FanoutPipeline 类
+#
+#     from agentscope.pipeline import FanoutPipeline
+#
+#     # 创建管道对象
+#     pipeline = FanoutPipeline(agents=[alice, bob, charlie, david])
+#
+#     # 调用管道
+#     msgs = await pipeline(msg=None)
+#
+#     # 使用不同输入复用管道
+#     msgs = await pipeline(msg=Msg("user", "你好！", "user"))
 #

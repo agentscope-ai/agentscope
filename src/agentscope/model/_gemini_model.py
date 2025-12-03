@@ -2,8 +2,20 @@
 # mypy: disable-error-code="dict-item"
 """The Google Gemini model in agentscope."""
 from datetime import datetime
-from typing import AsyncGenerator, Any, TYPE_CHECKING, AsyncIterator, Literal
+from typing import (
+    AsyncGenerator,
+    Any,
+    TYPE_CHECKING,
+    AsyncIterator,
+    Literal,
+    Type,
+    List,
+)
 
+from pydantic import BaseModel
+
+from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..message import ToolUseBlock, TextBlock, ThinkingBlock
 from ._model_usage import ChatUsage
 from ._model_base import ChatModelBase
@@ -26,8 +38,9 @@ class GeminiChatModel(ChatModelBase):
         api_key: str,
         stream: bool = True,
         thinking_config: dict | None = None,
-        client_args: dict = None,
+        client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -51,13 +64,40 @@ class GeminiChatModel(ChatModelBase):
                         "thinking_budget": 1024   # Max tokens for reasoning
                     }
 
-            client_args (`dict`, default `None`):
-                The extra keyword arguments to initialize the OpenAI client.
+            client_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
+                The extra keyword arguments to initialize the Gemini client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                The extra keyword arguments used in Gemini API generation,
                e.g. `temperature`, `seed`.
+            **kwargs (`Any`):
+                Additional keyword arguments.
         """
+
+        # Handle deprecated client_args parameter from kwargs
+        client_args = kwargs.pop("client_args", None)
+        if client_args is not None and client_kwargs is not None:
+            raise ValueError(
+                "Cannot specify both 'client_args' and 'client_kwargs'. "
+                "Please use only 'client_kwargs' (client_args is deprecated).",
+            )
+
+        if client_args is not None:
+            logger.warning(
+                "The parameter 'client_args' is deprecated and will be "
+                "removed in a future version. Please use 'client_kwargs' "
+                "instead. Automatically converting 'client_args' to "
+                "'client_kwargs'.",
+            )
+            client_kwargs = client_args
+
+        if kwargs:
+            logger.warning(
+                "Unknown keyword arguments: %s. These will be ignored.",
+                list(kwargs.keys()),
+            )
+
         try:
             from google import genai
         except ImportError as e:
@@ -70,7 +110,7 @@ class GeminiChatModel(ChatModelBase):
 
         self.client = genai.Client(
             api_key=api_key,
-            **(client_args or {}),
+            **(client_kwargs or {}),
         )
         self.thinking_config = thinking_config
         self.generate_kwargs = generate_kwargs or {}
@@ -83,6 +123,7 @@ class GeminiChatModel(ChatModelBase):
         tool_choice: Literal["auto", "none", "any", "required"]
         | str
         | None = None,
+        structured_model: Type[BaseModel] | None = None,
         **config_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
@@ -99,6 +140,18 @@ class GeminiChatModel(ChatModelBase):
                  Can be "auto", "none", "any", "required", or specific tool
                  name. For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+                .. note:: When `structured_model` is specified,
+                    both `tools` and `tool_choice` parameters are ignored,
+                    and the model will only perform structured output
+                    generation without calling any other tools.
+
+                For more details, please refer to
+                    https://ai.google.dev/gemini-api/docs/structured-output
+
             **config_kwargs (`Any`):
                 The keyword arguments for Gemini chat completions API.
         """
@@ -111,9 +164,23 @@ class GeminiChatModel(ChatModelBase):
 
         if tools:
             config["tools"] = self._format_tools_json_schemas(tools)
+
         if tool_choice:
             self._validate_tool_choice(tool_choice, tools)
             config["tool_config"] = self._format_tool_choice(tool_choice)
+
+        if structured_model:
+            if tools or tool_choice:
+                logger.warning(
+                    "structured_model is provided. Both 'tools' and "
+                    "'tool_choice' parameters will be overridden and "
+                    "ignored. The model will only perform structured output "
+                    "generation without calling any other tools.",
+                )
+            config.pop("tools", None)
+            config.pop("tool_config", None)
+            config["response_mime_type"] = "application/json"
+            config["response_schema"] = structured_model
 
         # Prepare the arguments for the Gemini API call
         kwargs: dict[str, JSONSerializableObject] = {
@@ -131,6 +198,7 @@ class GeminiChatModel(ChatModelBase):
             return self._parse_gemini_stream_generation_response(
                 start_datetime,
                 response,
+                structured_model,
             )
 
         # non-streaming
@@ -139,8 +207,9 @@ class GeminiChatModel(ChatModelBase):
         )
 
         parsed_response = self._parse_gemini_generation_response(
-            used_time=(datetime.now() - start_datetime).total_seconds(),
-            response=response,
+            start_datetime,
+            response,
+            structured_model,
         )
 
         return parsed_response
@@ -149,12 +218,34 @@ class GeminiChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncIterator[GenerateContentResponse],
+        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
-        """Parse the Gemini streaming generation response into ChatResponse"""
+        """Given a Gemini streaming generation response, extract the
+        content blocks and usages from it and yield ChatResponse objects.
 
-        parsed_chunk = None
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`AsyncIterator[GenerateContentResponse]`):
+                Gemini GenerateContentResponse async iterator to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+        Returns:
+            `AsyncGenerator[ChatResponse, None]`:
+                An async generator that yields ChatResponse objects containing
+                the content blocks and usage information for each chunk in the
+                streaming response.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
+        """
+
         text = ""
         thinking = ""
+        metadata: dict | None = None
         async for chunk in response:
             content_block: list = []
 
@@ -171,6 +262,8 @@ class GeminiChatModel(ChatModelBase):
             # Text parts
             if chunk.text:
                 text += chunk.text
+                if structured_model:
+                    metadata = _json_loads_with_repair(text)
 
             # Function calls
             tool_calls = []
@@ -219,16 +312,38 @@ class GeminiChatModel(ChatModelBase):
             parsed_chunk = ChatResponse(
                 content=content_block,
                 usage=usage,
+                metadata=metadata,
             )
             yield parsed_chunk
 
     def _parse_gemini_generation_response(
         self,
-        used_time: float,
+        start_datetime: datetime,
         response: GenerateContentResponse,
+        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
-        """Parse the Gemini generation response into ChatResponse"""
-        content: list = []
+        """Given a Gemini chat completion response object, extract the content
+           blocks and usages from it.
+
+        Args:
+            start_datetime (`datetime`):
+                The start datetime of the response generation.
+            response (`ChatCompletion`):
+                The OpenAI chat completion response object to parse.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+
+        Returns:
+            ChatResponse (`ChatResponse`):
+                A ChatResponse object containing the content blocks and usage.
+
+        .. note::
+            If `structured_model` is not `None`, the expected structured output
+            will be stored in the metadata of the `ChatResponse`.
+        """
+        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        metadata: dict | None = None
 
         if (
             response.candidates
@@ -237,7 +352,7 @@ class GeminiChatModel(ChatModelBase):
         ):
             for part in response.candidates[0].content.parts:
                 if part.thought and part.text:
-                    content.append(
+                    content_blocks.append(
                         ThinkingBlock(
                             type="thinking",
                             thinking=part.text,
@@ -245,16 +360,18 @@ class GeminiChatModel(ChatModelBase):
                     )
 
         if response.text:
-            content.append(
+            content_blocks.append(
                 TextBlock(
                     type="text",
                     text=response.text,
                 ),
             )
+            if structured_model:
+                metadata = _json_loads_with_repair(response.text)
 
         if response.function_calls:
             for tool_call in response.function_calls:
-                content.append(
+                content_blocks.append(
                     ToolUseBlock(
                         type="tool_use",
                         id=tool_call.id,
@@ -268,15 +385,16 @@ class GeminiChatModel(ChatModelBase):
                 input_tokens=response.usage_metadata.prompt_token_count,
                 output_tokens=response.usage_metadata.total_token_count
                 - response.usage_metadata.prompt_token_count,
-                time=used_time,
+                time=(datetime.now() - start_datetime).total_seconds(),
             )
 
         else:
             usage = None
 
         return ChatResponse(
-            content=content,
+            content=content_blocks,
             usage=usage,
+            metadata=metadata,
         )
 
     def _format_tools_json_schemas(

@@ -28,7 +28,7 @@ AgentScope Studio is installed via ``npm``:
 
 .. code-block:: bash
 
-    npm install -g agentscope-studio
+    npm install -g @agentscope/studio
 
 
 Start the Studio with the following command:
@@ -43,7 +43,7 @@ To connect your application to the Studio, use the ``agentscope.init`` function 
 
     import agentscope
 
-    agentscope.init(studio_url="http://localhost:8000")
+    agentscope.init(studio_url="http://localhost:3000")
 
     # your application code
     ...

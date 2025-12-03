@@ -50,6 +50,12 @@ class Msg:
         """
 
         self.name = name
+
+        assert isinstance(
+            content,
+            (list, str),
+        ), "The content must be a string or a list of content blocks."
+
         self.content = content
 
         assert role in ["user", "assistant", "system"]
@@ -146,7 +152,7 @@ class Msg:
     def get_content_blocks(
         self,
         block_type: Literal["tool_result"],
-    ) -> List[ToolUseBlock]:
+    ) -> List[ToolResultBlock]:
         ...
 
     @overload
@@ -218,7 +224,7 @@ class Msg:
                 TextBlock(type="text", text=self.content),
             )
         else:
-            blocks = self.content
+            blocks = self.content or []
 
         if block_type is not None:
             blocks = [_ for _ in blocks if _["type"] == block_type]
