@@ -334,6 +334,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">Task</span><span class="p">,</span> <span class="n">Queue</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">OrderedDict</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">copy</span><span class="w"> </span><span class="kn">import</span> <span class="n">deepcopy</span>
@@ -503,7 +504,13 @@
 
         <span class="c1"># We add this variable in case developers want to disable the console</span>
         <span class="c1"># output of the agent, e.g., in a production environment.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_disable_console_output</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_disable_console_output</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span>
+                <span class="s2">&quot;AGENTSCOPE_DISABLE_CONSOLE_OUTPUT&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;false&quot;</span><span class="p">,</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="o">==</span> <span class="s2">&quot;true&quot;</span>
+        <span class="p">)</span>
 
         <span class="c1"># The streaming message queue used to export the messages as a</span>
         <span class="c1"># generator</span>
