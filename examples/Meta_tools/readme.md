@@ -74,32 +74,32 @@ For example, you can try a prompt like:
 
 ```mermaid
 flowchart TD
-    A[User request<br>objective + exact_input] --> B[Initial tool selection<br>LLM chooses suitable tools]
+    A[User request<br>objective + exact input] --> B[Initial tool selection<br>LLM chooses suitable tools]
     B --> C{Does the LLM generate tool calls?}
     
-    C -->|Tool calls generated<br>Normal flow| D[Execute tool set<br>Log execution results]
-    C -->|No tool calls<br>Insufficient input| E[Insufficient input case<br>Explain missing elements]
-    C -->|No tool calls<br>No suitable tools| F[No suitable tool case<br>Explain capability limits]
+    C -->|Tool calls generated<br>Normal flow| D[Execute tool set<br>Record results]
+    C -->|No tool calls<br>Insufficient input| E[Insufficient input<br>Explain missing elements]
+    C -->|No tool calls<br>No suitable tools| F[No suitable tool<br>Explain limitations]
     
-    E --> G[Return<br>no_tool_calls_generated: true<br>reasoning: Missing info analysis<br>next_steps: Add required inputs]
-    F --> H[Return<br>no_tool_calls_generated: true<br>reasoning: Tool limits<br>next_steps: Alternative suggestions]
+    E --> G[Return<br>no tool calls: true<br>reasoning: Missing info analysis<br>next steps: Add required input]
+    F --> H[Return<br>no tool calls: true<br>reasoning: Tool limitations<br>next steps: Provide alternatives]
     
     D --> I[Result evaluation<br>LLM checks objective satisfaction]
     I --> J{Evaluation decision}
     
     J -->|No new tool calls<br>Task complete| K[Generate final summary<br>Return SUCCESS]
-    J -->|New tool calls required<br>Continue| L[Execute new tools<br>Prepare for next round]
+    J -->|New tool calls needed<br>Continue| L[Execute new tools<br>Next round]
     
     L --> M{Check iteration count}
-    M -->|Less than max_iterations (5)| N[Increase iteration counter<br>Store to memory]
-    M -->|Reached max_iterations (5)| O[Max iterations reached<br>Summarize all results]
+    M -->|Less than max iters (5)| N[Increase counter<br>Store to memory]
+    M -->|Reached max iters (5)| O[Max iterations reached<br>Summarize all results]
     
     N --> D
     
-    K --> P[Final result<br>task_completed: true<br>summary<br>all_execution_results]
-    O --> Q[Final result<br>task_completed: false<br>max_iterations_reached: true<br>summary]
+    K --> P[Final result<br>task completed: true<br>summary<br>all results]
+    O --> Q[Final result<br>task completed: false<br>max iters reached: true<br>summary]
     
-    R[TemporaryMemory<br>Record execution history] -.-> I
+    R[Temporary memory<br>Record execution history] -.-> I
     D -.-> R
     
     style A fill:#e1f5fe
