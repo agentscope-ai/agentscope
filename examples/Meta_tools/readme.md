@@ -71,35 +71,35 @@ For example, you can try a prompt like:
 
 ## Key Features
 
-
+Here is the execution flowchart inside the category of the Meta tool that received the instruction(Objective and Exact input):
 ```mermaid
-flowchart TD
-    A[User request<br>objective + exact input] --> B[Initial tool selection<br>LLM chooses suitable tools]
-    B --> C{Does the LLM generate tool calls?}
+graph TD
+    A["User request<br>objective + exact input"] --> B["Initial tool selection<br>LLM chooses tools"]
+    B --> C{"Tool calls?"}
     
-    C -->|Tool calls generated<br>Normal flow| D[Execute tool set<br>Record results]
-    C -->|No tool calls<br>Insufficient input| E[Insufficient input<br>Explain missing elements]
-    C -->|No tool calls<br>No suitable tools| F[No suitable tool<br>Explain limitations]
+    C --> D["Execute tool set<br>record results"]
+    C --> E["Insufficient input<br>explain missing parts"]
+    C --> F["No suitable tool<br>explain limitations"]
     
-    E --> G[Return<br>no tool calls: true<br>reasoning: Missing info analysis<br>next steps: Add required input]
-    F --> H[Return<br>no tool calls: true<br>reasoning: Tool limitations<br>next steps: Provide alternatives]
+    E --> G["Return to user<br>ask for more input"]
+    F --> H["Return to user<br>suggest alternatives"]
     
-    D --> I[Result evaluation<br>LLM checks objective satisfaction]
-    I --> J{Evaluation decision}
+    D --> I["Result evaluation<br>check if goal is met"]
+    I --> J{"Goal satisfied?"}
     
-    J -->|No new tool calls<br>Task complete| K[Generate final summary<br>Return SUCCESS]
-    J -->|New tool calls needed<br>Continue| L[Execute new tools<br>Next round]
+    J --> K["Final summary<br>return SUCCESS"]
+    J --> L["New tool calls<br>start next round"]
     
-    L --> M{Check iteration count}
-    M -->|Less than max iters (5)| N[Increase counter<br>Store to memory]
-    M -->|Reached max iters (5)| O[Max iterations reached<br>Summarize all results]
+    L --> M{"Check iterations"}
+    M --> N["Below max limit<br>continue next iteration"]
+    M --> O["Reached max limit<br>summarize all runs"]
     
     N --> D
     
-    K --> P[Final result<br>task completed: true<br>summary<br>all results]
-    O --> Q[Final result<br>task completed: false<br>max iters reached: true<br>summary]
+    K --> P["Final result<br>task completed"]
+    O --> Q["Final result<br>stopped by iteration limit"]
     
-    R[Temporary memory<br>Record execution history] -.-> I
+    R["Temporary memory<br>store execution history"] -.-> I
     D -.-> R
     
     style A fill:#e1f5fe
@@ -113,6 +113,8 @@ flowchart TD
     style I fill:#fff3e0
     style J fill:#fce4ec
 ```
+
+Detailedly:
 
 ### 1. Unified Interface Design
 From the external agent's perspective, each `CategoryManager` appears as a standard tool function with consistent schema:
