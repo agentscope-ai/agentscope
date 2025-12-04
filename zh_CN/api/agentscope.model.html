@@ -504,8 +504,10 @@ the same functionality.</p>
 <li><p><strong>messages</strong> (<cite>list[dict[str, Any]]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
 required.</p></li>
 <li><p><strong>tools</strong> (<cite>list[dict] | None</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
-<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str              |  None</cite>,  default <cite>None</cite>) -- <dl class="simple">
-<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, or specific tool name.
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str              |  None</cite>,  default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool name.
+Note: DashScope API only supports &quot;auto&quot; and &quot;none&quot;, so
+&quot;required&quot; will be converted to &quot;auto&quot;.
 For more details, please refer to
 <a class="reference external" href="https://help.aliyun.com/zh/model-studio/qwen-function-calling">https://help.aliyun.com/zh/model-studio/qwen-function-calling</a></p>
 </dd>
@@ -584,8 +586,8 @@ arguments.</p>
 <li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
 required, and <cite>name</cite> field is optional.</p></li>
 <li><p><strong>tools</strong> (<cite>list[dict]</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
-<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
-<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool
 name. For more details, please refer to
 <a class="reference external" href="https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice">https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice</a></p>
 </dd>
@@ -698,8 +700,8 @@ required, and <cite>name</cite> field is optional.</p></li>
 </div>
 </div>
 </p></li>
-<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
-<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool
 name. For more details, please refer to
 <a class="reference external" href="https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use">https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use</a></p>
 </dd>
@@ -782,12 +784,7 @@ arguments.</p>
 <li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
 required, and <cite>name</cite> field is optional.</p></li>
 <li><p><strong>tools</strong> (<cite>list[dict]</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
-<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str                 | None</cite>, default <cite>None</cite>) -- <dl class="simple">
-<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
-name.</p>
-</dd>
-</dl>
-</p></li>
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str                 | None</cite>, default <cite>None</cite>) -- Ollama doesn't support <cite>tool_choice</cite> argument yet.</p></li>
 <li><p><strong>structured_model</strong> (<cite>Type[BaseModel] | None</cite>, default <cite>None</cite>) -- A Pydantic BaseModel class that defines the expected structure
 for the model's output.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- The keyword arguments for Ollama chat completions API,
@@ -856,9 +853,9 @@ e.g. <cite>temperature</cite>, <cite>seed</cite>.</p></li>
 <li><p><strong>messages</strong> (<cite>list[dict[str, Any]]</cite>) -- A list of dictionaries, where <cite>role</cite> and <cite>content</cite> fields are
 required.</p></li>
 <li><p><strong>tools</strong> (<cite>list[dict] | None</cite>, default <cite>None</cite>) -- The tools JSON schemas that the model can use.</p></li>
-<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
-<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool
-name. For more details, please refer to
+<li><p><strong>tool_choice</strong> (<cite>Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str             | None</cite>, default <cite>None</cite>) -- <dl class="simple">
+<dt>Controls which (if any) tool is called by the model.</dt><dd><p>Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool name.
+For more details, please refer to
 <a class="reference external" href="https://ai.google.dev/gemini-api/docs/function-calling?hl=en&amp;example=meeting#function_calling_modes">https://ai.google.dev/gemini-api/docs/function-calling?hl=en&amp;example=meeting#function_calling_modes</a></p>
 </dd>
 </dl>

@@ -524,7 +524,7 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span> <span class="o">=</span> <span class="n">plan_notebook</span>
             <span class="c1"># When enable_meta_tool is True, plan tools are in plan_related</span>
             <span class="c1"># group and active by agent.</span>
-            <span class="c1"># Otherwise, plan tools in bassic group and always active.</span>
+            <span class="c1"># Otherwise, plan tools in basic group and always active.</span>
             <span class="k">if</span> <span class="n">enable_meta_tool</span><span class="p">:</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">toolkit</span><span class="o">.</span><span class="n">create_tool_group</span><span class="p">(</span>
                     <span class="s2">&quot;plan_related&quot;</span><span class="p">,</span>
@@ -605,7 +605,7 @@
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieve_from_knowledge</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
 
         <span class="c1"># Control if LLM generates tool calls in each reasoning step</span>
-        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="c1"># -------------- Structured output management --------------</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_required_structured_model</span> <span class="o">=</span> <span class="n">structured_model</span>
@@ -731,7 +731,7 @@
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_reasoning</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Perform the reasoning process.&quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span><span class="p">:</span>
