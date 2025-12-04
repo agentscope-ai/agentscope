@@ -117,11 +117,11 @@ Initialize a routing agent
             "your_choice": "Content Generation",
             "task_description": "Help me to write a poem"
         },
-        "id": "call_2a58ea31eea549109c4b2e"
+        "id": "call_a5357b08f7be48459538c5"
     }
     system: {
         "type": "tool_result",
-        "id": "call_2a58ea31eea549109c4b2e",
+        "id": "call_a5357b08f7be48459538c5",
         "name": "generate_response",
         "output": [
             {
@@ -130,7 +130,7 @@ Initialize a routing agent
             }
         ]
     }
-    Router: Sure, I can help with that! To get started, could you tell me a bit more about what you'd like the poem to be about? For example, do you have a specific theme, mood, or story in mind? Also, is there a particular style or form of poetry you prefer, such as a sonnet, haiku, or free verse?
+    Router: Sure, I can help with that! Could you tell me a bit more about what you'd like the poem to be about? For example, do you have a specific theme, mood, or style in mind? Any particular length or format, like a sonnet, haiku, or free verse? The more details you provide, the better I can tailor the poem to your liking.
     The structured output:
     {
         "your_choice": "Content Generation",
@@ -265,107 +265,124 @@ After that, we define a routing agent and equip it with the above tool functions
         "type": "tool_use",
         "name": "generate_python",
         "input": {
-            "demand": "a quick sort function"
+            "demand": "Create a quick sort function."
         },
-        "id": "call_b5b7c60c078a42078fa4ff"
+        "id": "call_c9fa1cfb726c4a12880f8a"
     }
-    PythonAgent: Certainly! Here's a Python implementation of the Quick Sort algorithm. This function sorts an array in-place and uses the Lomuto partition scheme for simplicity:
+    PythonAgent: Certainly! Quick sort is a popular and efficient sorting algorithm that uses a divide-and-conquer approach to sort elements. Here's a Python implementation of the quick sort algorithm:
 
     ```python
-    def quick_sort(arr, low, high):
+    def quick_sort(arr):
+        if len(arr) <= 1:
+            return arr
+        else:
+            pivot = arr[len(arr) // 2]
+            left = [x for x in arr if x < pivot]
+            middle = [x for x in arr if x == pivot]
+            right = [x for x in arr if x > pivot]
+            return quick_sort(left) + middle + quick_sort(right)
+
+    # Example usage:
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    sorted_arr = quick_sort(arr)
+    print("Sorted array:", sorted_arr)
+    ```
+
+    ### Explanation:
+    1. **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.
+    2. **Pivot Selection**: We choose the pivot element. In this implementation, we select the middle element of the array.
+    3. **Partitioning**:
+       - `left` contains all elements less than the pivot.
+       - `middle` contains all elements equal to the pivot.
+       - `right` contains all elements greater than the pivot.
+    4. **Recursive Sorting**: We recursively apply the quick sort to the `left` and `right` sub-arrays and concatenate the results with the `middle` array.
+
+    This implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For an in-place version, you can use the following implementation:
+
+    ```python
+    def quick_sort_in_place(arr, low, high):
         if low < high:
-            # Partition the array and get the pivot index
             pi = partition(arr, low, high)
-        
-            # Recursively sort elements before and after partition
-            quick_sort(arr, low, pi - 1)
-            quick_sort(arr, pi + 1, high)
+            quick_sort_in_place(arr, low, pi - 1)
+            quick_sort_in_place(arr, pi + 1, high)
 
     def partition(arr, low, high):
-        pivot = arr[high]  # Choose the last element as the pivot
-        i = low - 1  # Pointer for the greater element
-
+        pivot = arr[high]
+        i = low - 1
         for j in range(low, high):
-            # If current element is smaller than or equal to pivot
-            if arr[j] <= pivot:
-                i += 1  # Increment the pointer
-                arr[i], arr[j] = arr[j], arr[i]  # Swap elements
-
-        # Swap the pivot element with the element at i+1
+            if arr[j] < pivot:
+                i += 1
+                arr[i], arr[j] = arr[j], arr[i]
         arr[i + 1], arr[high] = arr[high], arr[i + 1]
         return i + 1
 
     # Example usage:
-    arr = [10, 7, 8, 9, 1, 5]
-    quick_sort(arr, 0, len(arr) - 1)
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    quick_sort_in_place(arr, 0, len(arr) - 1)
     print("Sorted array:", arr)
     ```
 
     ### Explanation:
-    - **quick_sort**: This is the main function that implements the quick sort algorithm. It takes an array `arr`, and the indices `low` and `high` which define the portion of the array to be sorted.
-    - **partition**: This helper function partitions the array and returns the pivot index. It uses the last element as the pivot and rearranges the array such that all elements less than or equal to the pivot are on its left, and all elements greater than the pivot are on its right.
+    1. **In-Place Partitioning**: The `partition` function rearranges the elements in the array such that elements less than the pivot are on the left, and elements greater than the pivot are on the right.
+    2. **Recursive Calls**: The `quick_sort_in_place` function recursively sorts the sub-arrays before and after the pivot.
 
-    ### Example Output:
-    If you run the example code, the output will be:
-    ```
-    Sorted array: [1, 5, 7, 8, 9, 10]
-    ```
-
-    This implementation is efficient and works well for most cases. If you need any further modifications or have specific requirements, feel free to let me know!
+    Both implementations will sort the array, but the in-place version is more space-efficient.
     system: {
         "type": "tool_result",
-        "id": "call_b5b7c60c078a42078fa4ff",
+        "id": "call_c9fa1cfb726c4a12880f8a",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "Certainly! Here's a Python implementation of the Quick Sort algorithm. This function sorts an array in-place and uses the Lomuto partition scheme for simplicity:\n\n```python\ndef quick_sort(arr, low, high):\n    if low < high:\n        # Partition the array and get the pivot index\n        pi = partition(arr, low, high)\n        \n        # Recursively sort elements before and after partition\n        quick_sort(arr, low, pi - 1)\n        quick_sort(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]  # Choose the last element as the pivot\n    i = low - 1  # Pointer for the greater element\n\n    for j in range(low, high):\n        # If current element is smaller than or equal to pivot\n        if arr[j] <= pivot:\n            i += 1  # Increment the pointer\n            arr[i], arr[j] = arr[j], arr[i]  # Swap elements\n\n    # Swap the pivot element with the element at i+1\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# Example usage:\narr = [10, 7, 8, 9, 1, 5]\nquick_sort(arr, 0, len(arr) - 1)\nprint(\"Sorted array:\", arr)\n```\n\n### Explanation:\n- **quick_sort**: This is the main function that implements the quick sort algorithm. It takes an array `arr`, and the indices `low` and `high` which define the portion of the array to be sorted.\n- **partition**: This helper function partitions the array and returns the pivot index. It uses the last element as the pivot and rearranges the array such that all elements less than or equal to the pivot are on its left, and all elements greater than the pivot are on its right.\n\n### Example Output:\nIf you run the example code, the output will be:\n```\nSorted array: [1, 5, 7, 8, 9, 10]\n```\n\nThis implementation is efficient and works well for most cases. If you need any further modifications or have specific requirements, feel free to let me know!"
+                "text": "Certainly! Quick sort is a popular and efficient sorting algorithm that uses a divide-and-conquer approach to sort elements. Here's a Python implementation of the quick sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n### Explanation:\n1. **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.\n2. **Pivot Selection**: We choose the pivot element. In this implementation, we select the middle element of the array.\n3. **Partitioning**:\n   - `left` contains all elements less than the pivot.\n   - `middle` contains all elements equal to the pivot.\n   - `right` contains all elements greater than the pivot.\n4. **Recursive Sorting**: We recursively apply the quick sort to the `left` and `right` sub-arrays and concatenate the results with the `middle` array.\n\nThis implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For an in-place version, you can use the following implementation:\n\n```python\ndef quick_sort_in_place(arr, low, high):\n    if low < high:\n        pi = partition(arr, low, high)\n        quick_sort_in_place(arr, low, pi - 1)\n        quick_sort_in_place(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] < pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nquick_sort_in_place(arr, 0, len(arr) - 1)\nprint(\"Sorted array:\", arr)\n```\n\n### Explanation:\n1. **In-Place Partitioning**: The `partition` function rearranges the elements in the array such that elements less than the pivot are on the left, and elements greater than the pivot are on the right.\n2. **Recursive Calls**: The `quick_sort_in_place` function recursively sorts the sub-arrays before and after the pivot.\n\nBoth implementations will sort the array, but the in-place version is more space-efficient."
             }
         ]
     }
-    Router: The Python code for a quick sort function has been generated. Here's the provided implementation:
+    Router: The quick sort function has been generated for you in Python. Below are two versions of the quick sort algorithm:
 
+    ### Version 1: Simple and Easy to Understand
     ```python
-    def quick_sort(arr, low, high):
+    def quick_sort(arr):
+        if len(arr) <= 1:
+            return arr
+        else:
+            pivot = arr[len(arr) // 2]
+            left = [x for x in arr if x < pivot]
+            middle = [x for x in arr if x == pivot]
+            right = [x for x in arr if x > pivot]
+            return quick_sort(left) + middle + quick_sort(right)
+
+    # Example usage:
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    sorted_arr = quick_sort(arr)
+    print("Sorted array:", sorted_arr)
+    ```
+
+    ### Version 2: In-Place Sorting (More Space-Efficient)
+    ```python
+    def quick_sort_in_place(arr, low, high):
         if low < high:
-            # Partition the array and get the pivot index
             pi = partition(arr, low, high)
-        
-            # Recursively sort elements before and after partition
-            quick_sort(arr, low, pi - 1)
-            quick_sort(arr, pi + 1, high)
+            quick_sort_in_place(arr, low, pi - 1)
+            quick_sort_in_place(arr, pi + 1, high)
 
     def partition(arr, low, high):
-        pivot = arr[high]  # Choose the last element as the pivot
-        i = low - 1  # Pointer for the greater element
-
+        pivot = arr[high]
+        i = low - 1
         for j in range(low, high):
-            # If current element is smaller than or equal to pivot
-            if arr[j] <= pivot:
-                i += 1  # Increment the pointer
-                arr[i], arr[j] = arr[j], arr[i]  # Swap elements
-
-        # Swap the pivot element with the element at i+1
+            if arr[j] < pivot:
+                i += 1
+                arr[i], arr[j] = arr[j], arr[i]
         arr[i + 1], arr[high] = arr[high], arr[i + 1]
         return i + 1
 
     # Example usage:
-    arr = [10, 7, 8, 9, 1, 5]
-    quick_sort(arr, 0, len(arr) - 1)
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    quick_sort_in_place(arr, 0, len(arr) - 1)
     print("Sorted array:", arr)
     ```
 
-    ### Explanation:
-    - **quick_sort**: This is the main function that implements the quick sort algorithm. It takes an array `arr`, and the indices `low` and `high` which define the portion of the array to be sorted.
-    - **partition**: This helper function partitions the array and returns the pivot index. It uses the last element as the pivot and rearranges the array such that all elements less than or equal to the pivot are on its left, and all elements greater than the pivot are on its right.
-
-    ### Example Output:
-    If you run the example code, the output will be:
-    ```
-    Sorted array: [1, 5, 7, 8, 9, 10]
-    ```
-
-    This implementation is efficient and works well for most cases. If you need any further modifications or have specific requirements, feel free to let me know!
+    You can use either version depending on your preference for simplicity or space efficiency. If you have any specific requirements or need further explanation, feel free to ask!
 
 
 
@@ -373,7 +390,7 @@ After that, we define a routing agent and equip it with the above tool functions
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 40.690 seconds)
+   **Total running time of the script:** (0 minutes 40.230 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:
