@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import os
 from asyncio import Task, Queue
 from collections import OrderedDict
 from copy import deepcopy
@@ -168,7 +169,13 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
         # We add this variable in case developers want to disable the console
         # output of the agent, e.g., in a production environment.
-        self._disable_console_output: bool = False
+        self._disable_console_output: bool = (
+            os.getenv(
+                "AGENTSCOPE_DISABLE_CONSOLE_OUTPUT",
+                "false",
+            ).lower()
+            == "true"
+        )
 
         # The streaming message queue used to export the messages as a
         # generator
