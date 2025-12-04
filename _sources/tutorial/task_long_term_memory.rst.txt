@@ -185,7 +185,11 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique, local feel and allow you to immerse yourself in the culture. If you're looking for recommendations or tips on finding great homestays in Hangzhou, I'd be happy to help. Do you have any specific preferences, such as location, amenities, or nearby attractions?
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique opportunity to immerse yourself in the local culture, enjoy home-cooked meals, and interact with friendly hosts who often have great recommendations for hidden gems in the city.
+
+    If you're planning another trip to Hangzhou and looking for homestay options, I can help suggest some neighborhoods or platforms where you might find great places to stay. Would you like me to assist with that? 
+
+    Also, do you have any specific preferences for your homestay, such as proximity to West Lake, budget range, or certain amenities?
 
 
 
@@ -523,7 +527,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 16.839 seconds)
+   **Total running time of the script:** (0 minutes 16.493 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

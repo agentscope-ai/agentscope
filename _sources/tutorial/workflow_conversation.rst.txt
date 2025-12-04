@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve environmental issues. How about you?
-    Bob: Hey Alice, nice to meet you! I'm Bob. I'm also a student, and I'm really into sports and fitness. I spend a lot of my free time playing basketball and learning about nutrition. It's cool to hear about your interest in tech and the environment!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and art. I play a bit of guitar and love to paint. It's great to meet you both and hear about your passions!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play on the school's soccer team. It's great to meet someone who's passionate about tech and the environment. What kind of tech projects are you working on?
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I love exploring different genres of music and I play the guitar. It's cool to hear about your interests in tech and sports! Alice, what kind of environmental projects are you involved with?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve environmental issues. How about you?
-    Bob: Hey Alice, nice to meet you! I'm Bob. I'm also a student, and I'm really into sports and fitness. I spend a lot of my free time playing basketball and learning about nutrition. It's cool to hear about your interest in tech and the environment!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and art. I play a bit of guitar and love to paint. It's great to meet you both and hear about your passions!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play on the school's soccer team. It's great to meet someone who's passionate about tech and the environment. What kind of tech projects are you working on?
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I love exploring different genres of music and I play the guitar. It's cool to hear about your interests in tech and sports! Alice, what kind of environmental projects are you involved with?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.777 seconds)
+   **Total running time of the script:** (0 minutes 10.068 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
