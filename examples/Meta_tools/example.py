@@ -89,23 +89,19 @@ async def main() -> None:
         try:
             from meta_config_models import MetaToolConfig
             # Load and validate with Pydantic
-            validated_config = MetaToolConfig.from_json_file(meta_tool_config_path)
-            meta_manager = MetaManager(
-                model=model,
-                meta_tool_config=validated_config,
-                global_toolkit=toolkit,
-                formatter=DashScopeChatFormatter(),
-            )
-        except ImportError:
-            # Fallback: load as plain dict (will be validated by MetaManager if Pydantic available)
+            meta_tool_config = MetaToolConfig.from_json_file(meta_tool_config_path)
+        except Exception as e:
+            print(f"Error: {e}")
+            # Fallback: load as plain dict
             with open(meta_tool_config_path, "r", encoding="utf-8") as f:
                 meta_tool_config = json.load(f)
-            meta_manager = MetaManager(
-                model=model,
-                meta_tool_config=meta_tool_config,
-                global_toolkit=toolkit,
-                formatter=DashScopeChatFormatter(),
-            )
+        meta_manager = MetaManager(
+            model=model,
+            meta_tool_config=meta_tool_config,
+            global_toolkit=toolkit,
+            formatter=DashScopeChatFormatter(),
+            memory=InMemoryMemory(),
+        )
 
         # Use meta_manager directly as toolkit for ReActAgent
         agent = ReActAgent(

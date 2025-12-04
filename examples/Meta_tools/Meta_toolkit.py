@@ -18,7 +18,7 @@ from typing import (
 )
 from agentscope.model import ChatModelBase
 from agentscope.formatter import FormatterBase
-from agentscope.memory import InMemoryMemory
+from agentscope.memory import InMemoryMemory, MemoryBase
 from agentscope.message import Msg, TextBlock
 from agentscope.tool import Toolkit, ToolResponse
 from agentscope.tool._registered_tool_function import RegisteredToolFunction
@@ -39,6 +39,7 @@ class CategoryManager:
             model: ChatModelBase,
             formatter: FormatterBase,
             tool_usage_notes: str = "",
+            memory: MemoryBase = InMemoryMemory(),
     ):
         """Initialize the Category Manager
 
@@ -57,12 +58,15 @@ class CategoryManager:
             tool_usage_notes (`str`, optional):
                 Special usage notes and considerations for tools in this
                 category that will be included in the system prompts.
+            memory (`MemoryBase`, optional):
+                The memory instance to be used by this category manager.
+                Defaults to InMemoryMemory() if not provided.
         """
         self.category_name = category_name
         self.category_description = category_description
         self.model = model
         self.tool_usage_notes = tool_usage_notes
-        self.memory = InMemoryMemory()
+        self.memory = memory
         self.formatter = formatter
         # internal level 1 tools
         self.internal_toolkit = Toolkit()
@@ -759,6 +763,7 @@ class MetaManager(Toolkit):
             meta_tool_config: Optional[Union[Dict, MetaToolConfig]] = None,
             global_toolkit: Optional[Toolkit] = None,
             formatter: Optional[FormatterBase] = None,
+            memory: MemoryBase = InMemoryMemory(),
     ) -> None:
         """Initialize the Meta Manager.
 
@@ -778,6 +783,9 @@ class MetaManager(Toolkit):
                 The formatter to be used for all category managers.
                 Required if auto-initialization is desired (when model,
                 meta_tool_config, and global_toolkit are all provided).
+            memory (`MemoryBase`, optional):
+                The memory instance to be used by all category managers.
+                Defaults to InMemoryMemory() if not provided.
         """
         # self.toolkit manages the external interface of category manager.
         # The internal routing is by self.category_managers
@@ -794,7 +802,7 @@ class MetaManager(Toolkit):
 
             # Validate and convert config
             validated_config = self._validate_config(meta_tool_config)
-            self._initialize_from_config(model, validated_config, global_toolkit, formatter)
+            self._initialize_from_config(model, validated_config, global_toolkit, formatter, memory)
 
     def _validate_config(
             self,
@@ -841,6 +849,7 @@ class MetaManager(Toolkit):
             meta_tool_config: Union[Dict, MetaToolConfig],
             global_toolkit: Toolkit,
             formatter: FormatterBase,
+            memory: MemoryBase,
     ) -> None:
         """Initialize category managers from configuration.
 
@@ -853,6 +862,8 @@ class MetaManager(Toolkit):
                 The global toolkit containing all available tools.
             formatter (`FormatterBase`):
                 The formatter to be used for all category managers.
+            memory (`MemoryBase`):
+                The memory instance to be used by all category managers.
         """
         # Convert MetaToolConfig to dict if needed
         if isinstance(meta_tool_config, MetaToolConfig):
@@ -873,6 +884,7 @@ class MetaManager(Toolkit):
                 model=model,
                 formatter=formatter,
                 tool_usage_notes=category_config.get("tool_usage_notes", ""),
+                memory=memory,
             )
 
             # Add tools to the category manager
