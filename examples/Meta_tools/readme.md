@@ -71,51 +71,6 @@ For example, you can try a prompt like:
 
 ## Key Features
 
-Here is the execution flowchart inside the category of the Meta tool that received the instruction(Objective and Exact input):
-```mermaid
-graph TD
-    A["User request<br>objective + exact input"] --> B["Initial tool selection<br>LLM chooses tools"]
-    B --> C{"Tool calls?"}
-    
-    C --> D["Execute tool set<br>record results"]
-    C --> E["Insufficient input<br>explain missing parts"]
-    C --> F["No suitable tool<br>explain limitations"]
-    
-    E --> G["Return to user<br>ask for more input"]
-    F --> H["Return to user<br>suggest alternatives"]
-    
-    D --> I["Result evaluation<br>check if goal is met"]
-    I --> J{"Goal satisfied?"}
-    
-    J --> K["Final summary<br>return SUCCESS"]
-    J --> L["New tool calls<br>start next round"]
-    
-    L --> M{"Check iterations"}
-    M --> N["Below max limit<br>continue next iteration"]
-    M --> O["Reached max limit<br>summarize all runs"]
-    
-    N --> D
-    
-    K --> P["Final result<br>task completed"]
-    O --> Q["Final result<br>stopped by iteration limit"]
-    
-    R["Temporary memory<br>store execution history"] -.-> I
-    D -.-> R
-    
-    style A fill:#e1f5fe
-    style C fill:#fff3e0
-    style E fill:#ffeb3b
-    style F fill:#ff9800
-    style G fill:#fff59d
-    style H fill:#ffcc02
-    style K fill:#c8e6c9
-    style O fill:#ffcdd2
-    style I fill:#fff3e0
-    style J fill:#fce4ec
-```
-
-Detailedly:
-
 ### 1. Unified Interface Design
 From the external agent's perspective, each `CategoryManager` appears as a standard tool function with consistent schema:
 
@@ -178,5 +133,49 @@ The Meta Tool system includes robust countermeasures for all potential issues it
 * **Custom Categories**: Edit `Meta_tool_config.json` to create new functional domains or reorganize existing tools into different categories
 * **Custom Prompts**: Modify the selection, evaluation, and summary templates in `meta_tool_prompts/` to adapt reasoning behavior for specific domains or workflows
 * **New Tools**: Integrate additional MCP services, built-in AgentScope tools, or custom local functions, and assign them to the most relevant categories for seamless integration
+
+
+Here is the execution flowchart inside the category of the Meta tool that received the instruction(Objective and Exact input) from agent:
+```mermaid
+graph TD
+    A["User request<br>objective + exact input"] --> B["Initial tool selection<br>LLM chooses tools"]
+    B --> C{"Tool calls?"}
+    
+    C --> D["Execute tool set<br>record results"]
+    C --> E["Insufficient input<br>explain missing parts"]
+    C --> F["No suitable tool<br>explain limitations"]
+    
+    E --> G["Return to user<br>ask for more input"]
+    F --> H["Return to user<br>suggest alternatives"]
+    
+    D --> I["Result evaluation<br>check if goal is met"]
+    I --> J{"Goal satisfied?"}
+    
+    J --> K["Final summary<br>return SUCCESS"]
+    J --> L["New tool calls<br>start next round"]
+    
+    L --> M{"Check iterations"}
+    M --> N["Below max limit<br>continue next iteration"]
+    M --> O["Reached max limit<br>summarize all runs"]
+    
+    N --> D
+    
+    K --> P["Final result<br>task completed"]
+    O --> Q["Final result<br>stopped by iteration limit"]
+    
+    R["Temporary memory<br>store execution history"] -.-> I
+    D -.-> R
+    
+    style A fill:#e1f5fe
+    style C fill:#fff3e0
+    style E fill:#ffeb3b
+    style F fill:#ff9800
+    style G fill:#fff59d
+    style H fill:#ffcc02
+    style K fill:#c8e6c9
+    style O fill:#ffcdd2
+    style I fill:#fff3e0
+    style J fill:#fce4ec
+```
 
 You can freely integrate multiple custom tools into the system, organize them into your own Meta Tool categories, and tailor the workflow to your needs—give it a try and explore the possibilities!
