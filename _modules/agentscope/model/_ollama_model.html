@@ -439,9 +439,7 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
         <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span>
-        <span class="o">|</span> <span class="nb">str</span>
-        <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">structured_model</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">BaseModel</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ChatResponse</span> <span class="o">|</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">ChatResponse</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
@@ -454,11 +452,9 @@
 <span class="sd">                required, and `name` field is optional.</span>
 <span class="sd">            tools (`list[dict]`, default `None`):</span>
 <span class="sd">                The tools JSON schemas that the model can use.</span>
-<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str \</span>
+<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str \</span>
 <span class="sd">                | None`, default `None`):</span>
-<span class="sd">                Controls which (if any) tool is called by the model.</span>
-<span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool</span>
-<span class="sd">                 name.</span>
+<span class="sd">                Ollama doesn&#39;t support `tool_choice` argument yet.</span>
 <span class="sd">            structured_model (`Type[BaseModel] | None`, default `None`):</span>
 <span class="sd">                A Pydantic BaseModel class that defines the expected structure</span>
 <span class="sd">                for the model&#39;s output.</span>

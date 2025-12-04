@@ -332,6 +332,7 @@
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="c1"># pylint: disable=too-many-branches</span>
 <span class="sd">&quot;&quot;&quot;OpenAI Chat model class.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">Any</span><span class="p">,</span>
@@ -485,9 +486,7 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
         <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span>
-        <span class="o">|</span> <span class="nb">str</span>
-        <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">structured_model</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">BaseModel</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ChatResponse</span> <span class="o">|</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">ChatResponse</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
@@ -500,10 +499,10 @@
 <span class="sd">                required, and `name` field is optional.</span>
 <span class="sd">            tools (`list[dict]`, default `None`):</span>
 <span class="sd">                The tools JSON schemas that the model can use.</span>
-<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str \</span>
+<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str \</span>
 <span class="sd">            | None`, default `None`):</span>
 <span class="sd">                Controls which (if any) tool is called by the model.</span>
-<span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool</span>
+<span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool</span>
 <span class="sd">                 name. For more details, please refer to</span>
 <span class="sd">                 https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice</span>
 <span class="sd">            structured_model (`Type[BaseModel] | None`, default `None`):</span>
@@ -562,6 +561,14 @@
             <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;tools&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_format_tools_json_schemas</span><span class="p">(</span><span class="n">tools</span><span class="p">)</span>
 
         <span class="k">if</span> <span class="n">tool_choice</span><span class="p">:</span>
+            <span class="c1"># Handle deprecated &quot;any&quot; option with warning</span>
+            <span class="k">if</span> <span class="n">tool_choice</span> <span class="o">==</span> <span class="s2">&quot;any&quot;</span><span class="p">:</span>
+                <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span>
+                    <span class="s1">&#39;&quot;any&quot; is deprecated and will be removed in a future &#39;</span>
+                    <span class="s2">&quot;version.&quot;</span><span class="p">,</span>
+                    <span class="ne">DeprecationWarning</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;required&quot;</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_validate_tool_choice</span><span class="p">(</span><span class="n">tool_choice</span><span class="p">,</span> <span class="n">tools</span><span class="p">)</span>
             <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;tool_choice&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_format_tool_choice</span><span class="p">(</span><span class="n">tool_choice</span><span class="p">)</span>
 
@@ -882,16 +889,16 @@
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_format_tool_choice</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;any&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Format tool_choice parameter for API compatibility.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;] | str \</span>
+<span class="sd">            tool_choice (`Literal[&quot;auto&quot;, &quot;none&quot;, &quot;required&quot;] | str \</span>
 <span class="sd">            | None`, default `None`):</span>
 <span class="sd">                Controls which (if any) tool is called by the model.</span>
-<span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;any&quot;, &quot;required&quot;, or specific tool</span>
-<span class="sd">                 name. For more details, please refer to</span>
+<span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool name.</span>
+<span class="sd">                 For more details, please refer to</span>
 <span class="sd">                 https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice</span>
 <span class="sd">        Returns:</span>
 <span class="sd">            `dict | None`:</span>
@@ -900,10 +907,10 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="n">tool_choice</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="kc">None</span>
+
         <span class="n">mode_mapping</span> <span class="o">=</span> <span class="p">{</span>
             <span class="s2">&quot;auto&quot;</span><span class="p">:</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span>
             <span class="s2">&quot;none&quot;</span><span class="p">:</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;any&quot;</span><span class="p">:</span> <span class="s2">&quot;required&quot;</span><span class="p">,</span>
             <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="s2">&quot;required&quot;</span><span class="p">,</span>
         <span class="p">}</span>
         <span class="k">if</span> <span class="n">tool_choice</span> <span class="ow">in</span> <span class="n">mode_mapping</span><span class="p">:</span>
