@@ -36,8 +36,7 @@ From the main agent's perspective, only high-level categories are visible — th
 - **Scalable Architecture**: System performance remains stable as tool count increases
 - **Agent-Level Decoupling**: Separates detailed tool selection from the agent, enabling focus on task decomposition and state monitoring
 
-![img.png](img.png)
-
+![meta_tool_example_image.jpg](meta_tool_example_image.jpg)
 
 
 ## How to Run This Example
@@ -75,32 +74,32 @@ For example, you can try a prompt like:
 
 ```mermaid
 flowchart TD
-    A[User request<br/>objective + exact_input] --> B[Initial tool selection<br/>LLM chooses suitable tools]
+    A[User request<br>objective + exact_input] --> B[Initial tool selection<br>LLM chooses suitable tools]
     B --> C{Does the LLM generate tool calls?}
     
-    C -->|Tool calls generated<br/>Normal flow| D[Execute tool set<br/>Log execution results]
-    C -->|No tool calls<br/>Insufficient input| E[Insufficient input case<br/>Explain missing elements in detail]
-    C -->|No tool calls<br/>No suitable tools| F[No suitable tool case<br/>Explain why this task type cannot be handled]
+    C -->|Tool calls generated<br>Normal flow| D[Execute tool set<br>Log execution results]
+    C -->|No tool calls<br>Insufficient input| E[Insufficient input case<br>Explain missing elements]
+    C -->|No tool calls<br>No suitable tools| F[No suitable tool case<br>Explain capability limits]
     
-    E --> G[Return<br/>no_tool_calls_generated: true<br/>reasoning: Detailed analysis of missing information<br/>next_steps: Suggestions for additional input]
-    F --> H[Return<br/>no_tool_calls_generated: true<br/>reasoning: Explanation of tool capability limits<br/>next_steps: Alternative suggestions]
+    E --> G[Return<br>no_tool_calls_generated: true<br>reasoning: Missing info analysis<br>next_steps: Add required inputs]
+    F --> H[Return<br>no_tool_calls_generated: true<br>reasoning: Tool limits<br>next_steps: Alternative suggestions]
     
-    D --> I[Result evaluation<br/>LLM checks whether the objective is satisfied]
+    D --> I[Result evaluation<br>LLM checks objective satisfaction]
     I --> J{Evaluation decision}
     
-    J -->|No new tool calls<br/>Task complete| K[Generate final summary<br/>Return SUCCESS]
-    J -->|New tool calls needed<br/>Continue| L[Execute new tools<br/>Prepare for next evaluation round]
+    J -->|No new tool calls<br>Task complete| K[Generate final summary<br>Return SUCCESS]
+    J -->|New tool calls required<br>Continue| L[Execute new tools<br>Prepare for next round]
     
     L --> M{Check iteration count}
-    M -->|&lt; max_iterations (5)| N[iteration++<br/>Store to memory]
-    M -->|≥ max_iterations (5)| O[Max iterations reached<br/>Summarize all execution results]
+    M -->|Less than max_iterations (5)| N[Increase iteration counter<br>Store to memory]
+    M -->|Reached max_iterations (5)| O[Max iterations reached<br>Summarize all results]
     
     N --> D
     
-    K --> P[Final result<br/>task_completed: true<br/>summary: Evaluation summary<br/>all_execution_results]
-    O --> Q[Final result<br/>task_completed: false<br/>max_iterations_reached: true<br/>summary: LLM-generated summary]
+    K --> P[Final result<br>task_completed: true<br>summary<br>all_execution_results]
+    O --> Q[Final result<br>task_completed: false<br>max_iterations_reached: true<br>summary]
     
-    R[TemporaryMemory<br/>Record execution history] -.-> I
+    R[TemporaryMemory<br>Record execution history] -.-> I
     D -.-> R
     
     style A fill:#e1f5fe
