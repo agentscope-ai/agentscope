@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in literature and history. It's nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob. Nice to meet you too! I'm into science and technology, but I also like to read a bit of everything. What's your favorite book or historical period?
-    Charlie: Hi, I'm Charlie! I'm really into sports and music. I play basketball for my school team and I'm learning to play the guitar. It's great to meet you both! Alice, what's your favorite book? And Bob, do you have a favorite tech gadget?
+    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm on the school's soccer team. Besides that, I like to dabble in a bit of coding. It's great to meet you!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love reading and writing, and I'm part of the school's debate team. It's really cool to meet both of you!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in literature and history. It's nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob. Nice to meet you too! I'm into science and technology, but I also like to read a bit of everything. What's your favorite book or historical period?
-    Charlie: Hi, I'm Charlie! I'm really into sports and music. I play basketball for my school team and I'm learning to play the guitar. It's great to meet you both! Alice, what's your favorite book? And Bob, do you have a favorite tech gadget?
+    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm on the school's soccer team. Besides that, I like to dabble in a bit of coding. It's great to meet you!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love reading and writing, and I'm part of the school's debate team. It's really cool to meet both of you!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.152 seconds)
+   **Total running time of the script:** (0 minutes 8.710 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
