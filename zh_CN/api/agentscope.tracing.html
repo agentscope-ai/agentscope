@@ -354,11 +354,12 @@
 
 <dl class="py function">
 <dt class="sig sig-object py" id="agentscope.tracing.trace">
-<span class="sig-name descname"><span class="pre">trace</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tracing/_trace.html#trace"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tracing.trace" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">trace</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tracing/_trace.html#trace"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tracing.trace" title="Link to this definition">¶</a></dt>
 <dd><p>A generic tracing decorator for synchronous and asynchronous functions.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>name</strong> (<cite>str</cite>) -- The name of the span to be created.</p>
+<dd class="field-odd"><p><strong>name</strong> (<cite>str | None</cite>, optional) -- The name of the span to be created. If not provided,
+the name of the function will be used.</p>
 </dd>
 <dt class="field-even">返回<span class="colon">:</span></dt>
 <dd class="field-even"><p>Returns a decorator that wraps the given function with
@@ -446,10 +447,10 @@ input/output and exceptions.</p>
 <dd><p>Trace the embedding call with OpenTelemetry.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>func</strong> (<em>Callable</em><em>[</em><em>[</em><em>...</em><em>]</em><em>, </em><em>Coroutine</em><em>[</em><em>Any</em><em>, </em><em>Any</em><em>, </em><a class="reference internal" href="agentscope.embedding.html#agentscope.embedding.EmbeddingResponse" title="agentscope.embedding.EmbeddingResponse"><em>EmbeddingResponse</em></a><em>]</em><em>]</em>)</p>
+<dd class="field-odd"><p><strong>func</strong> (<em>Callable</em><em>[</em><em>[</em><em>...</em><em>]</em><em>, </em><em>Coroutine</em><em>[</em><em>Any</em><em>, </em><em>Any</em><em>, </em><a class="reference internal" href="agentscope.embedding.html#agentscope.embedding.EmbeddingResponse" title="agentscope.embedding._embedding_response.EmbeddingResponse"><em>EmbeddingResponse</em></a><em>]</em><em>]</em>)</p>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p><em>Callable</em>[[...], <em>Coroutine</em>[<em>Any</em>, <em>Any</em>, <a class="reference internal" href="agentscope.embedding.html#agentscope.embedding.EmbeddingResponse" title="agentscope.embedding.EmbeddingResponse">EmbeddingResponse</a>]]</p>
+<dd class="field-even"><p><em>Callable</em>[[...], <em>Coroutine</em>[<em>Any</em>, <em>Any</em>, <a class="reference internal" href="agentscope.embedding.html#agentscope.embedding.EmbeddingResponse" title="agentscope.embedding._embedding_response.EmbeddingResponse"><em>EmbeddingResponse</em></a>]]</p>
 </dd>
 </dl>
 </dd></dl>

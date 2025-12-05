@@ -346,35 +346,52 @@
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">aioitertools</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">._attributes</span><span class="w"> </span><span class="kn">import</span> <span class="n">_serialize_to_str</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..</span><span class="w"> </span><span class="kn">import</span> <span class="n">_config</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..embedding._embedding_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">EmbeddingModelBase</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..model._model_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatModelBase</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..embedding</span><span class="w"> </span><span class="kn">import</span> <span class="n">EmbeddingModelBase</span><span class="p">,</span> <span class="n">EmbeddingResponse</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._types</span><span class="w"> </span><span class="kn">import</span> <span class="n">SpanKind</span><span class="p">,</span> <span class="n">SpanAttributes</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">ToolUseBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..model</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatModelBase</span><span class="p">,</span> <span class="n">ChatResponse</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">._attributes</span><span class="w"> </span><span class="kn">import</span> <span class="n">SpanAttributes</span><span class="p">,</span> <span class="n">OperationNameValues</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._extractor</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_get_common_attributes</span><span class="p">,</span>
+    <span class="n">_get_agent_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_agent_span_name</span><span class="p">,</span>
+    <span class="n">_get_agent_response_attributes</span><span class="p">,</span>
+    <span class="n">_get_llm_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_llm_span_name</span><span class="p">,</span>
+    <span class="n">_get_llm_response_attributes</span><span class="p">,</span>
+    <span class="n">_get_tool_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_tool_span_name</span><span class="p">,</span>
+    <span class="n">_get_tool_response_attributes</span><span class="p">,</span>
+    <span class="n">_get_formatter_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_formatter_span_name</span><span class="p">,</span>
+    <span class="n">_get_formatter_response_attributes</span><span class="p">,</span>
+    <span class="n">_get_generic_function_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_generic_function_span_name</span><span class="p">,</span>
+    <span class="n">_get_generic_function_response_attributes</span><span class="p">,</span>
+    <span class="n">_get_embedding_request_attributes</span><span class="p">,</span>
+    <span class="n">_get_embedding_span_name</span><span class="p">,</span>
+    <span class="n">_get_embedding_response_attributes</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._setup</span><span class="w"> </span><span class="kn">import</span> <span class="n">_get_tracer</span>
 
 <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">Span</span>
+
     <span class="kn">from</span><span class="w"> </span><span class="nn">..agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentBase</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">..formatter</span><span class="w"> </span><span class="kn">import</span> <span class="n">FormatterBase</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">..tool</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
         <span class="n">Toolkit</span><span class="p">,</span>
         <span class="n">ToolResponse</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-        <span class="n">Msg</span><span class="p">,</span>
-        <span class="n">ToolUseBlock</span><span class="p">,</span>
-    <span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">..embedding</span><span class="w"> </span><span class="kn">import</span> <span class="n">EmbeddingResponse</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">..model</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatResponse</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">Span</span>
+
 <span class="k">else</span><span class="p">:</span>
+    <span class="n">AgentBase</span> <span class="o">=</span> <span class="s2">&quot;AgentBase&quot;</span>
+    <span class="n">FormatterBase</span> <span class="o">=</span> <span class="s2">&quot;FormatterBase&quot;</span>
+    <span class="n">Span</span> <span class="o">=</span> <span class="s2">&quot;Span&quot;</span>
     <span class="n">Toolkit</span> <span class="o">=</span> <span class="s2">&quot;Toolkit&quot;</span>
     <span class="n">ToolResponse</span> <span class="o">=</span> <span class="s2">&quot;ToolResponse&quot;</span>
-    <span class="n">Msg</span> <span class="o">=</span> <span class="s2">&quot;Msg&quot;</span>
-    <span class="n">ToolUseBlock</span> <span class="o">=</span> <span class="s2">&quot;ToolUseBlock&quot;</span>
-    <span class="n">EmbeddingResponse</span> <span class="o">=</span> <span class="s2">&quot;EmbeddingResponse&quot;</span>
-    <span class="n">ChatResponse</span> <span class="o">=</span> <span class="s2">&quot;ChatResponse&quot;</span>
-    <span class="n">Span</span> <span class="o">=</span> <span class="s2">&quot;Span&quot;</span>
 
 
 <span class="n">T</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;T&quot;</span><span class="p">)</span>
@@ -391,13 +408,38 @@
     <span class="k">return</span> <span class="n">_config</span><span class="o">.</span><span class="n">trace_enabled</span>
 
 
+<span class="k">def</span><span class="w"> </span><span class="nf">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">:</span> <span class="n">Span</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Set the status of the span.</span>
+<span class="sd">    Args:</span>
+<span class="sd">        span (`Span`):</span>
+<span class="sd">            The OpenTelemetry span to be used for tracing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span> <span class="k">as</span> <span class="n">trace_api</span>
+
+    <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">trace_api</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
+    <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">:</span> <span class="n">Span</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span> <span class="ne">Exception</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Set the status of the span.</span>
+<span class="sd">    Args:</span>
+<span class="sd">        span (`Span`):</span>
+<span class="sd">            The OpenTelemetry span to be used for tracing.</span>
+<span class="sd">        e (`Exception`):</span>
+<span class="sd">            The exception to be recorded.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span> <span class="k">as</span> <span class="n">trace_api</span>
+
+    <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">trace_api</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+    <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+    <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+
+
 <span class="k">def</span><span class="w"> </span><span class="nf">_trace_sync_generator_wrapper</span><span class="p">(</span>
     <span class="n">res</span><span class="p">:</span> <span class="n">Generator</span><span class="p">[</span><span class="n">T</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span>
     <span class="n">span</span><span class="p">:</span> <span class="n">Span</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Generator</span><span class="p">[</span><span class="n">T</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Trace the sync generator output with OpenTelemetry.&quot;&quot;&quot;</span>
-
-    <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
 
     <span class="n">has_error</span> <span class="o">=</span> <span class="kc">False</span>
 
@@ -408,20 +450,16 @@
             <span class="k">yield</span> <span class="n">chunk</span>
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
         <span class="n">has_error</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
         <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">finally</span><span class="p">:</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">has_error</span><span class="p">:</span>
             <span class="c1"># Set the last chunk as output</span>
             <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">last_chunk</span><span class="p">),</span>
-                <span class="p">},</span>
+                <span class="n">_get_generic_function_response_attributes</span><span class="p">(</span><span class="n">last_chunk</span><span class="p">),</span>
             <span class="p">)</span>
-            <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+            <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
 
 
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_trace_async_generator_wrapper</span><span class="p">(</span>
@@ -440,8 +478,6 @@
 <span class="sd">        `T`:</span>
 <span class="sd">            The output of the async generator.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
-
     <span class="n">has_error</span> <span class="o">=</span> <span class="kc">False</span>
 
     <span class="k">try</span><span class="p">:</span>
@@ -452,32 +488,49 @@
 
     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
         <span class="n">has_error</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
         <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">finally</span><span class="p">:</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="n">has_error</span><span class="p">:</span>
             <span class="c1"># Set the last chunk as output</span>
-            <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">last_chunk</span><span class="p">),</span>
-                <span class="p">},</span>
-            <span class="p">)</span>
-            <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-        <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+
+            <span class="k">if</span> <span class="p">(</span>
+                <span class="nb">getattr</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="s2">&quot;attributes&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">GEN_AI_OPERATION_NAME</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="o">==</span> <span class="n">OperationNameValues</span><span class="o">.</span><span class="n">CHAT</span>
+            <span class="p">):</span>
+                <span class="n">response_attributes</span> <span class="o">=</span> <span class="n">_get_llm_response_attributes</span><span class="p">(</span><span class="n">last_chunk</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="p">(</span>
+                <span class="nb">getattr</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="s2">&quot;attributes&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">GEN_AI_OPERATION_NAME</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="o">==</span> <span class="n">OperationNameValues</span><span class="o">.</span><span class="n">EXECUTE_TOOL</span>
+            <span class="p">):</span>
+                <span class="n">response_attributes</span> <span class="o">=</span> <span class="n">_get_tool_response_attributes</span><span class="p">(</span><span class="n">last_chunk</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">response_attributes</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="n">_get_generic_function_response_attributes</span><span class="p">(</span>
+                        <span class="n">last_chunk</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+
+            <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span><span class="n">response_attributes</span><span class="p">)</span>
+            <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="trace">
 <a class="viewcode-back" href="../../../api/agentscope.tracing.html#agentscope.tracing.trace">[文档]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">trace</span><span class="p">(</span>
-    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A generic tracing decorator for synchronous and asynchronous functions.</span>
 
 <span class="sd">    Args:</span>
-<span class="sd">        name (`str`):</span>
-<span class="sd">            The name of the span to be created.</span>
+<span class="sd">        name (`str | None`, optional):</span>
+<span class="sd">            The name of the span to be created. If not provided,</span>
+<span class="sd">            the name of the function will be used.</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        `Callable`:</span>
@@ -512,27 +565,19 @@
                 <span class="k">if</span> <span class="ow">not</span> <span class="n">_check_tracing_enabled</span><span class="p">():</span>
                     <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-                <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
+                <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
-                <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+                <span class="n">function_name</span> <span class="o">=</span> <span class="n">name</span> <span class="k">if</span> <span class="n">name</span> <span class="k">else</span> <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+                <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_generic_function_request_attributes</span><span class="p">(</span>
+                    <span class="n">function_name</span><span class="p">,</span>
+                    <span class="n">args</span><span class="p">,</span>
+                    <span class="n">kwargs</span><span class="p">,</span>
+                <span class="p">)</span>
 
-                <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">SpanKind</span><span class="o">.</span><span class="n">COMMON</span><span class="p">,</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                        <span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span>
-                    <span class="p">),</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                        <span class="p">{</span>
-                            <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                            <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                        <span class="p">},</span>
-                    <span class="p">),</span>
-                    <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">({}),</span>
-                <span class="p">}</span>
-
+                <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_generic_function_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
                 <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-                    <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-                    <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+                    <span class="n">attributes</span><span class="o">=</span><span class="n">request_attributes</span><span class="p">,</span>
                     <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
                 <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
                     <span class="k">try</span><span class="p">:</span>
@@ -546,19 +591,13 @@
 
                         <span class="c1"># non-generator result</span>
                         <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                            <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
+                            <span class="n">_get_generic_function_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">),</span>
                         <span class="p">)</span>
-                        <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                        <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                        <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                         <span class="k">return</span> <span class="n">res</span>
 
                     <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                        <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                            <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                            <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                        <span class="p">)</span>
-                        <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                        <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                        <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                         <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
             <span class="k">return</span> <span class="n">wrapper</span>
@@ -573,27 +612,19 @@
             <span class="k">if</span> <span class="ow">not</span> <span class="n">_check_tracing_enabled</span><span class="p">():</span>
                 <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-            <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
+            <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
-            <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+            <span class="n">function_name</span> <span class="o">=</span> <span class="n">name</span> <span class="k">if</span> <span class="n">name</span> <span class="k">else</span> <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+            <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_generic_function_request_attributes</span><span class="p">(</span>
+                <span class="n">function_name</span><span class="p">,</span>
+                <span class="n">args</span><span class="p">,</span>
+                <span class="n">kwargs</span><span class="p">,</span>
+            <span class="p">)</span>
 
-            <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">SpanKind</span><span class="o">.</span><span class="n">COMMON</span><span class="p">,</span>
-                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                    <span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span>
-                <span class="p">),</span>
-                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                    <span class="p">{</span>
-                        <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                        <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                    <span class="p">},</span>
-                <span class="p">),</span>
-                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">({}),</span>
-            <span class="p">}</span>
-
+            <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_generic_function_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
             <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-                <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-                <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+                <span class="n">attributes</span><span class="o">=</span><span class="n">request_attributes</span><span class="p">,</span>
                 <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
             <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
                 <span class="k">try</span><span class="p">:</span>
@@ -607,19 +638,13 @@
 
                     <span class="c1"># non-generator result</span>
                     <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                        <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
+                        <span class="n">_get_generic_function_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">),</span>
                     <span class="p">)</span>
-                    <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                    <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                    <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                     <span class="k">return</span> <span class="n">res</span>
 
                 <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                    <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                        <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                        <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                    <span class="p">)</span>
-                    <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                    <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                    <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                     <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
         <span class="k">return</span> <span class="n">sync_wrapper</span>
@@ -648,29 +673,18 @@
         <span class="k">if</span> <span class="ow">not</span> <span class="n">_check_tracing_enabled</span><span class="p">():</span>
             <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_call</span><span class="o">=</span><span class="n">tool_call</span><span class="p">)</span>
 
-        <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
+        <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
-        <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
-
-        <span class="c1"># Prepare the attributes for the span</span>
-        <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">SpanKind</span><span class="o">.</span><span class="n">TOOL</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;tool_call&quot;</span><span class="p">:</span> <span class="n">tool_call</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="o">**</span><span class="n">tool_call</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">}</span>
-
+        <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_tool_request_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool_call</span><span class="p">)</span>
+        <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_tool_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
+        <span class="n">function_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+            <span class="n">attributes</span><span class="o">=</span><span class="p">{</span>
+                <span class="o">**</span><span class="n">request_attributes</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">_get_common_attributes</span><span class="p">(),</span>
+                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">AGENTSCOPE_FUNCTION_NAME</span><span class="p">:</span> <span class="n">function_name</span><span class="p">,</span>
+            <span class="p">},</span>
             <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -681,11 +695,7 @@
                 <span class="k">return</span> <span class="n">_trace_async_generator_wrapper</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">span</span><span class="p">)</span>
 
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                    <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+                <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                 <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
                 <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
@@ -731,32 +741,21 @@
             <span class="p">)</span>
             <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-        <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
-
-        <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+        <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
         <span class="c1"># Prepare the attributes for the span</span>
-        <span class="n">agent_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
-        <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">SpanKind</span><span class="o">.</span><span class="n">AGENT</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                    <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
-                    <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">agent_name</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">}</span>
 
+        <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_agent_request_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_agent_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
+        <span class="n">function_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="c1"># Begin the llm call span</span>
         <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+            <span class="n">attributes</span><span class="o">=</span><span class="p">{</span>
+                <span class="o">**</span><span class="n">request_attributes</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">_get_common_attributes</span><span class="p">(),</span>
+                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">AGENTSCOPE_FUNCTION_NAME</span><span class="p">:</span> <span class="n">function_name</span><span class="p">,</span>
+            <span class="p">},</span>
             <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -764,20 +763,12 @@
                 <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
                 <span class="c1"># Set the output attribute</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                    <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span><span class="n">_get_agent_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">))</span>
+                <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                 <span class="k">return</span> <span class="n">res</span>
 
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                    <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                 <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">return</span> <span class="n">wrapper</span></div>
@@ -810,30 +801,24 @@
             <span class="p">)</span>
             <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-        <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
-
-        <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+        <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
         <span class="c1"># Prepare the attributes for the span</span>
-        <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">SpanKind</span><span class="o">.</span><span class="n">EMBEDDING</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                    <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">}</span>
+        <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_embedding_request_attributes</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span>
+            <span class="n">args</span><span class="p">,</span>
+            <span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_embedding_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
+        <span class="n">function_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
 
         <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+            <span class="n">attributes</span><span class="o">=</span><span class="p">{</span>
+                <span class="o">**</span><span class="n">request_attributes</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">_get_common_attributes</span><span class="p">(),</span>
+                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">AGENTSCOPE_FUNCTION_NAME</span><span class="p">:</span> <span class="n">function_name</span><span class="p">,</span>
+            <span class="p">},</span>
             <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -841,20 +826,12 @@
                 <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
                 <span class="c1"># Set the output attribute</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                    <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span><span class="n">_get_embedding_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">))</span>
+                <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                 <span class="k">return</span> <span class="n">res</span>
 
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                    <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                 <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">return</span> <span class="n">wrapper</span></div>
@@ -899,26 +876,23 @@
             <span class="p">)</span>
             <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-        <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
-
-        <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+        <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
         <span class="c1"># Prepare the attributes for the span</span>
-        <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">SpanKind</span><span class="o">.</span><span class="n">FORMATTER</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                    <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">({}),</span>
-        <span class="p">}</span>
-
+        <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_formatter_request_attributes</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span>
+            <span class="n">args</span><span class="p">,</span>
+            <span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_formatter_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
+        <span class="n">function_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
         <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-            <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+            <span class="n">attributes</span><span class="o">=</span><span class="p">{</span>
+                <span class="o">**</span><span class="n">request_attributes</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">_get_common_attributes</span><span class="p">(),</span>
+                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">AGENTSCOPE_FUNCTION_NAME</span><span class="p">:</span> <span class="n">function_name</span><span class="p">,</span>
+            <span class="p">},</span>
             <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -926,20 +900,12 @@
                 <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
                 <span class="c1"># Set the output attribute</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                    <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span><span class="n">_get_formatter_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">))</span>
+                <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                 <span class="k">return</span> <span class="n">res</span>
 
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                    <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                 <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">return</span> <span class="n">wrapper</span></div>
@@ -994,32 +960,20 @@
             <span class="p">)</span>
             <span class="k">return</span> <span class="k">await</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
 
-        <span class="kn">import</span><span class="w"> </span><span class="nn">opentelemetry</span>
-
-        <span class="n">tracer</span> <span class="o">=</span> <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+        <span class="n">tracer</span> <span class="o">=</span> <span class="n">_get_tracer</span><span class="p">()</span>
 
         <span class="c1"># Prepare the attributes for the span</span>
-        <span class="n">attributes</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">SPAN_KIND</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">SpanKind</span><span class="o">.</span><span class="n">LLM</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">PROJECT_RUN_ID</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">_config</span><span class="o">.</span><span class="n">run_id</span><span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">INPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;args&quot;</span><span class="p">:</span> <span class="n">args</span><span class="p">,</span>
-                    <span class="s2">&quot;kwargs&quot;</span><span class="p">:</span> <span class="n">kwargs</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-            <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">META</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span>
-                <span class="p">{</span>
-                    <span class="s2">&quot;model_name&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
-                    <span class="s2">&quot;stream&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">stream</span><span class="p">,</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">}</span>
-
+        <span class="n">request_attributes</span> <span class="o">=</span> <span class="n">_get_llm_request_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">kwargs</span><span class="p">)</span>
+        <span class="n">span_name</span> <span class="o">=</span> <span class="n">_get_llm_span_name</span><span class="p">(</span><span class="n">request_attributes</span><span class="p">)</span>
+        <span class="n">function_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.__call__&quot;</span>
         <span class="c1"># Begin the llm call span</span>
         <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">.__call__&quot;</span><span class="p">,</span>
-            <span class="n">attributes</span><span class="o">=</span><span class="n">attributes</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">span_name</span><span class="p">,</span>
+            <span class="n">attributes</span><span class="o">=</span><span class="p">{</span>
+                <span class="o">**</span><span class="n">request_attributes</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">_get_common_attributes</span><span class="p">(),</span>
+                <span class="n">SpanAttributes</span><span class="o">.</span><span class="n">AGENTSCOPE_FUNCTION_NAME</span><span class="p">:</span> <span class="n">function_name</span><span class="p">,</span>
+            <span class="p">},</span>
             <span class="n">end_on_exit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
         <span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
@@ -1031,20 +985,12 @@
                     <span class="k">return</span> <span class="n">_trace_async_generator_wrapper</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">span</span><span class="p">)</span>
 
                 <span class="c1"># non-generator result</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span>
-                    <span class="p">{</span><span class="n">SpanAttributes</span><span class="o">.</span><span class="n">OUTPUT</span><span class="p">:</span> <span class="n">_serialize_to_str</span><span class="p">(</span><span class="n">res</span><span class="p">)},</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span><span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">OK</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">span</span><span class="o">.</span><span class="n">set_attributes</span><span class="p">(</span><span class="n">_get_llm_response_attributes</span><span class="p">(</span><span class="n">res</span><span class="p">))</span>
+                <span class="n">_set_span_success_status</span><span class="p">(</span><span class="n">span</span><span class="p">)</span>
                 <span class="k">return</span> <span class="n">res</span>
 
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">set_status</span><span class="p">(</span>
-                    <span class="n">opentelemetry</span><span class="o">.</span><span class="n">trace</span><span class="o">.</span><span class="n">StatusCode</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span>
-                    <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
-                <span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">record_exception</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
-                <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+                <span class="n">_set_span_error_status</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
                 <span class="k">raise</span> <span class="n">e</span> <span class="kn">from</span><span class="w"> </span><span class="kc">None</span>
 
     <span class="k">return</span> <span class="n">async_wrapper</span></div>
