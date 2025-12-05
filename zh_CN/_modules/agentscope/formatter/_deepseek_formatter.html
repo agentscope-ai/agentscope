@@ -387,12 +387,15 @@
         <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
             <span class="n">content_blocks</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">reasoning_content_blocks</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[]</span>
             <span class="n">tool_calls</span> <span class="o">=</span> <span class="p">[]</span>
 
             <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">():</span>
                 <span class="n">typ</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;type&quot;</span><span class="p">)</span>
                 <span class="k">if</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;text&quot;</span><span class="p">:</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="o">**</span><span class="n">block</span><span class="p">})</span>
+                <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;thinking&quot;</span><span class="p">:</span>
+                    <span class="n">reasoning_content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="o">**</span><span class="n">block</span><span class="p">})</span>
 
                 <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;tool_use&quot;</span><span class="p">:</span>
                     <span class="n">tool_calls</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
@@ -430,10 +433,18 @@
             <span class="n">content_msg</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
                 <span class="n">content</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">content</span> <span class="ow">in</span> <span class="n">content_blocks</span>
             <span class="p">)</span>
+            <span class="n">reasoning_msg</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="n">reasoning</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;thinking&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">reasoning</span> <span class="ow">in</span> <span class="n">reasoning_content_blocks</span>
+            <span class="p">)</span>
+
             <span class="n">msg_deepseek</span> <span class="o">=</span> <span class="p">{</span>
                 <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="o">.</span><span class="n">role</span><span class="p">,</span>
                 <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">content_msg</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">,</span>
             <span class="p">}</span>
+
+            <span class="k">if</span> <span class="n">reasoning_msg</span><span class="p">:</span>
+                <span class="n">msg_deepseek</span><span class="p">[</span><span class="s2">&quot;reasoning_content&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">reasoning_msg</span>
 
             <span class="k">if</span> <span class="n">tool_calls</span><span class="p">:</span>
                 <span class="n">msg_deepseek</span><span class="p">[</span><span class="s2">&quot;tool_calls&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tool_calls</span>
