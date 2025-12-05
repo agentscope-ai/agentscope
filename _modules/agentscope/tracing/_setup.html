@@ -331,6 +331,12 @@
           <h1>Source code for agentscope.tracing._setup</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="sd">&quot;&quot;&quot;The tracing interface class in agentscope.&quot;&quot;&quot;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tracer</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">Tracer</span> <span class="o">=</span> <span class="s2">&quot;Tracer&quot;</span>
 
 
 <div class="viewcode-block" id="setup_tracing">
@@ -343,12 +349,12 @@
 <span class="sd">            The endpoint URL for the tracing exporter.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="c1"># Lazy import</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracerProvider</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace.export</span><span class="w"> </span><span class="kn">import</span> <span class="n">BatchSpanProcessor</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.exporter.otlp.proto.http.trace_exporter</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
         <span class="n">OTLPSpanExporter</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
 
     <span class="n">tracer_provider</span> <span class="o">=</span> <span class="n">TracerProvider</span><span class="p">()</span>
     <span class="n">exporter</span> <span class="o">=</span> <span class="n">OTLPSpanExporter</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">endpoint</span><span class="p">)</span>
@@ -356,6 +362,17 @@
     <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
     <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span></div>
 
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_tracer</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Tracer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get the tracer</span>
+<span class="sd">    Returns:</span>
+<span class="sd">        `Tracer`: The tracer with the name &quot;agentscope&quot; and version.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.._version</span><span class="w"> </span><span class="kn">import</span> <span class="n">__version__</span>
+
+    <span class="k">return</span> <span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="s2">&quot;agentscope&quot;</span><span class="p">,</span> <span class="n">__version__</span><span class="p">)</span>
 </pre></div>
         </article>
       </div>
