@@ -109,7 +109,7 @@ AgentScope v1.0 新功能概览:
 |            | 允许智能体自主控制长期记忆                          |                                                                               |
 |            | 支持智能体钩子函数                              |                                                                               |
 | tracing    | 支持基于 OpenTelemetry 的 LLM、工具、智能体和格式化器追踪 | [Tracing](https://doc.agentscope.io/zh_CN/tutorial/task_tracing.html)         |
-|            | 支持连接到第三方追踪平台（如Arize-Phoenix、Langfuse）  |                                                                               |
+|            | 支持连接到第三方追踪平台（如阿里云云监控、Arize-Phoenix、Langfuse）  |                                                                               |
 | memory     | 支持长期记忆                                 | [Memory](https://doc.agentscope.io/zh_CN/tutorial/task_long_term_memory.html) |
 | session    | 提供会话/应用级状态管理                           | [Session](https://doc.agentscope.io/zh_CN/tutorial/task_state.html)           |
 | evaluation | 提供分布式和并行评估                             | [Evaluation](https://doc.agentscope.io/zh_CN/tutorial/task_eval.html)         |
