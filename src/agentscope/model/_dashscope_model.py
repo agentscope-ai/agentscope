@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The dashscope API model classes."""
+import asyncio
 import collections
 import warnings
 from datetime import datetime
@@ -56,6 +57,8 @@ class DashScopeChatModel(ChatModelBase):
         enable_thinking: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
+        max_retries: int = 3,
+        retry_interval: float = 1.0,
         **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
@@ -79,6 +82,11 @@ class DashScopeChatModel(ChatModelBase):
             base_http_api_url (`str | None`, optional):
                 The base URL for DashScope API requests. If not provided,
                 the default base URL from the DashScope SDK will be used.
+            max_retries (`int`, default `3`):
+                Maximum number of retry attempts when API calls fail.
+            retry_interval (`float`, default `1.0`):
+                Initial retry interval in seconds. The interval will increase
+                exponentially with each retry attempt.
             **_kwargs (`Any`):
                 Additional keyword arguments.
         """
@@ -94,6 +102,8 @@ class DashScopeChatModel(ChatModelBase):
         self.api_key = api_key
         self.enable_thinking = enable_thinking
         self.generate_kwargs = generate_kwargs or {}
+        self.max_retries = max_retries
+        self.retry_interval = retry_interval
 
         if base_http_api_url is not None:
             import dashscope
@@ -149,6 +159,199 @@ class DashScopeChatModel(ChatModelBase):
                 refer to `DashScope documentation
                 <https://help.aliyun.com/zh/dashscope/developer-reference/api-details>`_
                 for more detailed arguments.
+        """
+        # For streaming responses, we need to handle retry in the generator
+        if self.stream:
+            return self._call_api_with_retry_stream(
+                messages,
+                tools,
+                tool_choice,
+                structured_model,
+                **kwargs,
+            )
+
+        # For non-streaming responses, retry logic is straightforward
+        return await self._call_api_with_retry_non_stream(
+            messages,
+            tools,
+            tool_choice,
+            structured_model,
+            **kwargs,
+        )
+
+    async def _call_api_with_retry_non_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Call the DashScope API with retry logic for non-streaming responses.
+
+        Args:
+            messages (`list[dict[str, Any]]`):
+                A list of dictionaries, where `role` and `content` fields are
+                required.
+            tools (`list[dict] | None`, default `None`):
+                The tools JSON schemas that the model can use.
+            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+             |  None`,  default `None`):
+                Controls which (if any) tool is called by the model.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+            **kwargs (`Any`):
+                The keyword arguments for DashScope chat completions API.
+
+        Returns:
+            ChatResponse:
+                The response from the DashScope API.
+        """
+        last_exception: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                result: ChatResponse = await self._call_api(
+                    messages,
+                    tools,
+                    tool_choice,
+                    structured_model,
+                    **kwargs,
+                )
+                return result
+            except Exception as e:
+                last_exception = e
+                if not await self._handle_retry(attempt, e):
+                    break
+
+        # If all retries failed, raise the last exception
+        assert last_exception is not None
+        raise last_exception
+
+    async def _call_api_with_retry_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Call the DashScope API with retry logic for streaming responses.
+
+        Args:
+            messages (`list[dict[str, Any]]`):
+                A list of dictionaries, where `role` and `content` fields are
+                required.
+            tools (`list[dict] | None`, default `None`):
+                The tools JSON schemas that the model can use.
+            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+             |  None`,  default `None`):
+                Controls which (if any) tool is called by the model.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+            **kwargs (`Any`):
+                The keyword arguments for DashScope chat completions API.
+
+        Yields:
+            ChatResponse:
+                The streaming response chunks from the DashScope API.
+        """
+        last_exception: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Get the generator from _call_api
+                generator = await self._call_api(
+                    messages,
+                    tools,
+                    tool_choice,
+                    structured_model,
+                    **kwargs,
+                )
+
+                # Iterate through the generator and yield chunks
+                async for chunk in generator:
+                    yield chunk
+
+                # If we successfully iterated through all chunks, return
+                return
+
+            except Exception as e:
+                last_exception = e
+                if not await self._handle_retry(attempt, e):
+                    break
+
+        # If all retries failed, raise the last exception
+        assert last_exception is not None
+        raise last_exception
+
+    async def _handle_retry(self, attempt: int, exception: Exception) -> bool:
+        """Handle retry logic: log and wait if should retry.
+
+        Args:
+            attempt (`int`):
+                The current attempt number (0-indexed).
+            exception (`Exception`):
+                The exception that occurred.
+
+        Returns:
+            `bool`:
+                True if we should retry, False otherwise.
+        """
+        if attempt >= self.max_retries:
+            logger.error(
+                "Failed to call DashScope API after %d attempts: %s",
+                self.max_retries + 1,
+                exception,
+            )
+            return False
+
+        wait_time = self.retry_interval * (2**attempt)
+        logger.warning(
+            "Failed to call DashScope API (attempt %d/%d): %s. "
+            "Retrying in %.2f seconds...",
+            attempt + 1,
+            self.max_retries + 1,
+            exception,
+            wait_time,
+        )
+        await asyncio.sleep(wait_time)
+        return True
+
+    async def _call_api(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        tool_choice: Literal["auto", "none", "any", "required"]
+        | str
+        | None = None,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        """Call the DashScope API with the given arguments.
+
+        Args:
+            messages (`list[dict[str, Any]]`):
+                A list of dictionaries, where `role` and `content` fields are
+                required.
+            tools (`list[dict] | None`, default `None`):
+                The tools JSON schemas that the model can use.
+            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+             |  None`,  default `None`):
+                Controls which (if any) tool is called by the model.
+            structured_model (`Type[BaseModel] | None`, default `None`):
+                A Pydantic BaseModel class that defines the expected structure
+                for the model's output.
+            **kwargs (`Any`):
+                The keyword arguments for DashScope chat completions API.
+
+        Returns:
+            ChatResponse | AsyncGenerator[ChatResponse, None]:
+                The response from the DashScope API.
         """
         import dashscope
 
