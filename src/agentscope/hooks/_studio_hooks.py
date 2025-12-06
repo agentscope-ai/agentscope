@@ -32,8 +32,8 @@ def as_studio_forward_message_pre_print_hook(
                 json={
                     "runId": run_id,
                     "replyId": reply_id,
-                    "name": getattr(self, "name", msg.name),
-                    "role": "user"
+                    "replyName": getattr(self, "name", msg.name),
+                    "replyRole": "user"
                     if isinstance(self, UserAgent)
                     else "assistant",
                     "msg": message_data,

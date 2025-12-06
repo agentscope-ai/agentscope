@@ -222,11 +222,15 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         # and the thinking blocks
         thinking_and_text_to_print = []
 
-        for block in msg.get_content_blocks():
-            if block["type"] == "audio":
-                self._process_audio_block(msg.id, block)
+        # Play audio block if exists
+        if isinstance(msg.speech, list):
+            for audio_block in msg.speech:
+                self._process_audio_block(msg.id, audio_block)
+        elif isinstance(msg.speech, dict):
+            self._process_audio_block(msg.id, msg.speech)
 
-            elif block["type"] == "text":
+        for block in msg.get_content_blocks():
+            if block["type"] == "text":
                 self._print_text_block(
                     msg.id,
                     name_prefix=msg.name,
@@ -392,18 +396,28 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
     def _print_last_block(
         self,
-        block: ToolUseBlock | ToolResultBlock | ImageBlock | VideoBlock,
+        block: ToolUseBlock
+        | ToolResultBlock
+        | ImageBlock
+        | VideoBlock
+        | AudioBlock,
         msg: Msg,
     ) -> None:
         """Process and print the last content block, and the block type
-        is not audio, text, or thinking.
+        is not text, or thinking.
 
         Args:
-            block (`ToolUseBlock | ToolResultBlock | ImageBlock | VideoBlock`):
+            block (`ToolUseBlock | ToolResultBlock | ImageBlock | VideoBlock \
+            | AudioBlock`):
                 The content block to be printed
             msg (`Msg`):
                 The message object
         """
+        # TODO: We should consider how to handle the multimodal blocks in the
+        #  terminal, since the base64 data may be too long to display.
+        if block.get("type") in ["image", "video", "audio"]:
+            return
+
         text_prefix = self._stream_prefix.get(msg.id, {}).get("text", "")
 
         if text_prefix:
