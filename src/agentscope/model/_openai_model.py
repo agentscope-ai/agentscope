@@ -73,6 +73,7 @@ class OpenAIChatModel(ChatModelBase):
         stream: bool = True,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         organization: str = None,
+        client_type: Literal["openai", "azure"] = "openai",
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
@@ -96,6 +97,8 @@ class OpenAIChatModel(ChatModelBase):
             organization (`str`, default `None`):
                 The organization ID for OpenAI API. If not specified, it will
                 be read from the environment variable `OPENAI_ORGANIZATION`.
+            client_type (`Literal["openai", "azure"]`, default `openai`):
+                Selects which OpenAI-compatible client to initialize.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the OpenAI client.
@@ -134,11 +137,23 @@ class OpenAIChatModel(ChatModelBase):
 
         import openai
 
-        self.client = openai.AsyncClient(
-            api_key=api_key,
-            organization=organization,
-            **(client_kwargs or {}),
-        )
+        if client_type not in ("openai", "azure"):
+            raise ValueError(
+                "Invalid client_type. Supported values: 'openai', 'azure'.",
+            )
+
+        if client_type == "azure":
+            self.client = openai.AsyncAzureOpenAI(
+                api_key=api_key,
+                organization=organization,
+                **(client_kwargs or {}),
+            )
+        else:
+            self.client = openai.AsyncClient(
+                api_key=api_key,
+                organization=organization,
+                **(client_kwargs or {}),
+            )
 
         self.reasoning_effort = reasoning_effort
         self.generate_kwargs = generate_kwargs or {}
