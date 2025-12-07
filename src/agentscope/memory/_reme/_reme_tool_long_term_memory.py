@@ -5,8 +5,6 @@ This module provides a tool memory implementation that integrates
 with the ReMe library to record tool execution results and retrieve
 tool usage guidelines.
 
-Requirements:
-    Python 3.12 or greater is required to use ReMe.
 """
 from typing import Any
 
@@ -22,8 +20,6 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     Tool memory records tool execution results and generates usage
     guidelines from the execution history.
 
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
     """
 
     async def record_to_memory(
@@ -179,6 +175,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 5,
         **kwargs: Any,
     ) -> ToolResponse:
         """Retrieve usage guidelines and best practices for tools.
@@ -213,6 +210,10 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 List of tool names to retrieve guidelines for. Use the
                 exact tool names. Examples: ["search"],
                 ["database_query", "cache_get"], ["api_call"].
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 5.
             **kwargs (`Any`):
                 Additional keyword arguments for the retrieval operation.
 
@@ -244,6 +245,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
                 tool_names=tool_names,
+                top_k=limit,
                 **kwargs,
             )
 
@@ -472,6 +474,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
     async def retrieve(
         self,
         msg: Msg | list[Msg] | None,
+        limit: int = 5,
         **kwargs: Any,
     ) -> str:
         """Retrieve tool guidelines from memory.
@@ -482,6 +485,13 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
             msg (`Msg | list[Msg] | None`):
                 The message containing tool names or queries to
                 retrieve guidelines for.
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. If the
+                message is a list of messages, the limit applies to each
+                message. If the message is a single message, the limit is the
+                total number of memories to retrieve for that message. Defaults
+                to 5.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -521,6 +531,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
                 name="retrieve_tool_memory",
                 workspace_id=self.workspace_id,
                 tool_names=tool_names,
+                top_k=limit,
                 **kwargs,
             )
 

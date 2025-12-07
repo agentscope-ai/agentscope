@@ -2,7 +2,7 @@
 """The plan notebook class, used to manage the plan, providing hints and
 tool functions to the agent."""
 from collections import OrderedDict
-from typing import Callable, Literal, Coroutine, Any
+from typing import Callable, Literal, Coroutine, Any, Awaitable
 
 from ._in_memory_storage import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan
@@ -173,7 +173,11 @@ class PlanNotebook(StateModule):
     """The plan notebook to manage the plan, providing hints and plan related
     tool functions to the agent."""
 
-    _plan_change_hooks: dict[str, Callable[["PlanNotebook", Plan], None]]
+    _plan_change_hooks: dict[
+        str,
+        Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
+    ]
     """The hooks that will be triggered when the plan is changed. For example,
     used to display the plan on the frontend."""
 
@@ -856,7 +860,8 @@ class PlanNotebook(StateModule):
     def register_plan_change_hook(
         self,
         hook_name: str,
-        hook: Callable[["PlanNotebook", Plan], None],
+        hook: Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
     ) -> None:
         """Register a plan hook that will be triggered when the plan is
         changed.
@@ -864,7 +869,8 @@ class PlanNotebook(StateModule):
         Args:
             hook_name (`str`):
                 The name of the hook, should be unique.
-            hook (`Callable[[Plan], None]`):
+            hook (`Callable[["PlanNotebook", Plan], None] | \
+            Callable[["PlanNotebook", Plan], Awaitable[None]]):
                 The hook function, which takes the current plan as input and
                 returns nothing.
         """

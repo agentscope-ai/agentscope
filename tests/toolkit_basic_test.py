@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# mypy: disable-error-code="index"
 """Test toolkit module in agentscope."""
 import asyncio
 import time
@@ -70,6 +71,21 @@ def sync_func(
     )
 
 
+class TestCls:
+    """A test class for testing."""
+
+    def sync_func(self) -> ToolResponse:
+        """A duplicate sync function for testing."""
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text="test",
+                ),
+            ],
+        )
+
+
 async def async_generator_func(
     raise_cancel: bool,
 ) -> AsyncGenerator[ToolResponse, None]:
@@ -111,12 +127,209 @@ class StructuredModel(BaseModel):
     arg3: int = Field(description="Test argument 3.")
 
 
-class ToolkitTest(IsolatedAsyncioTestCase):
-    """Unittest for the toolkit module."""
+class MyBaseModel1(BaseModel):
+    """A base model for testing nested $defs merging."""
+
+    c: int = Field(description="Field c")
+
+
+class MyBaseModel2(BaseModel):
+    """A base model that contains nested MyBaseModel1."""
+
+    b: list[MyBaseModel1] = Field(description="List of MyBaseModel1")
+
+
+class ExtendedModelReusingBaseModel(BaseModel):
+    """Extended model that reuses the same BaseModel from original function."""
+
+    another_model: MyBaseModel2 = Field(description="Reusing MyBaseModel2")
+    extra_field: str = Field(description="Extra field")
+
+
+class ToolkitBasicTest(IsolatedAsyncioTestCase):
+    """Basic unittests for the toolkit module."""
 
     async def asyncSetUp(self) -> None:
         """Set up the test environment before each test."""
         self.toolkit = Toolkit()
+
+        self.sync_func_schema = {
+            "type": "function",
+            "function": {
+                "name": "sync_func",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "description": "Test argument 1.",
+                            "type": "integer",
+                        },
+                        "arg2": {
+                            "anyOf": [
+                                {
+                                    "items": {
+                                        "anyOf": [
+                                            {"type": "string"},
+                                            {"type": "integer"},
+                                        ],
+                                    },
+                                    "type": "array",
+                                },
+                                {"type": "null"},
+                            ],
+                            "default": None,
+                            "description": "Test argument 2.",
+                        },
+                    },
+                    "required": ["arg1"],
+                    "type": "object",
+                },
+                "description": "A sync function for testing.\n"
+                "Long description.",
+            },
+        }
+
+    async def test_duplicate_tool_registration(self) -> None:
+        """Test duplicate tool function registration."""
+        tool_call = ToolUseBlock(
+            type="tool_use",
+            id="123",
+            name="sync_func",
+            input={
+                "arg1": 55,
+            },
+        )
+
+        # Add a function
+        self.toolkit.register_tool_function(
+            sync_func,
+        )
+        self.assertListEqual(
+            [self.sync_func_schema],
+            self.toolkit.get_json_schemas(),
+        )
+        async for chunk in await self.toolkit.call_tool_function(tool_call):
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="arg1: 55, arg2: None",
+                    ),
+                ],
+            )
+
+        test = TestCls()
+
+        # Try to add the same function with raise strategy
+        with self.assertRaises(ValueError):
+            self.toolkit.register_tool_function(test.sync_func)
+
+        # Try to add the same function with skip strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="skip",
+        )
+        self.assertListEqual(
+            [self.sync_func_schema],
+            self.toolkit.get_json_schemas(),
+        )
+
+        # Try to add the same function with rename strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="rename",
+        )
+        new_func_name = list(self.toolkit.tools.keys())[1]
+        new_func_schema = {
+            "type": "function",
+            "function": {
+                "name": new_func_name,
+                "parameters": {
+                    "properties": {},
+                    "type": "object",
+                },
+                "description": "A duplicate sync function for testing.",
+            },
+        }
+        self.assertListEqual(
+            [
+                self.sync_func_schema,
+                new_func_schema,
+            ],
+            self.toolkit.get_json_schemas(),
+        )
+        self.assertTrue(new_func_name.startswith("sync_func_"))
+        res = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                type="tool_use",
+                id="123",
+                name=new_func_name,
+                input={},
+            ),
+        )
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="test",
+                    ),
+                ],
+            )
+        res = await self.toolkit.call_tool_function(tool_call)
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="arg1: 55, arg2: None",
+                    ),
+                ],
+            )
+
+        # Try to add the same function with override strategy
+        self.toolkit.register_tool_function(
+            test.sync_func,
+            namesake_strategy="override",
+        )
+        self.assertListEqual(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "sync_func",
+                        "parameters": {
+                            "properties": {},
+                            "type": "object",
+                        },
+                        "description": "A duplicate sync function "
+                        "for testing.",
+                    },
+                },
+                new_func_schema,
+            ],
+            self.toolkit.get_json_schemas(),
+        )
+        res = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                type="tool_use",
+                id="123",
+                name="sync_func",
+                input={},
+            ),
+        )
+        async for chunk in res:
+            self.assertListEqual(
+                chunk.content,
+                [
+                    TextBlock(
+                        type="text",
+                        text="test",
+                    ),
+                ],
+            )
 
     async def test_basic_functionalities(self) -> None:
         """Test sync function:
@@ -129,44 +342,11 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             tool_func=sync_func,
             preset_kwargs={"arg1": 55},
         )
+        sync_func_schema = deepcopy(self.sync_func_schema)
+        sync_func_schema["function"]["parameters"]["properties"].pop("arg1")
+        sync_func_schema["function"]["parameters"].pop("required")
         self.assertListEqual(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {
-                                                        "type": "string",
-                                                    },
-                                                    {
-                                                        "type": "integer",
-                                                    },
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {
-                                            "type": "null",
-                                        },
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [sync_func_schema],
             self.toolkit.get_json_schemas(),
         )
 
@@ -215,7 +395,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                                 "arg3",
                             ],
                         },
-                        "description": "A sync function for testing.\n\n"
+                        "description": "A sync function for testing.\n"
                         "Long description.",
                     },
                 },
@@ -225,43 +405,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 
         self.toolkit.set_extended_model("sync_func", None)
         self.assertListEqual(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {
-                                                        "type": "string",
-                                                    },
-                                                    {
-                                                        "type": "integer",
-                                                    },
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {
-                                            "type": "null",
-                                        },
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [sync_func_schema],
             self.toolkit.get_json_schemas(),
         )
 
@@ -286,6 +430,94 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                 ),
                 chunk,
             )
+
+    async def test_extended_model_reusing_same_base_model(self) -> None:
+        """Test extended model reusing the same BaseModel from original
+        function."""
+
+        def func_with_nested_model(a: MyBaseModel2) -> ToolResponse:
+            """Function with nested BaseModel parameter."""
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"a: {a}",
+                    ),
+                ],
+            )
+
+        self.toolkit.register_tool_function(func_with_nested_model)
+
+        # Set extended model that reuses the same MyBaseModel2
+        self.toolkit.set_extended_model(
+            "func_with_nested_model",
+            ExtendedModelReusingBaseModel,
+        )
+
+        # Get and verify the schema - should not raise any conflicts
+        schemas = self.toolkit.get_json_schemas()
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "func_with_nested_model",
+                        "parameters": {
+                            "$defs": {
+                                "MyBaseModel1": {
+                                    "description": "A base model for testing"
+                                    " nested $defs merging.",
+                                    "properties": {
+                                        "c": {
+                                            "description": "Field c",
+                                            "title": "C",
+                                            "type": "integer",
+                                        },
+                                    },
+                                    "required": ["c"],
+                                    "title": "MyBaseModel1",
+                                    "type": "object",
+                                },
+                                "MyBaseModel2": {
+                                    "description": "A base model that contains"
+                                    " nested MyBaseModel1.",
+                                    "properties": {
+                                        "b": {
+                                            "description": "List of "
+                                            "MyBaseModel1",
+                                            "items": {
+                                                "$ref": "#/$defs/MyBaseModel1",
+                                            },
+                                            "title": "B",
+                                            "type": "array",
+                                        },
+                                    },
+                                    "required": ["b"],
+                                    "title": "MyBaseModel2",
+                                    "type": "object",
+                                },
+                            },
+                            "properties": {
+                                "a": {"$ref": "#/$defs/MyBaseModel2"},
+                                "another_model": {
+                                    "$ref": "#/$defs/MyBaseModel2",
+                                    "description": "Reusing MyBaseModel2",
+                                },
+                                "extra_field": {
+                                    "description": "Extra field",
+                                    "type": "string",
+                                },
+                            },
+                            "required": ["a", "another_model", "extra_field"],
+                            "type": "object",
+                        },
+                        "description": "Function with nested BaseModel "
+                        "parameter.",
+                    },
+                },
+            ],
+        )
 
     async def test_detailed_arguments(self) -> None:
         """Verify the arguments in `register_tool_function`."""
@@ -317,7 +549,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                             "properties": {},
                             "type": "object",
                         },
-                        "description": "A test function.\n\n"
+                        "description": "A test function.\n"
                         "Note this function is test.",
                     },
                 },
@@ -577,46 +809,11 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             [],
         )
 
-        # Active the tool group
+        # Activate the tool group
         self.toolkit.update_tool_groups(["my_group"], True)
         self.assertListEqual(
             self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "sync_func",
-                        "parameters": {
-                            "properties": {
-                                "arg1": {
-                                    "description": "Test argument 1.",
-                                    "type": "integer",
-                                },
-                                "arg2": {
-                                    "anyOf": [
-                                        {
-                                            "items": {
-                                                "anyOf": [
-                                                    {"type": "string"},
-                                                    {"type": "integer"},
-                                                ],
-                                            },
-                                            "type": "array",
-                                        },
-                                        {"type": "null"},
-                                    ],
-                                    "default": None,
-                                    "description": "Test argument 2.",
-                                },
-                            },
-                            "required": ["arg1"],
-                            "type": "object",
-                        },
-                        "description": "A sync function for testing.\n\n"
-                        "Long description.",
-                    },
-                },
-            ],
+            [self.sync_func_schema],
         )
 
         # Deactivate the tool group
@@ -775,113 +972,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             self.assertEqual(
                 chunk.content[0]["text"],
                 "Received: a=1, b=test, c=[1, 2, 3], d=xyz",
-            )
-
-    async def test_meta_tool(self) -> None:
-        """Test the meta tool."""
-        self.toolkit.register_tool_function(
-            self.toolkit.reset_equipped_tools,
-        )
-        self.assertListEqual(
-            self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "reset_equipped_tools",
-                        "parameters": {
-                            "properties": {},
-                            "type": "object",
-                        },
-                        "description": (
-                            "Choose appropriate tools to equip yourself "
-                            "with, so that you can\n\n"
-                            "finish your task. Each argument in this function "
-                            "represents a group\n"
-                            "of related tools, and the value indicates "
-                            "whether to activate the\n"
-                            "group or not. Besides, the tool response of "
-                            "this function will\n"
-                            "contain the precaution notes for using them, "
-                            "which you\n"
-                            "**MUST pay attention to and follow**. You can "
-                            "also reuse this function\n"
-                            "to check the notes of the tool groups.\n\n"
-                            "Note this function will `reset` the tools, so "
-                            "that the original tools\n"
-                            "will be removed first."
-                        ),
-                    },
-                },
-            ],
-        )
-        self.toolkit.create_tool_group(
-            "browser_use",
-            "The browser-use related tools.",
-            notes="""## About Browser-Use Tools
-1. You must xxx
-2. First click xxx
-""",
-        )
-        self.assertListEqual(
-            self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "reset_equipped_tools",
-                        "parameters": {
-                            "properties": {
-                                "browser_use": {
-                                    "default": False,
-                                    "description": "The browser-use related "
-                                    "tools.",
-                                    "type": "boolean",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": (
-                            "Choose appropriate tools to equip yourself "
-                            "with, so that you can\n\n"
-                            "finish your task. Each argument in this function "
-                            "represents a group\n"
-                            "of related tools, and the value indicates "
-                            "whether to activate the\n"
-                            "group or not. Besides, the tool response of "
-                            "this function will\n"
-                            "contain the precaution notes for using them, "
-                            "which you\n"
-                            "**MUST pay attention to and follow**. You can "
-                            "also reuse this function\n"
-                            "to check the notes of the tool groups.\n\n"
-                            "Note this function will `reset` the tools, so "
-                            "that the original tools\n"
-                            "will be removed first."
-                        ),
-                    },
-                },
-            ],
-        )
-        res = await self.toolkit.call_tool_function(
-            ToolUseBlock(
-                type="tool_use",
-                id="123",
-                name="reset_equipped_tools",
-                input={"browser_use": True},
-            ),
-        )
-
-        async for chunk in res:
-            self.assertEqual(
-                chunk.content[0]["text"],
-                "Active tool groups successfully: ['browser_use']. "
-                "You MUST follow these notes to use the tools:\n"
-                "<notes>## About browser_use Tools\n"
-                "## About Browser-Use Tools\n"
-                "1. You must xxx\n"
-                "2. First click xxx\n"
-                "</notes>",
             )
 
     async def asyncTearDown(self) -> None:

@@ -5,6 +5,7 @@ This module provides a long-term memory implementation that integrates
 with the mem0 library to provide persistent memory storage and retrieval
 capabilities for AgentScope agents.
 """
+import asyncio
 import json
 from typing import Any, TYPE_CHECKING
 from importlib import metadata
@@ -391,12 +392,15 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         Args:
             keywords (`list[str]`):
-                The keywords to search for in the memory, which should be
-                specific and concise, e.g. the person's name, the date, the
-                location, etc.
+                Short, targeted search phrases (for example, a person's name,
+                a specific date, a location, or a phrase describing something
+                you want to retrieve from the memory). Each keyword is issued
+                as an independent query against the memory store.
             limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
-
+                The maximum number of memories to retrieve per search,
+                defaults to 5.
+                i.e.,the number of memories to retrieve for
+                each keyword.
         Returns:
             `ToolResponse`:
                 A ToolResponse containing the retrieved memories as JSON text.
@@ -404,18 +408,26 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         try:
             results = []
-            for keyword in keywords:
-                result = await self.long_term_working_memory.search(
+            search_coroutines = [
+                self.long_term_working_memory.search(
                     query=keyword,
                     agent_id=self.agent_id,
                     user_id=self.user_id,
                     run_id=self.run_id,
                     limit=limit,
                 )
+                for keyword in keywords
+            ]
+            search_results = await asyncio.gather(*search_coroutines)
+            for result in search_results:
                 if result:
                     results.extend(
                         [item["memory"] for item in result["results"]],
                     )
+                    if "relations" in result.keys():
+                        results.extend(
+                            self._format_relations(result),
+                        )
 
             return ToolResponse(
                 content=[
@@ -482,6 +494,28 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             **kwargs,
         )
 
+    def _format_relations(self, result: dict) -> list:
+        """Format relations from search result.
+
+        Args:
+            result (`dict`):
+                The result from the memory search operation.
+
+        Returns:
+            `list`:
+                The formatted relations.
+                Each relation is a string in the format of:
+                "{source} -- {relationship} -- {destination}"
+        """
+        if "relations" not in result:
+            return []
+        return [
+            f"{relation['source']} -- "
+            f"{relation['relationship']} -- "
+            f"{relation['destination']}"
+            for relation in result["relations"]
+        ]
+
     async def _mem0_record(
         self,
         messages: str | list[dict],
@@ -537,7 +571,12 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
             limit (`int`, optional):
-                The maximum number of memories to retrieve per search.
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for the message. if the
+                message is a list of messages, the limit will be applied to
+                each message. If the message is a single message, then the
+                limit is the total number of memories to retrieve for the
+                message. Defaults to 5.
             **kwargs (`Any`):
                 Additional keyword arguments.
 
@@ -560,15 +599,25 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         ]
 
         results = []
-        for item in msg_strs:
-            result = await self.long_term_working_memory.search(
+        search_coroutines = [
+            self.long_term_working_memory.search(
                 query=item,
                 agent_id=self.agent_id,
                 user_id=self.user_id,
                 run_id=self.run_id,
                 limit=limit,
             )
+            for item in msg_strs
+        ]
+        search_results = await asyncio.gather(*search_coroutines)
+        for result in search_results:
             if result:
-                results.extend([item["memory"] for item in result["results"]])
+                results.extend(
+                    [memory["memory"] for memory in result["results"]],
+                )
+                if "relations" in result.keys():
+                    results.extend(
+                        self._format_relations(result),
+                    )
 
         return "\n".join(results)

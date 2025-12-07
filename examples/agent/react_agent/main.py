@@ -18,6 +18,7 @@ from agentscope.tool import (
 async def main() -> None:
     """The main entry point for the ReAct agent example."""
     toolkit = Toolkit()
+
     toolkit.register_tool_function(execute_shell_command)
     toolkit.register_tool_function(execute_python_code)
     toolkit.register_tool_function(view_text_file)
@@ -35,6 +36,7 @@ async def main() -> None:
         toolkit=toolkit,
         memory=InMemoryMemory(),
     )
+
     user = UserAgent("User")
 
     msg = None

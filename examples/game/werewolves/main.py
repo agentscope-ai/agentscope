@@ -66,7 +66,7 @@ Your target is to win the game with your teammates as much as possible.
 - This is a TEXT-based game, so DO NOT use or make up any non-textual information.
 - Always critically reflect on whether your evidence exist, and avoid making assumptions.
 - Your response should be specific and concise, provide clear reason and avoid unnecessary elaboration.
-- Generate your one-line response by using the `generate_response` function.
+- Generate a one-line response.
 - Don't repeat the others' speeches.""",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),

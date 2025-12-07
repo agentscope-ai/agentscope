@@ -15,6 +15,7 @@ from agentscope.message import (
     TextBlock,
     ImageBlock,
     AudioBlock,
+    VideoBlock,
     URLSource,
     Base64Source,
 )
@@ -31,6 +32,9 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
 
         self.mock_audio_path = (
             "/var/folders/gf/krg8x_ws409cpw_46b2s6rjc0000gn/T/tmpfymnv2w9.wav"
+        )
+        self.mock_video_path = (
+            "/var/folders/gf/krg8x_ws409cpw_46b2s6rjc0000gn/T/tmpfymnv2w9.mp4"
         )
 
         self.msgs_system = [
@@ -130,6 +134,14 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                                     type="base64",
                                     media_type="audio/wav",
                                     data="ZmFrZSBhdWRpbyBjb250ZW50",
+                                ),
+                            ),
+                            VideoBlock(
+                                type="video",
+                                source=Base64Source(
+                                    type="base64",
+                                    media_type="video/mp4",
+                                    data="ZmFrZSB2aWRlbyBjb250ZW50",
                                 ),
                             ),
                         ],
@@ -263,7 +275,9 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 "content": "- The capital of Japan is Tokyo.\n"
                 "- The returned image can be found at: ./image.png"
                 "\n- The returned audio can be found at: "
-                f"{self.mock_audio_path}",
+                f"{self.mock_audio_path}"
+                f"\n- The returned video can be found at: "
+                f"{self.mock_video_path}",
                 "name": "get_capital",
             },
             {
@@ -327,7 +341,9 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 "content": "- The capital of Japan is Tokyo.\n- The returned"
                 " image can be found at: ./image.png\n- The"
                 " returned audio can be found at: "
-                f"{self.mock_audio_path}",
+                f"{self.mock_audio_path}\n"
+                f"- The returned video can be found at: "
+                f"{self.mock_video_path}",
                 "name": "get_capital",
             },
             {
@@ -366,7 +382,9 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 "content": "- The capital of Japan is Tokyo.\n- The returned"
                 " image can be found at: ./image.png\n- The"
                 " returned audio can be found at: "
-                f"{self.mock_audio_path}",
+                f"{self.mock_audio_path}\n"
+                f"- The returned video can be found at: "
+                f"{self.mock_video_path}",
                 "name": "get_capital",
             },
             {
@@ -432,7 +450,9 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                 "tool_call_id": "1",
                 "content": "- The capital of Japan is Tokyo.\n- The returned"
                 " image can be found at: ./image.png\n- The returned audio can"
-                f" be found at: {self.mock_audio_path}",
+                f" be found at: {self.mock_audio_path}"
+                f"\n- The returned video can be found at: "
+                f"{self.mock_video_path}",
                 "name": "get_capital",
             },
             {
@@ -475,13 +495,36 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             },
         ]
 
+    def _mock_save_base64_data(
+        self,
+        media_type: str,
+        _base64_data: str,
+    ) -> str:
+        """Mock function for _save_base64_data that returns different paths
+        based on media_type.
+
+        Args:
+            media_type: The MIME type of the media (e.g., "audio/wav",
+            "video/mp4")
+            _base64_data: The base64 encoded data (not used in mock)
+
+        Returns:
+            The mock file path for the media type
+        """
+        if "audio" in media_type:
+            return self.mock_audio_path
+        elif "video" in media_type:
+            return self.mock_video_path
+        else:
+            return self.mock_audio_path  # fallback
+
     @patch("agentscope.formatter._formatter_base._save_base64_data")
     async def test_chat_formatter(
         self,
         mock_save_base64_data: MagicMock,
     ) -> None:
         """Test the chat formatter."""
-        mock_save_base64_data.return_value = self.mock_audio_path
+        mock_save_base64_data.side_effect = self._mock_save_base64_data
 
         formatter = DashScopeChatFormatter()
 
@@ -524,12 +567,138 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
         self.assertListEqual(res, [])
 
     @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_chat_formatter_with_extract_media_blocks(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the chat formatter with promote_tool_result_images=True."""
+        mock_save_base64_data.side_effect = self._mock_save_base64_data
+
+        formatter = DashScopeChatFormatter(
+            promote_tool_result_images=True,
+            promote_tool_result_audios=True,
+            promote_tool_result_videos=True,
+        )
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+
+        # Expected result: image blocks should be extracted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "content": "You're a helpful assistant.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": "What is the capital of France?",
+                    },
+                    {
+                        "image": f"file://{os.path.abspath(self.image_path)}",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The capital of France is Paris.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": "What is the capital of Germany?",
+                    },
+                    {
+                        "audio": "https://example.com/audio1.mp3",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The capital of Germany is Berlin.",
+            },
+            {
+                "role": "user",
+                "content": "What is the capital of Japan?",
+            },
+            {
+                "role": "assistant",
+                "content": [{"text": None}],
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": '{"country": "Japan"}',
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n"
+                "- The returned image can be found at: ./image.png"
+                "\n- The returned audio can be found at: "
+                f"{self.mock_audio_path}"
+                f"\n- The returned video can be found at: "
+                f"{self.mock_video_path}",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": "<system-info>The following are "
+                        "the media contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "text": "\n- The image from './image.png': ",
+                    },
+                    {
+                        "image": f"file://{os.path.abspath(self.image_path)}",
+                    },
+                    {
+                        "text": "\n- The audio from "
+                        f"'{self.mock_audio_path}': ",
+                    },
+                    {
+                        "audio": self.mock_audio_path,
+                    },
+                    {
+                        "text": "\n- The video from "
+                        f"'{self.mock_video_path}': ",
+                    },
+                    {
+                        "video": self.mock_video_path,
+                    },
+                    {
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The capital of Japan is Tokyo.",
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
     async def test_multiagent_formater(
         self,
         mock_save_base64_data: MagicMock,
     ) -> None:
         """Test the multi-agent formatter."""
-        mock_save_base64_data.return_value = self.mock_audio_path
+        mock_save_base64_data.side_effect = self._mock_save_base64_data
 
         formatter = DashScopeMultiAgentFormatter()
 
@@ -623,6 +792,135 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_multiagent_without_first_conversation[1:],
         )
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_multiagent_formatter_with_promote_media_tool_result(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the multi-agent formatter with
+        promote_tool_result_images=True."""
+        mock_save_base64_data.side_effect = self._mock_save_base64_data
+
+        formatter = DashScopeMultiAgentFormatter(
+            promote_tool_result_images=True,
+            promote_tool_result_audios=True,
+            promote_tool_result_videos=True,
+        )
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [
+                *self.msgs_system,
+                *self.msgs_conversation,
+                *self.msgs_tools,
+            ],
+        )
+
+        # Expected result: image blocks should be promoted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "content": "You're a helpful assistant.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": "# Conversation History\nThe content between"
+                        " <history></history> tags contains your"
+                        " conversation history\n<history>\nuser: What"
+                        " is the capital of France?",
+                    },
+                    {
+                        "image": f"file://{os.path.abspath(self.image_path)}",
+                    },
+                    {
+                        "text": "assistant: The capital of France is Paris."
+                        "\nuser: What is the capital of Germany?",
+                    },
+                    {
+                        "audio": "https://example.com/audio1.mp3",
+                    },
+                    {
+                        "text": "assistant: The capital of Germany is Berlin."
+                        "\nuser: What is the capital of Japan?"
+                        "\n</history>",
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "text": None,
+                    },
+                ],
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": '{"country": "Japan"}',
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n- The returned"
+                " image can be found at: ./image.png\n- The"
+                " returned audio can be found at: "
+                f"{self.mock_audio_path}"
+                f"\n- The returned video can be found at: "
+                f"{self.mock_video_path}",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": "<system-info>The following are "
+                        "the media contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "text": "\n- The image from './image.png': ",
+                    },
+                    {
+                        "image": f"file://{os.path.abspath(self.image_path)}",
+                    },
+                    {
+                        "text": "\n- The audio from "
+                        f"'{self.mock_audio_path}': ",
+                    },
+                    {
+                        "audio": self.mock_audio_path,
+                    },
+                    {
+                        "text": "\n- The video from "
+                        f"'{self.mock_video_path}': ",
+                    },
+                    {
+                        "video": self.mock_video_path,
+                    },
+                    {
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": "<history>\nassistant:"
+                " The capital of Japan is Tokyo.\n</history>",
+            },
+        ]
+
+        self.maxDiff = None
+        self.assertListEqual(expected_result, res)
 
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""
