@@ -348,7 +348,7 @@ to download the full example code.</p>
 <li><p>为 LLM、工具、智能体、格式化器等提供内置追踪</p></li>
 <li><p>支持错误和异常追踪</p></li>
 <li><p>在 AgentScope Studio 中提供原生追踪 <strong>可视化</strong></p></li>
-<li><p>支持连接到 <strong>第三方平台</strong>，如 <a class="reference external" href="https://github.com/Arize-ai/phoenix">Arize-Phoenix</a>、<a class="reference external" href="https://langfuse.com/">Langfuse</a> 等</p></li>
+<li><p>支持连接到 <strong>第三方平台</strong>，如阿里云云监控、<a class="reference external" href="https://github.com/Arize-ai/phoenix">Arize-Phoenix</a>、<a class="reference external" href="https://langfuse.com/">Langfuse</a> 等</p></li>
 </ul>
 <section id="id2">
 <h2>设置<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
@@ -358,11 +358,11 @@ to download the full example code.</p>
 </div>
 <section id="agentscope-studio">
 <h3>AgentScope Studio<a class="headerlink" href="#agentscope-studio" title="Link to this heading">¶</a></h3>
-<figure class="align-center" id="id9">
+<figure class="align-center" id="id10">
 <a class="bordered-image reference internal image-reference" href="../_images/studio_tracing.png"><img alt="AgentScope Studio 追踪页面" class="bordered-image" src="../_images/studio_tracing.png" style="width: 100%;" />
 </a>
 <figcaption>
-<p><span class="caption-text"><em>AgentScope Studio 中的追踪页面</em></span><a class="headerlink" href="#id9" title="Link to this image">¶</a></p>
+<p><span class="caption-text"><em>AgentScope Studio 中的追踪页面</em></span><a class="headerlink" href="#id10" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>当连接到 AgentScope Studio 时，只需在 <code class="docutils literal notranslate"><span class="pre">agentscope.init</span></code> 函数中提供 <code class="docutils literal notranslate"><span class="pre">studio_url</span></code> 参数。</p>
@@ -382,10 +382,24 @@ to download the full example code.</p>
 <span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">tracing_url</span><span class="o">=</span><span class="s2">&quot;https://your-tracing-backend:port/traces&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>以 Arize-Phoenix 和 Langfuse 为例：</p>
+<p>以阿里云云监控、Arize-Phoenix 和 Langfuse 为例：</p>
+<p><strong>阿里云云监控（Alibaba Cloud CloudMonitor）</strong>：全托管可观测平台。</p>
+<div class="literal-block-wrapper docutils container" id="id11">
+<div class="code-block-caption"><span class="caption-text">连接到阿里云云监控</span><a class="headerlink" href="#id11" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">tracing_url</span><span class="o">=</span><span class="s2">&quot;https://tracing-cn-hangzhou.arms.aliyuncs.com/adapt_xxx/api/otlp/traces&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p><strong>获取 Endpoint：</strong> 在 <a class="reference external" href="https://arms.console.aliyun.com/">ARMS 控制台</a> 的 <strong>接入中心</strong> &gt; <strong>OpenTelemetry</strong> 中，
+根据实际部署地域选择对应的 <strong>公网接入点</strong>。可通过环境变量 <code class="docutils literal notranslate"><span class="pre">OTEL_SERVICE_NAME</span></code> 自定义应用名称。
+阿里云云监控可通过 <a class="reference external" href="https://github.com/alibaba/loongsuite-python-agent">LoongSuite</a> 探针提供零侵入的自动化接入。
+更多信息请参考 <a class="reference external" href="https://help.aliyun.com/zh/cms/cloudmonitor-2-0/user-guide/model-application">云监控文档</a>。</p>
+</div>
 <p><strong>Arize-Phoenix</strong>：需要在环境变量中设置 <code class="docutils literal notranslate"><span class="pre">PHOENIX_API_KEY</span></code>。</p>
-<div class="literal-block-wrapper docutils container" id="id10">
-<div class="code-block-caption"><span class="caption-text">连接到 Arize Phoenix</span><a class="headerlink" href="#id10" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id12">
+<div class="code-block-caption"><span class="caption-text">连接到 Arize Phoenix</span><a class="headerlink" href="#id12" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Arize Phoenix 集成</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 
@@ -398,8 +412,8 @@ to download the full example code.</p>
 </div>
 <p><strong>LangFuse</strong>：需要在环境变量中设置 <code class="docutils literal notranslate"><span class="pre">LANGFUSE_PUBLIC_KEY</span></code> 和 <code class="docutils literal notranslate"><span class="pre">LANGFUSE_SECRET_KEY</span></code>。
 授权头是使用这些密钥构建的。</p>
-<div class="literal-block-wrapper docutils container" id="id11">
-<div class="code-block-caption"><span class="caption-text">连接到 LangFuse</span><a class="headerlink" href="#id11" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id13">
+<div class="code-block-caption"><span class="caption-text">连接到 LangFuse</span><a class="headerlink" href="#id13" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span>
 
 <span class="n">LANGFUSE_PUBLIC_KEY</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;LANGFUSE_PUBLIC_KEY&quot;</span><span class="p">]</span>
@@ -418,8 +432,8 @@ to download the full example code.</p>
 </div>
 </section>
 </section>
-<section id="id4">
-<h2>自定义追踪<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
+<section id="id5">
+<h2>自定义追踪<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
 <p>如前所述，AgentScope 中的追踪功能是基于 OpenTelemetry 实现的。
 这意味着 AgentScope 中的追踪与开发者基于 OpenTelemetry SDK 自己实现的的追踪代码**完全兼容**。</p>
 <p>此外，AgentScope 内置了以下装饰器来追踪相应的模块，它们对不同类的特殊属性，以及返回值做了相应的特殊处理：</p>
@@ -429,11 +443,11 @@ to download the full example code.</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">&#64;trace_format</span></code>：追踪 <code class="docutils literal notranslate"><span class="pre">FormatterBase</span></code> 子类的 <code class="docutils literal notranslate"><span class="pre">format</span></code> 函数</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&#64;trace</span></code>：追踪一般函数</p></li>
 </ul>
-<section id="id5">
-<h3>追踪大语言模型<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<section id="id6">
+<h3>追踪大语言模型<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;trace_llm</span></code> 装饰器用于追踪 <code class="docutils literal notranslate"><span class="pre">ChatModelBase</span></code> 类的 <code class="docutils literal notranslate"><span class="pre">__call__</span></code> 函数。</p>
-<div class="literal-block-wrapper docutils container" id="id12">
-<div class="code-block-caption"><span class="caption-text">追踪新的 ChatModel 类</span><a class="headerlink" href="#id12" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id14">
+<div class="code-block-caption"><span class="caption-text">追踪新的 ChatModel 类</span><a class="headerlink" href="#id14" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleChatModel</span><span class="p">(</span><span class="n">ChatModelBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;示例模型&quot;&quot;&quot;</span>
 
@@ -451,11 +465,11 @@ to download the full example code.</p>
 </div>
 </div>
 </section>
-<section id="id6">
-<h3>追踪智能体<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<section id="id7">
+<h3>追踪智能体<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;trace_reply</span></code> 装饰器用于追踪智能体的 <cite>reply</cite> 函数。</p>
-<div class="literal-block-wrapper docutils container" id="id13">
-<div class="code-block-caption"><span class="caption-text">追踪新的 Agent 类</span><a class="headerlink" href="#id13" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id15">
+<div class="code-block-caption"><span class="caption-text">追踪新的 Agent 类</span><a class="headerlink" href="#id15" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleAgent</span><span class="p">(</span><span class="n">AgentBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;示例智能体类&quot;&quot;&quot;</span>
 
@@ -467,11 +481,11 @@ to download the full example code.</p>
 </div>
 </div>
 </section>
-<section id="id7">
-<h3>追踪格式化器<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
+<section id="id8">
+<h3>追踪格式化器<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;trace_format</span></code> 装饰器用于格式化器实现并追踪 <cite>format</cite> 函数。</p>
-<div class="literal-block-wrapper docutils container" id="id14">
-<div class="code-block-caption"><span class="caption-text">追踪新的 Formatter 类</span><a class="headerlink" href="#id14" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id16">
+<div class="code-block-caption"><span class="caption-text">追踪新的 Formatter 类</span><a class="headerlink" href="#id16" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleFormatter</span><span class="p">(</span><span class="n">FormatterBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;简单的示例格式化器类&quot;&quot;&quot;</span>
 
@@ -482,8 +496,8 @@ to download the full example code.</p>
 </div>
 </div>
 </section>
-<section id="id8">
-<h3>一般函数追踪<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
+<section id="id9">
+<h3>一般函数追踪<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;trace</span></code> 装饰器与上述装饰器不同，它是一个通用的追踪装饰器，可以应用于任何函数。
 它需要一个 <cite>name</cite> 参数来标识被追踪的函数，并且可以追踪各种类型的函数，包括：</p>
 <ul class="simple">
@@ -492,8 +506,8 @@ to download the full example code.</p>
 <li><p>异步函数</p></li>
 <li><p>异步生成器函数</p></li>
 </ul>
-<div class="literal-block-wrapper docutils container" id="id15">
-<div class="code-block-caption"><span class="caption-text">一般追踪示例</span><a class="headerlink" href="#id15" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id17">
+<div class="code-block-caption"><span class="caption-text">一般追踪示例</span><a class="headerlink" href="#id17" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. 同步函数</span>
 <span class="nd">@trace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">&#39;simple_function&#39;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">simple_function</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -617,11 +631,11 @@ to download the full example code.</p>
 <li><a class="reference internal" href="#id3">第三方平台</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#id4">自定义追踪</a><ul>
-<li><a class="reference internal" href="#id5">追踪大语言模型</a></li>
-<li><a class="reference internal" href="#id6">追踪智能体</a></li>
-<li><a class="reference internal" href="#id7">追踪格式化器</a></li>
-<li><a class="reference internal" href="#id8">一般函数追踪</a></li>
+<li><a class="reference internal" href="#id5">自定义追踪</a><ul>
+<li><a class="reference internal" href="#id6">追踪大语言模型</a></li>
+<li><a class="reference internal" href="#id7">追踪智能体</a></li>
+<li><a class="reference internal" href="#id8">追踪格式化器</a></li>
+<li><a class="reference internal" href="#id9">一般函数追踪</a></li>
 </ul>
 </li>
 </ul>

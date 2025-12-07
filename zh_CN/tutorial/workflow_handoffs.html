@@ -355,50 +355,50 @@ to download the full example code.</p>
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;在 Python 中打印 &#39;Hello, world!&#39; 并返回输出结果&quot;
+        &quot;task_description&quot;: &quot;使用 Python 编写并执行一个简单的 &#39;Hello, World!&#39; 程序。&quot;
     },
-    &quot;id&quot;: &quot;call_d22cefdf5a704f218e84b4&quot;
+    &quot;id&quot;: &quot;call_599e395c36c54682b593e7&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
-        &quot;code&quot;: &quot;print(&#39;Hello, world!&#39;)&quot;,
-        &quot;timeout&quot;: 5
+        &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
+        &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_8e60bd737b2841bf9e1f91&quot;
+    &quot;id&quot;: &quot;call_f58d1390db1e4428a92c21&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_8e60bd737b2841bf9e1f91&quot;,
+    &quot;id&quot;: &quot;call_f58d1390db1e4428a92c21&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, world!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
+            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
         }
     ]
 }
-Worker: 运行的 Python 代码成功打印了 &#39;Hello, world!&#39;。下面是输出结果：
+Worker: &#39;Hello, World!&#39; 程序已成功执行，输出为：
 
 ```
-Hello, world!
+Hello, World!
 ```
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_d22cefdf5a704f218e84b4&quot;,
+    &quot;id&quot;: &quot;call_599e395c36c54682b593e7&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;运行的 Python 代码成功打印了 &#39;Hello, world!&#39;。下面是输出结果：\n\n```\nHello, world!\n```&quot;
+            &quot;text&quot;: &quot;&#39;Hello, World!&#39; 程序已成功执行，输出为：\n\n```\nHello, World!\n```&quot;
         }
     ]
 }
-Orchestrator: 子智能体在 Python 中成功执行了 &quot;Hello, world!&quot; 的打印任务。下面是输出结果：
+Orchestrator: &#39;Hello, World!&#39; 程序已使用 Python 成功执行，其输出为：
 
 ```
-Hello, world!
+Hello, World!
 ```
 </pre></div>
 </div>
@@ -482,7 +482,7 @@ Hello, world!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.324 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 6.507 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>
