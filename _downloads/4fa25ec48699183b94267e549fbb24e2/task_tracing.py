@@ -11,7 +11,7 @@ execution of agent applications, which features
 - Provide built-in tracing for LLM, tool, agent, formatter, etc.
 - Support error and exception tracking
 - Provide native tracing **visualization** in AgentScope Studio
-- Support connecting to **third-party platforms** like `Arize-Phoenix <https://github.com/Arize-ai/phoenix>`_, `Langfuse <https://langfuse.com/>`_, etc.
+- Support connecting to **third-party platforms** like Alibaba Cloud CloudMonitor, `Arize-Phoenix <https://github.com/Arize-ai/phoenix>`_, `Langfuse <https://langfuse.com/>`_, etc.
 
 Setting Up
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -51,7 +51,20 @@ The ``tracing_url`` is the URL of your OpenTelemetry collector or any compatible
     # Connect to OpenTelemetry-compatible backends
     agentscope.init(tracing_url="https://your-tracing-backend:port/traces")
 
-Taking Arize-Phoenix and Langfuse as examples:
+Taking Alibaba Cloud CloudMonitor, Arize-Phoenix, and Langfuse as examples:
+
+**Alibaba Cloud CloudMonitor**: A fully-managed observability platform.
+
+.. code-block:: python
+    :caption: Connect to Alibaba Cloud CloudMonitor
+
+    agentscope.init(tracing_url="https://tracing-cn-hangzhou.arms.aliyuncs.com/adapt_xxx/api/otlp/traces")
+
+.. tip::
+    **Get your Endpoint:** In the `ARMS Console <https://arms.console.aliyun.com/>`_ under **Access Center** > **OpenTelemetry**,
+    select the **Public Endpoint** matching your deployment region. Customize your app name via the ``OTEL_SERVICE_NAME`` environment variable.
+    Alibaba Cloud CloudMonitor provides zero-code instrumentation through `LoongSuite <https://github.com/alibaba/loongsuite-python-agent>`_ agent.
+    Learn more in the `CloudMonitor Documentation <https://www.alibabacloud.com/help/en/cms/cloudmonitor-2-0/user-guide/model-application>`_.
 
 **Arize-Phoenix**: You need to set the ``PHOENIX_API_KEY`` in your environment variables.
 

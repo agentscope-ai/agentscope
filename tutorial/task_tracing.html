@@ -348,7 +348,7 @@ execution of agent applications, which features</p>
 <li><p>Provide built-in tracing for LLM, tool, agent, formatter, etc.</p></li>
 <li><p>Support error and exception tracking</p></li>
 <li><p>Provide native tracing <strong>visualization</strong> in AgentScope Studio</p></li>
-<li><p>Support connecting to <strong>third-party platforms</strong> like <a class="reference external" href="https://github.com/Arize-ai/phoenix">Arize-Phoenix</a>, <a class="reference external" href="https://langfuse.com/">Langfuse</a>, etc.</p></li>
+<li><p>Support connecting to <strong>third-party platforms</strong> like Alibaba Cloud CloudMonitor, <a class="reference external" href="https://github.com/Arize-ai/phoenix">Arize-Phoenix</a>, <a class="reference external" href="https://langfuse.com/">Langfuse</a>, etc.</p></li>
 </ul>
 <section id="setting-up">
 <h2>Setting Up<a class="headerlink" href="#setting-up" title="Link to this heading">¶</a></h2>
@@ -382,10 +382,24 @@ The <code class="docutils literal notranslate"><span class="pre">tracing_url</sp
 <span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">tracing_url</span><span class="o">=</span><span class="s2">&quot;https://your-tracing-backend:port/traces&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>Taking Arize-Phoenix and Langfuse as examples:</p>
-<p><strong>Arize-Phoenix</strong>: You need to set the <code class="docutils literal notranslate"><span class="pre">PHOENIX_API_KEY</span></code> in your environment variables.</p>
+<p>Taking Alibaba Cloud CloudMonitor, Arize-Phoenix, and Langfuse as examples:</p>
+<p><strong>Alibaba Cloud CloudMonitor</strong>: A fully-managed observability platform.</p>
 <div class="literal-block-wrapper docutils container" id="id3">
-<div class="code-block-caption"><span class="caption-text">Connect to Arize Phoenix</span><a class="headerlink" href="#id3" title="Link to this code">¶</a></div>
+<div class="code-block-caption"><span class="caption-text">Connect to Alibaba Cloud CloudMonitor</span><a class="headerlink" href="#id3" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">agentscope</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">tracing_url</span><span class="o">=</span><span class="s2">&quot;https://tracing-cn-hangzhou.arms.aliyuncs.com/adapt_xxx/api/otlp/traces&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p><strong>Get your Endpoint:</strong> In the <a class="reference external" href="https://arms.console.aliyun.com/">ARMS Console</a> under <strong>Access Center</strong> &gt; <strong>OpenTelemetry</strong>,
+select the <strong>Public Endpoint</strong> matching your deployment region. Customize your app name via the <code class="docutils literal notranslate"><span class="pre">OTEL_SERVICE_NAME</span></code> environment variable.
+Alibaba Cloud CloudMonitor provides zero-code instrumentation through <a class="reference external" href="https://github.com/alibaba/loongsuite-python-agent">LoongSuite</a> agent.
+Learn more in the <a class="reference external" href="https://www.alibabacloud.com/help/en/cms/cloudmonitor-2-0/user-guide/model-application">CloudMonitor Documentation</a>.</p>
+</div>
+<p><strong>Arize-Phoenix</strong>: You need to set the <code class="docutils literal notranslate"><span class="pre">PHOENIX_API_KEY</span></code> in your environment variables.</p>
+<div class="literal-block-wrapper docutils container" id="id4">
+<div class="code-block-caption"><span class="caption-text">Connect to Arize Phoenix</span><a class="headerlink" href="#id4" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Arize Phoenix Integration</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
 
@@ -399,8 +413,8 @@ The <code class="docutils literal notranslate"><span class="pre">tracing_url</sp
 <p><strong>LangFuse</strong>: You need to set the <code class="docutils literal notranslate"><span class="pre">LANGFUSE_PUBLIC_KEY</span></code> and
 <code class="docutils literal notranslate"><span class="pre">LANGFUSE_SECRET_KEY</span></code> in your environment variables. The authorization
 header is constructed using these keys.</p>
-<div class="literal-block-wrapper docutils container" id="id4">
-<div class="code-block-caption"><span class="caption-text">Connect to LangFuse</span><a class="headerlink" href="#id4" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id5">
+<div class="code-block-caption"><span class="caption-text">Connect to LangFuse</span><a class="headerlink" href="#id5" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">base64</span>
 
 <span class="n">LANGFUSE_PUBLIC_KEY</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;LANGFUSE_PUBLIC_KEY&quot;</span><span class="p">]</span>
@@ -438,8 +452,8 @@ AgentScope natively.</p>
 <p class="admonition-title">Note</p>
 <p>Your LLM class must inherit from <code class="docutils literal notranslate"><span class="pre">ChatModelBase</span></code></p>
 </div>
-<div class="literal-block-wrapper docutils container" id="id5">
-<div class="code-block-caption"><span class="caption-text">Tracing new ChatModel class</span><a class="headerlink" href="#id5" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id6">
+<div class="code-block-caption"><span class="caption-text">Tracing new ChatModel class</span><a class="headerlink" href="#id6" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleChatModel</span><span class="p">(</span><span class="n">ChatModelBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;An example Model&quot;&quot;&quot;</span>
 
@@ -464,8 +478,8 @@ AgentScope natively.</p>
 <p class="admonition-title">Note</p>
 <p>Your agent class must inherit from <code class="docutils literal notranslate"><span class="pre">AgentBase</span></code></p>
 </div>
-<div class="literal-block-wrapper docutils container" id="id6">
-<div class="code-block-caption"><span class="caption-text">Tracing new Agent class</span><a class="headerlink" href="#id6" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id7">
+<div class="code-block-caption"><span class="caption-text">Tracing new Agent class</span><a class="headerlink" href="#id7" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleAgent</span><span class="p">(</span><span class="n">AgentBase</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;An example agent class&quot;&quot;&quot;</span>
 
@@ -484,8 +498,8 @@ AgentScope natively.</p>
 <p class="admonition-title">Note</p>
 <p>Your formatter class must inherit from <code class="docutils literal notranslate"><span class="pre">FormatterBase</span></code></p>
 </div>
-<div class="literal-block-wrapper docutils container" id="id7">
-<div class="code-block-caption"><span class="caption-text">Tracing new Formatter class</span><a class="headerlink" href="#id7" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id8">
+<div class="code-block-caption"><span class="caption-text">Tracing new Formatter class</span><a class="headerlink" href="#id8" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">ExampleFormatter</span><span class="p">(</span><span class="n">FormatterBase</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;A simple example formatter class&quot;&quot;&quot;</span>
 
@@ -506,8 +520,8 @@ It requires a <cite>name</cite> parameter to identify the traced function, and c
 <li><p>asynchronous functions</p></li>
 <li><p>asynchronous generator functions</p></li>
 </ul>
-<div class="literal-block-wrapper docutils container" id="id8">
-<div class="code-block-caption"><span class="caption-text">General tracing example</span><a class="headerlink" href="#id8" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id9">
+<div class="code-block-caption"><span class="caption-text">General tracing example</span><a class="headerlink" href="#id9" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Synchronous function</span>
 <span class="nd">@trace</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">&#39;simple_function&#39;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">simple_function</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
