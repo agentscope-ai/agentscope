@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="记忆" href="task_memory.html"><link rel="prev" title="提示词格式化" href="task_prompt.html">
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="MCP" href="task_mcp.html"><link rel="prev" title="长期记忆" href="task_long_term_memory.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -543,7 +554,7 @@ openai_audio_to_text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2025-12-07 12:02:05.693_a79054&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2025-12-08 03:13:13.666_0c7a68&#39;)
 </pre></div>
 </div>
 </section>
@@ -674,7 +685,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-12-07 12:02:06.697_e7d639&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-12-08 03:13:14.670_9f8ffb&#39;)
 中断标志：
 True
 </pre></div>
@@ -735,11 +746,11 @@ True
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>块 0：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2025-12-07 12:02:06.700_7bd7c1&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2025-12-08 03:13:14.672_b63e58&#39;)
 中断标志： False
 
 块 1：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-12-07 12:02:06.700_7bd7c1&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2025-12-08 03:13:14.672_b63e58&#39;)
 中断标志： True
 </pre></div>
 </div>
@@ -1038,23 +1049,23 @@ Now tool groups &#39;browser_use&#39; are activated. You MUST follow these notes
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="task_memory.html">
+          <a class="next-page" href="task_mcp.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">记忆</div>
+                <div class="title">MCP</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="task_prompt.html">
+          <a class="prev-page" href="task_long_term_memory.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">提示词格式化</div>
+                <div class="title">长期记忆</div>
                 
               </div>
             </a>

@@ -247,26 +247,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -288,6 +298,7 @@
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -424,7 +435,11 @@
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding.__init__">__init__() （DashScopeMultiModalEmbedding 方法）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.__init__">__init__() （DashScopeRealtimeTTSModel 方法）</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding.__init__">__init__() （DashScopeTextEmbedding 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.__init__">__init__() （DashScopeTTSModel 方法）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__">__init__() （DeepSeekMultiAgentFormatter 方法）</a>
 </li>
@@ -456,6 +471,8 @@
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter.__init__">__init__() （GeminiTokenCounter 方法）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.__init__">__init__() （GeminiTTSModel 方法）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.__init__">__init__() （GeneralEvaluator 方法）</a>
 </li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatefulClient.__init__">__init__() （HttpStatefulClient 方法）</a>
@@ -464,10 +481,10 @@
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.HuggingFaceTokenCounter.__init__">__init__() （HuggingFaceTokenCounter 方法）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.__init__">__init__() （InMemoryMemory 方法）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.__init__">__init__() （InMemoryPlanStorage 方法）</a>
 </li>
         <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.__init__">__init__() （JSONSession 方法）</a>
@@ -508,6 +525,8 @@
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter.__init__">__init__() （OpenAITokenCounter 方法）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.__init__">__init__() （OpenAITTSModel 方法）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.__init__">__init__() （PDFReader 方法）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.__init__">__init__() （PlanNotebook 方法）</a>
@@ -545,6 +564,12 @@
         <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel.__init__">__init__() （TrinityChatModel 方法）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.__init__">__init__() （TruncatedFormatterBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.__init__">__init__() （TTSModelBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.__init__">__init__() （TTSResponse 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.__init__">__init__() （TTSUsage 方法）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.__init__">__init__() （UserAgent 方法）</a>
 </li>
@@ -701,8 +726,6 @@
           <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.message
 
@@ -710,6 +733,8 @@
           <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.model
 
@@ -771,6 +796,13 @@
 
         <ul>
           <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.tts
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#module-agentscope.tts">module</a>
 </li>
         </ul></li>
         <li>
@@ -863,17 +895,27 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.clear_instance_hooks">clear_instance_hooks() （AgentBase 方法）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.close">close() （DashScopeRealtimeTTSModel 方法）</a>
+</li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">close() （StatefulClientBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.close">close() （TTSModelBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.connect">connect() （DashScopeRealtimeTTSModel 方法）</a>
 </li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.connect">connect() （StatefulClientBase 方法）</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.connect">connect() （TTSModelBase 方法）</a>
+</li>
         <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.content">content（ChatResponse 属性）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.content">content（DocMetadata 属性）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.content">content（ToolResponse 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.content">content（TTSResponse 属性）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.convert_tool_result_to_string">convert_tool_result_to_string()（FormatterBase 静态方法）</a>
 </li>
@@ -901,6 +943,8 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.created_at">created_at（SubTask 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.created_at">created_at（TTSResponse 属性）</a>
+</li>
     </ul></td>
   </tr></table>
 </section>
@@ -923,7 +967,11 @@
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding">DashScopeMultiModalEmbedding（agentscope.embedding 中的类）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel">DashScopeRealtimeTTSModel（agentscope.tts 中的类）</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding">DashScopeTextEmbedding（agentscope.embedding 中的类）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel">DashScopeTTSModel（agentscope.tts 中的类）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.data_dir_url">data_dir_url（ACEBenchmark 属性）</a>
 </li>
@@ -939,10 +987,10 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint">DefaultPlanToHint（agentscope.plan 中的类）</a>
 </li>
-        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.delete">delete() （InMemoryMemory 方法）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.delete">delete() （InMemoryMemory 方法）</a>
+</li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.delete">delete() （MemoryBase 方法）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.delete">delete() （MilvusLiteStore 方法）</a>
@@ -1085,6 +1133,8 @@
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter">GeminiTokenCounter（agentscope.token 中的类）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel">GeminiTTSModel（agentscope.tts 中的类）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator">GeneralEvaluator（agentscope.evaluate 中的类）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.generate_response">generate_response() （ReActAgent 方法）</a>
@@ -1213,17 +1263,21 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.id">id（ToolUseBlock 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.id">id（TTSResponse 属性）</a>
+</li>
         <li><a href="api/agentscope.message.html#agentscope.message.ImageBlock">ImageBlock（agentscope.message 中的类）</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader">ImageReader（agentscope.rag 中的类）</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader">ImageReader（agentscope.rag 中的类）</a>
-</li>
         <li><a href="api/agentscope.html#agentscope.init">init()（在 agentscope 模块中）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory">InMemoryMemory（agentscope.memory 中的类）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage">InMemoryPlanStorage（agentscope.plan 中的类）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.input_tokens">input_tokens（TTSUsage 属性）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.Task.input">input（Task 属性）</a>
 </li>
@@ -1238,6 +1292,8 @@
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_interrupted">is_interrupted（ToolResponse 属性）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_last">is_last（ToolResponse 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.is_last">is_last（TTSResponse 属性）</a>
 </li>
     </ul></td>
   </tr></table>
@@ -1327,6 +1383,8 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.metadata">metadata（ToolResponse 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.metadata">metadata（TTSResponse 属性）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.meta">meta（SolutionOutput 属性）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricBase">MetricBase（agentscope.evaluate 中的类）</a>
@@ -1346,6 +1404,8 @@
         <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.model_name">model_name（ChatModelBase 属性）</a>
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.model_name">model_name（EmbeddingModelBase 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.model_name">model_name（TTSModelBase 属性）</a>
 </li>
         <li>
     module
@@ -1388,6 +1448,8 @@
           <li><a href="api/agentscope.tool.html#module-agentscope.tool">agentscope.tool</a>
 </li>
           <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">agentscope.tracing</a>
+</li>
+          <li><a href="api/agentscope.tts.html#module-agentscope.tts">agentscope.tts</a>
 </li>
           <li><a href="api/agentscope.tune.html#module-agentscope.tune">agentscope.tune</a>
 </li>
@@ -1460,10 +1522,10 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_audio">openai_text_to_audio()（在 agentscope.tool 模块中）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image()（在 agentscope.tool 模块中）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">OpenAIChatFormatter（agentscope.formatter 中的类）</a>
 </li>
         <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel">OpenAIChatModel（agentscope.model 中的类）</a>
@@ -1474,9 +1536,13 @@
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter">OpenAITokenCounter（agentscope.token 中的类）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel">OpenAITTSModel（agentscope.tts 中的类）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.outcome">outcome（Plan 属性）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.outcome">outcome（SubTask 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.output_tokens">output_tokens（TTSUsage 属性）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.output">output（SolutionOutput 属性）</a>
 </li>
@@ -1498,13 +1564,17 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook">PlanNotebook（agentscope.plan 中的类）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase">PlanStorageBase（agentscope.plan 中的类）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan">Plan（agentscope.plan 中的类）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.print">print() （AgentBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.push">push() （DashScopeRealtimeTTSModel 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.push">push() （TTSModelBase 方法）</a>
 </li>
     </ul></td>
   </tr></table>
@@ -1762,6 +1832,8 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.stream">stream（ToolResponse 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.stream">stream（TTSModelBase 属性）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.structured_input">structured_input（UserInputData 属性）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.StudioUserInput">StudioUserInput（agentscope.agent 中的类）</a>
@@ -1776,8 +1848,6 @@
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.AnthropicMultiAgentFormatter.support_multiagent">support_multiagent（AnthropicMultiAgentFormatter 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.support_multiagent">support_multiagent（DashScopeChatFormatter 属性）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent">support_multiagent（DashScopeMultiAgentFormatter 属性）</a>
@@ -1786,6 +1856,8 @@
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent">support_multiagent（DeepSeekMultiAgentFormatter 属性）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiChatFormatter.support_multiagent">support_multiagent（GeminiChatFormatter 属性）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.GeminiMultiAgentFormatter.support_multiagent">support_multiagent（GeminiMultiAgentFormatter 属性）</a>
@@ -1888,6 +1960,26 @@
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding.supported_modalities">supported_modalities（OpenAITextEmbedding 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.supports_streaming_input">supports_streaming_input（DashScopeRealtimeTTSModel 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.supports_streaming_input">supports_streaming_input（DashScopeTTSModel 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.supports_streaming_input">supports_streaming_input（GeminiTTSModel 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.supports_streaming_input">supports_streaming_input（OpenAITTSModel 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.supports_streaming_input">supports_streaming_input（TTSModelBase 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.synthesize">synthesize() （DashScopeRealtimeTTSModel 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.synthesize">synthesize() （DashScopeTTSModel 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.synthesize">synthesize() （GeminiTTSModel 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.synthesize">synthesize() （OpenAITTSModel 方法）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.synthesize">synthesize() （TTSModelBase 方法）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.sys_prompt">sys_prompt（ReActAgent 属性）</a>
 </li>
     </ul></td>
@@ -1915,6 +2007,8 @@
         <li><a href="api/agentscope.message.html#agentscope.message.ThinkingBlock.thinking">thinking（ThinkingBlock 属性）</a>
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.time">time（EmbeddingUsage 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.time">time（TTSUsage 属性）</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.to_dict">to_dict() （Msg 方法）</a>
 </li>
@@ -1944,12 +2038,12 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.total_chunks">total_chunks（DocMetadata 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace">trace()（在 agentscope.tracing 模块中）</a>
 </li>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_embedding">trace_embedding()（在 agentscope.tracing 模块中）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_format">trace_format()（在 agentscope.tracing 模块中）</a>
 </li>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_llm">trace_llm()（在 agentscope.tracing 模块中）</a>
@@ -1963,6 +2057,12 @@
         <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel">TrinityChatModel（agentscope.model 中的类）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase">TruncatedFormatterBase（agentscope.formatter 中的类）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase">TTSModelBase（agentscope.tts 中的类）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse">TTSResponse（agentscope.tts 中的类）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage">TTSUsage（agentscope.tts 中的类）</a>
 </li>
         <li><a href="api/agentscope.tune.html#agentscope.tune.tune">tune()（在 agentscope.tune 模块中）</a>
 </li>
@@ -1988,6 +2088,10 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.type">type（ToolUseBlock 属性）</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.type">type（TTSResponse 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.type">type（TTSUsage 属性）</a>
+</li>
         <li><a href="api/agentscope.message.html#agentscope.message.URLSource.type">type（URLSource 属性）</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock.type">type（VideoBlock 属性）</a>
@@ -2008,11 +2112,13 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.URLSource.url">url（URLSource 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.usage">usage（ChatResponse 属性）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.usage">usage（EmbeddingResponse 属性）</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.usage">usage（TTSResponse 属性）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent">UserAgent（agentscope.agent 中的类）</a>
 </li>

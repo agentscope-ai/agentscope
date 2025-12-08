@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul class="current">
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -400,7 +411,7 @@ current state and input arguments.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.agent.AgentBase.print">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">print</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">last</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_agent_base.html#AgentBase.print"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.AgentBase.print" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">print</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">last</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">speech</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_agent_base.html#AgentBase.print"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.AgentBase.print" title="Link to this definition">¶</a></dt>
 <dd><p>The function to display the message.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -408,6 +419,8 @@ current state and input arguments.</p>
 <li><p><strong>msg</strong> (<cite>Msg</cite>) -- The message object to be printed.</p></li>
 <li><p><strong>last</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- Whether this is the last one in streaming messages. For
 non-streaming message, this should always be <cite>True</cite>.</p></li>
+<li><p><strong>speech</strong> (<cite>AudioBlock | list[AudioBlock] | None</cite>, optional) -- The audio content block(s) to be played along with the
+message.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -703,7 +716,7 @@ registered when structured output model is provided in the reply call.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sys_prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">formatter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">toolkit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory_mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'both'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_meta_tool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel_tool_calls</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">knowledge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_rewrite_query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plan_notebook</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">print_hint_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sys_prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">formatter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">toolkit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory_mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'both'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_meta_tool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel_tool_calls</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">knowledge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_rewrite_query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plan_notebook</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">print_hint_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tts_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the ReAct agent</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -745,6 +758,7 @@ complex task by decomposing it into a sequence of subtasks.</p></li>
 hint from the plan notebook, the retrieved information from
 the long-term memory and knowledge base(s).</p></li>
 <li><p><strong>max_iters</strong> (<cite>int</cite>, defaults to <cite>10</cite>) -- The maximum number of iterations of the reasoning-acting loops.</p></li>
+<li><p><strong>tts_model</strong> (<cite>TTSModelBase | None</cite> optional) -- The TTS model used by the agent.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>

@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul class="current">
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -621,7 +632,7 @@ If False, agents are executed sequentially.</p></li>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="agentscope.pipeline.stream_printing_messages">
-<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">stream_printing_messages</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agents</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coroutine_task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_signal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'[END]'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/pipeline/_functional.html#stream_printing_messages"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.pipeline.stream_printing_messages" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">stream_printing_messages</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agents</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coroutine_task</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_signal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'[END]'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">yield_speech</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/pipeline/_functional.html#stream_printing_messages"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.pipeline.stream_printing_messages" title="Link to this definition">¶</a></dt>
 <dd><p>This pipeline will gather the printing messages from agents when
 execute the given coroutine task, and yield them one by one.
 Only the messages that are printed by <cite>await self.print(msg)</cite> in the agent
@@ -649,15 +660,20 @@ can be captured and yielded.</p></li>
 <li><p><strong>end_signal</strong> (<cite>str</cite>, defaults to <cite>&quot;[END]&quot;</cite>) -- A special signal to indicate the end of message streaming. When
 this signal is received from the message queue, the generator will
 stop yielding messages and exit the loop.</p></li>
+<li><p><strong>yield_speech</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to yield speech associated with the messages, if any.
+If <cite>True</cite> and a speech is attached when calling <cite>await
+self.print()</cite> in the agent, the yielded tuple will include the
+speech as the third element. If <cite>False</cite>, only the message and
+the boolean flag will be yielded.</p></li>
 </ul>
 </dd>
-<dt class="field-even">返回<span class="colon">:</span></dt>
-<dd class="field-even"><p>An async generator that yields tuples of (message, is_last_chunk).
-The <cite>is_last_chunk</cite> boolean indicates whether the message is the
-last chunk in a streaming message.</p>
+<dt class="field-even">生成器<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>Tuple[Msg, bool] | Tuple[Msg, bool, AudioBlock | list[AudioBlock] |         None]</cite> --     A tuple containing the message, a boolean indicating whether
+it's the last chunk in a streaming message, and optionally
+the associated speech (if <cite>yield_speech</cite> is <cite>True</cite>).</p>
 </dd>
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p><cite>AsyncGenerator[Tuple[Msg, bool], None]</cite></p>
+<dd class="field-odd"><p><em>AsyncGenerator</em>[<em>Tuple</em>[<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a>, bool] | <em>Tuple</em>[<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a>, bool, <a class="reference internal" href="agentscope.message.html#agentscope.message.AudioBlock" title="agentscope.message._message_block.AudioBlock"><em>AudioBlock</em></a> | list[<a class="reference internal" href="agentscope.message.html#agentscope.message.AudioBlock" title="agentscope.message._message_block.AudioBlock"><em>AudioBlock</em></a>] | None], None]</p>
 </dd>
 </dl>
 </dd></dl>

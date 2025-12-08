@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="计划" href="task_plan.html"><link rel="prev" title="智能体" href="task_agent.html">
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="计划" href="task_plan.html"><link rel="prev" title="智能体钩子函数" href="task_hook.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -411,9 +422,9 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 您好，我叫Alice，今年50岁，我的职业是一名教师。很高兴认识您！请问有什么我可以帮助您的吗？
-Bob: 看起来您可能误将我认为了Alice。实际上，我叫Bob，今年35岁，是一名工程师。很高兴认识您！如果有什么工程相关的问题或者其他需要帮助的地方，请告诉我。
-Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。很高兴遇到你们！如果有关于设计的问题或者需要创意方面的帮助，随时欢迎向我咨询。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 您好，我叫Alice，今年50岁，是一名教师。在我的职业生涯中，我一直致力于教育事业，并且热爱与学生们分享知识和学习的乐趣。如果您有任何问题想要询问，我会很乐意帮助您。
+Bob: 您好，我叫Bob，今年35岁，是一名工程师。我在我的领域里有着丰富的经验，并且热爱解决技术难题。如果您有关于工程或技术方面的问题，我会很高兴地为您提供帮助。看起来您之前是和Alice在交谈，她是一位教师。如果需要转换话题或是有其他问题想要讨论，请告诉我。
+Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。我对创造视觉上吸引人的作品充满热情，并且喜欢通过我的设计来解决问题和传达信息。如果你对设计有任何疑问或者需要一些创意方面的建议，我很乐意帮助你。看起来您之前是与Alice和Bob交谈，他们分别是一位教师和一位工程师。如果您想要讨论其他话题，也请随时告诉我。
 </pre></div>
 </div>
 <p>现在让我们检查 Bob、Charlie 和 David 是否收到了 Alice 的消息。</p>
@@ -433,9 +444,9 @@ Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。很高兴遇�
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">check_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice是一位50岁的教师，我们在之前的对话中刚刚介绍过自己。如果你需要更多关于教育方面的信息，或许可以向她咨询。不过，如果问题与工程相关，我很乐意提供帮助。
-Charlie: Alice 是一位50岁的教师，她之前介绍过自己。如果你需要教育方面的帮助或有关于教学的问题，她应该是一个很好的咨询对象。不过，在当前的对话中，我才是与你交流的人，也就是Charlie，一名28岁的设计师。如果你有任何设计相关的需求或者想要讨论创意，我很乐意提供帮助。
-David: 你提到的Alice可能是指很多人，因为在没有更多上下文的情况下，Alice可以是任何名字叫Alice的人。如果你能提供更多的信息，比如她的职业、她所在的领域或者你们是如何认识的，我或许能够更好地帮助你了解她是谁以及她是做什么的。另外，如果Alice是在某个特定的行业或社区中为人所知的人物，那么相关信息也会对我有所帮助。你能给我一些额外的信息吗？
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice是一位50岁的教师，她非常热爱教育事业，并且喜欢与学生们分享知识和学习的乐趣。她在之前的对话中提到如果有什么问题需要询问，她会很乐意提供帮助。如果您有关于教育方面的问题，或许可以向她咨询。
+Charlie: 当然，Alice 是一位50岁的教师。她在教育领域工作，热衷于传授知识给学生，并且享受教学过程中的互动。如果您有关于教育或者学习方面的问题，她会是一个很好的咨询对象。
+David: 你提到的Alice可能是指很多人，因为这是一个常见的名字。如果你能提供更多的背景信息，比如她的全名、职业或者她所在的领域，我可能会更清楚地知道你说的是哪位Alice。例如，她是你的朋友、同事，还是某个知名人物？
 </pre></div>
 </div>
 <p>现在我们观察到 Bob 和 Charlie 知道 Alice 和她的职业，而 David 对
@@ -575,16 +586,15 @@ Alice 一无所知，因为他没有包含在 <code class="docutils literal notr
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_example_pipeline</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴遇见你！你是&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴遇见你！你是怎么找到我的呢&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴遇见你！你是怎么找到我的呢？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴遇见你！你是怎么找到我的呢？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一个20岁的学生。很高兴遇见你！你是怎么找到我的呢？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-07 11:58:58.212&#39;, invocation_id=&#39;None&#39;) True
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20岁的学生。很高兴遇到&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20岁的学生。很高兴遇到你！有什么我可以帮助你的&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20岁的学生。很高兴遇到你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20岁的学生。很高兴遇到你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;neJuqM6ZkyLZLz4xFSMyBR&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;嗨！我是Alice，一名20岁的学生。很高兴遇到你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-08 03:09:55.490&#39;, invocation_id=&#39;None&#39;) True
 </pre></div>
 </div>
 </section>
@@ -622,7 +632,7 @@ Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;ty
 </pre></div>
 </div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 15.964 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 26.981 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-pipeline-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/a841049f564cf5f9c0fea523e59490f5/task_pipeline.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_pipeline.ipynb</span></code></a></p>
@@ -652,14 +662,14 @@ Msg(id=&#39;7nW22KUfQVTrQQHRYjH8Nz&#39;, name=&#39;Alice&#39;, content=[{&#39;ty
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="task_agent.html">
+          <a class="prev-page" href="task_hook.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">智能体</div>
+                <div class="title">智能体钩子函数</div>
                 
               </div>
             </a>

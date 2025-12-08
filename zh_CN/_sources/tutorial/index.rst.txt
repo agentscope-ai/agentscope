@@ -283,6 +283,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 为多个 API 提供商的文本转语音（TTS）模型提供了统一接口。 本章节演示如何在 AgentScope 中使用 TTS 模型。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tts_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tts`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">TTS</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="在章我们首先重点介绍 AgentScope 中的 ReAct 智能体，然后简要介绍如何从零开始自定义智能体。">
 
 .. only:: html
@@ -511,6 +528,7 @@
    /tutorial/task_embedding
    /tutorial/task_mcp
    /tutorial/quickstart_message
+   /tutorial/task_tts
    /tutorial/task_agent
    /tutorial/workflow_conversation
    /tutorial/workflow_multiagent_debate

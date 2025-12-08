@@ -248,26 +248,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -289,6 +299,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -338,16 +349,23 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ValidationError</span><span class="p">,</span> <span class="n">Field</span>
 
+<span class="kn">from</span><span class="w"> </span><span class="nn">._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">_AsyncNullContext</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._react_agent_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgentBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..formatter</span><span class="w"> </span><span class="kn">import</span> <span class="n">FormatterBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">MemoryBase</span><span class="p">,</span> <span class="n">LongTermMemoryBase</span><span class="p">,</span> <span class="n">InMemoryMemory</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">ToolUseBlock</span><span class="p">,</span> <span class="n">ToolResultBlock</span><span class="p">,</span> <span class="n">TextBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..message</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Msg</span><span class="p">,</span>
+    <span class="n">ToolUseBlock</span><span class="p">,</span>
+    <span class="n">ToolResultBlock</span><span class="p">,</span>
+    <span class="n">TextBlock</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..model</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatModelBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..rag</span><span class="w"> </span><span class="kn">import</span> <span class="n">KnowledgeBase</span><span class="p">,</span> <span class="n">Document</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..plan</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlanNotebook</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tool</span><span class="w"> </span><span class="kn">import</span> <span class="n">Toolkit</span><span class="p">,</span> <span class="n">ToolResponse</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tracing</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace_reply</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..tts</span><span class="w"> </span><span class="kn">import</span> <span class="n">TTSModelBase</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">_QueryRewriteModel</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -398,6 +416,7 @@
         <span class="n">plan_notebook</span><span class="p">:</span> <span class="n">PlanNotebook</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">print_hint_msg</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">max_iters</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="n">tts_model</span><span class="p">:</span> <span class="n">TTSModelBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the ReAct agent</span>
 
@@ -455,6 +474,8 @@
 <span class="sd">                the long-term memory and knowledge base(s).</span>
 <span class="sd">            max_iters (`int`, defaults to `10`):</span>
 <span class="sd">                The maximum number of iterations of the reasoning-acting loops.</span>
+<span class="sd">            tts_model (`TTSModelBase | None` optional):</span>
+<span class="sd">                The TTS model used by the agent.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
 
@@ -470,6 +491,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">max_iters</span> <span class="o">=</span> <span class="n">max_iters</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span> <span class="o">=</span> <span class="n">formatter</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="o">=</span> <span class="n">tts_model</span>
 
         <span class="c1"># -------------- Memory management --------------</span>
         <span class="c1"># Record the dialogue history in the memory</span>
@@ -729,11 +751,13 @@
         <span class="k">return</span> <span class="n">reply_msg</span></div>
 
 
+    <span class="c1"># pylint: disable=too-many-branches</span>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_reasoning</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">tool_choice</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span> <span class="s2">&quot;required&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Perform the reasoning process.&quot;&quot;&quot;</span>
+
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span><span class="p">:</span>
             <span class="c1"># Insert the reasoning hint from the plan notebook</span>
             <span class="n">hint_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span><span class="o">.</span><span class="n">get_current_hint</span><span class="p">()</span>
@@ -762,21 +786,51 @@
         <span class="c1"># handle output from the model</span>
         <span class="n">interrupted_by_user</span> <span class="o">=</span> <span class="kc">False</span>
         <span class="n">msg</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># TTS model context manager</span>
+        <span class="n">tts_context</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="ow">or</span> <span class="n">_AsyncNullContext</span><span class="p">()</span>
+        <span class="n">speech</span> <span class="o">=</span> <span class="kc">None</span>
+
         <span class="k">try</span><span class="p">:</span>
-            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span><span class="p">:</span>
-                <span class="n">msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">[],</span> <span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
-                <span class="k">async</span> <span class="k">for</span> <span class="n">content_chunk</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
-                    <span class="n">msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">content_chunk</span><span class="o">.</span><span class="n">content</span>
-                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+            <span class="k">async</span> <span class="k">with</span> <span class="n">tts_context</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="p">[],</span> <span class="n">role</span><span class="o">=</span><span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span><span class="p">:</span>
+                    <span class="k">async</span> <span class="k">for</span> <span class="n">content_chunk</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+                        <span class="n">msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">content_chunk</span><span class="o">.</span><span class="n">content</span>
+
+                        <span class="c1"># The speech generated from multimodal (audio) models</span>
+                        <span class="c1"># e.g. Qwen-Omni and GPT-AUDIO</span>
+                        <span class="n">speech</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;audio&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="kc">None</span>
+
+                        <span class="c1"># Push to TTS model if available</span>
+                        <span class="k">if</span> <span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span>
+                            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">supports_streaming_input</span>
+                        <span class="p">):</span>
+                            <span class="n">tts_res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">push</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+                            <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_res</span><span class="o">.</span><span class="n">content</span>
+
+                        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
+
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="p">:</span>
+                    <span class="c1"># Push to TTS model and block to receive the full speech</span>
+                    <span class="c1"># synthesis result</span>
+                    <span class="n">tts_res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">synthesize</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">stream</span><span class="p">:</span>
+                        <span class="k">async</span> <span class="k">for</span> <span class="n">tts_chunk</span> <span class="ow">in</span> <span class="n">tts_res</span><span class="p">:</span>
+                            <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_chunk</span><span class="o">.</span><span class="n">content</span>
+                            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_res</span><span class="o">.</span><span class="n">content</span>
+
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
 
                 <span class="c1"># Add a tiny sleep to yield the last message object in the</span>
                 <span class="c1"># message queue</span>
                 <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.001</span><span class="p">)</span>
-
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">res</span><span class="o">.</span><span class="n">content</span><span class="p">),</span> <span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
 
         <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">interrupted_by_user</span> <span class="o">=</span> <span class="kc">True</span>
@@ -884,6 +938,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_summarizing</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Msg</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate a response when the agent fails to solve the problem in</span>
 <span class="sd">        the maximum iterations.&quot;&quot;&quot;</span>
+
         <span class="n">hint_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
             <span class="s2">&quot;user&quot;</span><span class="p">,</span>
             <span class="s2">&quot;You have failed to generate response within the maximum &quot;</span>
@@ -904,18 +959,47 @@
         <span class="c1">#  finish_function here</span>
         <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">prompt</span><span class="p">)</span>
 
-        <span class="n">res_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">[],</span> <span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
-        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">AsyncGenerator</span><span class="p">):</span>
-            <span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
-                <span class="n">res_msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">content</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="c1"># TTS model context manager</span>
+        <span class="n">tts_context</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="ow">or</span> <span class="n">_AsyncNullContext</span><span class="p">()</span>
+        <span class="n">speech</span> <span class="o">=</span> <span class="kc">None</span>
 
-        <span class="k">else</span><span class="p">:</span>
-            <span class="n">res_msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">res</span><span class="o">.</span><span class="n">content</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">tts_context</span><span class="p">:</span>
+            <span class="n">res_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">[],</span> <span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">AsyncGenerator</span><span class="p">):</span>
+                <span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+                    <span class="n">res_msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">content</span>
 
-        <span class="k">return</span> <span class="n">res_msg</span>
+                    <span class="c1"># The speech generated from multimodal (audio) models</span>
+                    <span class="c1"># e.g. Qwen-Omni and GPT-AUDIO</span>
+                    <span class="n">speech</span> <span class="o">=</span> <span class="n">res_msg</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;audio&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="kc">None</span>
+
+                    <span class="c1"># Push to TTS model if available</span>
+                    <span class="k">if</span> <span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span>
+                        <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">supports_streaming_input</span>
+                    <span class="p">):</span>
+                        <span class="n">tts_res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">push</span><span class="p">(</span><span class="n">res_msg</span><span class="p">)</span>
+                        <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_res</span><span class="o">.</span><span class="n">content</span>
+
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
+
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">res_msg</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">res</span><span class="o">.</span><span class="n">content</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="p">:</span>
+                <span class="c1"># Push to TTS model and block to receive the full speech</span>
+                <span class="c1"># synthesis result</span>
+                <span class="n">tts_res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">synthesize</span><span class="p">(</span><span class="n">res_msg</span><span class="p">)</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span><span class="o">.</span><span class="n">stream</span><span class="p">:</span>
+                    <span class="k">async</span> <span class="k">for</span> <span class="n">tts_chunk</span> <span class="ow">in</span> <span class="n">tts_res</span><span class="p">:</span>
+                        <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_chunk</span><span class="o">.</span><span class="n">content</span>
+                        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">speech</span> <span class="o">=</span> <span class="n">tts_res</span><span class="o">.</span><span class="n">content</span>
+
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">res_msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="n">speech</span><span class="o">=</span><span class="n">speech</span><span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">res_msg</span>
 
 <div class="viewcode-block" id="ReActAgent.handle_interrupt">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.handle_interrupt">[文档]</a>

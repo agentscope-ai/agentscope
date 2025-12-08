@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="智能体钩子函数" href="task_hook.html"><link rel="prev" title="RAG" href="task_rag.html">
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="智能体钩子函数" href="task_hook.html"><link rel="prev" title="智能体" href="task_agent.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -496,31 +507,31 @@ obj_b 的状态：
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_agent_state</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你好！我是Friday，你的智能助手。有什么我可以帮你的吗？
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你好！我叫Friday，是你的智能助手。有什么可以帮助你的吗？
 生成回复后智能体的状态：
 {
     &quot;memory&quot;: {
         &quot;content&quot;: [
             {
-                &quot;id&quot;: &quot;8pJGX4dUmxYrrNaefokcnf&quot;,
+                &quot;id&quot;: &quot;JTWxmsrDZMy6xbhkPy3hNS&quot;,
                 &quot;name&quot;: &quot;user&quot;,
                 &quot;role&quot;: &quot;user&quot;,
                 &quot;content&quot;: &quot;你好，智能体！&quot;,
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:45.536&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:07.157&quot;
             },
             {
-                &quot;id&quot;: &quot;DLwqSX98FDXhjkQ9ZmWfpt&quot;,
+                &quot;id&quot;: &quot;XdEZ7AWQtXf8t5swvGzvYQ&quot;,
                 &quot;name&quot;: &quot;Friday&quot;,
                 &quot;role&quot;: &quot;assistant&quot;,
                 &quot;content&quot;: [
                     {
                         &quot;type&quot;: &quot;text&quot;,
-                        &quot;text&quot;: &quot;你好！我是Friday，你的智能助手。有什么我可以帮你的吗？&quot;
+                        &quot;text&quot;: &quot;你好！我叫Friday，是你的智能助手。有什么可以帮助你的吗？&quot;
                     }
                 ],
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:45.537&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:07.157&quot;
             }
         ]
     },
@@ -575,31 +586,31 @@ obj_b 的状态：
 <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">agent</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你好！我是Friday，很高兴为您服务。有什么我可以帮助您的吗？
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你好！我叫Friday，很高兴为你提供帮助。有什么我可以帮你的吗？
 生成回复后智能体的状态：
 {
     &quot;memory&quot;: {
         &quot;content&quot;: [
             {
-                &quot;id&quot;: &quot;8ynM96NDiaKT5VrVHesPBy&quot;,
+                &quot;id&quot;: &quot;Rgqz7Gg32Bn3Rryo6jfYMM&quot;,
                 &quot;name&quot;: &quot;user&quot;,
                 &quot;role&quot;: &quot;user&quot;,
                 &quot;content&quot;: &quot;你好，智能体！&quot;,
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.552&quot;
             },
             {
-                &quot;id&quot;: &quot;dgTmA5nzqNUWQGQ7sByash&quot;,
+                &quot;id&quot;: &quot;8AbJfNu82mw5qieua24ods&quot;,
                 &quot;name&quot;: &quot;Friday&quot;,
                 &quot;role&quot;: &quot;assistant&quot;,
                 &quot;content&quot;: [
                     {
                         &quot;type&quot;: &quot;text&quot;,
-                        &quot;text&quot;: &quot;你好！我是Friday，很高兴为您服务。有什么我可以帮助您的吗？&quot;
+                        &quot;text&quot;: &quot;你好！我叫Friday，很高兴为你提供帮助。有什么我可以帮你的吗？&quot;
                     }
                 ],
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.553&quot;
             }
         ]
     },
@@ -618,25 +629,25 @@ obj_b 的状态：
     &quot;memory&quot;: {
         &quot;content&quot;: [
             {
-                &quot;id&quot;: &quot;8ynM96NDiaKT5VrVHesPBy&quot;,
+                &quot;id&quot;: &quot;Rgqz7Gg32Bn3Rryo6jfYMM&quot;,
                 &quot;name&quot;: &quot;user&quot;,
                 &quot;role&quot;: &quot;user&quot;,
                 &quot;content&quot;: &quot;你好，智能体！&quot;,
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.552&quot;
             },
             {
-                &quot;id&quot;: &quot;dgTmA5nzqNUWQGQ7sByash&quot;,
+                &quot;id&quot;: &quot;8AbJfNu82mw5qieua24ods&quot;,
                 &quot;name&quot;: &quot;Friday&quot;,
                 &quot;role&quot;: &quot;assistant&quot;,
                 &quot;content&quot;: [
                     {
                         &quot;type&quot;: &quot;text&quot;,
-                        &quot;text&quot;: &quot;你好！我是Friday，很高兴为您服务。有什么我可以帮助您的吗？&quot;
+                        &quot;text&quot;: &quot;你好！我叫Friday，很高兴为你提供帮助。有什么我可以帮你的吗？&quot;
                     }
                 ],
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.553&quot;
             }
         ]
     },
@@ -680,25 +691,25 @@ obj_b 的状态：
         &quot;memory&quot;: {
             &quot;content&quot;: [
                 {
-                    &quot;id&quot;: &quot;8ynM96NDiaKT5VrVHesPBy&quot;,
+                    &quot;id&quot;: &quot;Rgqz7Gg32Bn3Rryo6jfYMM&quot;,
                     &quot;name&quot;: &quot;user&quot;,
                     &quot;role&quot;: &quot;user&quot;,
                     &quot;content&quot;: &quot;你好，智能体！&quot;,
                     &quot;metadata&quot;: null,
-                    &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                    &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.552&quot;
                 },
                 {
-                    &quot;id&quot;: &quot;dgTmA5nzqNUWQGQ7sByash&quot;,
+                    &quot;id&quot;: &quot;8AbJfNu82mw5qieua24ods&quot;,
                     &quot;name&quot;: &quot;Friday&quot;,
                     &quot;role&quot;: &quot;assistant&quot;,
                     &quot;content&quot;: [
                         {
                             &quot;type&quot;: &quot;text&quot;,
-                            &quot;text&quot;: &quot;你好！我是Friday，很高兴为您服务。有什么我可以帮助您的吗？&quot;
+                            &quot;text&quot;: &quot;你好！我叫Friday，很高兴为你提供帮助。有什么我可以帮你的吗？&quot;
                         }
                     ],
                     &quot;metadata&quot;: null,
-                    &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                    &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.553&quot;
                 }
             ]
         },
@@ -759,25 +770,25 @@ obj_b 的状态：
     &quot;memory&quot;: {
         &quot;content&quot;: [
             {
-                &quot;id&quot;: &quot;8ynM96NDiaKT5VrVHesPBy&quot;,
+                &quot;id&quot;: &quot;Rgqz7Gg32Bn3Rryo6jfYMM&quot;,
                 &quot;name&quot;: &quot;user&quot;,
                 &quot;role&quot;: &quot;user&quot;,
                 &quot;content&quot;: &quot;你好，智能体！&quot;,
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.552&quot;
             },
             {
-                &quot;id&quot;: &quot;dgTmA5nzqNUWQGQ7sByash&quot;,
+                &quot;id&quot;: &quot;8AbJfNu82mw5qieua24ods&quot;,
                 &quot;name&quot;: &quot;Friday&quot;,
                 &quot;role&quot;: &quot;assistant&quot;,
                 &quot;content&quot;: [
                     {
                         &quot;type&quot;: &quot;text&quot;,
-                        &quot;text&quot;: &quot;你好！我是Friday，很高兴为您服务。有什么我可以帮助您的吗？&quot;
+                        &quot;text&quot;: &quot;你好！我叫Friday，很高兴为你提供帮助。有什么我可以帮你的吗？&quot;
                     }
                 ],
                 &quot;metadata&quot;: null,
-                &quot;timestamp&quot;: &quot;2025-12-07 12:00:47.155&quot;
+                &quot;timestamp&quot;: &quot;2025-12-08 03:12:08.553&quot;
             }
         ]
     },
@@ -793,7 +804,7 @@ obj_b 的状态：
 </pre></div>
 </div>
 <p>此时我们可以观察到智能体的状态已经恢复到之前保存的状态。</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 3.109 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 4.143 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-state-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/78801218992541b6da6586f399b20cbd/task_state.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_state.ipynb</span></code></a></p>
@@ -824,14 +835,14 @@ obj_b 的状态：
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="task_rag.html">
+          <a class="prev-page" href="task_agent.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">RAG</div>
+                <div class="title">智能体</div>
                 
               </div>
             </a>

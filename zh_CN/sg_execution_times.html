@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/faq.html">常见问题</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_model.html">模型</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_prompt.html">提示词格式化</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token 计数</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_memory.html">记忆</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">智能体钩子函数</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_pipeline.html">管道 (Pipeline)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_plan.html">计划</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">状态/会话管理</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">智能体钩子函数</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">智能体技能</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_tracing.html">追踪</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_embedding.html">嵌入(Embedding)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -337,7 +348,7 @@
         <article role="main" id="furo-main-content">
           <section id="computation-times">
 <span id="sphx-glr-sg-execution-times"></span><h1>Computation times<a class="headerlink" href="#computation-times" title="Link to this heading">¶</a></h1>
-<p><strong>03:32.896</strong> total execution time for 28 files <strong>from all galleries</strong>:</p>
+<p><strong>04:00.825</strong> total execution time for 29 files <strong>from all galleries</strong>:</p>
 <div class="docutils container">
 <style scoped>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
@@ -359,107 +370,107 @@ $(document).ready( function () {
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/workflow_routing.html#sphx-glr-tutorial-workflow-routing-py"><span class="std std-ref">Routing</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_routing.py</span></code>)</p></td>
-<td><p>00:34.665</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/workflow_multiagent_debate.html#sphx-glr-tutorial-workflow-multiagent-debate-py"><span class="std std-ref">Multi-Agent Debate</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_multiagent_debate.py</span></code>)</p></td>
+<td><p>00:43.835</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/workflow_multiagent_debate.html#sphx-glr-tutorial-workflow-multiagent-debate-py"><span class="std std-ref">Multi-Agent Debate</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_multiagent_debate.py</span></code>)</p></td>
-<td><p>00:31.505</p></td>
-<td><p>0.0</p></td>
-</tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_rag.html#sphx-glr-tutorial-task-rag-py"><span class="std std-ref">RAG</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_rag.py</span></code>)</p></td>
-<td><p>00:30.966</p></td>
-<td><p>0.0</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_agent.html#sphx-glr-tutorial-task-agent-py"><span class="std std-ref">智能体</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_agent.py</span></code>)</p></td>
-<td><p>00:19.664</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_rag.html#sphx-glr-tutorial-task-rag-py"><span class="std std-ref">RAG</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_rag.py</span></code>)</p></td>
+<td><p>00:27.497</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_pipeline.html#sphx-glr-tutorial-task-pipeline-py"><span class="std std-ref">管道 (Pipeline)</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_pipeline.py</span></code>)</p></td>
-<td><p>00:15.964</p></td>
+<td><p>00:26.981</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_model.html#sphx-glr-tutorial-task-model-py"><span class="std std-ref">模型</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_model.py</span></code>)</p></td>
-<td><p>00:15.708</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/workflow_routing.html#sphx-glr-tutorial-workflow-routing-py"><span class="std std-ref">Routing</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_routing.py</span></code>)</p></td>
+<td><p>00:26.134</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_long_term_memory.html#sphx-glr-tutorial-task-long-term-memory-py"><span class="std std-ref">长期记忆</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_long_term_memory.py</span></code>)</p></td>
-<td><p>00:14.404</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_agent.html#sphx-glr-tutorial-task-agent-py"><span class="std std-ref">智能体</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_agent.py</span></code>)</p></td>
+<td><p>00:21.360</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/workflow_conversation.html#sphx-glr-tutorial-workflow-conversation-py"><span class="std std-ref">Conversation</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_conversation.py</span></code>)</p></td>
-<td><p>00:08.639</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_long_term_memory.html#sphx-glr-tutorial-task-long-term-memory-py"><span class="std std-ref">长期记忆</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_long_term_memory.py</span></code>)</p></td>
+<td><p>00:18.303</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_eval.html#sphx-glr-tutorial-task-eval-py"><span class="std std-ref">智能体评测</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_eval.py</span></code>)</p></td>
-<td><p>00:08.492</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_model.html#sphx-glr-tutorial-task-model-py"><span class="std std-ref">模型</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_model.py</span></code>)</p></td>
+<td><p>00:14.234</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/workflow_handoffs.html#sphx-glr-tutorial-workflow-handoffs-py"><span class="std std-ref">Handoffs</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_handoffs.py</span></code>)</p></td>
+<td><p>00:13.223</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/workflow_conversation.html#sphx-glr-tutorial-workflow-conversation-py"><span class="std std-ref">Conversation</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_conversation.py</span></code>)</p></td>
+<td><p>00:09.439</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_mcp.html#sphx-glr-tutorial-task-mcp-py"><span class="std std-ref">MCP</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_mcp.py</span></code>)</p></td>
-<td><p>00:06.785</p></td>
+<td><p>00:08.580</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/workflow_handoffs.html#sphx-glr-tutorial-workflow-handoffs-py"><span class="std std-ref">Handoffs</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_handoffs.py</span></code>)</p></td>
-<td><p>00:06.507</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_eval.html#sphx-glr-tutorial-task-eval-py"><span class="std std-ref">智能体评测</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_eval.py</span></code>)</p></td>
+<td><p>00:06.538</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="tutorial/quickstart_agent.html#sphx-glr-tutorial-quickstart-agent-py"><span class="std std-ref">创建 ReAct 智能体</span></a> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_agent.py</span></code>)</p></td>
-<td><p>00:06.097</p></td>
+<td><p>00:05.619</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_state.html#sphx-glr-tutorial-task-state-py"><span class="std std-ref">状态/会话管理</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_state.py</span></code>)</p></td>
-<td><p>00:03.109</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_tts.html#sphx-glr-tutorial-task-tts-py"><span class="std std-ref">TTS</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_tts.py</span></code>)</p></td>
+<td><p>00:04.929</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/workflow_concurrent_agents.html#sphx-glr-tutorial-workflow-concurrent-agents-py"><span class="std std-ref">Concurrent Agents</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_concurrent_agents.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_state.html#sphx-glr-tutorial-task-state-py"><span class="std std-ref">状态/会话管理</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_state.py</span></code>)</p></td>
+<td><p>00:04.143</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/workflow_concurrent_agents.html#sphx-glr-tutorial-workflow-concurrent-agents-py"><span class="std std-ref">Concurrent Agents</span></a> (<code class="docutils literal notranslate"><span class="pre">src/workflow_concurrent_agents.py</span></code>)</p></td>
 <td><p>00:03.005</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_prompt.html#sphx-glr-tutorial-task-prompt-py"><span class="std std-ref">提示词格式化</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_prompt.py</span></code>)</p></td>
-<td><p>00:02.363</p></td>
-<td><p>0.0</p></td>
-</tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_embedding.html#sphx-glr-tutorial-task-embedding-py"><span class="std std-ref">嵌入(Embedding)</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_embedding.py</span></code>)</p></td>
-<td><p>00:01.923</p></td>
+<td><p>00:02.099</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/quickstart_installation.html#sphx-glr-tutorial-quickstart-installation-py"><span class="std std-ref">安装</span></a> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_installation.py</span></code>)</p></td>
-<td><p>00:01.030</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_prompt.html#sphx-glr-tutorial-task-prompt-py"><span class="std std-ref">提示词格式化</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_prompt.py</span></code>)</p></td>
+<td><p>00:01.621</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_tool.html#sphx-glr-tutorial-task-tool-py"><span class="std std-ref">工具</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_tool.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/quickstart_installation.html#sphx-glr-tutorial-quickstart-installation-py"><span class="std std-ref">安装</span></a> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_installation.py</span></code>)</p></td>
+<td><p>00:01.454</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_tool.html#sphx-glr-tutorial-task-tool-py"><span class="std std-ref">工具</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_tool.py</span></code>)</p></td>
 <td><p>00:01.022</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_token.html#sphx-glr-tutorial-task-token-py"><span class="std std-ref">Token 计数</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_token.py</span></code>)</p></td>
-<td><p>00:01.015</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_token.html#sphx-glr-tutorial-task-token-py"><span class="std std-ref">Token 计数</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_token.py</span></code>)</p></td>
+<td><p>00:00.774</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_plan.html#sphx-glr-tutorial-task-plan-py"><span class="std std-ref">计划</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_plan.py</span></code>)</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_plan.html#sphx-glr-tutorial-task-plan-py"><span class="std std-ref">计划</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_plan.py</span></code>)</p></td>
 <td><p>00:00.024</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/quickstart_message.html#sphx-glr-tutorial-quickstart-message-py"><span class="std std-ref">创建消息</span></a> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_message.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/quickstart_message.html#sphx-glr-tutorial-quickstart-message-py"><span class="std std-ref">创建消息</span></a> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_message.py</span></code>)</p></td>
 <td><p>00:00.004</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_agent_skill.html#sphx-glr-tutorial-task-agent-skill-py"><span class="std std-ref">智能体技能</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_agent_skill.py</span></code>)</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_agent_skill.html#sphx-glr-tutorial-task-agent-skill-py"><span class="std std-ref">智能体技能</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_agent_skill.py</span></code>)</p></td>
 <td><p>00:00.004</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_hook.html#sphx-glr-tutorial-task-hook-py"><span class="std std-ref">智能体钩子函数</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_hook.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_hook.html#sphx-glr-tutorial-task-hook-py"><span class="std std-ref">智能体钩子函数</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_hook.py</span></code>)</p></td>
 <td><p>00:00.002</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/faq.html#sphx-glr-tutorial-faq-py"><span class="std std-ref">常见问题</span></a> (<code class="docutils literal notranslate"><span class="pre">src/faq.py</span></code>)</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/faq.html#sphx-glr-tutorial-faq-py"><span class="std std-ref">常见问题</span></a> (<code class="docutils literal notranslate"><span class="pre">src/faq.py</span></code>)</p></td>
 <td><p>00:00.000</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_tracing.html#sphx-glr-tutorial-task-tracing-py"><span class="std std-ref">追踪</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_tracing.py</span></code>)</p></td>
-<td><p>00:00.000</p></td>
-<td><p>0.0</p></td>
-</tr>
-<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_studio.html#sphx-glr-tutorial-task-studio-py"><span class="std std-ref">AgentScope Studio</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_studio.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><span class="xref std std-ref">sphx_glr_tutorial_quickstart_key_concept.py</span> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_key_concept.py</span></code>)</p></td>
 <td><p>00:00.000</p></td>
 <td><p>0.0</p></td>
 </tr>
@@ -467,7 +478,11 @@ $(document).ready( function () {
 <td><p>00:00.000</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-odd"><td><p><span class="xref std std-ref">sphx_glr_tutorial_quickstart_key_concept.py</span> (<code class="docutils literal notranslate"><span class="pre">src/quickstart_key_concept.py</span></code>)</p></td>
+<tr class="row-odd"><td><p><a class="reference internal" href="tutorial/task_studio.html#sphx-glr-tutorial-task-studio-py"><span class="std std-ref">AgentScope Studio</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_studio.py</span></code>)</p></td>
+<td><p>00:00.000</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="tutorial/task_tracing.html#sphx-glr-tutorial-task-tracing-py"><span class="std std-ref">追踪</span></a> (<code class="docutils literal notranslate"><span class="pre">src/task_tracing.py</span></code>)</p></td>
 <td><p>00:00.000</p></td>
 <td><p>0.0</p></td>
 </tr>

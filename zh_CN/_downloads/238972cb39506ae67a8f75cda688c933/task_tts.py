@@ -1,0 +1,230 @@
+# -*- coding: utf-8 -*-
+"""
+.. _tts:
+
+TTS
+====================
+
+AgentScope 为多个 API 提供商的文本转语音（TTS）模型提供了统一接口。
+本章节演示如何在 AgentScope 中使用 TTS 模型。
+
+AgentScope 支持以下 TTS API：
+
+.. list-table:: 内置 TTS 模型
+    :header-rows: 1
+
+    * - API
+      - 类
+      - 流式输入
+      - 非流式输入
+      - 流式输出
+      - 非流式输出
+    * - DashScope 实时 API
+      - ``DashScopeRealtimeTTSModel``
+      - ✅
+      - ✅
+      - ✅
+      - ✅
+    * - DashScope API
+      - ``DashScopeTTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+    * - OpenAI API
+      - ``OpenAITTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+    * - Gemini API
+      - ``GeminiTTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+
+.. note:: AgentScope TTS 模型中的流式输入和输出都是累积式的。
+
+**选择合适的模型：**
+
+- **使用非实时 TTS**：当已有完整文本时（例如预先编写的响应、完整的 LLM 输出）
+- **使用实时 TTS**：当文本是逐步生成时（例如 LLM 的流式返回），以获得更低的延迟
+
+"""
+
+import asyncio
+import os
+
+from agentscope.agent import ReActAgent, UserAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import DashScopeChatModel
+from agentscope.tts import (
+    DashScopeRealtimeTTSModel,
+    DashScopeTTSModel,
+)
+
+# %%
+# 非实时 TTS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 非实时 TTS 模型处理完整的文本输入，使用起来最简单，可以直接调用它们的 ``synthesize()`` 方法。
+#
+# 以 DashScope TTS 模型为例：
+
+
+async def example_non_realtime_tts() -> None:
+    """使用非实时 TTS 模型的基本示例。"""
+    # DashScope TTS 示例
+    tts_model = DashScopeTTSModel(
+        api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+        model_name="qwen3-tts-flash",
+        voice="Cherry",
+        stream=False,  # 非流式输出
+    )
+
+    msg = Msg(
+        name="assistant",
+        content="你好，这是 DashScope TTS。",
+        role="assistant",
+    )
+
+    tts_response = await tts_model.synthesize(msg)
+
+    # tts_response.content 包含一个带有 base64 编码音频数据的音频块
+    print("音频数据长度：", len(tts_response.content["source"]["data"]))
+
+
+asyncio.run(example_non_realtime_tts())
+
+# %%
+# **流式输出以降低延迟：**
+#
+# 当 ``stream=True`` 时，模型会逐步返回音频块，允许
+# 您在合成完成前开始播放。这减少了感知延迟。
+#
+
+
+async def example_non_realtime_tts_streaming() -> None:
+    """使用带流式输出的非实时 TTS 模型的示例。"""
+    # 使用流式输出的 DashScope TTS 示例
+    tts_model = DashScopeTTSModel(
+        api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+        model_name="qwen3-tts-flash",
+        voice="Cherry",
+        stream=True,  # 启用流式输出
+    )
+
+    msg = Msg(
+        name="assistant",
+        content="你好，这是带流式输出的 DashScope TTS。",
+        role="assistant",
+    )
+
+    # 合成并接收用于流式输出的异步生成器
+    async for tts_response in await tts_model.synthesize(msg):
+        # 处理到达的每个音频块
+        print("接收到的音频块长度：", len(tts_response.content["source"]["data"]))
+
+
+asyncio.run(example_non_realtime_tts_streaming())
+
+
+# %%
+# 实时 TTS
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 实时 TTS 模型专为文本增量生成的场景设计，
+# 例如流式 LLM 响应。这通过在完整文本准备好之前
+# 开始音频合成，实现尽可能低的延迟。
+#
+# **核心概念：**
+#
+# - **有状态处理**：实时 TTS 为单个流式会话维护状态，
+#   由 ``msg.id`` 标识。一次只能有一个流式会话处于活动状态。
+# - **两种方法**：
+#
+#   - ``push(msg)``：非阻塞方法，提交文本块并立即返回。
+#     如果有可用的部分音频，可能会返回。
+#   - ``synthesize(msg)``：阻塞方法，完成会话并返回
+#     所有剩余的音频。当 ``stream=True`` 时，返回异步生成器。
+#
+# .. code-block:: python
+#
+#     async def example_realtime_tts_streaming():
+#         tts_model = DashScopeRealtimeTTSModel(
+#             api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+#             model_name="qwen3-tts-flash-realtime",
+#             voice="Cherry",
+#             stream=False,
+#         )
+#
+#         # 实时 tts 模型接收累积的文本块
+#         res = await tts_model.push(msg_chunk_1)  # 非阻塞
+#         res = await tts_model.push(msg_chunk_2)  # 非阻塞
+#         ...
+#         res = await tts_model.synthesize(final_msg)  # 阻塞，获取所有剩余音频
+#
+# 在初始化时设置 ``stream=True`` 时，``synthesize()`` 方法返回 ``TTSResponse`` 对象的异步生成器，允许您在音频块到达时处理它们。
+#
+#
+# 与 ReActAgent 集成
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# AgentScope 智能体在提供 TTS 模型时，可以自动将其响应合成为语音。
+# 这与实时和非实时 TTS 模型都能无缝协作。
+#
+# **工作原理：**
+#
+# 1. 智能体生成文本响应（可能从 LLM 流式传输）
+# 2. TTS 模型自动将文本合成为音频
+# 3. 合成的音频附加到 ``Msg`` 对象的 ``speech`` 字段
+# 4. 音频在智能体的 ``self.print()`` 方法期间播放
+#
+
+
+async def example_agent_with_tts() -> None:
+    """使用带 TTS 的 ReActAgent 的示例。"""
+    # 创建启用了 TTS 的智能体
+    agent = ReActAgent(
+        name="Assistant",
+        sys_prompt="你是一个有用的助手。",
+        model=DashScopeChatModel(
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+            model_name="qwen-max",
+            stream=True,
+        ),
+        formatter=DashScopeChatFormatter(),
+        # 启用 TTS
+        tts_model=DashScopeRealtimeTTSModel(
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+            model_name="qwen3-tts-flash-realtime",
+            voice="Cherry",
+        ),
+    )
+    user = UserAgent("User")
+
+    # 像正常情况一样构建对话
+    msg = None
+    while True:
+        msg = await agent(msg)
+        msg = await user(msg)
+        if msg.get_text_content() == "exit":
+            break
+
+
+# %%
+# 自定义 TTS 模型
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# 可以通过继承 ``TTSModelBase`` 来创建自定义 TTS 实现。
+# 基类为实时和非实时 TTS 模型提供了灵活的接口。
+# 我们使用属性 ``supports_streaming_input`` 来指示 TTS 模型是否为实时模型。
+#
+# 对于实时 TTS 模型，需要实现 ``connect``、``close``、``push`` 和 ``synthesize`` 方法来处理 API 的生命周期和流式输入。
+#
+# 而对于非实时 TTS 模型，只需实现 ``synthesize`` 方法。
+#
+# 进一步阅读
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# - :ref:`agent` - 了解更多关于 AgentScope 中的智能体
+# - :ref:`message` - 理解 AgentScope 中的消息格式
+# - API 参考：:class:`agentscope.tts.TTSModelBase`
+#
