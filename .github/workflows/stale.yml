@@ -24,6 +24,7 @@ jobs:
         stale-issue-message: 'This issue is marked as stale because there has been no activity for 21 days. Remove stale label or add new comments or this issue will be closed in 3 day.'
         close-issue-message: 'Close this stale issue.'
         stale-issue-label: 'stale-issue'
+        exempt-issue-labels: 'RoadMap,Roadmap'
         days-before-stale: 21
         days-before-close: 3
 

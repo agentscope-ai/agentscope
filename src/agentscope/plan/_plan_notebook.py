@@ -2,7 +2,7 @@
 """The plan notebook class, used to manage the plan, providing hints and
 tool functions to the agent."""
 from collections import OrderedDict
-from typing import Callable, Literal, Coroutine, Any
+from typing import Callable, Literal, Coroutine, Any, Awaitable
 
 from ._in_memory_storage import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan
@@ -173,7 +173,11 @@ class PlanNotebook(StateModule):
     """The plan notebook to manage the plan, providing hints and plan related
     tool functions to the agent."""
 
-    _plan_change_hooks: dict[str, Callable[["PlanNotebook", Plan], None]]
+    _plan_change_hooks: dict[
+        str,
+        Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
+    ]
     """The hooks that will be triggered when the plan is changed. For example,
     used to display the plan on the frontend."""
 
@@ -424,7 +428,7 @@ class PlanNotebook(StateModule):
     async def update_subtask_state(
         self,
         subtask_idx: int,
-        state: Literal["todo", "in_progress", "deprecated"],
+        state: Literal["todo", "in_progress", "abandoned"],
     ) -> ToolResponse:
         """Update the state of a subtask by given index and state. Note if you
         want to mark a subtask as done, you SHOULD call `finish_subtask`
@@ -487,7 +491,7 @@ class PlanNotebook(StateModule):
                 # Check all previous subtasks are done or deprecated
                 if idx < subtask_idx and subtask.state not in [
                     "done",
-                    "deprecated",
+                    "abandoned",
                 ]:
                     return ToolResponse(
                         content=[
@@ -520,6 +524,10 @@ class PlanNotebook(StateModule):
                     )
 
         self.current_plan.subtasks[subtask_idx].state = state
+
+        # Update the plan state to in_progress if not already
+        suffix = self.current_plan.refresh_plan_state()
+
         await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
@@ -527,7 +535,7 @@ class PlanNotebook(StateModule):
                     type="text",
                     text=f"Subtask at index {subtask_idx}, named "
                     f"'{self.current_plan.subtasks[subtask_idx].name}' "
-                    f"is marked as '{state}' successfully.",
+                    f"is marked as '{state}' successfully. " + suffix,
                 ),
             ],
         )
@@ -585,7 +593,7 @@ class PlanNotebook(StateModule):
         for idx, subtask in enumerate(
             self.current_plan.subtasks[0:subtask_idx],
         ):
-            if subtask.state not in ["done", "deprecated"]:
+            if subtask.state not in ["done", "abandoned"]:
                 return ToolResponse(
                     content=[
                         TextBlock(
@@ -815,12 +823,15 @@ class PlanNotebook(StateModule):
                 the agent.
         """
         return [
+            # subtask related tools
             self.view_subtasks,
             self.update_subtask_state,
             self.finish_subtask,
+            # plan related tools
             self.create_plan,
             self.revise_current_plan,
             self.finish_plan,
+            # historical plan related tools
             self.view_historical_plans,
             self.recover_historical_plan,
         ]
@@ -849,7 +860,8 @@ class PlanNotebook(StateModule):
     def register_plan_change_hook(
         self,
         hook_name: str,
-        hook: Callable[["PlanNotebook", Plan], None],
+        hook: Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
     ) -> None:
         """Register a plan hook that will be triggered when the plan is
         changed.
@@ -857,7 +869,8 @@ class PlanNotebook(StateModule):
         Args:
             hook_name (`str`):
                 The name of the hook, should be unique.
-            hook (`Callable[[Plan], None]`):
+            hook (`Callable[["PlanNotebook", Plan], None] | \
+            Callable[["PlanNotebook", Plan], Awaitable[None]]):
                 The hook function, which takes the current plan as input and
                 returns nothing.
         """

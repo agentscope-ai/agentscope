@@ -11,13 +11,15 @@ import types
 import typing
 import uuid
 from datetime import datetime
-from typing import Union, Any, Callable, Type, Dict
+from typing import Any, Callable, Type, Dict
 
 import requests
+from docstring_parser import parse
 from json_repair import repair_json
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model, ConfigDict
 
 from .._logging import logger
+from ..types import ToolFunction
 
 if typing.TYPE_CHECKING:
     from mcp.types import Tool
@@ -27,23 +29,48 @@ else:
 
 def _json_loads_with_repair(
     json_str: str,
-) -> Union[dict, list, str, float, int, bool, None]:
+) -> dict:
     """The given json_str maybe incomplete, e.g. '{"key', so we need to
     repair and load it into a Python object.
+
+    .. note::
+        This function is currently only used for parsing the streaming output
+        of the argument field in `tool_use`, so the parsed result must be a
+        dict.
+
+    Args:
+        json_str (`str`):
+            The JSON string to parse, which may be incomplete or malformed.
+
+    Returns:
+        `dict`:
+            A dictionary parsed from the JSON string after repair attempts.
+            Returns an empty dict if all repair attempts fail.
     """
-    repaired = json_str
     try:
         repaired = repair_json(json_str)
+        result = json.loads(repaired)
+        if isinstance(result, dict):
+            return result
     except Exception:
         pass
 
-    try:
-        return json.loads(repaired)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Failed to decode JSON string `{json_str}` after repairing it "
-            f"into `{repaired}`. Error: {e}",
-        ) from e
+    for i in range(len(json_str) - 1, 0, -1):
+        try:
+            repaired = repair_json(json_str[:i])
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            continue
+
+    logger.warning(
+        "Failed to parse JSON string `%s`. "
+        "All repair attempts (original + truncation) failed. "
+        "Returning empty dict.",
+        json_str,
+    )
+    return {}
 
 
 def _is_accessible_local_file(url: str) -> bool:
@@ -283,3 +310,122 @@ def _map_text_to_uuid(text: str) -> str:
             A deterministic UUID string derived from the input text.
     """
     return str(uuid.uuid3(uuid.NAMESPACE_DNS, text))
+
+
+def _parse_tool_function(
+    tool_func: ToolFunction,
+    include_long_description: bool,
+    include_var_positional: bool,
+    include_var_keyword: bool,
+) -> dict:
+    """Extract JSON schema from the tool function's docstring
+
+    Args:
+        tool_func (`ToolFunction`):
+            The tool function to extract the JSON schema from.
+        include_long_description (`bool`):
+            Whether to include the long description in the JSON schema.
+        include_var_positional (`bool`):
+            Whether to include variable positional arguments in the JSON
+            schema.
+        include_var_keyword (`bool`):
+            Whether to include variable keyword arguments in the JSON schema.
+
+    Returns:
+        `dict`:
+            The extracted JSON schema.
+    """
+    docstring = parse(tool_func.__doc__)
+    params_docstring = {_.arg_name: _.description for _ in docstring.params}
+
+    # Function description
+    descriptions = []
+    if docstring.short_description is not None:
+        descriptions.append(docstring.short_description)
+
+    if include_long_description and docstring.long_description is not None:
+        descriptions.append(docstring.long_description)
+
+    func_description = "\n".join(descriptions)
+
+    # Create a dynamic model with the function signature
+    fields = {}
+    for name, param in inspect.signature(tool_func).parameters.items():
+        # Skip the `self` and `cls` parameters
+        if name in ["self", "cls"]:
+            continue
+
+        # Handle `**kwargs`
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            if not include_var_keyword:
+                continue
+
+            fields[name] = (
+                Dict[str, Any]
+                if param.annotation == inspect.Parameter.empty
+                else Dict[str, param.annotation],  # type: ignore
+                Field(
+                    description=params_docstring.get(
+                        f"**{name}",
+                        params_docstring.get(name, None),
+                    ),
+                    default={}
+                    if param.default is param.empty
+                    else param.default,
+                ),
+            )
+
+        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+            if not include_var_positional:
+                continue
+
+            fields[name] = (
+                list[Any]
+                if param.annotation == inspect.Parameter.empty
+                else list[param.annotation],  # type: ignore
+                Field(
+                    description=params_docstring.get(
+                        f"*{name}",
+                        params_docstring.get(name, None),
+                    ),
+                    default=[]
+                    if param.default is param.empty
+                    else param.default,
+                ),
+            )
+
+        else:
+            fields[name] = (
+                Any
+                if param.annotation == inspect.Parameter.empty
+                else param.annotation,
+                Field(
+                    description=params_docstring.get(name, None),
+                    default=...
+                    if param.default is param.empty
+                    else param.default,
+                ),
+            )
+
+    base_model = create_model(
+        "_StructuredOutputDynamicClass",
+        __config__=ConfigDict(arbitrary_types_allowed=True),
+        **fields,
+    )
+    params_json_schema = base_model.model_json_schema()
+
+    # Remove the title from the json schema
+    _remove_title_field(params_json_schema)
+
+    func_json_schema: dict = {
+        "type": "function",
+        "function": {
+            "name": tool_func.__name__,
+            "parameters": params_json_schema,
+        },
+    }
+
+    if func_description not in [None, ""]:
+        func_json_schema["function"]["description"] = func_description
+
+    return func_json_schema

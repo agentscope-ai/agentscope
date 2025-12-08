@@ -4,12 +4,8 @@
 import base64
 import hashlib
 import json
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 
-from docx.oxml import CT_P, CT_Tbl
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-from docx.oxml.ns import qn
 
 from ._reader_base import ReaderBase
 from ._text_reader import TextReader
@@ -17,20 +13,32 @@ from .._document import Document, DocMetadata
 from ..._logging import logger
 from ...message import ImageBlock, Base64Source, TextBlock
 
+if TYPE_CHECKING:
+    from docx.table import Table as DocxTable
+    from docx.text.paragraph import Paragraph as DocxParagraph
+else:
+    DocxTable = "docx.table.Table"
+    DocxParagraph = "docx.text.paragraph.Paragraph"
 
-def _extract_text_from_paragraph(para: Paragraph) -> str:
+
+def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     """Extract text from a paragraph, including text in text boxes and shapes.
 
     Args:
-        para: Paragraph object
+        para (`Paragraph`):
+            The paragraph object from which to extract text.
+
 
     Returns:
-        str: Extracted text
+        `str`:
+            Extracted text
     """
     text = ""
 
     # Method 1: Extract all w:t elements directly from XML
     #  (handles revisions, hyperlinks, etc.)
+    from docx.oxml.ns import qn
+
     for t_elem in para._element.findall(".//" + qn("w:t")):
         if t_elem.text:
             text += t_elem.text
@@ -62,7 +70,7 @@ def _extract_text_from_paragraph(para: Paragraph) -> str:
     return text.strip()
 
 
-def _extract_table_data(table: Table) -> list[list[str]]:
+def _extract_table_data(table: DocxTable) -> list[list[str]]:
     """Extract table data, handling merged cells and preserving line breaks
     within cells.
 
@@ -74,6 +82,8 @@ def _extract_table_data(table: Table) -> list[list[str]]:
         `list[list[str]]`:
             Table data represented as a 2D list.
     """
+
+    from docx.oxml.ns import qn
 
     table_data = []
     # Extract table cell elements directly from XML
@@ -105,7 +115,7 @@ def _extract_table_data(table: Table) -> list[list[str]]:
     return table_data
 
 
-def _extract_image_data(para: Paragraph) -> list[ImageBlock]:
+def _extract_image_data(para: DocxParagraph) -> list[ImageBlock]:
     """Extract image data from a paragraph.
 
     Args:
@@ -117,6 +127,8 @@ def _extract_image_data(para: Paragraph) -> list[ImageBlock]:
             A list of image blocks with base64-encoded image data
     """
     images = []
+
+    from docx.oxml.ns import qn
 
     # Method 1: Find all drawing elements (modern Word format)
     drawings = para._element.findall(".//" + qn("w:drawing"))
@@ -334,6 +346,11 @@ class WordReader(ReaderBase):
         # Read the Word document
         try:
             from docx import Document as DocxDocument
+            from docx.oxml import CT_P, CT_Tbl
+            from docx.text.paragraph import Paragraph
+            from docx.table import Table
+            from docx.oxml.ns import qn
+
         except ImportError as e:
             raise ImportError(
                 "Please install python-docx to use the Word reader. "

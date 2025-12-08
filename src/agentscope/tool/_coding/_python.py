@@ -40,12 +40,16 @@ async def execute_python_code(
         with open(temp_file, "w", encoding="utf-8") as f:
             f.write(code)
 
+        env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-u",
             temp_file,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
 
         try:

@@ -70,7 +70,9 @@ async def react_agent_solution(
     # Obtain tool_use blocks as trajectory
     traj = []
     for msg in memory_msgs:
-        traj.extend(msg.get_content_blocks("tool_use"))
+        for block in msg.get_content_blocks():
+            if block["type"] in ["tool_use", "tool_result"]:
+                traj.append(block)
 
     # Obtain the final state of the phone and travel system
     phone: ACEPhone = ace_task.metadata["phone"]
