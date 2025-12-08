@@ -57,14 +57,6 @@ def _convert_to_text_block(msgs: list[Msg]) -> list[TextBlock]:
                     ),
                 )
 
-            elif block["type"] == "tool_result":
-                blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=f"Tool {block['name']} returned result: "
-                        f"{block['output']}",
-                    ),
-                )
     return blocks
 
 
@@ -166,6 +158,7 @@ You MUST use the `{ReActAgent.finish_function_name}` to generate the final answe
         enable_meta_tool=True,
         formatter=DashScopeChatFormatter(),
         toolkit=toolkit,
+        max_iters=20,
     )
 
     # disable the console output of the sub-agent
@@ -207,7 +200,7 @@ You MUST use the `{ReActAgent.finish_function_name}` to generate the final answe
         )
 
         # Expose the interruption signal to the caller
-        if msg.metadata.get("_is_interrupted", False):
+        if msg.metadata and msg.metadata.get("_is_interrupted", False):
             raise asyncio.CancelledError()
 
     # Obtain the last message from the coroutine task

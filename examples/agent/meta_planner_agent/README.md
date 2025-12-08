@@ -53,6 +53,24 @@ Instead, its printing messages are streamlined back to the planner agent as the 
 By this way, we only expose the planner agent to the user, rather than multiple agents, which provides a better user experience.
 However, the response of the tool function `create_worker` maybe take too much context length if the sub-agent finishes the given task with a long reasoning-acting process.
 
+This figure shows how the sub-agent output is displayed as tool streaming response in AgentScope-Studio:
+
+<details>
+ <summary>Chinese</summary>
+ <p align="center">
+  <img src="./assets/screenshot_zh.jpg"/>
+ </p>
+</details>
+
+<details>
+ <summary>English</summary>
+ <p align="center">
+  <img src="./assets/screenshot_en.jpg"/>
+ </p>
+</details>
+
+
+
 Also, you can choose to expose the sub-agent to the user, and only take the structured results back to the planner agent as the tool result of `create_worker`.
 
 ### Propagating Interrupt Events

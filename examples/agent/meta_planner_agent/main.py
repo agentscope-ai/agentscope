@@ -14,6 +14,13 @@ from agentscope.tool import Toolkit
 
 async def main() -> None:
     """The main function."""
+    # Connect to the studio for better visualization (optional)
+    # import agentscope
+    # agentscope.init(
+    #     project="meta_planner_agent",
+    #     studio_url="http://localhost:3000",
+    # )
+
     toolkit = Toolkit()
     toolkit.register_tool_function(create_worker)
 
@@ -37,6 +44,7 @@ Your primary purpose is to break down complicated tasks into manageable subtasks
         formatter=DashScopeChatFormatter(),
         plan_notebook=PlanNotebook(),
         toolkit=toolkit,
+        max_iters=20,
     )
     user = UserAgent(name="user")
 
