@@ -9,9 +9,6 @@ from pydantic import BaseModel
 from agentscope.tool import Toolkit, ToolResponse
 
 
-TOOL_RESULTS_MAX_WORDS = 5000
-
-
 def get_prompt_from_file(
     file_path: str,
     return_json: bool,
@@ -25,7 +22,10 @@ def get_prompt_from_file(
     return prompt
 
 
-def truncate_by_words(sentence: str) -> str:
+def truncate_by_words(
+    sentence: str,
+    max_tool_results_words: int = 10000,
+) -> str:
     """Truncate too long sentences by words number"""
     words = re.findall(
         r"\w+|[^\w\s]",
@@ -38,7 +38,7 @@ def truncate_by_words(sentence: str) -> str:
     for word in words:
         if re.match(r"\w+", word):
             word_count += 1
-        if word_count > TOOL_RESULTS_MAX_WORDS:
+        if word_count > max_tool_results_words:
             break
         result.append(word)
 
@@ -55,6 +55,7 @@ def truncate_by_words(sentence: str) -> str:
 
 def truncate_search_result(
     res: list,
+    max_tool_results_words: int = 10000,
     search_func: str = "tavily-search",
     extract_function: str = "tavily-extract",
 ) -> list:
@@ -65,7 +66,10 @@ def truncate_search_result(
         )
 
     for i, val in enumerate(res):
-        res[i]["text"] = truncate_by_words(val["text"])
+        res[i]["text"] = truncate_by_words(
+            val["text"],
+            max_tool_results_words,
+        )
 
     return res
 

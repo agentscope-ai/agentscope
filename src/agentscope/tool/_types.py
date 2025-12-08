@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""The data model for registered tool functions in AgentScope."""
+"""The types for the tool module in AgentScope."""
 from copy import deepcopy
-from dataclasses import field, dataclass
-from typing import Callable, Literal, Type, Awaitable
+from dataclasses import dataclass, field
+from typing import TypedDict, Literal, Type, Callable, Awaitable
 
 from pydantic import BaseModel
 
-from ._response import ToolResponse
+from . import ToolResponse
 from .._utils._common import _remove_title_field
 from ..message import ToolUseBlock
 from ..types import ToolFunction, JSONSerializableObject
@@ -69,6 +69,7 @@ class RegisteredToolFunction:
             extended_schema,
         )
 
+        # Merge properties from extended schema
         for key, value in extended_schema["properties"].items():
             if key in self.json_schema["function"]["parameters"]["properties"]:
                 raise ValueError(
@@ -83,4 +84,71 @@ class RegisteredToolFunction:
                 if "required" not in merged_schema["function"]["parameters"]:
                     merged_schema["function"]["parameters"]["required"] = []
                 merged_schema["function"]["parameters"]["required"].append(key)
+
+        # Merge $defs from extended schema to support nested models
+        if "$defs" in extended_schema:
+            merged_params = merged_schema["function"]["parameters"]
+            if "$defs" not in merged_params:
+                merged_params["$defs"] = {}
+
+            # Check for conflicts and merge $defs
+            for def_key, def_value in extended_schema["$defs"].items():
+                def_value_copy = deepcopy(def_value)
+                _remove_title_field(
+                    def_value_copy,
+                )  # pylint: disable=protected-access
+
+                if def_key in merged_params["$defs"]:
+                    # Check if the two definitions are from the same BaseModel
+                    # by comparing their content
+                    # Create copies and remove title fields for comparison
+
+                    existing_def_copy = deepcopy(
+                        merged_params["$defs"][def_key],
+                    )
+                    _remove_title_field(
+                        existing_def_copy,
+                    )  # pylint: disable=protected-access
+
+                    if existing_def_copy != def_value_copy:
+                        # The definitions are different, raise an error
+                        raise ValueError(
+                            f"The $defs key `{def_key}` conflicts with "
+                            f"existing definition in function schema of "
+                            f"`{self.name}`.",
+                        )
+                    # The definitions are the same (from the same BaseModel),
+                    # skip merging this key
+                    continue
+
+                merged_params["$defs"][def_key] = def_value_copy
+
         return merged_schema
+
+
+@dataclass
+class ToolGroup:
+    """The tool group class"""
+
+    name: str
+    """The group name, which will be used in the reset function as the group
+    identifier."""
+    active: bool
+    """If the tool group is active, meaning the tool functions in this group
+    is included in the JSON schema"""
+    description: str
+    """The description of the tool group to tell the agent what the tool
+    group is about."""
+    notes: str | None = None
+    """The using notes of the tool group, to remind the agent how to use"""
+
+
+class AgentSkill(TypedDict):
+    """The agent skill typed dict class"""
+
+    name: str
+    """The name of the skill."""
+    description: str
+    """The description of the skill."""
+    dir: str
+    """The directory of the agent skill."""

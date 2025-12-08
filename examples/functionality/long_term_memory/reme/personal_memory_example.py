@@ -280,6 +280,12 @@ async def main() -> None:
         # await test_retrieve_direct(long_term_memory)
         await test_react_agent_with_memory(long_term_memory)
 
+    # Alternative way: manually call __aenter__ and __aexit__
+    # This is equivalent to using "async with long_term_memory" above
+    # await long_term_memory.__aenter__()
+    # await test_react_agent_with_memory(long_term_memory)
+    # await long_term_memory.__aexit__()
+
     print("=" * 70)
     print("Testing Complete: All 5 Core Interfaces Verified!")
     print("=" * 70)

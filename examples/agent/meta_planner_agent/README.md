@@ -1,155 +1,92 @@
 # Meta Planner Agent Example
 
-An advanced AI agent example that demonstrates sophisticated task planning and execution capabilities using AgentScope. The Meta Planner breaks down complex tasks into manageable subtasks and orchestrates specialized worker agents to complete them efficiently.
+In this example, we demonstrate
 
-## Overview
+- how to build a planner agent that can decompose complex task into manageable subtasks and orchestrates sub-agents to
+ complete them
+- how to handle the printing messages of the sub-agents properly in a multi-agent system
+- how to propagate interrupt events from sub agents to the main planner agent
 
-The Meta Planner agent is designed to handle complex, multi-step tasks that would be difficult for a simple agent to manage directly. It uses a planning-execution pattern where:
+Specifically, in [main.py](./main.py), a planner agent is created with the `PlanNotebook` instance to create and manage
+plans. It's equipped with a tool function named `create_worker` in [tool.py](./tool.py) to create sub-agents
+dynamically and finish the assigned subtask. The sub-agents are equipped with some basic tools, and some preset
+MCP servers to enhance their capabilities.
 
-1. **Complex tasks are decomposed** into smaller, manageable subtasks
-2. **Worker agents can be dynamically created** with appropriate tools for each subtask
-3. **Progress is tracked and managed** through a roadmap system
-4. **Results are coordinated** to achieve the overall goal
+> We suggest to use AgentScope-Studio to visualize the agent-interactions in this example.
 
-This approach enables handling sophisticated workflows like data analysis, research projects, content creation, and multi-step problem solving.
+## Quick Start
 
-## Key Features
-
-- **Intelligent Task Decomposition**: Automatically breaks down complex requests into executable subtasks
-- **Progress Tracking**: Maintains a structured roadmap with status tracking for all subtasks
-- **Dynamic Worker Management**: Creates and manages specialized worker agents with relevant toolkits
-- **State Persistence**: Saves and restores agent state for long-running tasks
-- **Flexible Modes**: Can operate in simple ReAct mode or advanced planning mode based on task complexity
-
-## Architecture
-
-### Core Components
-
-1. **MetaPlanner** (`_meta_planner.py`): The main agent class that extends ReActAgent with planning capabilities
-2. **Planning Tools** (`_planning_tools/`):
-   - `PlannerNoteBook`: Manages session context and user inputs
-   - `RoadmapManager`: Handles task decomposition and progress tracking
-   - `WorkerManager`: Creates and manages worker agents
-3. **System Prompts** (`_built_in_long_sys_prompt/`): Detailed instructions for (worker) agent behavior
-4. **Demo Entry Point** (`main.py`): The main function to start the application with meta planner agent.
-
-
-## Prerequisites for Running This Example
-
-### Required Environment Variables
+Install agentscope if you haven't already:
 
 ```bash
-# Anthropic API key for the Claude model
-export ANTHROPIC_API_KEY="your_anthropic_api_key"
-
-# Tavily API key for search functionality
-export TAVILY_API_KEY="your_tavily_api_key"
+pip install agentscope
 ```
 
-### Optional Environment Variables
+Make sure you have set your DashScope API key as an environment variable.
+
+In this example, the sub-agents are equipped with the following MCP servers, set the corresponding environment variables to activate them.
+If not set, the corresponding MCP will be disabled.
+For more details about the tools, refer to [tool.py](./tool.py). You can also add or modify the tools as needed.
+
+| MCP                      | Description                    | Environment Variable |
+|--------------------------|--------------------------------|----------------------|
+| AMAP MCP                 | Provide map related services   | GAODE_API_KEY        |
+| GitHub MCP               | Search and access GitHub repos | GITHUB_TOKEN         |
+| Microsoft Playwright MCP | Web Browser-use MCP server     | -                    |
+
+Run the example:
 
 ```bash
-# Custom working directory for agent operations (default: ./meta_agent_demo_env)
-export AGENT_OPERATION_DIR="/path/to/custom/working/directory"
-```
-
-## Usage
-
-### Basic Usage
-
-Run the agent interactively:
-
-```bash
-cd examples/agent/meta_planner_agent
 python main.py
 ```
 
-The agent will start in chat mode where you can provide complex tasks. For example:
+Then you can ask the planner agent to help you complete a complex task, such as "Conduct research on AgentScope repo".
 
-- "Create a comprehensive analysis of Meta's stock performance in Q1 2025"
-- "Research and write a 7-day exercise plan with detailed instructions"
-- "Analyze the latest AI trends and create a summary report"
+Note for simple questions, the planner agent may directly answer without creating sub-agents.
 
+## Advanced Usage
 
-### Example Interactions
+### Handling Sub-agent Output
 
-1. **Data Analysis Task**:
-   ```
-   User: "Analyze the files in my directory and create a summary report"
-   ```
+In this example, the sub-agents won't print messages to the console directly (by `agent.set_console_output_enable(True)` in tool.py).
+Instead, its printing messages are streamlined back to the planner agent as the streaming responses of the tool function `create_worker`.
+By this way, we only expose the planner agent to the user, rather than multiple agents, which provides a better user experience.
+However, the response of the tool function `create_worker` maybe take too much context length if the sub-agent finishes the given task with a long reasoning-acting process.
 
-2. **Research Task**:
-   ```
-   User: "Research Alibaba's latest quarterly results and competitive position"
-   ```
+This figure shows how the sub-agent output is displayed as tool streaming response in AgentScope-Studio:
 
+<details>
+ <summary>Chinese</summary>
+ <p align="center">
+  <img src="./assets/screenshot_zh.jpg"/>
+ </p>
+</details>
 
-## Configuration
-
-### Agent Modes
-
-The Meta Planner supports three operation modes:
-
-- **`dynamic`** (default): Automatically switches between simple ReAct and planning mode based on task complexity
-- **`enforced`**: Always uses planning mode for all tasks
-- **`disable`**: Only uses simple ReAct mode (no planning capabilities)
-
-### Tool Configuration
-
-The agent uses two main toolkits:
-
-1. **Planner Toolkit**: Planning-specific tools for task decomposition and worker management
-2. **Worker Toolkit**: Comprehensive tools including:
-   - Shell command execution
-   - File operations
-   - Web search (via Tavily)
-   - Filesystem access (via MCP)
-
-### State Management
-
-Agent states are automatically saved during execution:
-
-- **Location**: `./agent-states/run-YYYYMMDDHHMMSS/`
-- **Types**:
-  - `state-post_reasoning-*.json`: After reasoning steps
-  - `state-post-action-{tool_name}-*.json`: After tool executions
+<details>
+ <summary>English</summary>
+ <p align="center">
+  <img src="./assets/screenshot_en.jpg"/>
+ </p>
+</details>
 
 
-### State Recovery
 
-If an agent gets stuck or fails:
+Also, you can choose to expose the sub-agent to the user, and only take the structured results back to the planner agent as the tool result of `create_worker`.
 
-1. Check the latest state file in `./agent-states/`
-2. Resume from the last successful state:
-   ```bash
-   python main.py --load_state path/to/state/file.json
-   ```
+### Propagating Interrupt Events
 
-## Advanced Customization
+In `ReActAgent`, when the final answer is generated from the `handle_interrupt` function, the metadata field of the return message
+will contain a `_is_interrupted` key with value `True` to indicate that the agent is interrupted.
 
-### Adding New Tools
+By this field, we can propagate the interrupt event from the sub-agent to the main planner agent in the tool function `create_worker`.
+For user defined agent classes, you can define your own propagation logic in the `handle_interrupt` function of your agent class.
 
-1. Create tool functions following AgentScope patterns
-2. Register tools in the appropriate toolkit:
-   ```python
-   worker_toolkit.register_tool_function(your_custom_tool)
-   ```
+### Changing the LLM
 
-### Custom MCP Clients
+The example is built with DashScope chat model. If you want to change the model in this example, don't forget
+to change the formatter at the same time! The corresponding relationship between built-in models and formatters are
+list in [our tutorial](https://doc.agentscope.io/tutorial/task_prompt.html#id1)
 
-Add additional MCP clients in `main.py`:
+## Further Reading
 
-```python
-mcp_clients.append(
-    StdIOStatefulClient(
-        name="custom_mcp",
-        command="npx",
-        args=["-y", "your-mcp-server"],
-        env={"API_KEY": "your_key"},
-    )
-)
-```
-
-### System Prompt Modifications
-
-Modify prompts in `_built_in_long_sys_prompt/` to customize agent behavior.
+- [Plan](https://doc.agentscope.io/tutorial/task_plan.html)
