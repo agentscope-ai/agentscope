@@ -41,13 +41,64 @@ class AgentScopeLLM(LLMBase):
 
         self.agentscope_model = self.config.model
 
+    def _parse_response(
+        self,
+        model_response: ChatResponse,
+        has_tool: bool,
+    ) -> str | dict:
+        """Parse the model response into a string or
+        a dict to follow the mem0 library's format.
+
+        Args:
+            model_response (`ChatResponse`): The response from the model.
+            has_tool (`bool`): Whether there are tool calls in the response.
+
+        Returns:
+            `str | dict`:
+                The parsed response. If has_tool is True, return a dict
+                with "content" and "tool_calls" keys. Otherwise, return
+                a string.
+        """
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_parts = []
+        for block in model_response.content:
+            # Handle TextBlock
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(str(block.get("text", "")))
+
+            # Handle ThinkingBlock
+            elif isinstance(block, dict) and block.get("type") == "thinking":
+                thinking_parts.append(
+                    f"[Thinking: {block.get('thinking', '')}]",
+                )
+            # Handle ToolUseBlock
+            elif isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_name = block.get("name")
+                tool_input = block.get("input", {})
+                tool_parts.append(
+                    {
+                        "name": tool_name,
+                        "arguments": tool_input,
+                    },
+                )
+        text_part = thinking_parts + text_parts
+        if has_tool:
+            # If there are tool calls, return the content and tool calls
+            return {
+                "content": "\n".join(text_part) if len(text_part) > 0 else "",
+                "tool_calls": tool_parts,
+            }
+        else:
+            return "\n".join(text_part) if len(text_part) > 0 else ""
+
     def generate_response(
         self,
         messages: List[Dict[str, str]],
         response_format: Any | None = None,
         tools: List[Dict] | None = None,
         tool_choice: str = "auto",
-    ) -> str:
+    ) -> str | dict:
         """Generate a response based on the given messages using agentscope.
 
         Args:
@@ -61,7 +112,7 @@ class AgentScopeLLM(LLMBase):
                 Tool choice method. Not used in AgentScope.
 
         Returns:
-            `str`:
+            `str | dict`:
                 The generated response.
         """
         # pylint: disable=unused-argument
@@ -92,47 +143,19 @@ class AgentScopeLLM(LLMBase):
                 )
 
             response = asyncio.run(_async_call())
+            has_tool = tools is not None
 
             # Extract text from the response content blocks
             if not response.content:
-                return ""
+                if has_tool:
+                    return {
+                        "content": "",
+                        "tool_calls": [],
+                    }
+                else:
+                    return ""
 
-            # Collect all text from different block types
-            text_parts = []
-            thinking_parts = []
-            tool_parts = []
-
-            for block in response.content:
-                # Handle TextBlock
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-
-                # Handle ThinkingBlock
-                elif (
-                    isinstance(block, dict) and block.get("type") == "thinking"
-                ):
-                    thinking_parts.append(
-                        f"[Thinking: {block.get('thinking', '')}]",
-                    )
-
-                # Handle ToolUseBlock
-                elif (
-                    isinstance(block, dict) and block.get("type") == "tool_use"
-                ):
-                    tool_name = block.get("name")
-                    tool_input = block.get("input", {})
-                    tool_parts.append(
-                        f"[Tool: {tool_name} - {str(tool_input)}]",
-                    )
-
-            # Combine all parts in order: thinking, text, tools
-            all_parts: list[str] = thinking_parts + text_parts + tool_parts
-
-            if all_parts:
-                return "\n".join(all_parts)
-            # If no recognized blocks found, try to convert the entire
-            # content to string
-            return str(response.content)
+            return self._parse_response(response, has_tool)
 
         except Exception as e:
             raise RuntimeError(

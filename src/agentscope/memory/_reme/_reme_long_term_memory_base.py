@@ -24,8 +24,6 @@ Dependencies:
         .. code-block:: bash
 
             pip install reme-ai
-
-    Python 3.12 or greater is required to use ReMe.
     For more information, visit: https://github.com/modelscope/reMe
 
 Subclasses:
@@ -91,9 +89,6 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
     The ReMe library must be installed separately:
         pip install reme-ai
-
-    Requirements:
-        Python 3.12 or greater is required to use ReMe.
 
     If the library is not installed, a warning will be issued during
     initialization,
@@ -238,15 +233,11 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             embedding_api_key = embedding_model.api_key
 
         elif isinstance(embedding_model, OpenAITextEmbedding):
-            embedding_api_base = getattr(
-                embedding_model.client,
-                "base_url",
-                None,
+            embedding_api_base = str(
+                getattr(embedding_model.client, "base_url", None),
             )
-            embedding_api_key = getattr(
-                embedding_model.client,
-                "api_key",
-                None,
+            embedding_api_key = str(
+                getattr(embedding_model.client, "api_key", None),
             )
 
         else:
@@ -263,6 +254,11 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
             config_args.append(
                 f"embedding_model.default.model_name={embedding_model_name}",
             )
+
+        dimensions = embedding_model.dimensions
+        config_args.append(
+            f'embedding_model.default.params={{"dimensions": {dimensions}}}',
+        )
 
         # Attempt to import and initialize ReMe
         # If import fails, set app to None and issue a warning
@@ -330,9 +326,9 @@ class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):
 
     async def __aexit__(
         self,
-        exc_type: Any,
-        exc_val: Any,
-        exc_tb: Any,
+        exc_type: Any = None,
+        exc_val: Any = None,
+        exc_tb: Any = None,
     ) -> None:
         """Async context manager exit point.
 

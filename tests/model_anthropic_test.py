@@ -69,7 +69,7 @@ class TestAnthropicChatModel(IsolatedAsyncioTestCase):
         """Test initialization with custom parameters."""
         thinking_config = {"type": "enabled", "budget_tokens": 1024}
         generate_kwargs = {"temperature": 0.7, "top_p": 0.9}
-        client_args = {"timeout": 30}
+        client_kwargs = {"timeout": 30}
 
         with patch("anthropic.AsyncAnthropic") as mock_client:
             model = AnthropicChatModel(
@@ -78,7 +78,7 @@ class TestAnthropicChatModel(IsolatedAsyncioTestCase):
                 max_tokens=4096,
                 stream=False,
                 thinking=thinking_config,
-                client_args=client_args,
+                client_kwargs=client_kwargs,
                 generate_kwargs=generate_kwargs,
             )
             self.assertEqual(model.model_name, "claude-3-opus-20240229")

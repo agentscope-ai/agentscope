@@ -24,9 +24,6 @@ def as_studio_forward_message_pre_print_hook(
     else:
         reply_id = shortuuid.uuid()
 
-    name = getattr(self, "name", msg.name)
-    role = "user" if isinstance(self, UserAgent) else "assistant"
-
     n_retry = 0
     while True:
         try:
@@ -35,8 +32,10 @@ def as_studio_forward_message_pre_print_hook(
                 json={
                     "runId": run_id,
                     "replyId": reply_id,
-                    "name": name,
-                    "role": role,
+                    "replyName": getattr(self, "name", msg.name),
+                    "replyRole": "user"
+                    if isinstance(self, UserAgent)
+                    else "assistant",
                     "msg": message_data,
                 },
             )

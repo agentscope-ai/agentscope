@@ -2,10 +2,10 @@
 """The formatter module."""
 
 from abc import abstractmethod
-from typing import Any, List
+from typing import Any, List, Tuple, Sequence
 
 from .._utils._common import _save_base64_data
-from ..message import Msg, AudioBlock, ImageBlock, TextBlock
+from ..message import Msg, AudioBlock, ImageBlock, TextBlock, VideoBlock
 
 
 class FormatterBase:
@@ -35,31 +35,48 @@ class FormatterBase:
 
     @staticmethod
     def convert_tool_result_to_string(
-        output: str | List[TextBlock | ImageBlock | AudioBlock],
-    ) -> str:
+        output: str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock],
+    ) -> tuple[
+        str,
+        Sequence[
+            Tuple[
+                str,
+                ImageBlock | AudioBlock | TextBlock | VideoBlock,
+            ]
+        ],
+    ]:
         """Turn the tool result list into a textual output to be compatible
-        with the LLM API that doesn't support multimodal data.
+        with the LLM API that doesn't support multimodal data in the tool
+        result.
+
+        For URL-based images, the URL is included in the list. For
+        base64-encoded images, the local file path where the image is saved
+        is included in the returned list.
 
         Args:
-            output (`str | List[TextBlock | ImageBlock | AudioBlock]`):
+            output (`str | List[TextBlock | ImageBlock | AudioBlock | \
+            VideoBlock]`):
                 The output of the tool response, including text and multimodal
                 data like images and audio.
 
         Returns:
-            `str`:
-                A string representation of the tool result, with text blocks
-                concatenated and multimodal data represented by file paths
-                or URLs.
+            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock \
+            TextBlock]]]`:
+                A tuple containing the textual representation of the tool
+                result and a list of tuples. The first element of each tuple
+                is the local file path or URL of the multimodal data, and the
+                second element is the corresponding block.
         """
 
         if isinstance(output, str):
-            return output
+            return output, []
 
         textual_output = []
+        multimodal_data = []
         for block in output:
             assert isinstance(block, dict) and "type" in block, (
-                f"Invalid block: {block}, a TextBlock, ImageBlock, or "
-                f"AudioBlock is expected."
+                f"Invalid block: {block}, a TextBlock, ImageBlock, "
+                f"AudioBlock, or VideoBlock is expected."
             )
             if block["type"] == "text":
                 textual_output.append(block["text"])
@@ -77,14 +94,16 @@ class FormatterBase:
                         f"at: {source['url']}",
                     )
 
+                    path_multimodal_file = source["url"]
+
                 elif source["type"] == "base64":
-                    path_temp_file = _save_base64_data(
+                    path_multimodal_file = _save_base64_data(
                         source["media_type"],
                         source["data"],
                     )
                     textual_output.append(
                         f"The returned {block['type']} can be found "
-                        f"at: {path_temp_file}",
+                        f"at: {path_multimodal_file}",
                     )
 
                 else:
@@ -93,6 +112,10 @@ class FormatterBase:
                         "expected 'url' or 'base64'.",
                     )
 
+                multimodal_data.append(
+                    (path_multimodal_file, block),
+                )
+
             else:
                 raise ValueError(
                     f"Unsupported block type: {block['type']}, "
@@ -100,7 +123,7 @@ class FormatterBase:
                 )
 
         if len(textual_output) == 1:
-            return textual_output[0]
+            return textual_output[0], multimodal_data
 
         else:
-            return "\n".join("- " + _ for _ in textual_output)
+            return "\n".join("- " + _ for _ in textual_output), multimodal_data

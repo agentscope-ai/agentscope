@@ -6,7 +6,8 @@ from typing import AsyncGenerator, Any
 
 from ._model_response import ChatResponse
 
-TOOL_CHOICE_MODES = ["auto", "none", "any", "required"]
+
+_TOOL_CHOICE_MODES = ["auto", "none", "required"]
 
 
 class ChatModelBase:
@@ -63,13 +64,13 @@ class ChatModelBase:
             raise TypeError(
                 f"tool_choice must be str, got {type(tool_choice)}",
             )
-        if tool_choice in TOOL_CHOICE_MODES:
+        if tool_choice in _TOOL_CHOICE_MODES:
             return
 
         available_functions = [tool["function"]["name"] for tool in tools]
 
         if tool_choice not in available_functions:
-            all_options = TOOL_CHOICE_MODES + available_functions
+            all_options = _TOOL_CHOICE_MODES + available_functions
             raise ValueError(
                 f"Invalid tool_choice '{tool_choice}'. "
                 f"Available options: {', '.join(sorted(all_options))}",

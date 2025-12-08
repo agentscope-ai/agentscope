@@ -43,7 +43,7 @@ AgentScope Studio 通过 ``npm`` 安装：
 
     import agentscope
 
-    agentscope.init(studio_url="http://localhost:8000")
+    agentscope.init(studio_url="http://localhost:3000")
 
     # 应用程序代码
     ...

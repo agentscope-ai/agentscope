@@ -85,7 +85,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
         """Test initialization with custom parameters."""
         thinking_config = {"include_thoughts": True, "thinking_budget": 1024}
         generate_kwargs = {"temperature": 0.7, "top_p": 0.9}
-        client_args = {"timeout": 30}
+        client_kwargs = {"timeout": 30}
 
         with patch("google.genai.Client") as mock_client:
             model = GeminiChatModel(
@@ -93,7 +93,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                 api_key="test_key",
                 stream=False,
                 thinking_config=thinking_config,
-                client_args=client_args,
+                client_kwargs=client_kwargs,
                 generate_kwargs=generate_kwargs,
             )
             self.assertEqual(model.model_name, "gemini-2.5-pro")
