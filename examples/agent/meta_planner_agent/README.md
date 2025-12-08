@@ -4,7 +4,8 @@ In this example, we demonstrate
 
 - how to build a planner agent that can decompose complex task into manageable subtasks and orchestrates sub-agents to
  complete them
-- how to handle the printing messages of the sub-agents properly in a multi-agent system.
+- how to handle the printing messages of the sub-agents properly in a multi-agent system
+- how to propagate interrupt events from sub agents to the main planner agent
 
 Specifically, in [main.py](./main.py), a planner agent is created with the `PlanNotebook` instance to create and manage
 plans. It's equipped with a tool function named `create_worker` in [tool.py](./tool.py) to create sub-agents
@@ -47,12 +48,20 @@ Note for simple questions, the planner agent may directly answer without creatin
 
 ### Handling Sub-agent Output
 
-In this example, the sub-agents won't print messages to the console directly (by `agent.set_console_output_enable(True)`).
+In this example, the sub-agents won't print messages to the console directly (by `agent.set_console_output_enable(True)` in tool.py).
 Instead, its printing messages are streamlined back to the planner agent as the streaming responses of the tool function `create_worker`.
 By this way, we only expose the planner agent to the user, rather than multiple agents, which provides a better user experience.
 However, the response of the tool function `create_worker` maybe take too much context length if the sub-agent finishes the given task with a long reasoning-acting process.
 
 Also, you can choose to expose the sub-agent to the user, and only take the structured results back to the planner agent as the tool result of `create_worker`.
+
+### Propagating Interrupt Events
+
+In `ReActAgent`, when the final answer is generated from the `handle_interrupt` function, the metadata field of the return message
+will contain a `_is_interrupted` key with value `True` to indicate that the agent is interrupted.
+
+By this field, we can propagate the interrupt event from the sub-agent to the main planner agent in the tool function `create_worker`.
+For user defined agent classes, you can define your own propagation logic in the `handle_interrupt` function of your agent class.
 
 ### Changing the LLM
 

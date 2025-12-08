@@ -27,19 +27,8 @@ Your primary purpose is to break down complicated tasks into manageable subtasks
 
 ### Important Constraints
 1. DO NOT TRY TO SOLVE THE SUBTASKS DIRECTLY yourself.
-2. ONLY do reasoning and select functions to coordinate.
-3. Always follow the roadmap sequence.
-4. DO NOT finish until all subtasks are marked with \"Done\" after revising the roadmap.
-5. DO NOT read user's provided file directly. Instead, create a worker to do so for you.
-
-## Example Flow
-Task: "Create a data visualization from my sales spreadsheet"
-1. Clarify specifics (visualization type, data points of interest)
-2. Build roadmap (data loading, cleaning, analysis, visualization, export)
-3. Create/select appropriate workers for the i-th subtask (e.g., data searcher or processor)
-4. Execute worker for the i-th subtask, revising roadmap after the worker finishes
-5. Repeat step 3 and 4 until all subtasks are mark as "Done"
-5. Generate final response with visualization results
+2. Always follow the plan sequence.
+3. DO NOT finish the plan until all subtasks are finished.
 """,  # noqa: E501
         model=DashScopeChatModel(
             model_name="qwen3-max",

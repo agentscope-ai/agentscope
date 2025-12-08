@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The tool functions used in the planner example."""
+import asyncio
 import json
 import os
 from collections import OrderedDict
@@ -84,17 +85,23 @@ async def create_worker(
     toolkit = Toolkit()
 
     # Gaode MCP client
-    toolkit.create_tool_group(
-        group_name="amap_tools",
-        description="Map-related tools, including geocoding, routing, and "
-        "place search.",
-    )
-    client = HttpStatelessClient(
-        name="amap_mcp",
-        transport="streamable_http",
-        url=f"https://mcp.amap.com/mcp?key={os.environ['GAODE_API_KEY']}",
-    )
-    await toolkit.register_mcp_client(client, group_name="amap_tools")
+    if os.getenv("GAODE_API_KEY"):
+        toolkit.create_tool_group(
+            group_name="amap_tools",
+            description="Map-related tools, including geocoding, routing, and "
+            "place search.",
+        )
+        client = HttpStatelessClient(
+            name="amap_mcp",
+            transport="streamable_http",
+            url=f"https://mcp.amap.com/mcp?key={os.environ['GAODE_API_KEY']}",
+        )
+        await toolkit.register_mcp_client(client, group_name="amap_tools")
+    else:
+        print(
+            "Warning: GAODE_API_KEY not set in environment, skipping Gaode "
+            "MCP client registration.",
+        )
 
     # Browser MCP client
     toolkit.create_tool_group(
@@ -113,21 +120,28 @@ async def create_worker(
     )
 
     # GitHub MCP client
-    toolkit.create_tool_group(
-        group_name="github_tools",
-        description="GitHub related tools, including repository search and "
-        "code file retrieval.",
-    )
-    github_client = HttpStatelessClient(
-        name="github",
-        transport="streamable_http",
-        url="https://api.githubcopilot.com/mcp/",
-        headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"},
-    )
-    await toolkit.register_mcp_client(
-        github_client,
-        group_name="github_tools",
-    )
+    if os.getenv("GITHUB_TOKEN"):
+        toolkit.create_tool_group(
+            group_name="github_tools",
+            description="GitHub related tools, including repository "
+            "search and code file retrieval.",
+        )
+        github_client = HttpStatelessClient(
+            name="github",
+            transport="streamable_http",
+            url="https://api.githubcopilot.com/mcp/",
+            headers={"Authorization": f"Bearer {os.getenv('GITHUB_TOKEN')}"},
+        )
+        await toolkit.register_mcp_client(
+            github_client,
+            group_name="github_tools",
+        )
+
+    else:
+        print(
+            "Warning: GITHUB_TOKEN not set in environment, skipping GitHub "
+            "MCP client registration.",
+        )
 
     # Basic read/write tools
     toolkit.register_tool_function(write_text_file)
@@ -191,6 +205,10 @@ You MUST use the `{ReActAgent.finish_function_name}` to generate the final answe
             stream=True,
             is_last=False,
         )
+
+        # Expose the interruption signal to the caller
+        if msg.metadata.get("_is_interrupted", False):
+            raise asyncio.CancelledError()
 
     # Obtain the last message from the coroutine task
     if result:
