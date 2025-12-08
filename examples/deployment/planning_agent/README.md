@@ -1,10 +1,10 @@
 # High-code Deployment of a Routing Agent
 
-This example demonstrates how to deploy a multi-agent system using AgentScope. The system is composed of a main 
+This example demonstrates how to deploy a multi-agent system using AgentScope. The system is composed of a main
 routing agent equipped with a tool function named `create_worker` to dispatch tasks to specialized worker agents.
 
-Specifically, the routing agent is deployed as a chat endpoint in server hold by the `Quark` library. 
-Once receiving an input request, we 
+Specifically, the routing agent is deployed as a chat endpoint in server hold by the `Quark` library.
+Once receiving an input request, we
 - set up a routing agent
 - load the session state if any
 - invoke the routing agent to handle the request, and return the streaming response
@@ -23,11 +23,11 @@ planning_agent/
 
 ## Note
 
-1. The printing messages from sub-agent/worker agents is converted to the streaming response of the tool 
+1. The printing messages from sub-agent/worker agents is converted to the streaming response of the tool
 function `create_worker`, meaning the sub-agent won't be exposing to the user directly.
 
-2. The sub-agent in `tool.py` is equipped with the following tools. For GitHub and AMap tools, they will be activated only 
-if the corresponding environment variables are set. 
+2. The sub-agent in `tool.py` is equipped with the following tools. For GitHub and AMap tools, they will be activated only
+if the corresponding environment variables are set.
 You can customize the toolset by modifying the `tool.py` file.
 
 | Tool                  | Description                                         | Required Environment Variable |
@@ -38,6 +38,8 @@ You can customize the toolset by modifying the `tool.py` file.
 | AMap MCP server       | Access AMap services for location-based tasks       | GAODE_API_KEY                 |
 
 
+3. Optionally, you can also expose the sub-agent's response to the user by modifying the `tool.py` file.
+
 ## Quick Start
 
 Install the latest agentscope and Quark packages:
@@ -46,10 +48,10 @@ Install the latest agentscope and Quark packages:
 pip install agentscope quark
 ```
 
-Ensure you have set `DASHSCOPE_API_KEY` in your environment for DashScope LLM API, or change the used model in 
-both `main.py` and `tool.py` (Remember to change the formatter correspondingly). 
+Ensure you have set `DASHSCOPE_API_KEY` in your environment for DashScope LLM API, or change the used model in
+both `main.py` and `tool.py` (Remember to change the formatter correspondingly).
 
-Set the environment variables for GitHub and AMap tools if needed. 
+Set the environment variables for GitHub and AMap tools if needed.
 
 Run the Quark server:
 
