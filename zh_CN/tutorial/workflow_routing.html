@@ -437,13 +437,13 @@ Router: {
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;your_choice&quot;: &quot;Content Generation&quot;,
-        &quot;task_description&quot;: &quot;写一首诗&quot;
+        &quot;task_description&quot;: &quot;用户请求创作一首诗&quot;
     },
-    &quot;id&quot;: &quot;call_1f6e7c8619084add98c507&quot;
+    &quot;id&quot;: &quot;call_22a06eab3b794d3fbf8a68&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_1f6e7c8619084add98c507&quot;,
+    &quot;id&quot;: &quot;call_22a06eab3b794d3fbf8a68&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -452,14 +452,11 @@ system: {
         }
     ]
 }
-Router: 已经理解您的请求，我将为您创作一首诗。不过，根据我的设置，我会将这个任务转交给专门负责内容创作的系统来完成，以确保您能够得到更加优美和符合期待的作品。请稍等片刻。
-
-工具&quot;generate_response&quot;被调用时使用了以下参数：
-{&quot;your_choice&quot;: &quot;Content Generation&quot;, &quot;task_description&quot;: &quot;写一首诗&quot;}
+Router: 我将把您的请求路由给我们的诗歌创作助手，它会帮助您完成这首诗的创作。请稍等片刻。
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;写一首诗&quot;
+    &quot;task_description&quot;: &quot;用户请求创作一首诗&quot;
 }
 </pre></div>
 </div>
@@ -558,100 +555,82 @@ Router: 已经理解您的请求，我将为您创作一首诗。不过，根据
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_3a02494d95244050857971&quot;
+    &quot;id&quot;: &quot;call_357876a9cc3a4362a35c8c&quot;
 }
-PythonAgent: 快速排序是一种高效的排序算法，使用分治法策略来对一个数组进行排序。下面是一个用 Python 实现的快速排序函数：
+PythonAgent: 当然！快速排序是一种高效的排序算法，它使用分治策略来对一个数组进行排序。以下是一个用 Python 实现的快速排序函数：
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
     else:
-        # 选择基准元素
         pivot = arr[len(arr) // 2]
-        # 分成三个子数组：小于、等于和大于基准的元素
         left = [x for x in arr if x &lt; pivot]
         middle = [x for x in arr if x == pivot]
         right = [x for x in arr if x &gt; pivot]
-        # 递归地对左右子数组进行排序，并将结果合并
         return quicksort(left) + middle + quicksort(right)
 
-# 测试快速排序函数
-if __name__ == &quot;__main__&quot;:
-    test_array = [3, 6, 8, 10, 1, 2, 1]
-    print(&quot;原始数组:&quot;, test_array)
-    sorted_array = quicksort(test_array)
-    print(&quot;排序后的数组:&quot;, sorted_array)
+# 示例用法
+arr = [3, 6, 8, 10, 1, 2, 1]
+sorted_arr = quicksort(arr)
+print(sorted_arr)
 ```
 
-这个实现选择了数组中间的元素作为基准（pivot），然后将数组分成三部分：小于基准的元素、等于基准的元素和大于基准的元素。接着递归地对小于和大于基准的部分进行排序，最后将结果合并。
+这个实现使用了递归的方法。以下是代码的详细解释：
 
-你可以根据需要修改基准的选择方式，例如选择第一个元素或最后一个元素作为基准。以下是选择第一个元素作为基准的版本：
+1. **基准条件**：如果数组的长度小于或等于1，直接返回该数组，因为它已经是有序的。
+2. **选择枢轴**：选择数组中间的元素作为枢轴（pivot）。
+3. **分区**：
+   - `left` 列表包含所有小于枢轴的元素。
+   - `middle` 列表包含所有等于枢轴的元素。
+   - `right` 列表包含所有大于枢轴的元素。
+4. **递归排序**：对 `left` 和 `right` 列表分别进行递归排序，然后将它们与 `middle` 列表合并。
 
-```python
-def quicksort(arr):
-    if len(arr) &lt;= 1:
-        return arr
-    else:
-        # 选择第一个元素作为基准
-        pivot = arr[0]
-        # 分成三个子数组：小于、等于和大于基准的元素
-        left = [x for x in arr[1:] if x &lt; pivot]
-        middle = [x for x in arr if x == pivot]
-        right = [x for x in arr[1:] if x &gt; pivot]
-        # 递归地对左右子数组进行排序，并将结果合并
-        return quicksort(left) + middle + quicksort(right)
-
-# 测试快速排序函数
-if __name__ == &quot;__main__&quot;:
-    test_array = [3, 6, 8, 10, 1, 2, 1]
-    print(&quot;原始数组:&quot;, test_array)
-    sorted_array = quicksort(test_array)
-    print(&quot;排序后的数组:&quot;, sorted_array)
-```
-
-这两种实现方式都可以有效地对数组进行排序。你可以根据具体需求选择合适的基准选择方式。
+这个实现的时间复杂度在平均情况下是 O(n log n)，但在最坏情况下（例如当数组已经部分有序时）可能会退化到 O(n^2)。可以通过随机选择枢轴或其他方法来优化最坏情况下的性能。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_3a02494d95244050857971&quot;,
+    &quot;id&quot;: &quot;call_357876a9cc3a4362a35c8c&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;快速排序是一种高效的排序算法，使用分治法策略来对一个数组进行排序。下面是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        # 选择基准元素\n        pivot = arr[len(arr) // 2]\n        # 分成三个子数组：小于、等于和大于基准的元素\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        # 递归地对左右子数组进行排序，并将结果合并\n        return quicksort(left) + middle + quicksort(right)\n\n# 测试快速排序函数\nif __name__ == \&quot;__main__\&quot;:\n    test_array = [3, 6, 8, 10, 1, 2, 1]\n    print(\&quot;原始数组:\&quot;, test_array)\n    sorted_array = quicksort(test_array)\n    print(\&quot;排序后的数组:\&quot;, sorted_array)\n```\n\n这个实现选择了数组中间的元素作为基准（pivot），然后将数组分成三部分：小于基准的元素、等于基准的元素和大于基准的元素。接着递归地对小于和大于基准的部分进行排序，最后将结果合并。\n\n你可以根据需要修改基准的选择方式，例如选择第一个元素或最后一个元素作为基准。以下是选择第一个元素作为基准的版本：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        # 选择第一个元素作为基准\n        pivot = arr[0]\n        # 分成三个子数组：小于、等于和大于基准的元素\n        left = [x for x in arr[1:] if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr[1:] if x &gt; pivot]\n        # 递归地对左右子数组进行排序，并将结果合并\n        return quicksort(left) + middle + quicksort(right)\n\n# 测试快速排序函数\nif __name__ == \&quot;__main__\&quot;:\n    test_array = [3, 6, 8, 10, 1, 2, 1]\n    print(\&quot;原始数组:\&quot;, test_array)\n    sorted_array = quicksort(test_array)\n    print(\&quot;排序后的数组:\&quot;, sorted_array)\n```\n\n这两种实现方式都可以有效地对数组进行排序。你可以根据具体需求选择合适的基准选择方式。&quot;
+            &quot;text&quot;: &quot;当然！快速排序是一种高效的排序算法，它使用分治策略来对一个数组进行排序。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(sorted_arr)\n```\n\n这个实现使用了递归的方法。以下是代码的详细解释：\n\n1. **基准条件**：如果数组的长度小于或等于1，直接返回该数组，因为它已经是有序的。\n2. **选择枢轴**：选择数组中间的元素作为枢轴（pivot）。\n3. **分区**：\n   - `left` 列表包含所有小于枢轴的元素。\n   - `middle` 列表包含所有等于枢轴的元素。\n   - `right` 列表包含所有大于枢轴的元素。\n4. **递归排序**：对 `left` 和 `right` 列表分别进行递归排序，然后将它们与 `middle` 列表合并。\n\n这个实现的时间复杂度在平均情况下是 O(n log n)，但在最坏情况下（例如当数组已经部分有序时）可能会退化到 O(n^2)。可以通过随机选择枢轴或其他方法来优化最坏情况下的性能。&quot;
         }
     ]
 }
-Router: 下面是用 Python 实现的快速排序函数：
+Router: 这是一个用 Python 实现的快速排序函数：
 
 ```python
 def quicksort(arr):
     if len(arr) &lt;= 1:
         return arr
     else:
-        # 选择基准元素
         pivot = arr[len(arr) // 2]
-        # 分成三个子数组：小于、等于和大于基准的元素
         left = [x for x in arr if x &lt; pivot]
         middle = [x for x in arr if x == pivot]
         right = [x for x in arr if x &gt; pivot]
-        # 递归地对左右子数组进行排序，并将结果合并
         return quicksort(left) + middle + quicksort(right)
 
-# 测试快速排序函数
-if __name__ == &quot;__main__&quot;:
-    test_array = [3, 6, 8, 10, 1, 2, 1]
-    print(&quot;原始数组:&quot;, test_array)
-    sorted_array = quicksort(test_array)
-    print(&quot;排序后的数组:&quot;, sorted_array)
+# 示例用法
+arr = [3, 6, 8, 10, 1, 2, 1]
+sorted_arr = quicksort(arr)
+print(sorted_arr)
 ```
 
-这个实现选择了数组中间的元素作为基准（pivot），然后将数组分成三部分：小于基准的元素、等于基准的元素和大于基准的元素。接着递归地对小于和大于基准的部分进行排序，最后将结果合并。
+这个实现使用了递归的方法。以下是代码的详细解释：
 
-你可以根据需要修改基准的选择方式，例如选择第一个元素或最后一个元素作为基准。此外，还提供了一个选择第一个元素作为基准的版本。您可以使用这些代码来对数组进行快速排序。如果您有任何其他问题或需要进一步的帮助，请告诉我。
+- **基准条件**：如果数组的长度小于或等于1，直接返回该数组，因为它已经是有序的。
+- **选择枢轴**：选择数组中间的元素作为枢轴（pivot）。
+- **分区**：
+  - `left` 列表包含所有小于枢轴的元素。
+  - `middle` 列表包含所有等于枢轴的元素。
+  - `right` 列表包含所有大于枢轴的元素。
+- **递归排序**：对 `left` 和 `right` 列表分别进行递归排序，然后将它们与 `middle` 列表合并。
+
+这个实现的时间复杂度在平均情况下是 O(n log n)，但在最坏情况下（例如当数组已经部分有序时）可能会退化到 O(n^2)。可以通过随机选择枢轴或其他方法来优化最坏情况下的性能。您可以直接使用这段代码来进行快速排序。
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 43.494 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 34.255 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>

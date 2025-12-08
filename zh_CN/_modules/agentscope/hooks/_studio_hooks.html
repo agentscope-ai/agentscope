@@ -359,6 +359,10 @@
     <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The pre-speak hook to forward messages to the studio.&quot;&quot;&quot;</span>
+    <span class="c1"># Disable console output if needed</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_disable_console_output</span><span class="p">:</span>  <span class="c1"># pylint: disable=protected-access</span>
+        <span class="k">return</span>
+
     <span class="n">msg</span> <span class="o">=</span> <span class="n">kwargs</span><span class="p">[</span><span class="s2">&quot;msg&quot;</span><span class="p">]</span>
 
     <span class="n">message_data</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
