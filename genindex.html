@@ -247,26 +247,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/faq.html">FAQ</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_model.html">Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_prompt.html">Prompt Formatter</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_memory.html">Memory</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_long_term_memory.html">Long-Term Memory</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">Agent Skill</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">Agent Hooks</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_pipeline.html">Pipeline</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_plan.html">Plan</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">State/Session Management</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">Agent Hooks</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_embedding.html">Embedding</a></li>
-<li class="toctree-l1"><a class="reference internal" href="tutorial/task_token.html">Token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -288,6 +298,7 @@
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -427,7 +438,11 @@
 </li>
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding.__init__">(DashScopeMultiModalEmbedding method)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.__init__">(DashScopeRealtimeTTSModel method)</a>
+</li>
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding.__init__">(DashScopeTextEmbedding method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.__init__">(DashScopeTTSModel method)</a>
 </li>
           <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__">(DeepSeekMultiAgentFormatter method)</a>
 </li>
@@ -458,6 +473,8 @@
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding.__init__">(GeminiTextEmbedding method)</a>
 </li>
           <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter.__init__">(GeminiTokenCounter method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.__init__">(GeminiTTSModel method)</a>
 </li>
           <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator.__init__">(GeneralEvaluator method)</a>
 </li>
@@ -509,6 +526,8 @@
 </li>
           <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter.__init__">(OpenAITokenCounter method)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.__init__">(OpenAITTSModel method)</a>
+</li>
           <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.__init__">(PDFReader method)</a>
 </li>
           <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.__init__">(PlanNotebook method)</a>
@@ -546,6 +565,12 @@
           <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel.__init__">(TrinityChatModel method)</a>
 </li>
           <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.__init__">(TruncatedFormatterBase method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.__init__">(TTSModelBase method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.__init__">(TTSResponse method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.__init__">(TTSUsage method)</a>
 </li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.__init__">(UserAgent method)</a>
 </li>
@@ -717,8 +742,6 @@
           <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.message
 
@@ -726,6 +749,8 @@
           <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.model
 
@@ -787,6 +812,13 @@
 
         <ul>
           <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.tts
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#module-agentscope.tts">module</a>
 </li>
         </ul></li>
         <li>
@@ -883,10 +915,22 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.clear_instance_hooks">clear_instance_hooks() (AgentBase method)</a>
 </li>
-        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">close() (StatefulClientBase method)</a>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.close">close() (DashScopeRealtimeTTSModel method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">(StatefulClientBase method)</a>
 </li>
-        <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.connect">connect() (StatefulClientBase method)</a>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.close">(TTSModelBase method)</a>
 </li>
+        </ul></li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.connect">connect() (DashScopeRealtimeTTSModel method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.connect">(StatefulClientBase method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.connect">(TTSModelBase method)</a>
+</li>
+        </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.content">content (ChatResponse attribute)</a>
@@ -895,6 +939,8 @@
           <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.content">(DocMetadata attribute)</a>
 </li>
           <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.content">(ToolResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.content">(TTSResponse attribute)</a>
 </li>
         </ul></li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.convert_tool_result_to_string">convert_tool_result_to_string() (FormatterBase static method)</a>
@@ -926,6 +972,8 @@
 </li>
           <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.created_at">(SubTask attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.created_at">(TTSResponse attribute)</a>
+</li>
         </ul></li>
     </ul></td>
   </tr></table>
@@ -949,7 +997,11 @@
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeMultiModalEmbedding">DashScopeMultiModalEmbedding (class in agentscope.embedding)</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel">DashScopeRealtimeTTSModel (class in agentscope.tts)</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.DashScopeTextEmbedding">DashScopeTextEmbedding (class in agentscope.embedding)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel">DashScopeTTSModel (class in agentscope.tts)</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Base64Source.data">data (Base64Source attribute)</a>
 </li>
@@ -965,6 +1017,8 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint">DefaultPlanToHint (class in agentscope.plan)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.delete">delete() (InMemoryMemory method)</a>
 
         <ul>
@@ -979,8 +1033,6 @@
           <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.delete">(VDBStoreBase method)</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.delete_plan">delete_plan() (InMemoryPlanStorage method)</a>
 
         <ul>
@@ -1126,6 +1178,8 @@
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.GeminiTextEmbedding">GeminiTextEmbedding (class in agentscope.embedding)</a>
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.GeminiTokenCounter">GeminiTokenCounter (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel">GeminiTTSModel (class in agentscope.tts)</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.GeneralEvaluator">GeneralEvaluator (class in agentscope.evaluate)</a>
 </li>
@@ -1276,13 +1330,15 @@
 </li>
           <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.id">(ToolUseBlock attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.id">(TTSResponse attribute)</a>
+</li>
         </ul></li>
         <li><a href="api/agentscope.message.html#agentscope.message.ImageBlock">ImageBlock (class in agentscope.message)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader">ImageReader (class in agentscope.rag)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.html#agentscope.init">init() (in module agentscope)</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory">InMemoryMemory (class in agentscope.memory)</a>
@@ -1295,6 +1351,8 @@
           <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.input">(ToolUseBlock attribute)</a>
 </li>
         </ul></li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.input_tokens">input_tokens (TTSUsage attribute)</a>
+</li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.insert_text_file">insert_text_file() (in module agentscope.tool)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.interrupt">interrupt() (AgentBase method)</a>
@@ -1304,7 +1362,11 @@
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_interrupted">is_interrupted (ToolResponse attribute)</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.is_last">is_last (ToolResponse attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.is_last">(TTSResponse attribute)</a>
 </li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -1402,6 +1464,8 @@
 </li>
           <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.metadata">(ToolResponse attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.metadata">(TTSResponse attribute)</a>
+</li>
         </ul></li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricBase">MetricBase (class in agentscope.evaluate)</a>
 </li>
@@ -1423,6 +1487,8 @@
 
         <ul>
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingModelBase.model_name">(EmbeddingModelBase attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.model_name">(TTSModelBase attribute)</a>
 </li>
         </ul></li>
         <li>
@@ -1466,6 +1532,8 @@
           <li><a href="api/agentscope.tool.html#module-agentscope.tool">agentscope.tool</a>
 </li>
           <li><a href="api/agentscope.tracing.html#module-agentscope.tracing">agentscope.tracing</a>
+</li>
+          <li><a href="api/agentscope.tts.html#module-agentscope.tts">agentscope.tts</a>
 </li>
           <li><a href="api/agentscope.tune.html#module-agentscope.tune">agentscope.tune</a>
 </li>
@@ -1542,10 +1610,10 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_audio">openai_text_to_audio() (in module agentscope.tool)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image() (in module agentscope.tool)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">OpenAIChatFormatter (class in agentscope.formatter)</a>
 </li>
         <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel">OpenAIChatModel (class in agentscope.model)</a>
@@ -1555,6 +1623,8 @@
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding">OpenAITextEmbedding (class in agentscope.embedding)</a>
 </li>
         <li><a href="api/agentscope.token.html#agentscope.token.OpenAITokenCounter">OpenAITokenCounter (class in agentscope.token)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel">OpenAITTSModel (class in agentscope.tts)</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.outcome">outcome (Plan attribute)</a>
 
@@ -1568,6 +1638,8 @@
           <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.output">(ToolResultBlock attribute)</a>
 </li>
         </ul></li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.output_tokens">output_tokens (TTSUsage attribute)</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.override_class_input_method">override_class_input_method() (UserAgent class method)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.override_instance_input_method">override_instance_input_method() (UserAgent method)</a>
@@ -1584,14 +1656,20 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan">Plan (class in agentscope.plan)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook">PlanNotebook (class in agentscope.plan)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanStorageBase">PlanStorageBase (class in agentscope.plan)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.print">print() (AgentBase method)</a>
 </li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.push">push() (DashScopeRealtimeTTSModel method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.push">(TTSModelBase method)</a>
+</li>
+        </ul></li>
     </ul></td>
   </tr></table>
 </section>
@@ -1885,6 +1963,8 @@
         <ul>
           <li><a href="api/agentscope.tool.html#agentscope.tool.ToolResponse.stream">(ToolResponse attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.stream">(TTSModelBase attribute)</a>
+</li>
         </ul></li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.stream_printing_messages">stream_printing_messages() (in module agentscope.pipeline)</a>
 </li>
@@ -2026,6 +2106,30 @@
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.OpenAITextEmbedding.supported_modalities">(OpenAITextEmbedding attribute)</a>
 </li>
         </ul></li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.supports_streaming_input">supports_streaming_input (DashScopeRealtimeTTSModel attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.supports_streaming_input">(DashScopeTTSModel attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.supports_streaming_input">(GeminiTTSModel attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.supports_streaming_input">(OpenAITTSModel attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.supports_streaming_input">(TTSModelBase attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.synthesize">synthesize() (DashScopeRealtimeTTSModel method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeTTSModel.synthesize">(DashScopeTTSModel method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.GeminiTTSModel.synthesize">(GeminiTTSModel method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.OpenAITTSModel.synthesize">(OpenAITTSModel method)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.synthesize">(TTSModelBase method)</a>
+</li>
+        </ul></li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.sys_prompt">sys_prompt (ReActAgent property)</a>
 </li>
     </ul></td>
@@ -2053,7 +2157,11 @@
         <li><a href="api/agentscope.message.html#agentscope.message.ThinkingBlock">ThinkingBlock (class in agentscope.message)</a>
 </li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingUsage.time">time (EmbeddingUsage attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.time">(TTSUsage attribute)</a>
 </li>
+        </ul></li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.to_dict">to_dict() (Msg method)</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.to_markdown">to_markdown() (Plan method)</a>
@@ -2084,12 +2192,12 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.DocMetadata.total_chunks">total_chunks (DocMetadata attribute)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace">trace() (in module agentscope.tracing)</a>
 </li>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_embedding">trace_embedding() (in module agentscope.tracing)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_format">trace_format() (in module agentscope.tracing)</a>
 </li>
         <li><a href="api/agentscope.tracing.html#agentscope.tracing.trace_llm">trace_llm() (in module agentscope.tracing)</a>
@@ -2103,6 +2211,12 @@
         <li><a href="api/agentscope.model.html#agentscope.model.TrinityChatModel">TrinityChatModel (class in agentscope.model)</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase">TruncatedFormatterBase (class in agentscope.formatter)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase">TTSModelBase (class in agentscope.tts)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse">TTSResponse (class in agentscope.tts)</a>
+</li>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage">TTSUsage (class in agentscope.tts)</a>
 </li>
         <li><a href="api/agentscope.tune.html#agentscope.tune.tune">tune() (in module agentscope.tune)</a>
 </li>
@@ -2129,6 +2243,10 @@
 </li>
           <li><a href="api/agentscope.message.html#agentscope.message.ToolUseBlock.type">(ToolUseBlock attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.type">(TTSResponse attribute)</a>
+</li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSUsage.type">(TTSUsage attribute)</a>
+</li>
           <li><a href="api/agentscope.message.html#agentscope.message.URLSource.type">(URLSource attribute)</a>
 </li>
           <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock.type">(VideoBlock attribute)</a>
@@ -2150,14 +2268,16 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.URLSource">URLSource (class in agentscope.message)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.model.html#agentscope.model.ChatResponse.usage">usage (ChatResponse attribute)</a>
 
         <ul>
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.EmbeddingResponse.usage">(EmbeddingResponse attribute)</a>
 </li>
+          <li><a href="api/agentscope.tts.html#agentscope.tts.TTSResponse.usage">(TTSResponse attribute)</a>
+</li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent">UserAgent (class in agentscope.agent)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputBase">UserInputBase (class in agentscope.agent)</a>

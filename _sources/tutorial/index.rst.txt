@@ -300,6 +300,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides a unified interface for Text-to-Speech (TTS) models across multiple API providers. This tutorial demonstrates how to use TTS models in AgentScope.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tts_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tts`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">TTS</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="In this tutorial, we introduce the model APIs integrated in AgentScope, how to use them and how to integrate new model APIs. The supported model APIs and providers include:">
 
 .. only:: html
@@ -512,6 +529,7 @@
    /tutorial/task_mcp
    /tutorial/task_embedding
    /tutorial/workflow_conversation
+   /tutorial/task_tts
    /tutorial/task_model
    /tutorial/quickstart_agent
    /tutorial/task_state

@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">FAQ</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">Prompt Formatter</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">Memory</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">Long-Term Memory</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">Pipeline</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">Plan</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -463,57 +474,50 @@ At each round a moderator agent will decide whether the correct answer can be ob
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Thank you for the introduction. As the affirmative side, I will present my argument on the number of revolutions circle A will make as it rolls around circle B.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Thank you. As the affirmative side, I will argue that when circle A, with a radius 1/3 that of circle B, rolls around circle B one trip back to its starting point without any relative sliding, circle A will revolve 4 times in total.
 
-Given:
-- Circle A and Circle B are externally tangent.
-- There is no relative sliding between the circles.
-- The radius of circle A (r_A) is 1/3 the radius of circle B (r_B).
+To understand this, let&#39;s break down the problem:
 
-Let&#39;s denote:
-- r_A = R
-- r_B = 3R
+- Let the radius of circle B be \( R \).
+- Then, the radius of circle A is \( \frac{R}{3} \).
 
-When circle A rolls around circle B, it travels a distance equal to the circumference of the path it follows. This path is essentially the circumference of a larger circle that has a radius equal to the sum of the radii of circle A and circle B: R + 3R = 4R.
+When circle A rolls around circle B, it follows a path along the circumference of a larger circle whose radius is the sum of the radii of circles A and B, which is \( R + \frac{R}{3} = \frac{4R}{3} \).
 
-The circumference of this path is:
-C_path = 2 * pi * (4R) = 8 * pi * R
+The circumference of this larger circle (the path that circle A follows) is:
+\[ C_{\text{path}} = 2\pi \times \frac{4R}{3} = \frac{8\pi R}{3} \]
 
-Now, the number of revolutions circle A makes is the total distance traveled divided by the circumference of circle A. The circumference of circle A is:
-C_A = 2 * pi * R
+Now, the circumference of circle A itself is:
+\[ C_A = 2\pi \times \frac{R}{3} = \frac{2\pi R}{3} \]
 
-Therefore, the number of revolutions (N) that circle A makes is:
-N = C_path / C_A
-  = (8 * pi * R) / (2 * pi * R)
-  = 8 / 2
-  = 4
+To find out how many times circle A revolves, we divide the length of the path by the circumference of circle A:
+\[ \text{Number of revolutions} = \frac{C_{\text{path}}}{C_A} = \frac{\frac{8\pi R}{3}}{\frac{2\pi R}{3}} = \frac{8\pi R}{3} \times \frac{3}{2\pi R} = 4 \]
 
-However, there is an additional consideration. When circle A completes one trip around circle B, it not only rolls along the path but also rotates about its own center. Because circle A is in contact with circle B, it will rotate once for each complete circuit around circle B due to the external tangency. This means we need to add one more revolution to account for the rotation about its own center.
+Therefore, circle A will revolve 4 times as it rolls around circle B once.
+Bob: Thank you, and I appreciate the detailed explanation from the affirmative side. However, as the negative side, I will argue that circle A will actually revolve 3 times, not 4, when it rolls around circle B one trip back to its starting point.
 
-Thus, the total number of revolutions is:
-Total Revolutions = 4 (rolling) + 1 (rotating about its own center) = 5
+Here&#39;s the reasoning:
 
-In conclusion, circle A will revolve 5 times in total as it rolls around circle B.
-Bob: Thank you, Alice, for your detailed argument. I am Bob, and I will be presenting the negative side of this debate. While I agree with most of your calculations, there is a subtle point that needs to be clarified regarding the total number of revolutions.
+- Let the radius of circle B be \( R \).
+- The radius of circle A is \( \frac{R}{3} \).
 
-Given:
-- Circle A (radius R) and Circle B (radius 3R) are externally tangent.
-- There is no relative sliding between the circles.
+When circle A rolls around circle B, it follows a path along the circumference of a larger circle whose radius is the sum of the radii of circles A and B, which is \( R + \frac{R}{3} = \frac{4R}{3} \).
 
-When circle A rolls around circle B, it travels a distance equal to the circumference of the path, which is indeed 8πR as you calculated. The circumference of circle A is 2πR. Therefore, the number of times circle A&#39;s circumference fits into the path&#39;s circumference is:
+The circumference of this larger circle (the path that circle A follows) is:
+\[ C_{\text{path}} = 2\pi \times \frac{4R}{3} = \frac{8\pi R}{3} \]
 
-N = C_path / C_A
-  = (8 * π * R) / (2 * π * R)
-  = 8 / 2
-  = 4
+The circumference of circle A itself is:
+\[ C_A = 2\pi \times \frac{R}{3} = \frac{2\pi R}{3} \]
 
-This calculation correctly determines how many times circle A&#39;s surface touches the ground as it rolls around the larger circle. However, the key point here is that the additional rotation due to the external tangency does not add an extra revolution in the way you suggested.
+To find out how many times circle A revolves, we need to consider both the translational motion (rolling along the path) and the rotational motion (spinning around its own center). When circle A completes one full trip around circle B, it has traveled a distance equal to the circumference of the path, \( \frac{8\pi R}{3} \).
 
-When circle A completes one full trip around circle B, it has already accounted for the necessary rotations due to the curvature of the path. The concept of &quot;rotating about its own center&quot; is implicitly included in the rolling motion. As circle A rolls without slipping, each point on its circumference comes into contact with the path exactly once per revolution. This means that the 4 revolutions already include the rotation about its own center.
+However, during this trip, circle A also rotates around its own center. The number of rotations due to this rolling motion is given by the ratio of the path length to the circumference of circle A:
+\[ \text{Rotations due to rolling} = \frac{C_{\text{path}}}{C_A} = \frac{\frac{8\pi R}{3}}{\frac{2\pi R}{3}} = 4 \]
 
-Therefore, the total number of revolutions that circle A makes as it rolls around circle B is simply 4, not 5. The additional rotation you mentioned is part of the 4 revolutions, not an extra one.
+But, we must also account for the fact that as circle A rolls around circle B, it also completes one full revolution around circle B. This additional revolution is not counted in the 4 rotations due to rolling, but it is an actual rotation of circle A around its own center. Therefore, we subtract this one full revolution from the 4 rotations:
 
-In conclusion, circle A will revolve 4 times in total as it rolls around circle B.
+\[ \text{Total revolutions} = 4 - 1 = 3 \]
+
+Thus, circle A will revolve 3 times in total as it rolls around circle B once.
 /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Aggregator: {
@@ -523,11 +527,11 @@ Aggregator: {
         &quot;correct_answer&quot;: &quot;4&quot;,
         &quot;finished&quot;: true
     },
-    &quot;id&quot;: &quot;call_6fa1eb55b9bf4210a65ca2&quot;
+    &quot;id&quot;: &quot;call_8fe7a8d332b74689964c62&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_6fa1eb55b9bf4210a65ca2&quot;,
+    &quot;id&quot;: &quot;call_8fe7a8d332b74689964c62&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -536,11 +540,11 @@ system: {
         }
     ]
 }
-Aggregator: Thank you, Alice and Bob, for your insightful arguments. After carefully considering both sides, the correct answer is that circle A will revolve 4 times in total as it rolls around circle B.
+Aggregator: The debate has concluded, and after carefully evaluating the arguments presented by both sides, the correct answer is that circle A will revolve 4 times in total as it rolls around circle B one trip back to its starting point.
 
-Bob&#39;s argument correctly points out that the 4 revolutions calculated from the ratio of the path&#39;s circumference to the circumference of circle A already account for all the rotations, including the rotation about its own center. There is no need to add an extra revolution since the rolling motion without slipping inherently includes this rotation.
+Alice&#39;s argument correctly identified the number of revolutions based on the path length and the circumference of circle A. The key point is that the additional revolution around the center of circle B is already accounted for in the 4 rotations due to rolling, so there is no need to subtract one full revolution as suggested by Bob.
 
-Therefore, the final answer is 4 revolutions.
+Therefore, Alice&#39;s position is the correct one: circle A will indeed revolve 4 times.
 
 The debate is finished, and the correct answer is:  4
 </pre></div>
@@ -551,7 +555,7 @@ The debate is finished, and the correct answer is:  4
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">Pipeline</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.417 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 41.996 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>

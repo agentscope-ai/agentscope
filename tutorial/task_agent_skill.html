@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="AgentScope Studio" href="task_studio.html"><link rel="prev" title="MCP" href="task_mcp.html">
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Agent" href="task_agent.html"><link rel="prev" title="MCP" href="task_mcp.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">FAQ</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">Prompt Formatter</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">Memory</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">Long-Term Memory</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Agent Skill</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">Pipeline</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">Plan</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -514,12 +525,12 @@ You are a helpful assistant named Friday.
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="task_studio.html">
+          <a class="next-page" href="task_agent.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">AgentScope Studio</div>
+                <div class="title">Agent</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>

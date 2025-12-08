@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Pipeline" href="task_pipeline.html"><link rel="prev" title="Long-Term Memory" href="task_long_term_memory.html">
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="State/Session Management" href="task_state.html"><link rel="prev" title="Agent Skill" href="task_agent_skill.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">FAQ</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">Prompt Formatter</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">Memory</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">Long-Term Memory</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul class="current">
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">Pipeline</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">Plan</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -521,7 +532,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_7b9491408bbc4e72845860&quot;,
+    &quot;id&quot;: &quot;call_430827e442bd4f5f952d1d&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -529,7 +540,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_23e18777d3f5495cbe3899&quot;,
+    &quot;id&quot;: &quot;call_2ca049ef187b4200815a04&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -537,30 +548,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_7b9491408bbc4e72845860&quot;,
+    &quot;id&quot;: &quot;call_430827e442bd4f5f952d1d&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag1 started at 11:54:44.964816 and ended at 11:54:47.968048. &quot;
+            &quot;text&quot;: &quot;Tag tag1 started at 03:05:04.402255 and ended at 03:05:07.405151. &quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_23e18777d3f5495cbe3899&quot;,
+    &quot;id&quot;: &quot;call_2ca049ef187b4200815a04&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag2 started at 11:54:44.964904 and ended at 11:54:47.968676. &quot;
+            &quot;text&quot;: &quot;Tag tag2 started at 03:05:04.402349 and ended at 03:05:07.405787. &quot;
         }
     ]
 }
-Jarvis: The function &#39;example_tool_function&#39; has been called in parallel with the tags &#39;tag1&#39; and &#39;tag2&#39;. Here are the results:
+Jarvis: The &#39;example_tool_function&#39; was called in parallel with two different tags, &#39;tag1&#39; and &#39;tag2&#39;. Here are the results:
 
-- For tag1, the function started at 11:54:44.964816 and ended at 11:54:47.968048.
-- For tag2, the function started at 11:54:44.964904 and ended at 11:54:47.968676.
+- For &#39;tag1&#39;, the function started at 03:05:04.402255 and ended at 03:05:07.405151.
+- For &#39;tag2&#39;, the function started at 03:05:04.402349 and ended at 03:05:07.405787.
+
+Both calls executed concurrently, as you can see from the start and end times.
 </pre></div>
 </div>
 </section>
@@ -620,22 +633,22 @@ Then we can get the structured output from the <code class="docutils literal not
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_661addb331594ab7964524&quot;,
+    &quot;id&quot;: &quot;call_f82c835ddc2f414aa76afe&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
-        &quot;name&quot;: &quot;Albert Einstein&quot;,
-        &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
+        &quot;name&quot;: &quot;Einstein&quot;,
+        &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
-            &quot;Nobel Prize in Physics (1921)&quot;,
-            &quot;Copley Medal (1925)&quot;,
-            &quot;Max Planck Medal (1929)&quot;
+            &quot;Nobel Prize in Physics&quot;,
+            &quot;Copley Medal&quot;,
+            &quot;Max Planck Medal&quot;
         ]
     }
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_661addb331594ab7964524&quot;,
+    &quot;id&quot;: &quot;call_f82c835ddc2f414aa76afe&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -644,17 +657,17 @@ system: {
         }
     ]
 }
-Jarvis: Albert Einstein was a theoretical physicist who is best known for developing the theory of relativity, which stands as one of the two pillars of modern physics. Born in 1879, Einstein&#39;s contributions to science have had a profound and lasting impact on our understanding of the universe. He was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, but he is most famous for his theories of special and general relativity. Among his many honors, Einstein also received the Copley Medal in 1925 and the Max Planck Medal in 1929. He lived a long and distinguished life, passing away at the age of 76, leaving behind a legacy that continues to influence scientific thought and research.
+Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein&#39;s work had a profound impact on the field of physics and beyond. He was awarded the Nobel Prize in Physics in 1921, primarily for his discovery of the law of the photoelectric effect, a pivotal contribution to the development of quantum theory. Throughout his distinguished career, he also received other prestigious honors such as the Copley Medal and the Max Planck Medal. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that continues to influence science and technology today.
 
 The structured output:
 {
-    &quot;name&quot;: &quot;Albert Einstein&quot;,
-    &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
+    &quot;name&quot;: &quot;Einstein&quot;,
+    &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
-        &quot;Nobel Prize in Physics (1921)&quot;,
-        &quot;Copley Medal (1925)&quot;,
-        &quot;Max Planck Medal (1929)&quot;
+        &quot;Nobel Prize in Physics&quot;,
+        &quot;Copley Medal&quot;,
+        &quot;Max Planck Medal&quot;
     ]
 }
 </pre></div>
@@ -743,7 +756,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">Tool</span></a></p></li>
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">Agent Hooks</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 15.922 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 23.216 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>
@@ -764,23 +777,23 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="task_pipeline.html">
+          <a class="next-page" href="task_state.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">Pipeline</div>
+                <div class="title">State/Session Management</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="task_long_term_memory.html">
+          <a class="prev-page" href="task_agent_skill.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">Long-Term Memory</div>
+                <div class="title">Agent Skill</div>
                 
               </div>
             </a>

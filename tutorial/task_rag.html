@@ -3,7 +3,7 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="State/Session Management" href="task_state.html"><link rel="prev" title="Plan" href="task_plan.html">
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="AgentScope Studio" href="task_studio.html"><link rel="prev" title="Plan" href="task_plan.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
@@ -249,26 +249,36 @@
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">FAQ</a></li>
 </ul>
-<p class="caption" role="heading"><span class="caption-text">Task Guides</span></p>
-<ul class="current">
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_model.html">Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_prompt.html">Prompt Formatter</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_memory.html">Memory</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">Long-Term Memory</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">Tool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">Agent</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">Pipeline</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_plan.html">Plan</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">RAG</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">Agent Skill</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tracing.html">Tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
-<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -290,6 +300,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tracing.html">agentscope.tracing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.session.html">agentscope.session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../api/agentscope.exception.html">agentscope.exception</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../api/agentscope.tts.html">agentscope.tts</a></li>
 </ul>
 
 </div>
@@ -610,9 +621,9 @@ They can be used as follows:</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Retrieved Documents:
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;Ai72Mv7dNBDaSgfVFg35Tu&#39;, embedding=None, score=0.5657136536003619)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;BLGQEQ9zrjXtZxYyMMXqkN&#39;, embedding=None, score=0.5657136536003619)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;4aMF5gFkg4qLvYzptmrCrd&#39;, embedding=None, score=0.5062624400117309)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;bu8eJwWBkyr5qPYwmh4ZDF&#39;, embedding=None, score=0.5062624400117309)
 </pre></div>
 </div>
 <p>The knowledge base class provides two main methods: <code class="docutils literal notranslate"><span class="pre">add_documents</span></code> and
@@ -725,21 +736,23 @@ and providing a proper description for the tool.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The first response:
-Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share or ask about John Doe or your friendship? Maybe there&#39;s something special you&#39;re planning for him, or you just want to chat about what makes your friendship so strong?
+Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any activities you both enjoy together? Or is there something I can help you with related to your friendship?
 
 
 The second response:
 Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_7277ec25b506447bb2fe46&quot;,
+    &quot;id&quot;: &quot;call_bda0a9a9974b4e4a933276&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
-        &quot;query&quot;: &quot;John Doe father&quot;
+        &quot;query&quot;: &quot;John Doe father&quot;,
+        &quot;limit&quot;: 5,
+        &quot;score_threshold&quot;: null
     }
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_7277ec25b506447bb2fe46&quot;,
+    &quot;id&quot;: &quot;call_bda0a9a9974b4e4a933276&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -764,7 +777,7 @@ system: {
         }
     ]
 }
-Friday: According to the information I found, John Doe&#39;s father is Michael Doe, who is a doctor. If you need more details or if there&#39;s anything else you&#39;re curious about, feel free to ask!
+Friday: According to the information I found, John Doe&#39;s father is Michael Doe, and he is a doctor. If this isn&#39;t the John Doe you&#39;re asking about, or if you need more specific details, please let me know!
 </pre></div>
 </div>
 <p>In the above example, our question is “Do you know who his father is?”.
@@ -926,12 +939,12 @@ The example is the same as before, just using the <code class="docutils literal 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, your name is Tony Stank.
 
 The image is attached in the agent&#39;s memory:
-Msg(id=&#39;b7ipxsswJ5KUjQLZjEfpvE&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata=None, timestamp=&#39;2025-12-07 11:56:33.886&#39;, invocation_id=&#39;None&#39;)
+Msg(id=&#39;VWZLpQgYhAPnbPvc4FP6US&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata=None, timestamp=&#39;2025-12-08 03:07:12.219&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>We can see that the agent can answer the question based on the retrieved
 image.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 26.949 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 27.671 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
@@ -952,12 +965,12 @@ image.</p>
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="task_state.html">
+          <a class="next-page" href="task_studio.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">State/Session Management</div>
+                <div class="title">AgentScope Studio</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
