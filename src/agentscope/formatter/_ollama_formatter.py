@@ -15,6 +15,7 @@ from ..message import (
     ImageBlock,
     ToolUseBlock,
     ToolResultBlock,
+    ThinkingBlock,
     URLSource,
 )
 from ..token import TokenCounterBase
@@ -84,6 +85,7 @@ class OllamaChatFormatter(TruncatedFormatterBase):
     """Whether support vision data"""
 
     supported_blocks: list[type] = [
+        ThinkingBlock,
         TextBlock,
         # Multimodal
         ImageBlock,
@@ -231,6 +233,16 @@ class OllamaChatFormatter(TruncatedFormatterBase):
                         ),
                     )
 
+                elif typ == "thinking":
+                    thinking_content = block.get("thinking", "")
+                    if thinking_content:
+                        content_blocks.append(
+                            {
+                                "type": "text",
+                                "text": f"<think>{thinking_content}</think>",
+                            },
+                        )
+
                 else:
                     logger.warning(
                         "Unsupported block type %s in the message, skipped.",
@@ -279,6 +291,7 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
     """Whether support vision data"""
 
     supported_blocks: list[type] = [
+        ThinkingBlock,
         TextBlock,
         # Multimodal
         ImageBlock,
