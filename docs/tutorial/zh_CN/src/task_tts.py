@@ -92,7 +92,7 @@ async def example_non_realtime_tts() -> None:
     tts_response = await tts_model.synthesize(msg)
 
     # tts_response.content 包含一个带有 base64 编码音频数据的音频块
-    print("音频数据长度：", len(tts_response.content[0]["source"]["data"]))
+    print("音频数据长度：", len(tts_response.content["source"]["data"]))
 
 
 asyncio.run(example_non_realtime_tts())
@@ -124,7 +124,7 @@ async def example_non_realtime_tts_streaming() -> None:
     # 合成并接收用于流式输出的异步生成器
     async for tts_response in await tts_model.synthesize(msg):
         # 处理到达的每个音频块
-        print("接收到的音频块长度：", len(tts_response.content[0]["source"]["data"]))
+        print("接收到的音频块长度：", len(tts_response.content["source"]["data"]))
 
 
 asyncio.run(example_non_realtime_tts_streaming())

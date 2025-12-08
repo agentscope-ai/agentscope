@@ -98,7 +98,7 @@ async def example_non_realtime_tts() -> None:
     # tts_response.content contains an audio block with base64-encoded audio data
     print(
         "The length of audio data:",
-        len(tts_response.content[0]["source"]["data"]),
+        len(tts_response.content["source"]["data"]),
     )
 
 
@@ -133,7 +133,7 @@ async def example_non_realtime_tts_streaming() -> None:
         # Process each audio chunk as it arrives
         print(
             "Received audio chunk of length:",
-            len(tts_response.content[0]["source"]["data"]),
+            len(tts_response.content["source"]["data"]),
         )
 
 
