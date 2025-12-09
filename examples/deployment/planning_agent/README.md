@@ -3,7 +3,7 @@
 This example demonstrates how to deploy a multi-agent system using AgentScope. The system is composed of a main
 routing agent equipped with a tool function named `create_worker` to dispatch tasks to specialized worker agents.
 
-Specifically, the routing agent is deployed as a chat endpoint in server hold by the `Quark` library.
+Specifically, the routing agent is deployed as a chat endpoint in server hold by the `Quart` library.
 Once receiving an input request, we
 - set up a routing agent
 - load the session state if any
@@ -15,7 +15,7 @@ Once receiving an input request, we
 
 ```
 planning_agent/
-    ├── main.py              # Entry point to start the Quark server with routing agent
+    ├── main.py              # Entry point to start the Quart server with routing agent
     ├── tool.py              # Tool function to create worker agents
     └── test_post.py         # Preset test script to send requests to the server
 ```
@@ -42,10 +42,10 @@ You can customize the toolset by modifying the `tool.py` file.
 
 ## Quick Start
 
-Install the latest agentscope and Quark packages:
+Install the latest agentscope and Quart packages:
 
 ```bash
-pip install agentscope quark
+pip install agentscope quart
 ```
 
 Ensure you have set `DASHSCOPE_API_KEY` in your environment for DashScope LLM API, or change the used model in
@@ -53,7 +53,7 @@ both `main.py` and `tool.py` (Remember to change the formatter correspondingly).
 
 Set the environment variables for GitHub and AMap tools if needed.
 
-Run the Quark server:
+Run the Quart server:
 
 ```bash
 python main.py
