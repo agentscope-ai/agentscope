@@ -457,6 +457,7 @@
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stream_printing_messages</span><span class="p">(</span>
     <span class="n">agents</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AgentBase</span><span class="p">],</span>
     <span class="n">coroutine_task</span><span class="p">:</span> <span class="n">Coroutine</span><span class="p">,</span>
+    <span class="n">queue</span><span class="p">:</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">end_signal</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;[END]&quot;</span><span class="p">,</span>
     <span class="n">yield_speech</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span>
@@ -484,6 +485,8 @@
 <span class="sd">            The coroutine task to be executed. This task should involve the</span>
 <span class="sd">            execution of the provided agents, so that their printing messages</span>
 <span class="sd">            can be captured and yielded.</span>
+<span class="sd">        queue (`asyncio.Queue | None`, optional):</span>
+<span class="sd">            Use this queue instead of creating a new one if provided.</span>
 <span class="sd">        end_signal (`str`, defaults to `&quot;[END]&quot;`):</span>
 <span class="sd">            A special signal to indicate the end of message streaming. When</span>
 <span class="sd">            this signal is received from the message queue, the generator will</span>
@@ -504,7 +507,7 @@
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="c1"># Enable the message queue to get the intermediate messages</span>
-    <span class="n">queue</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+    <span class="n">queue</span> <span class="o">=</span> <span class="n">queue</span> <span class="ow">or</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
     <span class="k">for</span> <span class="n">agent</span> <span class="ow">in</span> <span class="n">agents</span><span class="p">:</span>
         <span class="c1"># Use one queue to gather messages from all agents</span>
         <span class="n">agent</span><span class="o">.</span><span class="n">set_msg_queue_enabled</span><span class="p">(</span><span class="kc">True</span><span class="p">,</span> <span class="n">queue</span><span class="p">)</span>
