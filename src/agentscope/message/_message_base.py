@@ -203,8 +203,8 @@ class Msg:
         it will be converted to a text block.
 
         Args:
-            block_type (`Literal["text", "thinking", "tool_use", \
-            "tool_result", "image", "audio", "video"] | None`, optional):
+            block_type (`ContentBlockTypes | List[ContentBlockTypes] | None`, \
+            optional):
                 The type of the block to be extracted. If `None`, all blocks
                 will be returned.
 
