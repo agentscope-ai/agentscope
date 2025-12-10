@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# A2A protocol support
+a2a = [
+    "a2a-sdk",
+    "httpx",
+    "nacos-sdk-python>=3.0.0b1",
+]
 full = [
     # Model
     "ollama>=0.5.4",
@@ -62,6 +68,8 @@ full = [
     # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
     # the version to 1.15.1 here.
     "qdrant-client==1.15.1",
+    # A2A protocol support
+    "agentscope[a2a]",
 ]
 dev = [
     # Include full dependencies from local package
