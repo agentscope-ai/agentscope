@@ -507,9 +507,9 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(msg)
         self.assertEqual(msg.name, "TestAgent")
-        # Should have artifact info and content
-        self.assertTrue(len(msg.content) >= 2)
-        self.assertIn("Artifact ID", msg.content[0]["text"])
+        # Should have artifact content (without metadata TextBlock)
+        self.assertEqual(len(msg.content), 1)
+        self.assertEqual(msg.content[0]["text"], "Result data")
 
         # Test with no artifacts
         task_no_artifacts = Task(

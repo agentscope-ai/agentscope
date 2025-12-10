@@ -628,8 +628,7 @@ class A2aAgent(AgentBase):
                 `Msg | None`:
                         A merged message with all artifact parts as
                         ContentBlocks, or `None` if the task has no
-                        artifacts. Each artifact's content is preceded
-                        by a TextBlock with its metadata.
+                        artifacts.
         """
         if not task.artifacts or len(task.artifacts) == 0:
             return None
@@ -638,18 +637,6 @@ class A2aAgent(AgentBase):
 
         # Process all artifacts
         for artifact in task.artifacts:
-            # Add artifact metadata as TextBlock
-            artifact_info = f"[Artifact ID: {artifact.artifact_id}"
-            if artifact.name:
-                artifact_info += f", Name: {artifact.name}"
-            if artifact.description:
-                artifact_info += f", Description: {artifact.description}"
-            artifact_info += "]"
-
-            all_content_blocks.append(
-                TextBlock(type="text", text=artifact_info),
-            )
-
             # Convert each part to content block
             for part in artifact.parts:
                 content_block = self._convert_part_to_content_block(part)
