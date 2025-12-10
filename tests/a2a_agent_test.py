@@ -237,29 +237,29 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
 
         # Should have 3 parts: text, thinking, and image
         self.assertEqual(len(a2a_msg.parts), 3)
-        
+
         # Verify text part
         self.assertIsInstance(a2a_msg.parts[0].root, TextPart)
         self.assertEqual(a2a_msg.parts[0].root.text, "Hello")
         self.assertEqual(
             a2a_msg.parts[0].root.metadata.get("_agentscope_block_type"),
-            "text"
+            "text",
         )
-        
+
         # Verify thinking part
         self.assertIsInstance(a2a_msg.parts[1].root, TextPart)
         self.assertEqual(a2a_msg.parts[1].root.text, "Let me think...")
         self.assertEqual(
             a2a_msg.parts[1].root.metadata.get("_agentscope_block_type"),
-            "thinking"
+            "thinking",
         )
-        
+
         # Verify image part
         self.assertIsInstance(a2a_msg.parts[2].root, FilePart)
         self.assertIsInstance(a2a_msg.parts[2].root.file, FileWithUri)
         self.assertEqual(
             a2a_msg.parts[2].root.file.uri,
-            "http://example.com/image.jpg"
+            "http://example.com/image.jpg",
         )
         self.assertEqual(a2a_msg.parts[2].root.file.mime_type, "image/*")
 
@@ -359,7 +359,9 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(msg.content), 1)
         # ContentBlock is a TypedDict, check structure
         self.assertEqual(msg.content[0]["type"], "image")
-        self.assertEqual(msg.content[0]["source"]["url"], "http://example.com/image.png")
+        self.assertEqual(
+            msg.content[0]["source"]["url"], "http://example.com/image.png"
+        )
 
     async def test_reply_with_direct_message(self) -> None:
         """Test reply method with direct message response."""
@@ -585,11 +587,11 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         # Note: We can't create invalid AgentCard in Pydantic, so we mock the resolver
         # to return an invalid card during validation
         from unittest.mock import AsyncMock
-        
+
         # Create a mock that raises validation error
         async def mock_get_invalid_card():
             raise RuntimeError("Invalid agent card")
-        
+
         agent._agent_card_resolver.get_agent_card = mock_get_invalid_card
 
         # Should fall back to previous valid card
