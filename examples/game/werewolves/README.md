@@ -23,6 +23,7 @@ Specifically, this game is consisted of
 Run the following command to start the game, ensuring you have set up your DashScope API key as an environment variable.
 
 ```bash
+.\venv\Scripts\activate
 python main.py
 ```
 

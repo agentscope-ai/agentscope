@@ -142,3 +142,6 @@ docs/tutorial/**/doctrees/
 docs/tutorial/**/.doctrees/
 *.buildinfo
 *.pickle
+.claude/settings.local.json
+examples/game/werewolves/checkpoints/players_checkpoint.json
+nul
