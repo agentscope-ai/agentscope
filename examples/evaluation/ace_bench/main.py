@@ -13,9 +13,9 @@ from agentscope.evaluate import (
     ACEBenchmark,
     Task,
     SolutionOutput,
+    RayEvaluator,
     FileEvaluatorStorage,
     ACEPhone,
-    RayEvaluator,
 )
 from agentscope.tool import Toolkit
 

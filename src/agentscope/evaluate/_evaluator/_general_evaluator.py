@@ -3,8 +3,6 @@
 compared to the RayEvaluator."""
 from typing import Callable, Awaitable, Coroutine, Any
 
-from opentelemetry import baggage
-
 from ._evaluator_base import EvaluatorBase
 from .in_memory_exporter import _InMemoryExporter
 from .._evaluator_storage import EvaluatorStorageBase
@@ -75,6 +73,7 @@ class GeneralEvaluator(EvaluatorBase):
         else:
             from opentelemetry import trace
             from opentelemetry.context import attach, detach
+            from opentelemetry import baggage
 
             tracer = trace.get_tracer(__name__)
 
