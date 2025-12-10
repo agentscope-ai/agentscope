@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch
 import tempfile
 
 from a2a.types import (
@@ -26,10 +25,8 @@ from a2a.types import (
 
 from agentscope.agent import (
     A2aAgent,
-    A2aAgentConfig,
     FixedAgentCardResolver,
     FileAgentCardResolver,
-    WellKnownAgentCardResolver,
 )
 from agentscope.message import (
     AudioBlock,
@@ -360,7 +357,8 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         # ContentBlock is a TypedDict, check structure
         self.assertEqual(msg.content[0]["type"], "image")
         self.assertEqual(
-            msg.content[0]["source"]["url"], "http://example.com/image.png"
+            msg.content[0]["source"]["url"],
+            "http://example.com/image.png",
         )
 
     async def test_reply_with_direct_message(self) -> None:
@@ -584,12 +582,11 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(agent._agent_card.name, "ValidAgent")
 
         # Now test with invalid card (missing url) that should fall back
-        # Note: We can't create invalid AgentCard in Pydantic, so we mock the resolver
-        # to return an invalid card during validation
-        from unittest.mock import AsyncMock
+        # Note: We can't create invalid AgentCard in Pydantic, so we mock
+        # the resolver to return an invalid card during validation
 
         # Create a mock that raises validation error
-        async def mock_get_invalid_card():
+        async def mock_get_invalid_card() -> None:
             raise RuntimeError("Invalid agent card")
 
         agent._agent_card_resolver.get_agent_card = mock_get_invalid_card
