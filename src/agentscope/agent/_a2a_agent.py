@@ -5,35 +5,20 @@ This module provides the A2A (Agent-to-Agent) protocol implementation,
 enabling AgentScope agents to communicate with remote agents using the
 A2A standard protocol.
 """
+from __future__ import annotations
+
 import asyncio
 import json
-from abc import abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Callable, Literal, Union, Type
+from typing import Callable, Literal, Union, Type, TYPE_CHECKING
 from urllib.parse import urlparse
 from uuid import uuid4
 
-import httpx
-from a2a.client import A2ACardResolver, ClientFactory, Consumer, ClientConfig
-from a2a.client.client_factory import TransportProducer
-from a2a.types import (
-    AgentCard,
-    DataPart,
-    FilePart,
-    FileWithBytes,
-    FileWithUri,
-    Message as A2AMessage,
-    Part,
-    Role as A2ARole,
-    TaskState,
-    TextPart,
+from ._a2a_card_resolver import (
+    AgentCardResolverBase,
+    FixedAgentCardResolver,
 )
-from a2a.types import TransportProtocol, PushNotificationConfig, Task
-from a2a.utils import AGENT_CARD_WELL_KNOWN_PATH
-from grpc.aio import Channel
-from openai import BaseModel
-
 from ._agent_base import AgentBase
 from .._logging import logger
 from ..message import (
@@ -50,180 +35,22 @@ from ..message import (
     URLSource,
 )
 
-
-class AgentCardResolverBase:
-    """Base class for A2A Agent Card resolvers.
-
-    This abstract class defines the interface for resolving agent cards
-    from various sources (Fixed AgentCard, URL, file, etc.).
-    """
-
-    @abstractmethod
-    async def get_agent_card(self) -> AgentCard:
-        """Get Agent Card from the configured source.
-
-        Returns:
-                `AgentCard`:
-                        The resolved agent card object.
-        """
-
-
-class FixedAgentCardResolver(AgentCardResolverBase):
-    """Agent card resolver that returns a fixed AgentCard."""
-
-    def __init__(self, agent_card: AgentCard) -> None:
-        """Initialize the FixedAgentCardResolver.
-
-        Args:
-                agent_card (`AgentCard`):
-                        The agent card to be used.
-        """
-        self.agent_card = agent_card
-
-    async def get_agent_card(self) -> AgentCard:
-        """Get the fixed agent card.
-
-        Returns:
-                `AgentCard`:
-                        The fixed agent card.
-        """
-        return self.agent_card
-
-
-class FileAgentCardResolver(AgentCardResolverBase):
-    """Agent card resolver that loads AgentCard from a JSON file."""
-
-    def __init__(
-        self,
-        file_path: str,
-    ) -> None:
-        """Initialize the FileAgentCardResolver.
-
-        Args:
-                file_path (`str`):
-                        The path to the file containing the agent card.
-        """
-        self._file_path = file_path
-
-    async def get_agent_card(self) -> AgentCard:
-        """Get the agent card from the file.
-
-        Returns:
-                `AgentCard`:
-                        The agent card loaded from the file.
-        """
-        return await self._resolve_agent_card()
-
-    async def _resolve_agent_card(self) -> AgentCard:
-        try:
-            path = Path(self._file_path)
-            if not path.exists():
-                logger.error(
-                    "[%s] Agent card file not found: %s",
-                    self.__class__.__name__,
-                    self._file_path,
-                )
-                raise FileNotFoundError(
-                    f"Agent card file not found: {self._file_path}",
-                )
-            if not path.is_file():
-                logger.error(
-                    "[%s] Path is not a file: %s",
-                    self.__class__.__name__,
-                    self._file_path,
-                )
-                raise ValueError(f"Path is not a file: {self._file_path}")
-
-            with path.open("r", encoding="utf-8") as f:
-                agent_json_data = json.load(f)
-                return AgentCard(**agent_json_data)
-        except json.JSONDecodeError as e:
-            logger.error(
-                "[%s] Invalid JSON in agent card file %s: %s",
-                self.__class__.__name__,
-                self._file_path,
-                e,
-            )
-            raise RuntimeError(
-                f"Invalid JSON in agent card file " f"{self._file_path}: {e}",
-            ) from e
-        except Exception as e:
-            logger.error(
-                "[%s] Failed to resolve agent card from file %s: %s",
-                self.__class__.__name__,
-                self._file_path,
-                e,
-            )
-            raise RuntimeError(
-                f"Failed to resolve AgentCard from file "
-                f"{self._file_path}: {e}",
-            ) from e
-
-
-class WellKnownAgentCardResolver(AgentCardResolverBase):
-    """Agent card resolver that loads AgentCard from a well-known URL."""
-
-    def __init__(
-        self,
-        base_url: str,
-        agent_card_path: str = AGENT_CARD_WELL_KNOWN_PATH,
-    ) -> None:
-        """Initialize the WellKnownAgentCardResolver.
-
-        Args:
-                base_url (`str`):
-                        The base URL to resolve the agent card from.
-                agent_card_path (`str`, optional):
-                        The path to the agent card relative to the base URL.
-                        Defaults to `AGENT_CARD_WELL_KNOWN_PATH`.
-        """
-        self._base_url = base_url
-        self._agent_card_path = agent_card_path
-
-    async def get_agent_card(self) -> AgentCard:
-        """Get the agent card from the well-known URL.
-
-        Returns:
-                `AgentCard`:
-                        The agent card loaded from the URL.
-        """
-        try:
-            parsed_url = urlparse(self._base_url)
-            if not parsed_url.scheme or not parsed_url.netloc:
-                logger.error(
-                    "[%s] Invalid URL format: %s",
-                    self.__class__.__name__,
-                    self._base_url,
-                )
-                raise ValueError(
-                    f"Invalid URL format: {self._base_url}",
-                )
-
-            base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-            relative_card_path = parsed_url.path
-
-            _http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(timeout=600),
-            )
-            resolver = A2ACardResolver(
-                httpx_client=_http_client,
-                base_url=base_url,
-                agent_card_path=self._agent_card_path,
-            )
-            return await resolver.get_agent_card(
-                relative_card_path=relative_card_path,
-            )
-        except Exception as e:
-            logger.error(
-                "[%s] Failed to resolve agent card from URL %s: %s",
-                self.__class__.__name__,
-                self._base_url,
-                e,
-            )
-            raise RuntimeError(
-                f"Failed to resolve AgentCard from URL "
-                f"{self._base_url}: {e}",
-            ) from e
+if TYPE_CHECKING:
+    import httpx
+    from a2a.client import ClientConfig, ClientFactory, Consumer
+    from a2a.client.client_factory import TransportProducer
+    from a2a.types import (
+        AgentCard,
+        DataPart,
+        FilePart,
+        Message as A2AMessage,
+        Part,
+        TransportProtocol,
+        PushNotificationConfig,
+        Task,
+    )
+    from grpc.aio import Channel
+    from pydantic import BaseModel
 
 
 @dataclass
@@ -314,6 +141,8 @@ class A2aAgent(AgentBase):
                         transport preferences and streaming options.
                         Defaults to `A2aAgentConfig()`.
         """
+        from a2a.types import AgentCard
+
         super().__init__()
         self.name: str = name
         """The name of the agent."""
@@ -341,6 +170,35 @@ class A2aAgent(AgentBase):
 
         self._agent_config: A2aAgentConfig = agent_config
         """Configuration for the A2A client."""
+
+        self._observed_msgs: list[Msg] = []
+        """List of observed messages to be processed in the next reply."""
+
+    async def observe(self, msg: Msg | list[Msg] | None) -> None:
+        """Receive the given message(s) without generating a reply.
+
+        The observed messages are stored and will be merged with the
+        input messages when `reply` is called. After `reply` completes,
+        the stored messages will be cleared.
+
+        Args:
+            msg (`Msg | list[Msg] | None`):
+                The message(s) to be observed. If None, no action is taken.
+        """
+        if msg is None:
+            return
+
+        if isinstance(msg, Msg):
+            self._observed_msgs.append(msg)
+        else:
+            self._observed_msgs.extend(msg)
+
+        logger.debug(
+            "[%s] Observed %d message(s), total stored: %d",
+            self.__class__.__name__,
+            1 if isinstance(msg, Msg) else len(msg),
+            len(self._observed_msgs),
+        )
 
     async def _get_agent_card(self) -> AgentCard:
         """Retrieve the agent card from the configured resolver.
@@ -404,50 +262,59 @@ class A2aAgent(AgentBase):
     async def reply(
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """Send message(s) to the remote A2A agent and receive a response.
+
+        This method merges any previously observed messages with the input
+        messages, sends them to the remote agent, and clears the observed
+        messages after processing.
 
         Args:
                 msg (`Msg | list[Msg] | None`, optional):
                         The message(s) to send to the remote agent.
-                        Can be a single Msg or a list of Msgs.
-                        Defaults to `None`.
-                structured_model (`Type[BaseModel] | None`, optional):
-                        Optional Pydantic model for structured output.
-                        Not yet implemented for A2A agents.
-                        Defaults to `None`.
+                        Can be a single Msg, a list of Msgs, or None.
+                        If None, only observed messages will be sent.
+                        Defaults to None.
 
         Returns:
                 `Msg`:
                         The response message from the remote agent. For
                         tasks, this may be either a status update message
                         or the final artifacts message, depending on the
-                        task state. If an error occurs during communication,
+                        task state. If no messages are provided (both msg
+                        and observed messages are empty), returns a prompt
+                        message. If an error occurs during communication,
                         returns an error message.
-
-        Raises:
-                `ValueError`:
-                        If msg is None, empty, or all messages in the
-                        list are None.
         """
+        from a2a.types import Message as A2AMessage, TaskState
 
         await self._ensure_ready()
 
-        if msg is None:
-            raise ValueError("msg cannot be None")
+        # Merge observed messages with input messages
+        msgs_list: list[Msg] = list(self._observed_msgs)
 
-        # Normalize to list for unified processing
-        msgs_list = [msg] if isinstance(msg, Msg) else msg
-
-        if len(msgs_list) == 0:
-            raise ValueError("msg list cannot be empty")
+        if msg is not None:
+            if isinstance(msg, Msg):
+                msgs_list.append(msg)
+            else:
+                msgs_list.extend(msg)
 
         # Filter out None values
         msgs_list = [m for m in msgs_list if m is not None]
 
+        # If no messages to send, return early with a prompt message
         if not msgs_list:
-            raise ValueError("All messages in list are None")
+            logger.debug(
+                "[%s] No messages to send, returning prompt message",
+                self.__class__.__name__,
+            )
+            response_msg = Msg(
+                name=self.name,
+                content="No input message provided. How can I help you?",
+                role="assistant",
+            )
+            await self.print(response_msg, True)
+            return response_msg
 
         logger.debug(
             "[%s] Processing %d message(s) for A2A conversion",
@@ -561,7 +428,44 @@ class A2aAgent(AgentBase):
                     role="assistant",
                     metadata={"error": True, "error_type": "NoResponse"},
                 )
+
+        # Clear observed messages after processing
+        self._observed_msgs.clear()
+
         await self.print(response_msg, True)
+        return response_msg
+
+    async def handle_interrupt(
+        self,
+        _msg: Msg | list[Msg] | None = None,
+        _structured_model: Type[BaseModel] | None = None,
+    ) -> Msg:
+        """The post-processing logic when the reply is interrupted by the
+        user or something else.
+
+        Args:
+                _msg (`Msg | list[Msg] | None`, optional):
+                        The input message(s) to the agent.
+                _structured_model (`Type[BaseModel] | None`, optional):
+                        The required structured output model.
+        """
+
+        response_msg = Msg(
+            self.name,
+            "I noticed that you have interrupted me. What can I "
+            "do for you?",
+            "assistant",
+            metadata={
+                # Expose this field to indicate the interruption
+                "_is_interrupted": True,
+            },
+        )
+
+        await self.print(response_msg, True)
+
+        # Add to observed messages for context in next reply
+        self._observed_msgs.append(response_msg)
+
         return response_msg
 
     def _construct_msg_from_task_status(self, task: Task) -> Msg:
@@ -585,7 +489,7 @@ class A2aAgent(AgentBase):
 
             # Add task state info at the beginning of content
             status_text = (
-                f"[Task ID: {task.id}, " f"Status: {task.status.state.value}]"
+                f"[Task ID: {task.id}，Status: {task.status.state.value}]"
             )
             state_info_block = TextBlock(type="text", text=status_text)
 
@@ -665,7 +569,7 @@ class A2aAgent(AgentBase):
                         reconstructed. Otherwise, a new Msg with an empty
                         name is created.
         """
-        from collections import OrderedDict
+        from a2a.types import Role as A2ARole
 
         # Group parts by msg_id to reconstruct original messages
         msg_groups = OrderedDict()  # Preserve order
@@ -783,6 +687,8 @@ class A2aAgent(AgentBase):
                         The converted ContentBlock, or `None` if the part
                         type is unknown or conversion fails.
         """
+        from a2a.types import TextPart, FilePart, DataPart
+
         part_root = part.root
 
         # Case 1: TextPart
@@ -898,6 +804,8 @@ class A2aAgent(AgentBase):
                         The converted media block, or `None` if the media type
                         cannot be determined from the MIME type.
         """
+        from a2a.types import FileWithUri, FileWithBytes
+
         file_obj = file_part.file
 
         # Determine media type from mime_type
@@ -963,6 +871,13 @@ class A2aAgent(AgentBase):
                         A single A2A Message containing all content from
                         the input messages, with tracking metadata preserved.
         """
+        from a2a.types import (
+            Message as A2AMessage,
+            Part,
+            Role as A2ARole,
+            TextPart,
+        )
+
         merged_parts = []
         a2a_metadata = {}
 
@@ -1046,6 +961,8 @@ class A2aAgent(AgentBase):
                         The converted A2A Part object, or `None` if the
                         block is empty or of an unsupported type.
         """
+        from a2a.types import Part, TextPart, DataPart
+
         block_type = block["type"]
 
         # Text and Thinking blocks -> TextPart
@@ -1138,6 +1055,8 @@ class A2aAgent(AgentBase):
                         An A2A Part containing a FilePart, or `None` if the
                         conversion fails.
         """
+        from a2a.types import Part, FilePart, FileWithUri, FileWithBytes
+
         source = block.get("source")
         if not source:
             logger.warning(
@@ -1234,6 +1153,8 @@ class A2aAgent(AgentBase):
                 This method is idempotent and can be called multiple times
                 safely.
         """
+        from a2a.client import ClientFactory
+
         if self._is_ready and self._a2a_client_factory is not None:
             return
 
@@ -1267,6 +1188,8 @@ class A2aAgent(AgentBase):
                         The extracted client configuration
                                                 for A2A communication.
         """
+        from a2a.client import ClientConfig
+        from a2a.types import TransportProtocol
 
         a2a_client_config = ClientConfig(
             streaming=self._agent_config.streaming,

@@ -398,7 +398,7 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.name, "TestAgent")
         self.assertEqual(response.role, "assistant")
         # Should contain artifact content
-        self.assertTrue(len(response.content) > 0)
+        self.assertGreater(len(response.content), 0)
 
     async def test_reply_with_error(self) -> None:
         """Test reply method handles errors gracefully."""
@@ -421,8 +421,8 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         self.assertTrue(response.metadata.get("error", False))
         self.assertIn("Error", response.content[0]["text"])
 
-    async def test_reply_with_invalid_input(self) -> None:
-        """Test reply method with invalid input."""
+    async def test_reply_with_no_messages(self) -> None:
+        """Test reply method with no messages returns prompt message."""
         agent = A2aAgent(
             name="TestAgent",
             agent_card=self.test_agent_card,
@@ -430,17 +430,19 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         agent._a2a_client_factory = MockClientFactory()
         agent._is_ready = True
 
-        # Test with None
-        with self.assertRaises(ValueError):
-            await agent.reply(None)
+        # Test with None - should return prompt message
+        response = await agent.reply(None)
+        self.assertEqual(response.name, "TestAgent")
+        self.assertEqual(response.role, "assistant")
+        self.assertIn("No input message", response.content)
 
-        # Test with empty list
-        with self.assertRaises(ValueError):
-            await agent.reply([])
+        # Test with empty list - should return prompt message
+        response = await agent.reply([])
+        self.assertIn("No input message", response.content)
 
-        # Test with list of None
-        with self.assertRaises(ValueError):
-            await agent.reply([None, None])
+        # Test with list of None - should return prompt message
+        response = await agent.reply([None, None])
+        self.assertIn("No input message", response.content)
 
     async def test_construct_msg_from_task_status(self) -> None:
         """Test constructing Msg from task status."""
@@ -678,3 +680,104 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         for part in a2a_msg.parts:
             self.assertIn("_agentscope_msg_id", part.root.metadata)
             self.assertIn("_agentscope_msg_source", part.root.metadata)
+
+    async def test_observe_method(self) -> None:
+        """Test observe method stores messages for next reply."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._a2a_client_factory = MockClientFactory()
+        agent._is_ready = True
+
+        # Initially no observed messages
+        self.assertEqual(len(agent._observed_msgs), 0)
+
+        # Observe single message
+        msg1 = Msg(name="user", content="First observed", role="user")
+        await agent.observe(msg1)
+        self.assertEqual(len(agent._observed_msgs), 1)
+
+        # Observe multiple messages
+        msg2 = Msg(name="user", content="Second observed", role="user")
+        msg3 = Msg(name="user", content="Third observed", role="user")
+        await agent.observe([msg2, msg3])
+        self.assertEqual(len(agent._observed_msgs), 3)
+
+        # Observe None should not change anything
+        await agent.observe(None)
+        self.assertEqual(len(agent._observed_msgs), 3)
+
+    async def test_observe_and_reply_merge(self) -> None:
+        """Test that observed messages are merged with reply input."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        mock_factory = MockClientFactory()
+        agent._a2a_client_factory = mock_factory
+        agent._is_ready = True
+
+        # Observe some messages
+        msg1 = Msg(name="user", content="Observed message", role="user")
+        await agent.observe(msg1)
+
+        # Reply with another message
+        msg2 = Msg(name="user", content="Reply message", role="user")
+        await agent.reply(msg2)
+
+        # Check that the sent A2A message contains both observed and input
+        sent_msg = mock_factory.created_clients[0].sent_messages[0]
+        self.assertEqual(len(sent_msg.parts), 2)
+
+        # Check observed messages were cleared after reply
+        self.assertEqual(len(agent._observed_msgs), 0)
+
+    async def test_reply_with_only_observed_messages(self) -> None:
+        """Test reply with None input uses only observed messages."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        mock_factory = MockClientFactory()
+        agent._a2a_client_factory = mock_factory
+        agent._is_ready = True
+
+        # Observe a message
+        msg = Msg(name="user", content="Only observed", role="user")
+        await agent.observe(msg)
+
+        # Reply with None
+        await agent.reply(None)
+
+        # Should have sent the observed message
+        sent_msg = mock_factory.created_clients[0].sent_messages[0]
+        self.assertEqual(len(sent_msg.parts), 1)
+        self.assertEqual(sent_msg.parts[0].root.text, "Only observed")
+
+        # Observed messages should be cleared
+        self.assertEqual(len(agent._observed_msgs), 0)
+
+    async def test_handle_interrupt(self) -> None:
+        """Test handle_interrupt method."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._is_ready = True
+
+        # Initially no observed messages
+        self.assertEqual(len(agent._observed_msgs), 0)
+
+        # Call handle_interrupt
+        response = await agent.handle_interrupt()
+
+        # Check response
+        self.assertEqual(response.name, "TestAgent")
+        self.assertEqual(response.role, "assistant")
+        self.assertIn("interrupted", response.content)
+        self.assertTrue(response.metadata.get("_is_interrupted", False))
+
+        # Check that response was added to observed messages
+        self.assertEqual(len(agent._observed_msgs), 1)
+        self.assertEqual(agent._observed_msgs[0], response)

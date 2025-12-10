@@ -13,10 +13,13 @@ from ._user_agent import UserAgent
 from ._a2a_agent import (
     A2aAgent,
     A2aAgentConfig,
+)
+from ._a2a_card_resolver import (
     AgentCardResolverBase,
     FixedAgentCardResolver,
     FileAgentCardResolver,
     WellKnownAgentCardResolver,
+    NacosAgentCardResolver,
 )
 
 
@@ -35,4 +38,5 @@ __all__ = [
     "FixedAgentCardResolver",
     "FileAgentCardResolver",
     "WellKnownAgentCardResolver",
+    "NacosAgentCardResolver",
 ]
