@@ -1,0 +1,681 @@
+# -*- coding: utf-8 -*-
+"""The A2A agent unittests."""
+import json
+from pathlib import Path
+from typing import Any, AsyncIterator
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+import tempfile
+
+from a2a.types import (
+    AgentCard,
+    AgentCapabilities,
+    DataPart,
+    FilePart,
+    FileWithBytes,
+    FileWithUri,
+    Message as A2AMessage,
+    Part,
+    Role as A2ARole,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+    Artifact,
+)
+
+from agentscope.agent import (
+    A2aAgent,
+    A2aAgentConfig,
+    FixedAgentCardResolver,
+    FileAgentCardResolver,
+    WellKnownAgentCardResolver,
+)
+from agentscope.message import (
+    AudioBlock,
+    Base64Source,
+    ImageBlock,
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    URLSource,
+)
+
+
+class MockA2AClient:
+    """Mock A2A client for testing."""
+
+    def __init__(self, response_type: str = "message") -> None:
+        """Initialize mock client.
+
+        Args:
+            response_type (`str`):
+                Type of response to simulate: "message", "task", or "error".
+        """
+        self.response_type = response_type
+        self.sent_messages = []
+
+    async def send_message(
+        self,
+        message: A2AMessage,
+    ) -> AsyncIterator[A2AMessage | tuple[Task, Any]]:
+        """Mock send_message method."""
+        self.sent_messages.append(message)
+
+        if self.response_type == "message":
+            # Return a simple A2A message
+            response = A2AMessage(
+                message_id="test-msg-id",
+                role=A2ARole.agent,
+                parts=[
+                    Part(root=TextPart(text="Hello from remote agent")),
+                ],
+            )
+            yield response
+
+        elif self.response_type == "task":
+            # Return a task with completed state
+            task = Task(
+                id="test-task-id",
+                context_id="test-context-id",
+                status=TaskStatus(
+                    state=TaskState.completed,
+                    message=A2AMessage(
+                        message_id="status-msg-id",
+                        role=A2ARole.agent,
+                        parts=[
+                            Part(root=TextPart(text="Task completed")),
+                        ],
+                    ),
+                ),
+                artifacts=[
+                    Artifact(
+                        artifact_id="artifact-1",
+                        name="test_artifact",
+                        description="Test artifact",
+                        parts=[
+                            Part(root=TextPart(text="Artifact content")),
+                        ],
+                    ),
+                ],
+            )
+            yield (task, None)
+
+        elif self.response_type == "error":
+            raise RuntimeError("Simulated communication error")
+
+
+class MockClientFactory:
+    """Mock ClientFactory for testing."""
+
+    def __init__(self, response_type: str = "message") -> None:
+        """Initialize mock factory."""
+        self.response_type = response_type
+        self.created_clients = []
+
+    def create(self, card: AgentCard) -> MockA2AClient:
+        """Create a mock client."""
+        client = MockA2AClient(self.response_type)
+        self.created_clients.append(client)
+        return client
+
+
+class A2aAgentTest(IsolatedAsyncioTestCase):
+    """Test class for A2aAgent."""
+
+    def setUp(self) -> None:
+        """Set up test fixtures."""
+        self.test_agent_card = AgentCard(
+            name="TestAgent",
+            url="http://localhost:8000",
+            description="Test A2A agent",
+            version="1.0.0",
+            capabilities=AgentCapabilities(),
+            default_input_modes=["text/plain"],
+            default_output_modes=["text/plain"],
+            skills=[],
+        )
+
+    async def test_fixed_agent_card_resolver(self) -> None:
+        """Test FixedAgentCardResolver."""
+        resolver = FixedAgentCardResolver(self.test_agent_card)
+        card = await resolver.get_agent_card()
+
+        self.assertEqual(card.name, "TestAgent")
+        self.assertEqual(str(card.url), "http://localhost:8000")
+
+    async def test_file_agent_card_resolver(self) -> None:
+        """Test FileAgentCardResolver."""
+        # Create a temporary agent card file
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            delete=False,
+        ) as f:
+            json.dump(
+                {
+                    "name": "FileAgent",
+                    "url": "http://localhost:8001",
+                    "description": "Agent from file",
+                    "version": "1.0.0",
+                    "capabilities": {},
+                    "defaultInputModes": ["text/plain"],
+                    "defaultOutputModes": ["text/plain"],
+                    "skills": [],
+                },
+                f,
+            )
+            temp_file = f.name
+
+        try:
+            resolver = FileAgentCardResolver(temp_file)
+            card = await resolver.get_agent_card()
+
+            self.assertEqual(card.name, "FileAgent")
+            self.assertEqual(str(card.url), "http://localhost:8001")
+        finally:
+            Path(temp_file).unlink()
+
+    async def test_file_agent_card_resolver_invalid_file(self) -> None:
+        """Test FileAgentCardResolver with invalid file."""
+        resolver = FileAgentCardResolver("/nonexistent/path/card.json")
+
+        with self.assertRaises(RuntimeError):
+            await resolver.get_agent_card()
+
+    async def test_convert_text_msg_to_a2a(self) -> None:
+        """Test converting text Msg to A2A message."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Mock the client factory
+        agent._a2a_client_factory = MockClientFactory()
+        agent._is_ready = True
+
+        msg = Msg(
+            name="user",
+            content="Hello",
+            role="user",
+        )
+
+        a2a_msg = agent._convert_msgs_to_a2a_message([msg])
+
+        self.assertEqual(len(a2a_msg.parts), 1)
+        self.assertIsInstance(a2a_msg.parts[0].root, TextPart)
+        self.assertEqual(a2a_msg.parts[0].root.text, "Hello")
+
+    async def test_convert_content_blocks_to_a2a(self) -> None:
+        """Test converting ContentBlocks to A2A message."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._a2a_client_factory = MockClientFactory()
+        agent._is_ready = True
+
+        msg = Msg(
+            name="user",
+            content=[
+                TextBlock(type="text", text="Hello"),
+                ThinkingBlock(type="thinking", thinking="Let me think..."),
+                ImageBlock(
+                    type="image",
+                    source=URLSource(
+                        type="url",
+                        url="http://example.com/image.jpg",
+                    ),
+                ),
+            ],
+            role="user",
+        )
+
+        a2a_msg = agent._convert_msgs_to_a2a_message([msg])
+
+        # Should have 3 parts: text, thinking, and image
+        self.assertEqual(len(a2a_msg.parts), 3)
+        
+        # Verify text part
+        self.assertIsInstance(a2a_msg.parts[0].root, TextPart)
+        self.assertEqual(a2a_msg.parts[0].root.text, "Hello")
+        self.assertEqual(
+            a2a_msg.parts[0].root.metadata.get("_agentscope_block_type"),
+            "text"
+        )
+        
+        # Verify thinking part
+        self.assertIsInstance(a2a_msg.parts[1].root, TextPart)
+        self.assertEqual(a2a_msg.parts[1].root.text, "Let me think...")
+        self.assertEqual(
+            a2a_msg.parts[1].root.metadata.get("_agentscope_block_type"),
+            "thinking"
+        )
+        
+        # Verify image part
+        self.assertIsInstance(a2a_msg.parts[2].root, FilePart)
+        self.assertIsInstance(a2a_msg.parts[2].root.file, FileWithUri)
+        self.assertEqual(
+            a2a_msg.parts[2].root.file.uri,
+            "http://example.com/image.jpg"
+        )
+        self.assertEqual(a2a_msg.parts[2].root.file.mime_type, "image/*")
+
+    async def test_convert_tool_blocks_to_a2a(self) -> None:
+        """Test converting ToolUse/ToolResult blocks to A2A."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._a2a_client_factory = MockClientFactory()
+        agent._is_ready = True
+
+        msg = Msg(
+            name="assistant",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    name="get_weather",
+                    id="call-1",
+                    input={"city": "Beijing"},
+                ),
+                ToolResultBlock(
+                    type="tool_result",
+                    name="get_weather",
+                    id="call-1",
+                    output="Sunny, 25°C",
+                ),
+            ],
+            role="assistant",
+        )
+
+        a2a_msg = agent._convert_msgs_to_a2a_message([msg])
+
+        self.assertEqual(len(a2a_msg.parts), 2)
+        # Check tool use
+        self.assertIsInstance(a2a_msg.parts[0].root, DataPart)
+        self.assertEqual(
+            a2a_msg.parts[0].root.metadata.get("_agentscope_block_type"),
+            "tool_use",
+        )
+        # Check tool result
+        self.assertIsInstance(a2a_msg.parts[1].root, DataPart)
+        self.assertEqual(
+            a2a_msg.parts[1].root.metadata.get("_agentscope_block_type"),
+            "tool_result",
+        )
+
+    async def test_convert_a2a_to_msg(self) -> None:
+        """Test converting A2A message to Msg."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        a2a_msg = A2AMessage(
+            message_id="test-id",
+            role=A2ARole.agent,
+            parts=[
+                Part(root=TextPart(text="Response text")),
+            ],
+        )
+
+        msg = agent._convert_a2a_message_to_msg(a2a_msg)
+
+        self.assertEqual(msg.name, "TestAgent")
+        self.assertEqual(msg.role, "assistant")
+        self.assertEqual(len(msg.content), 1)
+        # ContentBlock is a TypedDict, check structure instead of isinstance
+        self.assertEqual(msg.content[0]["type"], "text")
+        self.assertEqual(msg.content[0]["text"], "Response text")
+
+    async def test_convert_a2a_file_part_to_msg(self) -> None:
+        """Test converting A2A FilePart to media blocks."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Test image file
+        a2a_msg = A2AMessage(
+            message_id="test-id",
+            role=A2ARole.agent,
+            parts=[
+                Part(
+                    root=FilePart(
+                        file=FileWithUri(
+                            uri="http://example.com/image.png",
+                            mime_type="image/png",
+                        ),
+                    ),
+                ),
+            ],
+        )
+
+        msg = agent._convert_a2a_message_to_msg(a2a_msg)
+
+        self.assertEqual(len(msg.content), 1)
+        # ContentBlock is a TypedDict, check structure
+        self.assertEqual(msg.content[0]["type"], "image")
+        self.assertEqual(msg.content[0]["source"]["url"], "http://example.com/image.png")
+
+    async def test_reply_with_direct_message(self) -> None:
+        """Test reply method with direct message response."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Mock the client factory
+        agent._a2a_client_factory = MockClientFactory(response_type="message")
+        agent._is_ready = True
+
+        input_msg = Msg(name="user", content="Hello", role="user")
+
+        response = await agent.reply(input_msg)
+
+        self.assertEqual(response.name, "TestAgent")
+        self.assertEqual(response.role, "assistant")
+        self.assertIn("Hello from remote agent", response.content[0]["text"])
+
+    async def test_reply_with_task(self) -> None:
+        """Test reply method with task response."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Mock the client factory
+        agent._a2a_client_factory = MockClientFactory(response_type="task")
+        agent._is_ready = True
+
+        input_msg = Msg(name="user", content="Process this", role="user")
+
+        response = await agent.reply(input_msg)
+
+        self.assertEqual(response.name, "TestAgent")
+        self.assertEqual(response.role, "assistant")
+        # Should contain artifact content
+        self.assertTrue(len(response.content) > 0)
+
+    async def test_reply_with_error(self) -> None:
+        """Test reply method handles errors gracefully."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Mock the client factory to raise error
+        agent._a2a_client_factory = MockClientFactory(response_type="error")
+        agent._is_ready = True
+
+        input_msg = Msg(name="user", content="Hello", role="user")
+
+        # Should return error message, not raise exception
+        response = await agent.reply(input_msg)
+
+        self.assertEqual(response.name, "TestAgent")
+        self.assertEqual(response.role, "assistant")
+        self.assertTrue(response.metadata.get("error", False))
+        self.assertIn("Error", response.content[0]["text"])
+
+    async def test_reply_with_invalid_input(self) -> None:
+        """Test reply method with invalid input."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._a2a_client_factory = MockClientFactory()
+        agent._is_ready = True
+
+        # Test with None
+        with self.assertRaises(ValueError):
+            await agent.reply(None)
+
+        # Test with empty list
+        with self.assertRaises(ValueError):
+            await agent.reply([])
+
+        # Test with list of None
+        with self.assertRaises(ValueError):
+            await agent.reply([None, None])
+
+    async def test_construct_msg_from_task_status(self) -> None:
+        """Test constructing Msg from task status."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Task with status message
+        task = Task(
+            id="task-1",
+            context_id="context-1",
+            status=TaskStatus(
+                state=TaskState.working,
+                message=A2AMessage(
+                    message_id="status-1",
+                    role=A2ARole.agent,
+                    parts=[Part(root=TextPart(text="Processing..."))],
+                ),
+            ),
+        )
+
+        msg = agent._construct_msg_from_task_status(task)
+
+        self.assertEqual(msg.name, "TestAgent")
+        self.assertIn("Task ID: task-1", msg.content[0]["text"])
+
+        # Task without status message
+        task_no_msg = Task(
+            id="task-2",
+            context_id="context-2",
+            status=TaskStatus(state=TaskState.submitted),
+        )
+
+        msg_no_status = agent._construct_msg_from_task_status(task_no_msg)
+
+        self.assertEqual(msg_no_status.name, "TestAgent")
+        self.assertIn("Task ID: task-2", msg_no_status.content[0]["text"])
+
+    async def test_convert_task_artifacts_to_msg(self) -> None:
+        """Test converting task artifacts to Msg."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        task = Task(
+            id="task-1",
+            context_id="context-1",
+            status=TaskStatus(state=TaskState.completed),
+            artifacts=[
+                Artifact(
+                    artifact_id="art-1",
+                    name="output",
+                    description="Generated output",
+                    parts=[
+                        Part(root=TextPart(text="Result data")),
+                    ],
+                ),
+            ],
+        )
+
+        msg = agent._convert_task_artifacts_to_msg(task)
+
+        self.assertIsNotNone(msg)
+        self.assertEqual(msg.name, "TestAgent")
+        # Should have artifact info and content
+        self.assertTrue(len(msg.content) >= 2)
+        self.assertIn("Artifact ID", msg.content[0]["text"])
+
+        # Test with no artifacts
+        task_no_artifacts = Task(
+            id="task-2",
+            context_id="context-2",
+            status=TaskStatus(state=TaskState.completed),
+            artifacts=[],
+        )
+
+        msg_none = agent._convert_task_artifacts_to_msg(task_no_artifacts)
+        self.assertIsNone(msg_none)
+
+    async def test_validate_agent_card(self) -> None:
+        """Test agent card validation."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Valid card
+        valid_card = AgentCard(
+            name="Valid",
+            url="http://localhost:8000",
+            description="Valid agent",
+            version="1.0.0",
+            capabilities=AgentCapabilities(),
+            default_input_modes=["text/plain"],
+            default_output_modes=["text/plain"],
+            skills=[],
+        )
+        await agent._validate_agent_card(valid_card)
+
+        # Invalid card - malformed URL
+        invalid_card = AgentCard(
+            name="Invalid",
+            url="invalid-url-format",
+            description="Invalid agent",
+            version="1.0.0",
+            capabilities=AgentCapabilities(),
+            default_input_modes=["text/plain"],
+            default_output_modes=["text/plain"],
+            skills=[],
+        )
+        with self.assertRaises(RuntimeError):
+            await agent._validate_agent_card(invalid_card)
+
+    async def test_get_agent_card_with_validation(self) -> None:
+        """Test _get_agent_card with validation and fallback."""
+        # Create a valid agent card
+        valid_card = AgentCard(
+            name="ValidAgent",
+            url="http://localhost:8000",
+            description="Valid agent",
+            version="1.0.0",
+            capabilities=AgentCapabilities(),
+            default_input_modes=["text/plain"],
+            default_output_modes=["text/plain"],
+            skills=[],
+        )
+
+        # Create agent with fixed resolver
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=valid_card,
+        )
+
+        # First call should succeed
+        card = await agent._get_agent_card()
+        self.assertEqual(card.name, "ValidAgent")
+        self.assertEqual(agent._agent_card.name, "ValidAgent")
+
+        # Now test with invalid card (missing url) that should fall back
+        # Note: We can't create invalid AgentCard in Pydantic, so we mock the resolver
+        # to return an invalid card during validation
+        from unittest.mock import AsyncMock
+        
+        # Create a mock that raises validation error
+        async def mock_get_invalid_card():
+            raise RuntimeError("Invalid agent card")
+        
+        agent._agent_card_resolver.get_agent_card = mock_get_invalid_card
+
+        # Should fall back to previous valid card
+        card = await agent._get_agent_card()
+        self.assertEqual(card.name, "ValidAgent")
+
+    async def test_msg_metadata_preservation(self) -> None:
+        """Test that message metadata is preserved during conversion."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+        agent._is_ready = True
+
+        original_msg = Msg(
+            name="user",
+            content="Test",
+            role="user",
+            metadata={"custom_key": "custom_value"},
+        )
+
+        # Convert to A2A and back
+        a2a_msg = agent._convert_msgs_to_a2a_message([original_msg])
+
+        # Check metadata is stored
+        self.assertIsNotNone(a2a_msg.metadata)
+        self.assertIn(original_msg.id, a2a_msg.metadata)
+
+        # Convert back
+        result_msg = agent._convert_a2a_message_to_msg(a2a_msg)
+
+        # Metadata should be preserved
+        self.assertEqual(result_msg.metadata, {"custom_key": "custom_value"})
+
+    async def test_media_block_conversions(self) -> None:
+        """Test media block conversions (Image, Audio, Video)."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Test URL source (without media_type, as URLSource doesn't have it)
+        url_image = ImageBlock(
+            type="image",
+            source=URLSource(
+                type="url",
+                url="http://example.com/img.jpg",
+            ),
+        )
+        part = agent._convert_content_block_to_part(url_image)
+        self.assertIsNotNone(part)
+        self.assertIsInstance(part.root.file, FileWithUri)
+        # Should be inferred as "image/*"
+        self.assertEqual(part.root.file.mime_type, "image/*")
+
+        # Test base64 source with data
+        base64_audio = AudioBlock(
+            type="audio",
+            source=Base64Source(
+                type="base64",
+                media_type="audio/mp3",
+                data="SGVsbG8=",
+            ),
+        )
+        part = agent._convert_content_block_to_part(base64_audio)
+        self.assertIsNotNone(part)
+        self.assertIsInstance(part.root.file, FileWithBytes)
+
+    async def test_multiple_msgs_merge(self) -> None:
+        """Test merging multiple Msgs into single A2A message."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        msgs = [
+            Msg(name="user", content="First message", role="user"),
+            Msg(name="user", content="Second message", role="user"),
+            Msg(name="assistant", content="Third message", role="assistant"),
+        ]
+
+        a2a_msg = agent._convert_msgs_to_a2a_message(msgs)
+
+        # All messages should be merged into one A2A message
+        self.assertEqual(len(a2a_msg.parts), 3)
+        # Each part should have tracking metadata
+        for part in a2a_msg.parts:
+            self.assertIn("_agentscope_msg_id", part.root.metadata)
+            self.assertIn("_agentscope_msg_source", part.root.metadata)
