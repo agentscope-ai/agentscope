@@ -4,7 +4,7 @@ compared to the RayEvaluator."""
 from typing import Callable, Awaitable, Coroutine, Any
 
 from ._evaluator_base import EvaluatorBase
-from .in_memory_exporter import _InMemoryExporter
+from ._in_memory_exporter import _InMemoryExporter
 from .._evaluator_storage import EvaluatorStorageBase
 from .._task import Task
 from .._solution import SolutionOutput
@@ -90,7 +90,6 @@ class GeneralEvaluator(EvaluatorBase):
                 ):
                     from ... import _config
 
-                    # pyilnt: disable=protected-access
                     _config.trace_enabled = True
 
                     # Run the solution
@@ -147,10 +146,8 @@ class GeneralEvaluator(EvaluatorBase):
         span_processor = SimpleSpanProcessor(exporter)
 
         tracer_provider: TracerProvider = trace.get_tracer_provider()
-        if isinstance(tracer_provider, TracerProvider):
-            # The provider is set outside, just add the span processor
-            tracer_provider.add_span_processor(span_processor)
-        else:
+        if not isinstance(tracer_provider, TracerProvider):
+            # Create a new tracer provider if not exists
             tracer_provider = TracerProvider()
         tracer_provider.add_span_processor(span_processor)
         trace.set_tracer_provider(tracer_provider)

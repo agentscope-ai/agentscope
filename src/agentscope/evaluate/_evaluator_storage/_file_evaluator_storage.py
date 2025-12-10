@@ -382,8 +382,8 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
 
         if not os.path.exists(path_file):
             raise FileNotFoundError(
-                f"Solution result for task {task_id} and repeat {repeat_id} "
-                "not found.",
+                f"Solution statistics for task {task_id} and repeat "
+                f"{repeat_id} not found.",
             )
 
         try:

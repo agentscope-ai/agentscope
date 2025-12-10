@@ -79,7 +79,12 @@ class EvaluatorBase:
         )
 
     async def _save_task_meta(self, task: Task) -> None:
-        """Save the task meta information."""
+        """Save the task meta information.
+
+        Args:
+            task (`Task`):
+                The task instance.
+        """
         meta_info = asdict(task)
         meta_info.pop("metadata")
         self.storage.save_task_meta(

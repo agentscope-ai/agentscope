@@ -3,7 +3,7 @@
 import asyncio
 from typing import Callable, Awaitable, Coroutine, Any
 
-from .in_memory_exporter import _InMemoryExporter
+from ._in_memory_exporter import _InMemoryExporter
 from .._benchmark_base import BenchmarkBase
 from .._evaluator._evaluator_base import EvaluatorBase
 from .._solution import SolutionOutput
@@ -86,7 +86,10 @@ class RaySolutionActor:
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
         span_processor = SimpleSpanProcessor(self.exporter)
-        tracer_provider = TracerProvider()
+        tracer_provider: TracerProvider = trace.get_tracer_provider()
+        if not isinstance(tracer_provider, TracerProvider):
+            # Create a new tracer provider if not exists
+            tracer_provider = TracerProvider()
         tracer_provider.add_span_processor(span_processor)
         trace.set_tracer_provider(tracer_provider)
 
@@ -154,7 +157,7 @@ class RaySolutionActor:
             storage.save_solution_stats(
                 task.id,
                 repeat_id,
-                self.exporter.cnt[task.id][repeat_id],
+                self.exporter.cnt.get(task.id, {}).get(repeat_id, {}),
             )
 
             storage.save_solution_result(
