@@ -58,7 +58,32 @@ class FixedAgentCardResolver(AgentCardResolverBase):
 
 
 class FileAgentCardResolver(AgentCardResolverBase):
-    """Agent card resolver that loads AgentCard from a JSON file."""
+    """Agent card resolver that loads AgentCard from a JSON file.
+
+    The JSON file should contain an AgentCard object with the following
+    required fields:
+
+    - name (str): The name of the agent
+    - url (str): The URL of the agent
+    - version (str): The version of the agent
+    - capabilities (dict): The capabilities of the agent
+    - default_input_modes (list[str]): Default input modes
+    - default_output_modes (list[str]): Default output modes
+    - skills (list): List of agent skills
+
+    Example JSON file content::
+
+        {
+            "name": "RemoteAgent",
+            "url": "http://localhost:8000",
+            "description": "A remote A2A agent",
+            "version": "1.0.0",
+            "capabilities": {},
+            "default_input_modes": ["text/plain"],
+            "default_output_modes": ["text/plain"],
+            "skills": []
+        }
+    """
 
     def __init__(
         self,
@@ -68,7 +93,7 @@ class FileAgentCardResolver(AgentCardResolverBase):
 
         Args:
                 file_path (`str`):
-                        The path to the file containing the agent card.
+                        The path to the JSON file containing the agent card.
         """
         self._file_path = file_path
 
