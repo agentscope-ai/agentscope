@@ -3,7 +3,10 @@
 compared to the RayEvaluator."""
 from typing import Callable, Awaitable, Coroutine, Any
 
+from opentelemetry import baggage
+
 from ._evaluator_base import EvaluatorBase
+from .in_memory_exporter import _InMemoryExporter
 from .._evaluator_storage import EvaluatorStorageBase
 from .._task import Task
 from .._solution import SolutionOutput
@@ -70,19 +73,42 @@ class GeneralEvaluator(EvaluatorBase):
             )
 
         else:
-            # Run the solution
-            solution_result = await solution(
-                task,
-                self.storage.get_agent_pre_print_hook(
-                    task.id,
-                    repeat_id,
-                ),
-            )
-            self.storage.save_solution_result(
-                task.id,
-                repeat_id,
-                solution_result,
-            )
+            from opentelemetry import trace
+            from opentelemetry.context import attach, detach
+
+            tracer = trace.get_tracer(__name__)
+
+            # Set baggage
+            ctx = baggage.set_baggage("task_id", task.id)
+            ctx = baggage.set_baggage("repeat_id", repeat_id, context=ctx)
+
+            # Activate the context
+            token = attach(ctx)
+
+            try:
+                with tracer.start_as_current_span(
+                    name=f"Solution_{task.id}_{repeat_id}",
+                ):
+                    from ... import _config
+
+                    # pyilnt: disable=protected-access
+                    _config.trace_enabled = True
+
+                    # Run the solution
+                    solution_result = await solution(
+                        task,
+                        self.storage.get_agent_pre_print_hook(
+                            task.id,
+                            repeat_id,
+                        ),
+                    )
+                    self.storage.save_solution_result(
+                        task.id,
+                        repeat_id,
+                        solution_result,
+                    )
+            finally:
+                detach(token)
 
         # Evaluate the solution with the
         for metric in task.metrics:
@@ -114,6 +140,22 @@ class GeneralEvaluator(EvaluatorBase):
                 hook function as input, returns a `SolutionOutput` instance.
         """
 
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        exporter = _InMemoryExporter()
+        span_processor = SimpleSpanProcessor(exporter)
+
+        tracer_provider: TracerProvider = trace.get_tracer_provider()
+        if isinstance(tracer_provider, TracerProvider):
+            # The provider is set outside, just add the span processor
+            tracer_provider.add_span_processor(span_processor)
+        else:
+            tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(span_processor)
+        trace.set_tracer_provider(tracer_provider)
+
         await self._save_evaluation_meta()
 
         for task in self.benchmark:
@@ -125,5 +167,16 @@ class GeneralEvaluator(EvaluatorBase):
                     task,
                     solution,
                 )
+
+                # Save the exporter data
+                if (
+                    task.id in exporter.cnt
+                    and str(repeat_id) in exporter.cnt[task.id]
+                ):
+                    self.storage.save_solution_stats(
+                        task.id,
+                        str(repeat_id),
+                        exporter.cnt[task.id][str(repeat_id)],
+                    )
 
         await self.aggregate()

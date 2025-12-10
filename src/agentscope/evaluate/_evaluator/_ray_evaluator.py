@@ -3,6 +3,7 @@
 import asyncio
 from typing import Callable, Awaitable, Coroutine, Any
 
+from .in_memory_exporter import _InMemoryExporter
 from .._benchmark_base import BenchmarkBase
 from .._evaluator._evaluator_base import EvaluatorBase
 from .._solution import SolutionOutput
@@ -77,6 +78,18 @@ class RaySolutionActor:
             max_concurrency=n_workers,
         ).remote()
 
+        # Set up global exporter for this Actor
+        self.exporter = _InMemoryExporter()
+
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        span_processor = SimpleSpanProcessor(self.exporter)
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(span_processor)
+        trace.set_tracer_provider(tracer_provider)
+
     async def run(
         self,
         storage: EvaluatorStorageBase,
@@ -97,8 +110,6 @@ class RaySolutionActor:
                 (Callable[[Task, Callable], Awaitable[SolutionOutput, Any]]):
                 callable function to execute agents and generate results.
         """
-        # TODO: Setup a exporter here to save the token usage
-
 
         if storage.solution_result_exists(task.id, repeat_id):
             # Obtain from storage
@@ -108,13 +119,43 @@ class RaySolutionActor:
             )
 
         else:
-            # Run the solution
-            solution_result = await solution(
-                task,
-                storage.get_agent_pre_print_hook(
-                    task.id,
-                    repeat_id,
-                ),
+            from opentelemetry import trace, baggage
+            from opentelemetry.context import attach, detach
+
+            tracer = trace.get_tracer(__name__)
+
+            # Set baggage items
+            ctx = baggage.set_baggage("task_id", task.id)
+            ctx = baggage.set_baggage("repeat_id", repeat_id, context=ctx)
+
+            # Attach the context with baggage
+            token = attach(ctx)
+
+            try:
+                with tracer.start_as_current_span(
+                    name=f"Solution_{task.id}_{repeat_id}",
+                ):
+                    from ... import _config
+
+                    _config.trace_enabled = True
+
+                    # Run the solution
+                    solution_result = await solution(
+                        task,
+                        storage.get_agent_pre_print_hook(
+                            task.id,
+                            repeat_id,
+                        ),
+                    )
+            finally:
+                detach(token)
+                # Ensure all spans are flushed
+                trace.get_tracer_provider().force_flush()
+
+            storage.save_solution_stats(
+                task.id,
+                repeat_id,
+                self.exporter.cnt[task.id][repeat_id],
             )
 
             storage.save_solution_result(

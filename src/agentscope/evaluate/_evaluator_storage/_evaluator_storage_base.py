@@ -189,6 +189,48 @@ class EvaluatorStorageBase:
         """
 
     @abstractmethod
+    def save_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+        stats: dict,
+    ) -> None:
+        """Save the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+            stats (`dict`):
+                A dictionary containing the solution statistics to be saved.
+        """
+
+    @abstractmethod
+    def get_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+    ) -> dict:
+        """Get the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+
+        Returns:
+            `dict`:
+                A dictionary containing the solution statistics for the given
+                task and repeat ID.
+        """
+
+    @abstractmethod
     def get_agent_pre_print_hook(
         self,
         task_id: str,

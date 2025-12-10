@@ -30,6 +30,7 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
     """
 
     SOLUTION_FILE_NAME = "solution.json"
+    SOLUTION_STATS_FILE_NAME = "stats.json"
     EVALUATION_DIR_NAME = "evaluation"
     EVALUATION_RESULT_FILE = "evaluation_result.json"
     EVALUATION_META_FILE = "evaluation_meta.json"
@@ -325,6 +326,75 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
         )
         with open(path_file, "w", encoding="utf-8") as f:
             json.dump(meta_info, f, ensure_ascii=False, indent=4)
+
+    def save_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+        stats: dict,
+    ) -> None:
+        """Save the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+            stats (`dict`):
+                A dictionary containing the solution statistics to be saved.
+        """
+        path_file = self._get_save_path(
+            task_id,
+            repeat_id,
+            self.SOLUTION_STATS_FILE_NAME,
+        )
+        if not os.path.exists(path_file):
+            with open(path_file, "w", encoding="utf-8") as f:
+                json.dump(stats, f, ensure_ascii=False, indent=4)
+
+    def get_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+    ) -> dict:
+        """Get the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+
+        Returns:
+            `dict`:
+                A dictionary containing the solution statistics for the given
+                task and repeat ID.
+        """
+        path_file = self._get_save_path(
+            task_id,
+            repeat_id,
+            self.SOLUTION_STATS_FILE_NAME,
+        )
+
+        if not os.path.exists(path_file):
+            raise FileNotFoundError(
+                f"Solution result for task {task_id} and repeat {repeat_id} "
+                "not found.",
+            )
+
+        try:
+            with open(path_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except JSONDecodeError as e:
+            raise JSONDecodeError(
+                f"Failed to load JSON from {path_file}: {e.msg}",
+                e.doc,
+                e.pos,
+            ) from e
 
     def get_agent_pre_print_hook(
         self,
