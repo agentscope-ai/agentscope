@@ -3,13 +3,22 @@
 """The main entry point for the werewolf game."""
 import asyncio
 import os
+from pathlib import Path
 
 from game import werewolves_game
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = Path(__file__).parent / '.env'
+if env_path.exists():
+    load_dotenv(env_path)
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeMultiAgentFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.session import JSONSession
+from agent import PlayerAgent
+from model_config import ModelConfig
 
 
 def get_official_agents(name: str) -> ReActAgent:
@@ -69,8 +78,8 @@ Your target is to win the game with your teammates as much as possible.
 - Generate a one-line response.
 - Don't repeat the others' speeches.""",
         model=DashScopeChatModel(
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen3-max",
+            api_key=ModelConfig.get_api_key(),
+            model_name=ModelConfig.get_model_name(),
         ),
         formatter=DashScopeMultiAgentFormatter(),
     )
@@ -78,27 +87,28 @@ Your target is to win the game with your teammates as much as possible.
 
 
 async def main() -> None:
-    """The main entry point for the werewolf game."""
+    """The main entry point for the wolf game."""
 
     # Uncomment the following lines if you want to use Agentscope Studio
     # to visualize the game process.
-    # import agentscope
-    # agentscope.init(
-    #     studio_url="http://localhost:3000",
-    #     project="werewolf_game",
-    # )
+    import agentscope
+    agentscope.init(
+        studio_url="http://localhost:3000",
+        project="werewolf_game",
+    )
 
-    # Prepare 9 players, you can change their names here
-    players = [get_official_agents(f"Player{_ + 1}") for _ in range(9)]
-
-    # Note: You can replace your own agents here, or use all your own agents
+    # Prepare 9 players using PlayerAgent
+    players = [PlayerAgent(name=f"Player{i + 1}") for i in range(9)]
 
     # Load states from a previous checkpoint
     session = JSONSession(save_dir="./checkpoints")
-    await session.load_session_state(
-        session_id="players_checkpoint",
-        **{player.name: player for player in players},
-    )
+    try:
+        await session.load_session_state(
+            session_id="players_checkpoint",
+            **{player.name: player for player in players},
+        )
+    except (KeyError, FileNotFoundError):
+        print("No valid checkpoint found, starting fresh.")
 
     await werewolves_game(players)
 
