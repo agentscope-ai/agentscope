@@ -385,7 +385,7 @@ class A2aAgent(AgentBase):
 
             # If we have a previous valid agent card, use it
             if self._agent_card is not None:
-                logger.info(
+                logger.debug(
                     "[%s] Using previous valid agent card",
                     self.__class__.__name__,
                 )
@@ -465,7 +465,7 @@ class A2aAgent(AgentBase):
                 card=await self._get_agent_card(),
             )
 
-            logger.info(
+            logger.debug(
                 "[%s] Sending message to remote agent: %s",
                 self.__class__.__name__,
                 self.name,
@@ -475,7 +475,7 @@ class A2aAgent(AgentBase):
                 if isinstance(item, A2AMessage):
                     response_msg = self._convert_a2a_message_to_msg(item)
                     await self.print(response_msg, False)
-                    logger.info(
+                    logger.debug(
                         "[%s] Received direct message response",
                         self.__class__.__name__,
                     )
@@ -500,7 +500,7 @@ class A2aAgent(AgentBase):
                     # Check task status
                     if task.status.state == TaskState.completed:
                         response_msg = artifact_msg
-                        logger.info(
+                        logger.debug(
                             "[%s] Task completed successfully: %s",
                             self.__class__.__name__,
                             task.id,
@@ -516,7 +516,7 @@ class A2aAgent(AgentBase):
 
         except asyncio.CancelledError:
             # User interruption - re-raise for proper cancellation handling
-            logger.info(
+            logger.debug(
                 "[%s] Communication cancelled by user",
                 self.__class__.__name__,
             )
@@ -561,7 +561,6 @@ class A2aAgent(AgentBase):
                     role="assistant",
                     metadata={"error": True, "error_type": "NoResponse"},
                 )
-
         await self.print(response_msg, True)
         return response_msg
 
@@ -749,7 +748,7 @@ class A2aAgent(AgentBase):
 
         # Case 3: No valid content
         else:
-            logger.warning(
+            logger.debug(
                 "[%s] No valid content found in A2A message",
                 self.__class__.__name__,
             )
@@ -817,7 +816,7 @@ class A2aAgent(AgentBase):
 
         # Unknown part type
         else:
-            logger.warning(
+            logger.debug(
                 "[%s] Unknown part type: %s",
                 self.__class__.__name__,
                 type(part_root),
