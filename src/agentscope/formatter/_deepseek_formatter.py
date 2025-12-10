@@ -52,12 +52,15 @@ class DeepSeekChatFormatter(TruncatedFormatterBase):
         messages: list[dict] = []
         for msg in msgs:
             content_blocks: list = []
+            reasoning_content_blocks: list = []
             tool_calls = []
 
             for block in msg.get_content_blocks():
                 typ = block.get("type")
                 if typ == "text":
                     content_blocks.append({**block})
+                elif typ == "thinking":
+                    reasoning_content_blocks.append({**block})
 
                 elif typ == "tool_use":
                     tool_calls.append(
@@ -95,10 +98,18 @@ class DeepSeekChatFormatter(TruncatedFormatterBase):
             content_msg = "\n".join(
                 content.get("text", "") for content in content_blocks
             )
+            reasoning_msg = "\n".join(
+                reasoning.get("thinking", "")
+                for reasoning in reasoning_content_blocks
+            )
+
             msg_deepseek = {
                 "role": msg.role,
                 "content": content_msg or None,
             }
+
+            if reasoning_msg:
+                msg_deepseek["reasoning_content"] = reasoning_msg
 
             if tool_calls:
                 msg_deepseek["tool_calls"] = tool_calls

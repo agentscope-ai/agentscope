@@ -5,7 +5,7 @@ from abc import abstractmethod
 from typing import Any, List, Tuple, Sequence
 
 from .._utils._common import _save_base64_data
-from ..message import Msg, AudioBlock, ImageBlock, TextBlock
+from ..message import Msg, AudioBlock, ImageBlock, TextBlock, VideoBlock
 
 
 class FormatterBase:
@@ -35,8 +35,16 @@ class FormatterBase:
 
     @staticmethod
     def convert_tool_result_to_string(
-        output: str | List[TextBlock | ImageBlock | AudioBlock],
-    ) -> tuple[str, Sequence[Tuple[str, ImageBlock | AudioBlock | TextBlock]]]:
+        output: str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock],
+    ) -> tuple[
+        str,
+        Sequence[
+            Tuple[
+                str,
+                ImageBlock | AudioBlock | TextBlock | VideoBlock,
+            ]
+        ],
+    ]:
         """Turn the tool result list into a textual output to be compatible
         with the LLM API that doesn't support multimodal data in the tool
         result.
@@ -46,12 +54,13 @@ class FormatterBase:
         is included in the returned list.
 
         Args:
-            output (`str | List[TextBlock | ImageBlock | AudioBlock]`):
+            output (`str | List[TextBlock | ImageBlock | AudioBlock | \
+            VideoBlock]`):
                 The output of the tool response, including text and multimodal
                 data like images and audio.
 
         Returns:
-            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | \
+            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock \
             TextBlock]]]`:
                 A tuple containing the textual representation of the tool
                 result and a list of tuples. The first element of each tuple
@@ -66,8 +75,8 @@ class FormatterBase:
         multimodal_data = []
         for block in output:
             assert isinstance(block, dict) and "type" in block, (
-                f"Invalid block: {block}, a TextBlock, ImageBlock, or "
-                f"AudioBlock is expected."
+                f"Invalid block: {block}, a TextBlock, ImageBlock, "
+                f"AudioBlock, or VideoBlock is expected."
             )
             if block["type"] == "text":
                 textual_output.append(block["text"])

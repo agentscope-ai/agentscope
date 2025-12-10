@@ -41,7 +41,7 @@ async def main(user_query: str) -> None:
             sys_prompt="You are a helpful assistant named Friday.",
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
-                model_name="qwen-max",
+                model_name="qwen3-max",
                 enable_thinking=False,
                 stream=True,
             ),
@@ -49,6 +49,7 @@ async def main(user_query: str) -> None:
             memory=InMemoryMemory(),
             search_mcp_client=tavily_search_client,
             tmp_file_storage_dir=agent_working_dir,
+            max_tool_results_words=10000,
         )
         user_name = "Bob"
         msg = Msg(

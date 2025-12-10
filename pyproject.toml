@@ -30,13 +30,15 @@ dependencies = [
     "numpy",
     "openai",
     "python-datauri",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-exporter-otlp",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
     "shortuuid",
     "tiktoken",
     "sounddevice",
+    "python-frontmatter",
 ]
 
 [project.optional-dependencies]
@@ -52,7 +54,7 @@ full = [
     # Long-term memory
     "mem0ai",
     "packaging",
-    "reme-ai>=0.2.0.0",
+    "reme-ai>=0.2.0.3",
     # RAG
     "pypdf",
     "python-docx",
@@ -82,6 +84,10 @@ Repository = "https://github.com/agentscope-ai/agentscope"
 
 [tool.setuptools]
 packages = { find = { where = ["src"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]

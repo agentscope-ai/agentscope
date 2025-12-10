@@ -7,16 +7,23 @@ from typing import Type, Any, AsyncGenerator, Literal
 
 from pydantic import BaseModel, ValidationError, Field
 
+from ._utils import _AsyncNullContext
 from ._react_agent_base import ReActAgentBase
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
-from ..message import Msg, ToolUseBlock, ToolResultBlock, TextBlock
+from ..message import (
+    Msg,
+    ToolUseBlock,
+    ToolResultBlock,
+    TextBlock,
+)
 from ..model import ChatModelBase
 from ..rag import KnowledgeBase, Document
 from ..plan import PlanNotebook
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
+from ..tts import TTSModelBase
 
 
 class _QueryRewriteModel(BaseModel):
@@ -63,6 +70,7 @@ class ReActAgent(ReActAgentBase):
         plan_notebook: PlanNotebook | None = None,
         print_hint_msg: bool = False,
         max_iters: int = 10,
+        tts_model: TTSModelBase | None = None,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -120,6 +128,8 @@ class ReActAgent(ReActAgentBase):
                 the long-term memory and knowledge base(s).
             max_iters (`int`, defaults to `10`):
                 The maximum number of iterations of the reasoning-acting loops.
+            tts_model (`TTSModelBase | None` optional):
+                The TTS model used by the agent.
         """
         super().__init__()
 
@@ -135,6 +145,7 @@ class ReActAgent(ReActAgentBase):
         self.max_iters = max_iters
         self.model = model
         self.formatter = formatter
+        self.tts_model = tts_model
 
         # -------------- Memory management --------------
         # Record the dialogue history in the memory
@@ -166,7 +177,7 @@ class ReActAgent(ReActAgentBase):
                 long_term_memory.retrieve_from_memory,
             )
         # Add a meta tool function to allow agent-controlled tool management
-        if enable_meta_tool or plan_notebook:
+        if enable_meta_tool:
             self.toolkit.register_tool_function(
                 self.toolkit.reset_equipped_tools,
             )
@@ -189,7 +200,7 @@ class ReActAgent(ReActAgentBase):
             self.plan_notebook = plan_notebook
             # When enable_meta_tool is True, plan tools are in plan_related
             # group and active by agent.
-            # Otherwise, plan tools in bassic group and always active.
+            # Otherwise, plan tools in basic group and always active.
             if enable_meta_tool:
                 self.toolkit.create_tool_group(
                     "plan_related",
@@ -231,7 +242,11 @@ class ReActAgent(ReActAgentBase):
     @property
     def sys_prompt(self) -> str:
         """The dynamic system prompt of the agent."""
-        return self._sys_prompt
+        agent_skill_prompt = self.toolkit.get_agent_skill_prompt()
+        if agent_skill_prompt:
+            return self._sys_prompt + "\n\n" + agent_skill_prompt
+        else:
+            return self._sys_prompt
 
     @trace_reply
     async def reply(  # pylint: disable=too-many-branches
@@ -263,7 +278,7 @@ class ReActAgent(ReActAgentBase):
         await self._retrieve_from_knowledge(msg)
 
         # Control if LLM generates tool calls in each reasoning step
-        tool_choice: Literal["auto", "none", "any", "required"] | None = None
+        tool_choice: Literal["auto", "none", "required"] | None = None
 
         # -------------- Structured output management --------------
         self._required_structured_model = structured_model
@@ -386,11 +401,13 @@ class ReActAgent(ReActAgentBase):
         await self.memory.add(reply_msg)
         return reply_msg
 
+    # pylint: disable=too-many-branches
     async def _reasoning(
         self,
-        tool_choice: Literal["auto", "none", "any", "required"] | None = None,
+        tool_choice: Literal["auto", "none", "required"] | None = None,
     ) -> Msg:
         """Perform the reasoning process."""
+
         if self.plan_notebook:
             # Insert the reasoning hint from the plan notebook
             hint_msg = await self.plan_notebook.get_current_hint()
@@ -419,21 +436,51 @@ class ReActAgent(ReActAgentBase):
         # handle output from the model
         interrupted_by_user = False
         msg = None
+
+        # TTS model context manager
+        tts_context = self.tts_model or _AsyncNullContext()
+        speech = None
+
         try:
-            if self.model.stream:
-                msg = Msg(self.name, [], "assistant")
-                async for content_chunk in res:
-                    msg.content = content_chunk.content
-                    await self.print(msg, False)
-                await self.print(msg, True)
+            async with tts_context:
+                msg = Msg(name=self.name, content=[], role="assistant")
+                if self.model.stream:
+                    async for content_chunk in res:
+                        msg.content = content_chunk.content
+
+                        # The speech generated from multimodal (audio) models
+                        # e.g. Qwen-Omni and GPT-AUDIO
+                        speech = msg.get_content_blocks("audio") or None
+
+                        # Push to TTS model if available
+                        if (
+                            self.tts_model
+                            and self.tts_model.supports_streaming_input
+                        ):
+                            tts_res = await self.tts_model.push(msg)
+                            speech = tts_res.content
+
+                        await self.print(msg, False, speech=speech)
+
+                else:
+                    msg.content = list(res.content)
+
+                if self.tts_model:
+                    # Push to TTS model and block to receive the full speech
+                    # synthesis result
+                    tts_res = await self.tts_model.synthesize(msg)
+                    if self.tts_model.stream:
+                        async for tts_chunk in tts_res:
+                            speech = tts_chunk.content
+                            await self.print(msg, False, speech=speech)
+                    else:
+                        speech = tts_res.content
+
+                await self.print(msg, True, speech=speech)
 
                 # Add a tiny sleep to yield the last message object in the
                 # message queue
                 await asyncio.sleep(0.001)
-
-            else:
-                msg = Msg(self.name, list(res.content), "assistant")
-                await self.print(msg, True)
 
         except asyncio.CancelledError as e:
             interrupted_by_user = True
@@ -538,6 +585,7 @@ class ReActAgent(ReActAgentBase):
     async def _summarizing(self) -> Msg:
         """Generate a response when the agent fails to solve the problem in
         the maximum iterations."""
+
         hint_msg = Msg(
             "user",
             "You have failed to generate response within the maximum "
@@ -558,25 +606,62 @@ class ReActAgent(ReActAgentBase):
         #  finish_function here
         res = await self.model(prompt)
 
-        res_msg = Msg(self.name, [], "assistant")
-        if isinstance(res, AsyncGenerator):
-            async for chunk in res:
-                res_msg.content = chunk.content
-                await self.print(res_msg, False)
-            await self.print(res_msg, True)
+        # TTS model context manager
+        tts_context = self.tts_model or _AsyncNullContext()
+        speech = None
 
-        else:
-            res_msg.content = res.content
-            await self.print(res_msg, True)
+        async with tts_context:
+            res_msg = Msg(self.name, [], "assistant")
+            if isinstance(res, AsyncGenerator):
+                async for chunk in res:
+                    res_msg.content = chunk.content
 
-        return res_msg
+                    # The speech generated from multimodal (audio) models
+                    # e.g. Qwen-Omni and GPT-AUDIO
+                    speech = res_msg.get_content_blocks("audio") or None
+
+                    # Push to TTS model if available
+                    if (
+                        self.tts_model
+                        and self.tts_model.supports_streaming_input
+                    ):
+                        tts_res = await self.tts_model.push(res_msg)
+                        speech = tts_res.content
+
+                    await self.print(res_msg, False, speech=speech)
+
+            else:
+                res_msg.content = res.content
+
+            if self.tts_model:
+                # Push to TTS model and block to receive the full speech
+                # synthesis result
+                tts_res = await self.tts_model.synthesize(res_msg)
+                if self.tts_model.stream:
+                    async for tts_chunk in tts_res:
+                        speech = tts_chunk.content
+                        await self.print(res_msg, False, speech=speech)
+                else:
+                    speech = tts_res.content
+
+            await self.print(res_msg, True, speech=speech)
+
+            return res_msg
 
     async def handle_interrupt(
         self,
         _msg: Msg | list[Msg] | None = None,
+        _structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
-        user or something else."""
+        user or something else.
+
+        Args:
+            _msg (`Msg | list[Msg] | None`, optional):
+                The input message(s) to the agent.
+            _structured_model (`Type[BaseModel] | None`, optional):
+                The required structured output model.
+        """
 
         response_msg = Msg(
             self.name,
@@ -585,7 +670,7 @@ class ReActAgent(ReActAgentBase):
             "assistant",
             metadata={
                 # Expose this field to indicate the interruption
-                "is_interrupted": True,
+                "_is_interrupted": True,
             },
         )
 

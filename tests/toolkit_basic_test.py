@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # mypy: disable-error-code="index"
-# pylint: disable=too-many-lines
 """Test toolkit module in agentscope."""
 import asyncio
 import time
@@ -147,8 +146,8 @@ class ExtendedModelReusingBaseModel(BaseModel):
     extra_field: str = Field(description="Extra field")
 
 
-class ToolkitTest(IsolatedAsyncioTestCase):
-    """Unittest for the toolkit module."""
+class ToolkitBasicTest(IsolatedAsyncioTestCase):
+    """Basic unittests for the toolkit module."""
 
     async def asyncSetUp(self) -> None:
         """Set up the test environment before each test."""
@@ -184,7 +183,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                     "required": ["arg1"],
                     "type": "object",
                 },
-                "description": "A sync function for testing.\n\n"
+                "description": "A sync function for testing.\n"
                 "Long description.",
             },
         }
@@ -396,7 +395,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                                 "arg3",
                             ],
                         },
-                        "description": "A sync function for testing.\n\n"
+                        "description": "A sync function for testing.\n"
                         "Long description.",
                     },
                 },
@@ -550,7 +549,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
                             "properties": {},
                             "type": "object",
                         },
-                        "description": "A test function.\n\n"
+                        "description": "A test function.\n"
                         "Note this function is test.",
                     },
                 },
@@ -810,7 +809,7 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             [],
         )
 
-        # Active the tool group
+        # Activate the tool group
         self.toolkit.update_tool_groups(["my_group"], True)
         self.assertListEqual(
             self.toolkit.get_json_schemas(),
@@ -973,113 +972,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
             self.assertEqual(
                 chunk.content[0]["text"],
                 "Received: a=1, b=test, c=[1, 2, 3], d=xyz",
-            )
-
-    async def test_meta_tool(self) -> None:
-        """Test the meta tool."""
-        self.toolkit.register_tool_function(
-            self.toolkit.reset_equipped_tools,
-        )
-        self.assertListEqual(
-            self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "reset_equipped_tools",
-                        "parameters": {
-                            "properties": {},
-                            "type": "object",
-                        },
-                        "description": (
-                            "Choose appropriate tools to equip yourself "
-                            "with, so that you can\n\n"
-                            "finish your task. Each argument in this function "
-                            "represents a group\n"
-                            "of related tools, and the value indicates "
-                            "whether to activate the\n"
-                            "group or not. Besides, the tool response of "
-                            "this function will\n"
-                            "contain the precaution notes for using them, "
-                            "which you\n"
-                            "**MUST pay attention to and follow**. You can "
-                            "also reuse this function\n"
-                            "to check the notes of the tool groups.\n\n"
-                            "Note this function will `reset` the tools, so "
-                            "that the original tools\n"
-                            "will be removed first."
-                        ),
-                    },
-                },
-            ],
-        )
-        self.toolkit.create_tool_group(
-            "browser_use",
-            "The browser-use related tools.",
-            notes="""## About Browser-Use Tools
-1. You must xxx
-2. First click xxx
-""",
-        )
-        self.assertListEqual(
-            self.toolkit.get_json_schemas(),
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "reset_equipped_tools",
-                        "parameters": {
-                            "properties": {
-                                "browser_use": {
-                                    "default": False,
-                                    "description": "The browser-use related "
-                                    "tools.",
-                                    "type": "boolean",
-                                },
-                            },
-                            "type": "object",
-                        },
-                        "description": (
-                            "Choose appropriate tools to equip yourself "
-                            "with, so that you can\n\n"
-                            "finish your task. Each argument in this function "
-                            "represents a group\n"
-                            "of related tools, and the value indicates "
-                            "whether to activate the\n"
-                            "group or not. Besides, the tool response of "
-                            "this function will\n"
-                            "contain the precaution notes for using them, "
-                            "which you\n"
-                            "**MUST pay attention to and follow**. You can "
-                            "also reuse this function\n"
-                            "to check the notes of the tool groups.\n\n"
-                            "Note this function will `reset` the tools, so "
-                            "that the original tools\n"
-                            "will be removed first."
-                        ),
-                    },
-                },
-            ],
-        )
-        res = await self.toolkit.call_tool_function(
-            ToolUseBlock(
-                type="tool_use",
-                id="123",
-                name="reset_equipped_tools",
-                input={"browser_use": True},
-            ),
-        )
-
-        async for chunk in res:
-            self.assertEqual(
-                chunk.content[0]["text"],
-                "Active tool groups successfully: ['browser_use']. "
-                "You MUST follow these notes to use the tools:\n"
-                "<notes>## About browser_use Tools\n"
-                "## About Browser-Use Tools\n"
-                "1. You must xxx\n"
-                "2. First click xxx\n"
-                "</notes>",
             )
 
     async def asyncTearDown(self) -> None:

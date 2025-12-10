@@ -1,78 +1,183 @@
 # -*- coding: utf-8 -*-
-"""Attributes processor for span attributes."""
-import datetime
-import enum
-import inspect
-import json
-from dataclasses import is_dataclass
-from typing import Any
-
-from pydantic import BaseModel
-
-from ..message import Msg
+"""The tracing types class in agentscope."""
+from opentelemetry.semconv._incubating.attributes import (
+    gen_ai_attributes as GenAIAttributes,
+)
 
 
-def _to_serializable(
-    obj: Any,
-) -> Any:
-    """Convert an object to a JSON serializable type.
+class SpanAttributes:
+    """The span attributes."""
 
-    Args:
-        obj (`Any`):
-            The object to be converted to JSON serializable.
+    # GenAI Common Attributes
+    GEN_AI_CONVERSATION_ID = GenAIAttributes.GEN_AI_CONVERSATION_ID
+    """The gen ai conversation ID."""
 
-    Returns:
-        `Any`:
-            The converted JSON serializable object
-    """
+    GEN_AI_OPERATION_NAME = GenAIAttributes.GEN_AI_OPERATION_NAME
+    """The gen ai operation name."""
 
-    # Handle primitive types first
-    if isinstance(obj, (str, int, bool, float, type(None))):
-        res = obj
+    GEN_AI_PROVIDER_NAME = GenAIAttributes.GEN_AI_PROVIDER_NAME
+    """The gen ai provider name."""
 
-    elif isinstance(obj, (list, tuple, set, frozenset)):
-        res = [_to_serializable(x) for x in obj]
+    # GenAI Request Attributes
+    GEN_AI_REQUEST_MODEL = GenAIAttributes.GEN_AI_REQUEST_MODEL
+    """The gen ai request model."""
 
-    elif isinstance(obj, dict):
-        res = {str(key): _to_serializable(val) for (key, val) in obj.items()}
+    GEN_AI_REQUEST_TEMPERATURE = GenAIAttributes.GEN_AI_REQUEST_TEMPERATURE
+    """The gen ai request temperature."""
 
-    elif isinstance(obj, (Msg, BaseModel)) or is_dataclass(obj):
-        res = repr(obj)
+    GEN_AI_REQUEST_TOP_P = GenAIAttributes.GEN_AI_REQUEST_TOP_P
+    """The gen ai request top_p."""
 
-    elif inspect.isclass(obj) and issubclass(obj, BaseModel):
-        res = repr(obj)
+    GEN_AI_REQUEST_TOP_K = GenAIAttributes.GEN_AI_REQUEST_TOP_K
+    """The gen ai request top_k."""
 
-    elif isinstance(obj, (datetime.date, datetime.datetime, datetime.time)):
-        res = obj.isoformat()
+    GEN_AI_REQUEST_MAX_TOKENS = GenAIAttributes.GEN_AI_REQUEST_MAX_TOKENS
+    """The gen ai request max_tokens."""
 
-    elif isinstance(obj, datetime.timedelta):
-        res = obj.total_seconds()
+    GEN_AI_REQUEST_PRESENCE_PENALTY = (
+        GenAIAttributes.GEN_AI_REQUEST_PRESENCE_PENALTY
+    )
+    """The gen ai request presence_penalty."""
 
-    elif isinstance(obj, enum.Enum):
-        res = _to_serializable(obj.value)
+    GEN_AI_REQUEST_FREQUENCY_PENALTY = (
+        GenAIAttributes.GEN_AI_REQUEST_FREQUENCY_PENALTY
+    )
+    """The gen ai request frequency_penalty."""
 
-    else:
-        res = str(obj)
+    GEN_AI_REQUEST_STOP_SEQUENCES = (
+        GenAIAttributes.GEN_AI_REQUEST_STOP_SEQUENCES
+    )
+    """The gen ai request stop_sequences."""
 
-    return res
+    GEN_AI_REQUEST_SEED = GenAIAttributes.GEN_AI_REQUEST_SEED
+    """The gen ai request seed."""
+
+    # GenAI Response Attributes
+    GEN_AI_RESPONSE_ID = GenAIAttributes.GEN_AI_RESPONSE_ID
+    """The gen ai response ID."""
+
+    GEN_AI_RESPONSE_FINISH_REASONS = (
+        GenAIAttributes.GEN_AI_RESPONSE_FINISH_REASONS
+    )
+    """The gen ai response finish reasons."""
+
+    # GenAI Usage Attributes
+    GEN_AI_USAGE_INPUT_TOKENS = GenAIAttributes.GEN_AI_USAGE_INPUT_TOKENS
+    """The gen ai usage input tokens."""
+
+    GEN_AI_USAGE_OUTPUT_TOKENS = GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS
+    """The gen ai usage output tokens."""
+
+    # GenAI Message Attributes
+    GEN_AI_INPUT_MESSAGES = GenAIAttributes.GEN_AI_INPUT_MESSAGES
+    """The gen ai input messages."""
+
+    GEN_AI_OUTPUT_MESSAGES = GenAIAttributes.GEN_AI_OUTPUT_MESSAGES
+    """The gen ai output messages."""
+
+    # GenAI Agent Attributes
+    GEN_AI_AGENT_ID = GenAIAttributes.GEN_AI_AGENT_ID
+    """The gen ai agent ID."""
+
+    GEN_AI_AGENT_NAME = GenAIAttributes.GEN_AI_AGENT_NAME
+    """The gen ai agent name."""
+
+    GEN_AI_AGENT_DESCRIPTION = GenAIAttributes.GEN_AI_AGENT_DESCRIPTION
+    """The gen ai agent description."""
+
+    GEN_AI_SYSTEM_INSTRUCTIONS = GenAIAttributes.GEN_AI_SYSTEM_INSTRUCTIONS
+    """The gen ai system instructions."""
+
+    # GenAI Tool Attributes
+    GEN_AI_TOOL_CALL_ID = GenAIAttributes.GEN_AI_TOOL_CALL_ID
+    """The gen ai tool call ID."""
+
+    GEN_AI_TOOL_NAME = GenAIAttributes.GEN_AI_TOOL_NAME
+    """The gen ai tool name."""
+
+    GEN_AI_TOOL_DESCRIPTION = GenAIAttributes.GEN_AI_TOOL_DESCRIPTION
+    """The gen ai tool description."""
+
+    GEN_AI_TOOL_CALL_ARGUMENTS = "gen_ai.tool.call.arguments"
+    """The gen ai tool call arguments."""
+
+    GEN_AI_TOOL_CALL_RESULT = "gen_ai.tool.call.result"
+    """The gen ai tool call result."""
+
+    GEN_AI_TOOL_DEFINITIONS = "gen_ai.tool.definitions"
+    """The gen ai tool definitions."""
+
+    # GenAI Embedding Attributes
+    GEN_AI_EMBEDDINGS_DIMENSION_COUNT = "gen_ai.embeddings.dimension.count"
+    """The gen ai embeddings dimension count."""
+
+    # AgentScope Extended Attributes
+    AGENTSCOPE_FORMAT_TARGET = "agentscope.format.target"
+    """The agentscope format target."""
+
+    AGENTSCOPE_FORMAT_COUNT = "agentscope.format.count"
+    """The count of formatted messages in the result."""
+
+    AGENTSCOPE_FUNCTION_NAME = "agentscope.function.name"
+    """The agentscope function name."""
+
+    AGENTSCOPE_FUNCTION_INPUT = "agentscope.function.input"
+    """The agentscope function input."""
+
+    AGENTSCOPE_FUNCTION_OUTPUT = "agentscope.function.output"
+    """The agentscope function output."""
 
 
-def _serialize_to_str(value: Any) -> str:
-    """Get input attributes
+class OperationNameValues:
+    """The operation name values."""
 
-    Args:
-        value (`Any`):
-            The input value
+    FORMATTER = "format"
+    """The formatter operation name."""
 
-    Returns:
-        `str`:
-            JSON serialized string of the input value
-    """
-    try:
-        return json.dumps(value, ensure_ascii=False)
+    INVOKE_GENERIC_FUNCTION = "invoke_generic_function"
+    """The invoke generic function operation name."""
 
-    except TypeError:
-        return json.dumps(
-            _to_serializable(value),
-            ensure_ascii=False,
-        )
+    CHAT = GenAIAttributes.GenAiOperationNameValues.CHAT.value
+    """The chat operation name."""
+
+    INVOKE_AGENT = GenAIAttributes.GenAiOperationNameValues.INVOKE_AGENT.value
+    """The invoke agent operation name."""
+
+    EXECUTE_TOOL = GenAIAttributes.GenAiOperationNameValues.EXECUTE_TOOL.value
+    """The execute tool operation name."""
+
+    EMBEDDINGS = GenAIAttributes.GenAiOperationNameValues.EMBEDDINGS.value
+    """The embeddings operation name."""
+
+
+class ProviderNameValues:
+    """The provider name values."""
+
+    DASHSCOPE = "dashscope"
+    """The dashscope provider name."""
+
+    OLLAMA = "ollama"
+    """The ollama provider name."""
+
+    DEEPSEEK = GenAIAttributes.GenAiProviderNameValues.DEEPSEEK.value
+    """The deepseek provider name."""
+
+    OPENAI = GenAIAttributes.GenAiProviderNameValues.OPENAI.value
+    """The openai provider name."""
+
+    ANTHROPIC = GenAIAttributes.GenAiProviderNameValues.ANTHROPIC.value
+    """The anthropic provider name."""
+
+    GCP_GEMINI = GenAIAttributes.GenAiProviderNameValues.GCP_GEMINI.value
+    """The gcp gemini provider name."""
+
+    MOONSHOT = "moonshot"
+    """The moonshot provider name."""
+
+    AZURE_AI_OPENAI = (
+        GenAIAttributes.GenAiProviderNameValues.AZURE_AI_OPENAI.value
+    )
+    """The azure openai provider name."""
+
+    AWS_BEDROCK = GenAIAttributes.GenAiProviderNameValues.AWS_BEDROCK.value
+    """The aws bedrock provider name."""

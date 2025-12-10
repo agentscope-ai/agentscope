@@ -11,7 +11,7 @@ import types
 import typing
 import uuid
 from datetime import datetime
-from typing import Union, Any, Callable, Type, Dict
+from typing import Any, Callable, Type, Dict
 
 import requests
 from docstring_parser import parse
@@ -29,23 +29,48 @@ else:
 
 def _json_loads_with_repair(
     json_str: str,
-) -> Union[dict, list, str, float, int, bool, None]:
+) -> dict:
     """The given json_str maybe incomplete, e.g. '{"key', so we need to
     repair and load it into a Python object.
+
+    .. note::
+        This function is currently only used for parsing the streaming output
+        of the argument field in `tool_use`, so the parsed result must be a
+        dict.
+
+    Args:
+        json_str (`str`):
+            The JSON string to parse, which may be incomplete or malformed.
+
+    Returns:
+        `dict`:
+            A dictionary parsed from the JSON string after repair attempts.
+            Returns an empty dict if all repair attempts fail.
     """
-    repaired = json_str
     try:
         repaired = repair_json(json_str)
+        result = json.loads(repaired)
+        if isinstance(result, dict):
+            return result
     except Exception:
         pass
 
-    try:
-        return json.loads(repaired)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Failed to decode JSON string `{json_str}` after repairing it "
-            f"into `{repaired}`. Error: {e}",
-        ) from e
+    for i in range(len(json_str) - 1, 0, -1):
+        try:
+            repaired = repair_json(json_str[:i])
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            continue
+
+    logger.warning(
+        "Failed to parse JSON string `%s`. "
+        "All repair attempts (original + truncation) failed. "
+        "Returning empty dict.",
+        json_str,
+    )
+    return {}
 
 
 def _is_accessible_local_file(url: str) -> bool:
@@ -321,7 +346,7 @@ def _parse_tool_function(
     if include_long_description and docstring.long_description is not None:
         descriptions.append(docstring.long_description)
 
-    func_description = "\n\n".join(descriptions)
+    func_description = "\n".join(descriptions)
 
     # Create a dynamic model with the function signature
     fields = {}
