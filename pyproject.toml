@@ -46,7 +46,7 @@ dependencies = [
 a2a = [
     "a2a-sdk",
     "httpx",
-    "nacos-sdk-python>=3.0.0b1",
+    "nacos-sdk-python>=3.0.0",
 ]
 full = [
     # Model
