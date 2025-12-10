@@ -98,8 +98,9 @@ async def main() -> None:
     )
 
     # Prepare 9 players using PlayerAgent
-    players = [PlayerAgent(name=f"Player{i + 1}") for i in range(9)]
+    players = [get_official_agents(f"Player{_ + 1}") for _ in range(9)]
 
+    players[0] = PlayerAgent(name="my_player")
     # Load states from a previous checkpoint
     session = JSONSession(save_dir="./checkpoints")
     try:
