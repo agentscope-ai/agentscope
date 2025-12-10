@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """An in memory exporter of OpenTelemetry traces for AgentScope evaluator, used
 to record the token usage during evaluation."""
-import json
 from collections import defaultdict
 from typing import Sequence
 
@@ -9,7 +8,7 @@ from opentelemetry import baggage
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
-from ...tracing._types import SpanKind, SpanAttributes
+from ...tracing._attributes import SpanAttributes, OperationNameValues
 
 
 class _InMemoryExporter(SpanExporter):
@@ -52,12 +51,14 @@ class _InMemoryExporter(SpanExporter):
                     "chat_usage": {},
                 }
 
-            span_kind = json.loads(
-                span.attributes.get(SpanAttributes.SPAN_KIND, '""'),
+            span_kind = span.attributes.get(
+                SpanAttributes.GEN_AI_OPERATION_NAME,
             )
-            if span_kind == SpanKind.LLM:
-                metadata = json.loads(span.attributes.get("metadata", "{}"))
-                model_name = metadata.get("model_name", "unknown")
+            if span_kind == OperationNameValues.CHAT:
+                model_name = span.attributes.get(
+                    SpanAttributes.GEN_AI_REQUEST_MODEL,
+                    "unknown",
+                )
                 self.cnt[task_id][repeat_id]["llm"][model_name] += 1
                 if (
                     model_name
@@ -67,31 +68,35 @@ class _InMemoryExporter(SpanExporter):
                         model_name
                     ] = defaultdict(int)
 
-                output = json.loads(span.attributes.get("output", "{}"))
-                usage = output.get("usage")
-                if "input_tokens" in usage:
-                    self.cnt[task_id][repeat_id]["chat_usage"][model_name][
-                        "input_tokens"
-                    ] += usage["input_tokens"]
-                if "output_tokens" in usage:
-                    self.cnt[task_id][repeat_id]["chat_usage"][model_name][
-                        "output_tokens"
-                    ] += usage["output_tokens"]
+                self.cnt[task_id][repeat_id]["chat_usage"][model_name][
+                    "input_tokens"
+                ] += span.attributes.get(
+                    SpanAttributes.GEN_AI_USAGE_INPUT_TOKENS,
+                    0,
+                )
 
-            elif span_kind == SpanKind.AGENT:
+                self.cnt[task_id][repeat_id]["chat_usage"][model_name][
+                    "output_tokens"
+                ] += span.attributes.get(
+                    SpanAttributes.GEN_AI_USAGE_OUTPUT_TOKENS,
+                    0,
+                )
+
+            elif span_kind == OperationNameValues.INVOKE_AGENT:
                 self.cnt[task_id][repeat_id]["agent"] += 1
 
-            elif span_kind == SpanKind.TOOL:
-                tool_name = json.loads(span.attributes.get("metadata")).get(
-                    "name",
+            elif span_kind == OperationNameValues.EXECUTE_TOOL:
+                tool_name = span.attributes.get(
+                    SpanAttributes.GEN_AI_TOOL_NAME,
                     "unknown",
                 )
                 self.cnt[task_id][repeat_id]["tool"][tool_name] += 1
 
-            elif span_kind == SpanKind.EMBEDDING:
-                embedding_model = json.loads(
-                    span.attributes.get("metadata"),
-                ).get("name", "unknown")
+            elif span_kind == OperationNameValues.EMBEDDINGS:
+                embedding_model = span.attributes.get(
+                    SpanAttributes.GEN_AI_REQUEST_MODEL,
+                    "unknown",
+                )
                 self.cnt[task_id][repeat_id]["embedding"][embedding_model] += 1
 
         return SpanExportResult.SUCCESS

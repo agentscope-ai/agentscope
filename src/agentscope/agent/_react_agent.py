@@ -17,6 +17,7 @@ from ..message import (
     ToolUseBlock,
     ToolResultBlock,
     TextBlock,
+    AudioBlock,
 )
 from ..model import ChatModelBase
 from ..rag import KnowledgeBase, Document
@@ -439,7 +440,7 @@ class ReActAgent(ReActAgentBase):
 
         # TTS model context manager
         tts_context = self.tts_model or _AsyncNullContext()
-        speech = None
+        speech: AudioBlock | list[AudioBlock] | None = None
 
         try:
             async with tts_context:
@@ -608,7 +609,7 @@ class ReActAgent(ReActAgentBase):
 
         # TTS model context manager
         tts_context = self.tts_model or _AsyncNullContext()
-        speech = None
+        speech: AudioBlock | list[AudioBlock] | None = None
 
         async with tts_context:
             res_msg = Msg(self.name, [], "assistant")
