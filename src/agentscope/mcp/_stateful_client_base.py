@@ -65,20 +65,16 @@ class StatefulClientBase(MCPClientBase, ABC):
             self.is_connected = True
             logger.info("MCP client connected.")
         except Exception as e:
-            close_err = None
+            res_err = e
             try:
                 await self.stack.aclose()
             except Exception as error:
-                close_err = error
+                res_err = error
             finally:
                 self.stack = None
                 self.session = None
 
-            if close_err:
-                raise type(close_err)(
-                    f"Error during cleanup unconnected MCP: {str(close_err)}",
-                ) from close_err
-            raise e
+            raise res_err
 
     async def close(self) -> None:
         """Clean up the MCP client resources. You must call this method when
