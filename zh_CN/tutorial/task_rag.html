@@ -616,9 +616,9 @@ AgentScope 目前内置支持基于 <a class="reference external" href="https://
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>检索到的 Document 对象：
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;Dwz6XeMGbqpAPjeZ27PfKH&#39;, embedding=None, score=0.5971063116560947)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;5TcfjfJc8sH9w5trTvWN8o&#39;, embedding=None, score=0.5971063116560947)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;cPH4J3VrNZHBP2SmcZcrpW&#39;, embedding=None, score=0.5449764333507582)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;MasrevNXxxoemn7BfbR3kv&#39;, embedding=None, score=0.5449764333507582)
 </pre></div>
 </div>
 <p>AgentScope 中的知识库类提供两个核心方法：<code class="docutils literal notranslate"><span class="pre">add_documents</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>，分别用于添加数据块和搜索检索数据块。</p>
@@ -724,13 +724,13 @@ Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>第一次回复:
-Friday: 那听起来很不错！有一个最好的朋友可以分享生活中的快乐和困难是很重要的。你们经常一起做什么？
+Friday: 那太好了！有好朋友是一件非常美好的事情。你和李明是怎么认识的？你们经常一起做些什么呢？
 
 
 第二次回复:
 Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_3f7ef4adce0d45c69b4542&quot;,
+    &quot;id&quot;: &quot;call_955941ad890a4893b87960&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
         &quot;query&quot;: &quot;李明的父亲&quot;,
@@ -740,7 +740,7 @@ Friday: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_3f7ef4adce0d45c69b4542&quot;,
+    &quot;id&quot;: &quot;call_955941ad890a4893b87960&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -765,7 +765,7 @@ system: {
         }
     ]
 }
-Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医生。如果你需要更多关于李明或他家庭的详细信息，请告诉我。
+Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医生。如果这些信息不是您所指的李明，可能需要更多关于李明的背景信息以便准确查找。您还有其他关于李明的信息可以分享吗？
 </pre></div>
 </div>
 <p>在上面的例子中，我们模拟了正常与智能体交流过程。第一次的交流我们提供了“李明”的名字作为上下文内容。
@@ -917,7 +917,7 @@ Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_multimodal_rag</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你提供的信息，你的名字是 Ming Li。不过，请注意，我作为AI助手，并不会主动记住或存储用户的个人信息，除非你在对话中明确告诉我。如果你希望我以某种方式称呼你，可以随时告诉我！ 😊
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你提供的信息，你的名字是 Ming Li。不过，请注意，我作为AI助手，并不会主动记住或存储用户的个人信息，除非你在对话中明确提供。如果你希望我以特定方式称呼你，可以随时告诉我！
 
 查看智能体记忆中检索信息如何插入：
 [
@@ -946,7 +946,7 @@ Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医
 <li><p><a class="reference internal" href="task_embedding.html#embedding"><span class="std std-ref">嵌入(Embedding)</span></a></p></li>
 <li><p><a class="reference internal" href="task_plan.html#plan"><span class="std std-ref">计划</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 22.708 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 38.894 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
