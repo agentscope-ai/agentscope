@@ -198,7 +198,7 @@ class StudioUserInput(UserInputBase):
                 run_id,
             )
             logger.info(
-                "View the run at: %s/dashboard/projects/%s",
+                "View the run at: %s/projects/%s",
                 self.studio_url,
                 _config.project,
             )

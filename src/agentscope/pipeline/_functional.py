@@ -107,6 +107,7 @@ async def fanout_pipeline(
 async def stream_printing_messages(
     agents: list[AgentBase],
     coroutine_task: Coroutine,
+    queue: asyncio.Queue | None = None,
     end_signal: str = "[END]",
     yield_speech: bool = False,
 ) -> AsyncGenerator[
@@ -134,6 +135,8 @@ async def stream_printing_messages(
             The coroutine task to be executed. This task should involve the
             execution of the provided agents, so that their printing messages
             can be captured and yielded.
+        queue (`asyncio.Queue | None`, optional):
+            Use this queue instead of creating a new one if provided.
         end_signal (`str`, defaults to `"[END]"`):
             A special signal to indicate the end of message streaming. When
             this signal is received from the message queue, the generator will
@@ -154,7 +157,7 @@ async def stream_printing_messages(
     """
 
     # Enable the message queue to get the intermediate messages
-    queue = asyncio.Queue()
+    queue = queue or asyncio.Queue()
     for agent in agents:
         # Use one queue to gather messages from all agents
         agent.set_msg_queue_enabled(True, queue)

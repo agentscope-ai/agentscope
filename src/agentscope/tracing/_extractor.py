@@ -392,52 +392,56 @@ def _get_llm_response_attributes(
 
 
 def _get_agent_messages(
-    msg: Msg,
-) -> dict[str, Any]:
-    """Convert AgentScope message to standardized parts format.
+    msg: Msg | list[Msg],
+) -> list[dict[str, Any]]:
+    """Convert AgentScope message(s) to standardized parts format.
 
     Transforms Msg objects into OpenTelemetry GenAI format.
 
     Args:
-        msg (`Msg`):
-            AgentScope message object with content blocks. The message should
-            have a role, content blocks (text, image, tool_use, etc.), and
-            optionally a name.
+        msg (`Msg | list[Msg]`):
+            AgentScope message object or list of message objects with
+            content blocks.
 
     Returns:
-        `dict[str, Any]`:
-            Formatted message dictionary with role, parts (converted content
-            blocks), name, and finish_reason. Returns a fallback text format
-            if conversion fails.
+        `list[dict[str, Any]]`:
+            List of formatted message dictionaries with role, parts, name,
+            and finish_reason.
     """
     try:
-        parts = []
-        for block in msg.get_content_blocks():
-            part = _convert_block_to_part(block)
-            if part:
-                parts.append(part)
+        if isinstance(msg, Msg):
+            msg = [msg]
 
-        formatted_msg = {
-            "role": msg.role,
-            "parts": parts,
-            "name": msg.name,
-            "finish_reason": "stop",
-        }
+        formatted_msgs = []
+        for m in msg:
+            parts = []
+            for block in m.get_content_blocks():
+                part = _convert_block_to_part(block)
+                if part:
+                    parts.append(part)
+            formatted_msg = {
+                "role": m.role,
+                "parts": parts,
+                "name": m.name,
+                "finish_reason": "stop",
+            }
+            formatted_msgs.append(formatted_msg)
 
-        return formatted_msg
-
+        return formatted_msgs
     except Exception:
-        return {
-            "role": msg.role,
-            "parts": [
-                {
-                    "type": "text",
-                    "content": str(msg.content) if msg.content else "",
-                },
-            ],
-            "name": msg.name,
-            "finish_reason": "stop",
-        }
+        return [
+            {
+                "role": msg.role,
+                "parts": [
+                    {
+                        "type": "text",
+                        "content": str(msg.content) if msg.content else "",
+                    },
+                ],
+                "name": msg.name,
+                "finish_reason": "stop",
+            },
+        ]
 
 
 def _get_agent_request_attributes(

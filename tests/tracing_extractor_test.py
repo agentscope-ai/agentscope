@@ -236,18 +236,78 @@ class ExtractorTest(TestCase):
         )
         self.assertIn(SpanAttributes.GEN_AI_OUTPUT_MESSAGES, attributes)
 
-    def test_get_agent_request_attributes(self) -> None:
-        """Test _get_agent_messages, request_attributes and span_name."""
-        # Test agent messages conversion
+    def test_get_agent_messages_single_msg(self) -> None:
+        """Test _get_agent_messages with single Msg input."""
         msg = Msg(
             "test_user",
             [TextBlock(type="text", text="Hello")],
             "user",
         )
         result = _get_agent_messages(msg)
-        self.assertEqual(result["role"], "user")
-        self.assertEqual(result["name"], "test_user")
-        self.assertIn("parts", result)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(result[0]["name"], "test_user")
+        self.assertEqual(result[0]["finish_reason"], "stop")
+        self.assertIn("parts", result[0])
+        self.assertEqual(len(result[0]["parts"]), 1)
+        self.assertEqual(result[0]["parts"][0]["type"], "text")
+        self.assertEqual(result[0]["parts"][0]["content"], "Hello")
+
+    def test_get_agent_messages_list_of_msgs(self) -> None:
+        """Test _get_agent_messages with list of Msg inputs."""
+        msgs = [
+            Msg(
+                "user1",
+                [TextBlock(type="text", text="Hello")],
+                "user",
+            ),
+            Msg(
+                "assistant1",
+                [TextBlock(type="text", text="Hi there!")],
+                "assistant",
+            ),
+            Msg(
+                "user1",
+                [TextBlock(type="text", text="How are you?")],
+                "user",
+            ),
+        ]
+        result = _get_agent_messages(msgs)
+
+        # Verify correct number of messages
+        self.assertEqual(len(result), 3)
+
+        # Verify first message (user)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(result[0]["name"], "user1")
+        self.assertEqual(result[0]["finish_reason"], "stop")
+        self.assertEqual(result[0]["parts"][0]["content"], "Hello")
+
+        # Verify second message (assistant)
+        self.assertEqual(result[1]["role"], "assistant")
+        self.assertEqual(result[1]["name"], "assistant1")
+        self.assertEqual(result[1]["finish_reason"], "stop")
+        self.assertEqual(result[1]["parts"][0]["content"], "Hi there!")
+
+        # Verify third message (user)
+        self.assertEqual(result[2]["role"], "user")
+        self.assertEqual(result[2]["name"], "user1")
+        self.assertEqual(result[2]["parts"][0]["content"], "How are you?")
+
+    def test_get_agent_messages_empty_list(self) -> None:
+        """Test _get_agent_messages with empty list."""
+        result = _get_agent_messages([])
+        self.assertEqual(len(result), 0)
+
+    def test_get_agent_request_attributes(self) -> None:
+        """Test _get_agent_request_attributes and _get_agent_span_name."""
+        # Test with single Msg
+        msg = Msg(
+            "test_user",
+            [TextBlock(type="text", text="Hello")],
+            "user",
+        )
 
         # Test request attributes
         args = (msg,)
@@ -277,14 +337,73 @@ class ExtractorTest(TestCase):
         span_name = _get_agent_span_name(attributes)
         self.assertEqual(span_name, "invoke_agent TestAgent")
 
+    def test_get_agent_request_attributes_with_list(self) -> None:
+        """Test _get_agent_request_attributes with list of Msg inputs."""
+        msgs = [
+            Msg(
+                "user1",
+                [TextBlock(type="text", text="Hello")],
+                "user",
+            ),
+            Msg(
+                "assistant1",
+                [TextBlock(type="text", text="Hi!")],
+                "assistant",
+            ),
+        ]
+
+        # Test with list in args
+        args = (msgs,)
+        kwargs = {}
+        attributes = _get_agent_request_attributes(
+            self.mock_agent,
+            args,
+            kwargs,
+        )
+
+        self.assertEqual(
+            attributes[SpanAttributes.GEN_AI_OPERATION_NAME],
+            OperationNameValues.INVOKE_AGENT,
+        )
+        self.assertIn(SpanAttributes.GEN_AI_INPUT_MESSAGES, attributes)
+
+        # Test with list in kwargs
+        args = ()
+        kwargs = {"msg": msgs}
+        attributes = _get_agent_request_attributes(
+            self.mock_agent,
+            args,
+            kwargs,
+        )
+        self.assertIn(SpanAttributes.GEN_AI_INPUT_MESSAGES, attributes)
+
     def test_get_agent_response_attributes(self) -> None:
-        """Test _get_agent_response_attributes."""
+        """Test _get_agent_response_attributes with single Msg."""
         response = Msg(
             "assistant",
             [TextBlock(type="text", text="Hi")],
             "assistant",
         )
         attributes = _get_agent_response_attributes(response)
+
+        self.assertIn(SpanAttributes.GEN_AI_OUTPUT_MESSAGES, attributes)
+        self.assertIn(SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT, attributes)
+
+    def test_get_agent_response_attributes_with_list(self) -> None:
+        """Test _get_agent_response_attributes with list of Msg."""
+        responses = [
+            Msg(
+                "assistant",
+                [TextBlock(type="text", text="First response")],
+                "assistant",
+            ),
+            Msg(
+                "assistant",
+                [TextBlock(type="text", text="Second response")],
+                "assistant",
+            ),
+        ]
+        attributes = _get_agent_response_attributes(responses)
 
         self.assertIn(SpanAttributes.GEN_AI_OUTPUT_MESSAGES, attributes)
         self.assertIn(SpanAttributes.AGENTSCOPE_FUNCTION_OUTPUT, attributes)
