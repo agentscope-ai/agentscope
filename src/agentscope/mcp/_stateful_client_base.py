@@ -64,17 +64,10 @@ class StatefulClientBase(MCPClientBase, ABC):
 
             self.is_connected = True
             logger.info("MCP client connected.")
-        except Exception as e:
-            res_err = e
-            try:
-                await self.stack.aclose()
-            except Exception as error:
-                res_err = error
-            finally:
-                self.stack = None
-                self.session = None
-
-            raise res_err
+        except Exception:
+            await self.stack.aclose()
+            self.stack = None
+            raise
 
     async def close(self) -> None:
         """Clean up the MCP client resources. You must call this method when
@@ -85,16 +78,11 @@ class StatefulClientBase(MCPClientBase, ABC):
                 "closing.",
             )
 
-        try:
-            await self.stack.aclose()
-            logger.info("MCP client closed.")
-        except Exception as e:
-            logger.warning("Error during MCP client cleanup: %s", e)
-            raise e
-        finally:
-            self.stack = None
-            self.session = None
-            self.is_connected = False
+        await self.stack.aclose()
+        logger.info("MCP client closed.")
+        self.stack = None
+        self.session = None
+        self.is_connected = False
 
     async def list_tools(self) -> List[mcp.types.Tool]:
         """Get all available tools from the server.
