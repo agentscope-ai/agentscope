@@ -39,7 +39,7 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
 
     def __init__(self, save_dir: str) -> None:
         """Initialize the file evaluator storage."""
-        self.save_dir = save_dir
+        self.save_dir = os.path.abspath(save_dir)
 
     def _get_save_path(
         self,
