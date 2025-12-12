@@ -330,11 +330,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_abf301f4883648e8951a76"
+        "id": "call_59df78dfd26340ce93f835"
     }
     system: {
         "type": "tool_result",
-        "id": "call_abf301f4883648e8951a76",
+        "id": "call_59df78dfd26340ce93f835",
         "name": "generate_response",
         "output": [
             {
@@ -344,17 +344,19 @@ AgentScope 当前的实现包括：
         ]
     }
     Friday: The answer to 2 + 2 is 4.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+      warnings.warn(
     Friday: {
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "answer_as_number": 73031
+            "answer_as_number": 73021
         },
-        "id": "call_d7699cba090f44ab93fe2c"
+        "id": "call_eb72088398ba4e918cbca1"
     }
     system: {
         "type": "tool_result",
-        "id": "call_d7699cba090f44ab93fe2c",
+        "id": "call_eb72088398ba4e918cbca1",
         "name": "generate_response",
         "output": [
             {
@@ -363,7 +365,7 @@ AgentScope 当前的实现包括：
             }
         ]
     }
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 73031.
+    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73021.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -382,7 +384,7 @@ AgentScope 当前的实现包括：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.905 seconds)
+   **Total running time of the script:** (0 minutes 7.888 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:

@@ -393,8 +393,22 @@
 
 <div class="viewcode-block" id="MetricBase">
 <a class="viewcode-back" href="../../../api/agentscope.evaluate.html#agentscope.evaluate.MetricBase">[文档]</a>
+<span class="nd">@dataclass</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">MetricBase</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The base class for _metric in evaluation.&quot;&quot;&quot;</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The name of the Metric&quot;&quot;&quot;</span>
+
+    <span class="n">metric_type</span><span class="p">:</span> <span class="n">MetricType</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The metric type&quot;&quot;&quot;</span>
+
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The description of the metric&quot;&quot;&quot;</span>
+
+    <span class="n">categories</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The candidate categories. If `metric_type` is &quot;category&quot;, the</span>
+<span class="sd">    categories must be provided, otherwise it should be `None`.&quot;&quot;&quot;</span>
 
 <div class="viewcode-block" id="MetricBase.__init__">
 <a class="viewcode-back" href="../../../api/agentscope.evaluate.html#agentscope.evaluate.MetricBase.__init__">[文档]</a>

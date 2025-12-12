@@ -367,11 +367,19 @@
         <span class="n">OTLPSpanExporter</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="n">tracer_provider</span> <span class="o">=</span> <span class="n">TracerProvider</span><span class="p">()</span>
+    <span class="c1"># Prepare a span_processor</span>
     <span class="n">exporter</span> <span class="o">=</span> <span class="n">OTLPSpanExporter</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="n">endpoint</span><span class="p">)</span>
     <span class="n">span_processor</span> <span class="o">=</span> <span class="n">BatchSpanProcessor</span><span class="p">(</span><span class="n">exporter</span><span class="p">)</span>
-    <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
-    <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span></div>
+
+    <span class="n">tracer_provider</span><span class="p">:</span> <span class="n">TracerProvider</span> <span class="o">=</span> <span class="n">trace</span><span class="o">.</span><span class="n">get_tracer_provider</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">,</span> <span class="n">TracerProvider</span><span class="p">):</span>
+        <span class="c1"># The provider is set outside, just add the span processor</span>
+        <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
+
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">tracer_provider</span> <span class="o">=</span> <span class="n">TracerProvider</span><span class="p">()</span>
+        <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
+        <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span></div>
 
 
 

@@ -346,6 +346,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Awaitable</span><span class="p">,</span> <span class="n">Coroutine</span><span class="p">,</span> <span class="n">Any</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._evaluator_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluatorBase</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._in_memory_exporter</span><span class="w"> </span><span class="kn">import</span> <span class="n">_InMemoryExporter</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._evaluator_storage</span><span class="w"> </span><span class="kn">import</span> <span class="n">EvaluatorStorageBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._task</span><span class="w"> </span><span class="kn">import</span> <span class="n">Task</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._solution</span><span class="w"> </span><span class="kn">import</span> <span class="n">SolutionOutput</span>
@@ -422,19 +423,42 @@
             <span class="p">)</span>
 
         <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># Run the solution</span>
-            <span class="n">solution_result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">solution</span><span class="p">(</span>
-                <span class="n">task</span><span class="p">,</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">get_agent_pre_print_hook</span><span class="p">(</span>
-                    <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
-                    <span class="n">repeat_id</span><span class="p">,</span>
-                <span class="p">),</span>
-            <span class="p">)</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">save_solution_result</span><span class="p">(</span>
-                <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
-                <span class="n">repeat_id</span><span class="p">,</span>
-                <span class="n">solution_result</span><span class="p">,</span>
-            <span class="p">)</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.context</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach</span><span class="p">,</span> <span class="n">detach</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">baggage</span>
+
+            <span class="n">tracer</span> <span class="o">=</span> <span class="n">trace</span><span class="o">.</span><span class="n">get_tracer</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+            <span class="c1"># Set baggage</span>
+            <span class="n">ctx</span> <span class="o">=</span> <span class="n">baggage</span><span class="o">.</span><span class="n">set_baggage</span><span class="p">(</span><span class="s2">&quot;task_id&quot;</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+            <span class="n">ctx</span> <span class="o">=</span> <span class="n">baggage</span><span class="o">.</span><span class="n">set_baggage</span><span class="p">(</span><span class="s2">&quot;repeat_id&quot;</span><span class="p">,</span> <span class="n">repeat_id</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="n">ctx</span><span class="p">)</span>
+
+            <span class="c1"># Activate the context</span>
+            <span class="n">token</span> <span class="o">=</span> <span class="n">attach</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span>
+                    <span class="n">name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Solution_</span><span class="si">{</span><span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">repeat_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="p">):</span>
+                    <span class="kn">from</span><span class="w"> </span><span class="nn">...</span><span class="w"> </span><span class="kn">import</span> <span class="n">_config</span>
+
+                    <span class="n">_config</span><span class="o">.</span><span class="n">trace_enabled</span> <span class="o">=</span> <span class="kc">True</span>
+
+                    <span class="c1"># Run the solution</span>
+                    <span class="n">solution_result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">solution</span><span class="p">(</span>
+                        <span class="n">task</span><span class="p">,</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">get_agent_pre_print_hook</span><span class="p">(</span>
+                            <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+                            <span class="n">repeat_id</span><span class="p">,</span>
+                        <span class="p">),</span>
+                    <span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">save_solution_result</span><span class="p">(</span>
+                        <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+                        <span class="n">repeat_id</span><span class="p">,</span>
+                        <span class="n">solution_result</span><span class="p">,</span>
+                    <span class="p">)</span>
+            <span class="k">finally</span><span class="p">:</span>
+                <span class="n">detach</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
 
         <span class="c1"># Evaluate the solution with the</span>
         <span class="k">for</span> <span class="n">metric</span> <span class="ow">in</span> <span class="n">task</span><span class="o">.</span><span class="n">metrics</span><span class="p">:</span>
@@ -469,15 +493,42 @@
 <span class="sd">                hook function as input, returns a `SolutionOutput` instance.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
+        <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace</span><span class="w"> </span><span class="kn">import</span> <span class="n">TracerProvider</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">opentelemetry.sdk.trace.export</span><span class="w"> </span><span class="kn">import</span> <span class="n">SimpleSpanProcessor</span>
+
+        <span class="n">exporter</span> <span class="o">=</span> <span class="n">_InMemoryExporter</span><span class="p">()</span>
+        <span class="n">span_processor</span> <span class="o">=</span> <span class="n">SimpleSpanProcessor</span><span class="p">(</span><span class="n">exporter</span><span class="p">)</span>
+
+        <span class="n">tracer_provider</span><span class="p">:</span> <span class="n">TracerProvider</span> <span class="o">=</span> <span class="n">trace</span><span class="o">.</span><span class="n">get_tracer_provider</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">,</span> <span class="n">TracerProvider</span><span class="p">):</span>
+            <span class="c1"># Create a new tracer provider if not exists</span>
+            <span class="n">tracer_provider</span> <span class="o">=</span> <span class="n">TracerProvider</span><span class="p">()</span>
+        <span class="n">tracer_provider</span><span class="o">.</span><span class="n">add_span_processor</span><span class="p">(</span><span class="n">span_processor</span><span class="p">)</span>
+        <span class="n">trace</span><span class="o">.</span><span class="n">set_tracer_provider</span><span class="p">(</span><span class="n">tracer_provider</span><span class="p">)</span>
+
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_save_evaluation_meta</span><span class="p">()</span>
 
-        <span class="k">for</span> <span class="n">repeat_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_repeat</span><span class="p">):</span>
-            <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">benchmark</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">benchmark</span><span class="p">:</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_save_task_meta</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">repeat_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">n_repeat</span><span class="p">):</span>
                 <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_solution</span><span class="p">(</span>
                     <span class="nb">str</span><span class="p">(</span><span class="n">repeat_id</span><span class="p">),</span>
                     <span class="n">task</span><span class="p">,</span>
                     <span class="n">solution</span><span class="p">,</span>
                 <span class="p">)</span>
+
+                <span class="c1"># Save the exporter data</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="n">task</span><span class="o">.</span><span class="n">id</span> <span class="ow">in</span> <span class="n">exporter</span><span class="o">.</span><span class="n">cnt</span>
+                    <span class="ow">and</span> <span class="nb">str</span><span class="p">(</span><span class="n">repeat_id</span><span class="p">)</span> <span class="ow">in</span> <span class="n">exporter</span><span class="o">.</span><span class="n">cnt</span><span class="p">[</span><span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">]</span>
+                <span class="p">):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">save_solution_stats</span><span class="p">(</span>
+                        <span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="n">repeat_id</span><span class="p">),</span>
+                        <span class="n">exporter</span><span class="o">.</span><span class="n">cnt</span><span class="p">[</span><span class="n">task</span><span class="o">.</span><span class="n">id</span><span class="p">][</span><span class="nb">str</span><span class="p">(</span><span class="n">repeat_id</span><span class="p">)],</span>
+                    <span class="p">)</span>
 
         <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">aggregate</span><span class="p">()</span></div>
 </div>
