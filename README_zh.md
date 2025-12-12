@@ -325,22 +325,22 @@ as_studio
 
 <p align="center">
     <img
-        src="./assets/images/home.gif"
+        src="https://img.alicdn.com/imgextra/i1/O1CN01PG2MdF1Zc44A1QM6N_!!6000000003214-1-tps-1971-1080.gif"
         width="49%"
         alt="home"
     />
     <img
-        src="./assets/images/projects.gif"
-        width="49%"
-        alt="projects"
-    />
-    <img
-        src="./assets/images/runtime.gif"
+        src="https://img.alicdn.com/imgextra/i2/O1CN01pGHedL1L4ibmyPeiq_!!6000000001246-1-tps-1971-1080.gif"
         width="49%"
         alt="runtime"
     />
     <img
-        src="./assets/images/friday.gif"
+        src="https://img.alicdn.com/imgextra/i1/O1CN01HfFhy928SSJAcWQ8c_!!6000000007931-1-tps-1971-1080.gif"
+        width="49%"
+        alt="traces"
+    />
+    <img
+        src="https://img.alicdn.com/imgextra/i1/O1CN01vovov821Arms9tEJ1_!!6000000006945-1-tps-1971-1080.gif"
         width="49%"
         alt="friday"
     />
