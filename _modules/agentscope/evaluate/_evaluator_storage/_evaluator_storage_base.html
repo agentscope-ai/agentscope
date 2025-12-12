@@ -349,6 +349,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._metric_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">MetricResult</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._solution</span><span class="w"> </span><span class="kn">import</span> <span class="n">SolutionOutput</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">...agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentBase</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">...types</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONSerializableObject</span>
 
 
 <div class="viewcode-block" id="EvaluatorStorageBase">
@@ -539,6 +540,73 @@
 <span class="sd">        Args:</span>
 <span class="sd">            meta_info (`dict`):</span>
 <span class="sd">                A dictionary containing the meta information.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="EvaluatorStorageBase.save_task_meta">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_task_meta">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_task_meta</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">meta_info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the task meta information.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            meta_info (`dict[str, JSONSerializableObject]`):</span>
+<span class="sd">                The task meta information to be saved, which should be JSON</span>
+<span class="sd">                serializable.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="EvaluatorStorageBase.save_solution_stats">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_solution_stats">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_solution_stats</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the solution statistics information for a given task and</span>
+<span class="sd">        repeat ID.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            repeat_id (`str`):</span>
+<span class="sd">                The repeat ID for the task, usually the index of the repeat</span>
+<span class="sd">                evaluation.</span>
+<span class="sd">            stats (`dict`):</span>
+<span class="sd">                A dictionary containing the solution statistics to be saved.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
+
+
+<div class="viewcode-block" id="EvaluatorStorageBase.get_solution_stats">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_solution_stats">[docs]</a>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_solution_stats</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the solution statistics information for a given task and</span>
+<span class="sd">        repeat ID.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            repeat_id (`str`):</span>
+<span class="sd">                The repeat ID for the task, usually the index of the repeat</span>
+<span class="sd">                evaluation.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `dict`:</span>
+<span class="sd">                A dictionary containing the solution statistics for the given</span>
+<span class="sd">                task and repeat ID.</span>
 <span class="sd">        &quot;&quot;&quot;</span></div>
 
 

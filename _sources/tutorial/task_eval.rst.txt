@@ -332,11 +332,11 @@ as well.
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_1ecdd85dc9d747afb31a7d"
+        "id": "call_bcaf10a239ef4921b90b5c"
     }
     system: {
         "type": "tool_result",
-        "id": "call_1ecdd85dc9d747afb31a7d",
+        "id": "call_bcaf10a239ef4921b90b5c",
         "name": "generate_response",
         "output": [
             {
@@ -346,17 +346,19 @@ as well.
         ]
     }
     Friday: The answer to 2 + 2 is 4.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+      warnings.warn(
     Friday: {
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "answer_as_number": 73031
+            "answer_as_number": 73331
         },
-        "id": "call_7a4f3bc249164ba4a7d12e"
+        "id": "call_3bb15f996fdd48e6b21d40"
     }
     system: {
         "type": "tool_result",
-        "id": "call_7a4f3bc249164ba4a7d12e",
+        "id": "call_3bb15f996fdd48e6b21d40",
         "name": "generate_response",
         "output": [
             {
@@ -365,7 +367,7 @@ as well.
             }
         ]
     }
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 73031.
+    Friday: The sum of 12345, 54321, 6789, and 9876 is 73331.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -384,7 +386,7 @@ as well.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.522 seconds)
+   **Total running time of the script:** (0 minutes 6.084 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:

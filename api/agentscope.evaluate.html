@@ -590,6 +590,31 @@ categories must be provided, otherwise it should be <cite>None</cite>.</p></li>
 </dl>
 </dd></dl>
 
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.MetricBase.name">
+<span class="sig-name descname"><span class="pre">name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.evaluate.MetricBase.name" title="Link to this definition">¶</a></dt>
+<dd><p>The name of the Metric</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.MetricBase.metric_type">
+<span class="sig-name descname"><span class="pre">metric_type</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="#agentscope.evaluate.MetricType" title="agentscope.evaluate._metric_base.MetricType"><span class="pre">MetricType</span></a></em><a class="headerlink" href="#agentscope.evaluate.MetricBase.metric_type" title="Link to this definition">¶</a></dt>
+<dd><p>The metric type</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.MetricBase.description">
+<span class="sig-name descname"><span class="pre">description</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.evaluate.MetricBase.description" title="Link to this definition">¶</a></dt>
+<dd><p>The description of the metric</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.MetricBase.categories">
+<span class="sig-name descname"><span class="pre">categories</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">list</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.evaluate.MetricBase.categories" title="Link to this definition">¶</a></dt>
+<dd><p>The candidate categories. If <cite>metric_type</cite> is “category”, the
+categories must be provided, otherwise it should be <cite>None</cite>.</p>
+</dd></dl>
+
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.evaluate.MetricBase.__call__">
 <em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_metric_base.html#MetricBase.__call__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.MetricBase.__call__" title="Link to this definition">¶</a></dt>
@@ -874,6 +899,67 @@ evaluation.</p></li>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.EvaluatorStorageBase.save_task_meta">
+<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_task_meta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">meta_info</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_evaluator_storage_base.html#EvaluatorStorageBase.save_task_meta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.EvaluatorStorageBase.save_task_meta" title="Link to this definition">¶</a></dt>
+<dd><p>Save the task meta information.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>meta_info</strong> (<cite>dict[str, JSONSerializableObject]</cite>) – The task meta information to be saved, which should be JSON
+serializable.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.EvaluatorStorageBase.save_solution_stats">
+<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_solution_stats</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">repeat_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stats</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_evaluator_storage_base.html#EvaluatorStorageBase.save_solution_stats"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.EvaluatorStorageBase.save_solution_stats" title="Link to this definition">¶</a></dt>
+<dd><p>Save the solution statistics information for a given task and
+repeat ID.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>repeat_id</strong> (<cite>str</cite>) – The repeat ID for the task, usually the index of the repeat
+evaluation.</p></li>
+<li><p><strong>stats</strong> (<cite>dict</cite>) – A dictionary containing the solution statistics to be saved.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.EvaluatorStorageBase.get_solution_stats">
+<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_solution_stats</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">repeat_id</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_evaluator_storage_base.html#EvaluatorStorageBase.get_solution_stats"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.EvaluatorStorageBase.get_solution_stats" title="Link to this definition">¶</a></dt>
+<dd><p>Get the solution statistics information for a given task and
+repeat ID.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>repeat_id</strong> (<cite>str</cite>) – The repeat ID for the task, usually the index of the repeat
+evaluation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A dictionary containing the solution statistics for the given
+task and repeat ID.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>dict</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook">
 <em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_agent_pre_print_hook</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">repeat_id</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_evaluator_storage_base.html#EvaluatorStorageBase.get_agent_pre_print_hook"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook" title="Link to this definition">¶</a></dt>
 <dd><p>Get a pre-print hook function for the agent to save the agent
@@ -940,6 +1026,11 @@ from the last saved state.</p>
 <dd></dd></dl>
 
 <dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.SOLUTION_STATS_FILE_NAME">
+<span class="sig-name descname"><span class="pre">SOLUTION_STATS_FILE_NAME</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'stats.json'</span></em><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.SOLUTION_STATS_FILE_NAME" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.EVALUATION_DIR_NAME">
 <span class="sig-name descname"><span class="pre">EVALUATION_DIR_NAME</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'evaluation'</span></em><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_DIR_NAME" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
@@ -952,6 +1043,11 @@ from the last saved state.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.EVALUATION_META_FILE">
 <span class="sig-name descname"><span class="pre">EVALUATION_META_FILE</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'evaluation_meta.json'</span></em><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_META_FILE" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.TASK_META_FILE">
+<span class="sig-name descname"><span class="pre">TASK_META_FILE</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'task_meta.json'</span></em><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.TASK_META_FILE" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
 
 <dl class="py attribute">
@@ -1150,6 +1246,67 @@ evaluation.</p></li>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
 <dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.save_task_meta">
+<span class="sig-name descname"><span class="pre">save_task_meta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">meta_info</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_file_evaluator_storage.html#FileEvaluatorStorage.save_task_meta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.save_task_meta" title="Link to this definition">¶</a></dt>
+<dd><p>Save the task meta information.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>meta_info</strong> (<cite>dict[str, JSONSerializableObject]</cite>) – The task meta information to be saved, which should be JSON
+serializable.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.save_solution_stats">
+<span class="sig-name descname"><span class="pre">save_solution_stats</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">repeat_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stats</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_file_evaluator_storage.html#FileEvaluatorStorage.save_solution_stats"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.save_solution_stats" title="Link to this definition">¶</a></dt>
+<dd><p>Save the solution statistics information for a given task and
+repeat ID.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>repeat_id</strong> (<cite>str</cite>) – The repeat ID for the task, usually the index of the repeat
+evaluation.</p></li>
+<li><p><strong>stats</strong> (<cite>dict</cite>) – A dictionary containing the solution statistics to be saved.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.evaluate.FileEvaluatorStorage.get_solution_stats">
+<span class="sig-name descname"><span class="pre">get_solution_stats</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">task_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">repeat_id</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/evaluate/_evaluator_storage/_file_evaluator_storage.html#FileEvaluatorStorage.get_solution_stats"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.evaluate.FileEvaluatorStorage.get_solution_stats" title="Link to this definition">¶</a></dt>
+<dd><p>Get the solution statistics information for a given task and
+repeat ID.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>task_id</strong> (<cite>str</cite>) – The task ID.</p></li>
+<li><p><strong>repeat_id</strong> (<cite>str</cite>) – The repeat ID for the task, usually the index of the repeat
+evaluation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A dictionary containing the solution statistics for the given
+task and repeat ID.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>dict</cite></p>
 </dd>
 </dl>
 </dd></dl>
@@ -1613,6 +1770,10 @@ ACEBench. The code is implemented with reference to the
 </li>
 <li><a class="reference internal" href="#agentscope.evaluate.MetricBase"><code class="docutils literal notranslate"><span class="pre">MetricBase</span></code></a><ul>
 <li><a class="reference internal" href="#agentscope.evaluate.MetricBase.__init__"><code class="docutils literal notranslate"><span class="pre">MetricBase.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.MetricBase.name"><code class="docutils literal notranslate"><span class="pre">MetricBase.name</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.MetricBase.metric_type"><code class="docutils literal notranslate"><span class="pre">MetricBase.metric_type</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.MetricBase.description"><code class="docutils literal notranslate"><span class="pre">MetricBase.description</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.MetricBase.categories"><code class="docutils literal notranslate"><span class="pre">MetricBase.categories</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.MetricBase.__call__"><code class="docutils literal notranslate"><span class="pre">MetricBase.__call__()</span></code></a></li>
 </ul>
 </li>
@@ -1641,14 +1802,19 @@ ACEBench. The code is implemented with reference to the
 <li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.save_aggregation_result"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.save_aggregation_result()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.aggregation_result_exists"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.aggregation_result_exists()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.save_evaluation_meta"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.save_evaluation_meta()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.save_task_meta"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.save_task_meta()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.save_solution_stats"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.save_solution_stats()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.get_solution_stats"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.get_solution_stats()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook"><code class="docutils literal notranslate"><span class="pre">EvaluatorStorageBase.get_agent_pre_print_hook()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage</span></code></a><ul>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.SOLUTION_FILE_NAME"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.SOLUTION_FILE_NAME</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.SOLUTION_STATS_FILE_NAME"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.SOLUTION_STATS_FILE_NAME</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_DIR_NAME"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.EVALUATION_DIR_NAME</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_RESULT_FILE"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.EVALUATION_RESULT_FILE</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.EVALUATION_META_FILE"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.EVALUATION_META_FILE</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.TASK_META_FILE"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.TASK_META_FILE</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.AGENT_PRINTING_LOG"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.AGENT_PRINTING_LOG</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.__init__"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.save_solution_result"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.save_solution_result()</span></code></a></li>
@@ -1660,6 +1826,9 @@ ACEBench. The code is implemented with reference to the
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.save_aggregation_result"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.save_aggregation_result()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.aggregation_result_exists"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.aggregation_result_exists()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.save_evaluation_meta"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.save_evaluation_meta()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.save_task_meta"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.save_task_meta()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.save_solution_stats"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.save_solution_stats()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.get_solution_stats"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.get_solution_stats()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.evaluate.FileEvaluatorStorage.get_agent_pre_print_hook"><code class="docutils literal notranslate"><span class="pre">FileEvaluatorStorage.get_agent_pre_print_hook()</span></code></a></li>
 </ul>
 </li>

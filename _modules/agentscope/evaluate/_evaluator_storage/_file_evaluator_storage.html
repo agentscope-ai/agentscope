@@ -352,6 +352,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._metric_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">MetricResult</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">...agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgentBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">...message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">...types</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONSerializableObject</span>
 
 
 <div class="viewcode-block" id="FileEvaluatorStorage">
@@ -373,21 +374,47 @@
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">SOLUTION_FILE_NAME</span> <span class="o">=</span> <span class="s2">&quot;solution.json&quot;</span>
+    <span class="n">SOLUTION_STATS_FILE_NAME</span> <span class="o">=</span> <span class="s2">&quot;stats.json&quot;</span>
     <span class="n">EVALUATION_DIR_NAME</span> <span class="o">=</span> <span class="s2">&quot;evaluation&quot;</span>
     <span class="n">EVALUATION_RESULT_FILE</span> <span class="o">=</span> <span class="s2">&quot;evaluation_result.json&quot;</span>
     <span class="n">EVALUATION_META_FILE</span> <span class="o">=</span> <span class="s2">&quot;evaluation_meta.json&quot;</span>
+    <span class="n">TASK_META_FILE</span> <span class="o">=</span> <span class="s2">&quot;task_meta.json&quot;</span>
     <span class="n">AGENT_PRINTING_LOG</span> <span class="o">=</span> <span class="s2">&quot;logging.txt&quot;</span>
 
 <div class="viewcode-block" id="FileEvaluatorStorage.__init__">
 <a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.__init__">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">save_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the file evaluator storage.&quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span> <span class="o">=</span> <span class="n">save_dir</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">save_dir</span><span class="p">)</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_get_save_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the save path for a given task and repeat ID.&quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span><span class="p">,</span> <span class="n">repeat_id</span><span class="p">,</span> <span class="n">task_id</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_save_path</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the save path for a given task, repeat ID, and additional path</span>
+<span class="sd">        components.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            repeat_id (`str | None`):</span>
+<span class="sd">                The repeat ID for the task, usually the index of the repeat</span>
+<span class="sd">                evaluation. If None, it will be ignored in the path.</span>
+<span class="sd">            *args (`str`):</span>
+<span class="sd">                Additional path components to be appended.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">path_components</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">task_id</span><span class="p">,</span>
+            <span class="n">repeat_id</span><span class="p">,</span>
+            <span class="o">*</span><span class="n">args</span><span class="p">,</span>
+        <span class="p">]</span>
+
+        <span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span><span class="p">,</span> <span class="o">*</span><span class="p">[</span><span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">path_components</span> <span class="k">if</span> <span class="n">_</span><span class="p">])</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">path</span>
 
 <div class="viewcode-block" id="FileEvaluatorStorage.save_solution_result">
 <a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_solution_result">[docs]</a>
@@ -414,7 +441,6 @@
             <span class="n">repeat_id</span><span class="p">,</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">SOLUTION_FILE_NAME</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path_file</span><span class="p">),</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
             <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span></div>
 
@@ -445,7 +471,6 @@
             <span class="bp">self</span><span class="o">.</span><span class="n">EVALUATION_DIR_NAME</span><span class="p">,</span>
             <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">evaluation</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.json&quot;</span><span class="p">,</span>
         <span class="p">)</span>
-        <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path_file</span><span class="p">),</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
             <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">evaluation</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span></div>
 
@@ -654,6 +679,106 @@
             <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">meta_info</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span></div>
 
 
+<div class="viewcode-block" id="FileEvaluatorStorage.save_task_meta">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_task_meta">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_task_meta</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">meta_info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the task meta information.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            meta_info (`dict[str, JSONSerializableObject]`):</span>
+<span class="sd">                The task meta information to be saved, which should be JSON</span>
+<span class="sd">                serializable.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">path_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span>
+            <span class="n">task_id</span><span class="p">,</span>
+            <span class="kc">None</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">TASK_META_FILE</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">meta_info</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FileEvaluatorStorage.save_solution_stats">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.save_solution_stats">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_solution_stats</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">stats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the solution statistics information for a given task and</span>
+<span class="sd">        repeat ID.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            repeat_id (`str`):</span>
+<span class="sd">                The repeat ID for the task, usually the index of the repeat</span>
+<span class="sd">                evaluation.</span>
+<span class="sd">            stats (`dict`):</span>
+<span class="sd">                A dictionary containing the solution statistics to be saved.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">path_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span>
+            <span class="n">task_id</span><span class="p">,</span>
+            <span class="n">repeat_id</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">SOLUTION_STATS_FILE_NAME</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">path_file</span><span class="p">):</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">stats</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FileEvaluatorStorage.get_solution_stats">
+<a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_solution_stats">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_solution_stats</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">task_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">repeat_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the solution statistics information for a given task and</span>
+<span class="sd">        repeat ID.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            task_id (`str`):</span>
+<span class="sd">                The task ID.</span>
+<span class="sd">            repeat_id (`str`):</span>
+<span class="sd">                The repeat ID for the task, usually the index of the repeat</span>
+<span class="sd">                evaluation.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `dict`:</span>
+<span class="sd">                A dictionary containing the solution statistics for the given</span>
+<span class="sd">                task and repeat ID.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">path_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span>
+            <span class="n">task_id</span><span class="p">,</span>
+            <span class="n">repeat_id</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">SOLUTION_STATS_FILE_NAME</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">path_file</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Solution statistics for task </span><span class="si">{</span><span class="n">task_id</span><span class="si">}</span><span class="s2"> and repeat &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">repeat_id</span><span class="si">}</span><span class="s2"> not found.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">JSONDecodeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">JSONDecodeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Failed to load JSON from </span><span class="si">{</span><span class="n">path_file</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="n">e</span><span class="o">.</span><span class="n">doc</span><span class="p">,</span>
+                <span class="n">e</span><span class="o">.</span><span class="n">pos</span><span class="p">,</span>
+            <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span></div>
+
+
 <div class="viewcode-block" id="FileEvaluatorStorage.get_agent_pre_print_hook">
 <a class="viewcode-back" href="../../../../api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_agent_pre_print_hook">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_agent_pre_print_hook</span><span class="p">(</span>
@@ -714,7 +839,6 @@
                 <span class="n">repeat_id</span><span class="p">,</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">AGENT_PRINTING_LOG</span><span class="p">,</span>
             <span class="p">)</span>
-            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path_file</span><span class="p">),</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path_file</span><span class="p">,</span> <span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
                 <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">printing_str</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
 

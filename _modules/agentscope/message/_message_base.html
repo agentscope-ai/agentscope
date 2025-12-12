@@ -347,7 +347,6 @@
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">.</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolResultBlock</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._message_block</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TextBlock</span><span class="p">,</span>
     <span class="n">ToolUseBlock</span><span class="p">,</span>
@@ -355,7 +354,8 @@
     <span class="n">AudioBlock</span><span class="p">,</span>
     <span class="n">ContentBlock</span><span class="p">,</span>
     <span class="n">VideoBlock</span><span class="p">,</span>
-    <span class="n">ThinkingBlock</span><span class="p">,</span>
+    <span class="n">ToolResultBlock</span><span class="p">,</span>
+    <span class="n">ContentBlockTypes</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..types</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONSerializableObject</span>
 
@@ -509,81 +509,63 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;text&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">TextBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;tool_use&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;tool_result&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ToolResultBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ToolResultBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;image&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ImageBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ImageBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;audio&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">AudioBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">AudioBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;video&quot;</span><span class="p">],</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">VideoBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">VideoBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
     <span class="nd">@overload</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">block_type</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ContentBlock</span><span class="p">]:</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ContentBlock</span><span class="p">]:</span>
         <span class="o">...</span>
 
 <div class="viewcode-block" id="Msg.get_content_blocks">
 <a class="viewcode-back" href="../../../api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="nf">get_content_blocks</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">block_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span>
-            <span class="s2">&quot;text&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;thinking&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;tool_result&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;image&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;audio&quot;</span><span class="p">,</span>
-            <span class="s2">&quot;video&quot;</span><span class="p">,</span>
-        <span class="p">]</span>
-        <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="p">(</span>
-        <span class="n">List</span><span class="p">[</span><span class="n">ContentBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">TextBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">ThinkingBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">ToolUseBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">ToolResultBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">ImageBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">AudioBlock</span><span class="p">]</span>
-        <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">VideoBlock</span><span class="p">]</span>
-    <span class="p">):</span>
+        <span class="n">block_type</span><span class="p">:</span> <span class="n">ContentBlockTypes</span> <span class="o">|</span> <span class="n">List</span><span class="p">[</span><span class="n">ContentBlockTypes</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">ContentBlock</span><span class="p">]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the content in block format. If the content is a string,</span>
 <span class="sd">        it will be converted to a text block.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            block_type (`Literal[&quot;text&quot;, &quot;thinking&quot;, &quot;tool_use&quot;, \</span>
-<span class="sd">            &quot;tool_result&quot;, &quot;image&quot;, &quot;audio&quot;, &quot;video&quot;] | None`, optional):</span>
+<span class="sd">            block_type (`ContentBlockTypes | List[ContentBlockTypes] | None`, \</span>
+<span class="sd">            optional):</span>
 <span class="sd">                The type of the block to be extracted. If `None`, all blocks</span>
 <span class="sd">                will be returned.</span>
 
@@ -599,8 +581,11 @@
         <span class="k">else</span><span class="p">:</span>
             <span class="n">blocks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">content</span> <span class="ow">or</span> <span class="p">[]</span>
 
-        <span class="k">if</span> <span class="n">block_type</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block_type</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
             <span class="n">blocks</span> <span class="o">=</span> <span class="p">[</span><span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">blocks</span> <span class="k">if</span> <span class="n">_</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="n">block_type</span><span class="p">]</span>
+
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block_type</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">blocks</span> <span class="o">=</span> <span class="p">[</span><span class="n">_</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">blocks</span> <span class="k">if</span> <span class="n">_</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="n">block_type</span><span class="p">]</span>
 
         <span class="k">return</span> <span class="n">blocks</span></div>
 

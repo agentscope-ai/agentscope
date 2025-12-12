@@ -359,6 +359,7 @@
     <span class="n">ToolUseBlock</span><span class="p">,</span>
     <span class="n">ToolResultBlock</span><span class="p">,</span>
     <span class="n">TextBlock</span><span class="p">,</span>
+    <span class="n">AudioBlock</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..model</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatModelBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..rag</span><span class="w"> </span><span class="kn">import</span> <span class="n">KnowledgeBase</span><span class="p">,</span> <span class="n">Document</span>
@@ -789,7 +790,7 @@
 
         <span class="c1"># TTS model context manager</span>
         <span class="n">tts_context</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="ow">or</span> <span class="n">_AsyncNullContext</span><span class="p">()</span>
-        <span class="n">speech</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">speech</span><span class="p">:</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">AudioBlock</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="k">try</span><span class="p">:</span>
             <span class="k">async</span> <span class="k">with</span> <span class="n">tts_context</span><span class="p">:</span>
@@ -961,7 +962,7 @@
 
         <span class="c1"># TTS model context manager</span>
         <span class="n">tts_context</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="ow">or</span> <span class="n">_AsyncNullContext</span><span class="p">()</span>
-        <span class="n">speech</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">speech</span><span class="p">:</span> <span class="n">AudioBlock</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">AudioBlock</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="k">async</span> <span class="k">with</span> <span class="n">tts_context</span><span class="p">:</span>
             <span class="n">res_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="p">[],</span> <span class="s2">&quot;assistant&quot;</span><span class="p">)</span>
