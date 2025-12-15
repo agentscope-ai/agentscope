@@ -7,8 +7,8 @@ import os
 from game import werewolves_game
 
 from agentscope.agent import ReActAgent
-from agentscope.formatter import DashScopeMultiAgentFormatter
-from agentscope.model import DashScopeChatModel
+from agentscope.formatter import DeepSeekChatFormatter
+from agentscope.model import OpenAIChatModel
 from agentscope.session import JSONSession
 
 
@@ -68,11 +68,12 @@ Your target is to win the game with your teammates as much as possible.
 - Your response should be specific and concise, provide clear reason and avoid unnecessary elaboration.
 - Generate a one-line response.
 - Don't repeat the others' speeches.""",
-        model=DashScopeChatModel(
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen3-max",
+        model=OpenAIChatModel(
+            model_name="deepseek-chat",
+            api_key=os.environ.get("DEEPSEEK_API_KEY"),
+            client_kwargs={"base_url": "https://api.deepseek.com"},
         ),
-        formatter=DashScopeMultiAgentFormatter(),
+        formatter=DeepSeekChatFormatter(),
     )
     return agent
 

@@ -27,7 +27,23 @@ This example shows a **DeepResearch Agent** implementation using the AgentScope 
    python main.py
    ```
 
-## Connect to Web Search MCP client
+## Quick Start (WebSearchTool)
+We provide a simplified example `simple_agent.py` that demonstrates the new local `WebSearchTool` without needing complex MCP servers.
+
+### Prerequisites
+```bash
+pip install duckduckgo-search
+```
+
+### Run
+```bash
+python simple_agent.py
+```
+This agent uses the `ReActAgent` framework to perform iterative search and answering.
+
+---
+
+## Advanced Usage (Original MCP Agent)
 The DeepResearch Agent only supports web search through the Tavily MCP client currently. To use this feature, you need to start the MCP server locally and establish a connection to it.
 ```
 from agentscope.mcp import StdIOStatefulClient

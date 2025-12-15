@@ -142,3 +142,9 @@ docs/tutorial/**/doctrees/
 docs/tutorial/**/.doctrees/
 *.buildinfo
 *.pickle
+
+# User Assets
+deploy_assets.py
+status_icons_*.png
+checkpoints/
+games/

@@ -23,6 +23,9 @@ from ._multi_modality import (
     openai_audio_to_text,
 )
 from ._toolkit import Toolkit
+from ._web import web_search
+from ._database.sqlite import execute_sql, get_schema
+from ._speech.speech import text_to_speech, speech_to_text
 
 __all__ = [
     "Toolkit",
@@ -40,5 +43,11 @@ __all__ = [
     "openai_edit_image",
     "openai_create_image_variation",
     "openai_image_to_text",
+    "openai_image_to_text",
     "openai_audio_to_text",
+    "web_search",
+    "execute_sql",
+    "get_schema",
+    "text_to_speech",
+    "speech_to_text",
 ]

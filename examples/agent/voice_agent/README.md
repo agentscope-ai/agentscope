@@ -1,20 +1,47 @@
-# Voice Agent
+# 🗣️ Voice Agent Demo (Jarvis)
 
-> This is experimental functionality in AgentScope.
+This is a voice-enabled agent that listens to your microphone and replies with synthesized speech.
 
-This example demonstrates how to create a voice agent using AgentScope with Qwen-Omni model, featuring both text and audio output capabilities.
+## Features
+- **ASR (Automatic Speech Recognition)**: Uses Google Speech Recognition (via `speech_recognition`).
+- **TTS (Text-to-Speech)**: Uses Microsoft Edge TTS (via `edge_tts`) for high-quality natural voices.
+- **LLM**: Powered by DeepSeek V3 (or compatible OpenAI models).
 
-> **Note**:
->  - Qwen-Omni may not generate tool calls when the audio output is enabled.
->  - This example supports DashScope `Qwen-Omni` and OpenAI `GPT-4o Audio` models. You can change model by modifying the `model` parameter in `main.py`.
->  - We haven't tested vLLM yet. Contributions are welcome!
+## Prerequisites
 
-## Quick Start
+1. **Install Dependencies**:
+   ```bash
+   pip install SpeechRecognition edge-tts pygame pyaudio
+   ```
+   *(Note: `pyaudio` might require system-level dependencies like `portaudio` on Linux/Mac)*
 
-Ensure you have installed agentscope and set ``DASHSCOPE_API_KEY`` in your environment variables.
+2. **API Key**:
+   You need a valid DeepSeek API Key with sufficient balance.
+   
+   **Option A (Environment Variable)**:
+   ```bash
+   export DEEPSEEK_API_KEY="sk-..."
+   # On Windows PowerShell:
+   # $env:DEEPSEEK_API_KEY="sk-..."
+   ```
+   
+   **Option B (Edit File)**:
+   Open `main.py` and modify `API_KEY` directly.
 
-Run the following commands to set up and run the example:
+## Running
 
 ```bash
 python main.py
 ```
+
+1. Wait for `[System] Listening...`
+2. Speak clearly into your microphone.
+3. The agent will reply elegantly.
+
+## Troubleshooting
+
+- **Error 402 (Insufficient Balance)**: Your API key is out of credits. Please recharge your DeepSeek account or switch to a different provider.
+- **Could not understand audio**: 
+    - Check if your microphone is set as the system default.
+    - Speak closer to the mic.
+    - Check `speech.py` to switch languages (`language="zh-CN"` for Chinese).
