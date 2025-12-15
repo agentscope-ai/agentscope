@@ -41,10 +41,14 @@ if TYPE_CHECKING:
     from a2a.client.client_factory import TransportProducer
     from a2a.types import (
         AgentCard,
+        Artifact,
         DataPart,
         FilePart,
         Message as A2AMessage,
         Part,
+        TaskStatus,
+        TaskStatusUpdateEvent,
+        TaskArtifactUpdateEvent,
         TransportProtocol,
         PushNotificationConfig,
         Task,
@@ -348,38 +352,76 @@ class A2aAgent(AgentBase):
                     )
 
                 elif isinstance(item, tuple):
-                    task, _ = item
-                    logger.debug(
-                        "[%s] Task update: %s, task_id: %s",
-                        self.__class__.__name__,
-                        task.status.state.value,
-                        task.id,
-                    )
+                    task, update_event = item
 
-                    # Construct message from task status
-                    status_msg = self._construct_msg_from_task_status(task)
-                    await self.print(status_msg, False)
-
-                    artifact_msg = self._convert_task_artifacts_to_msg(task)
-                    if artifact_msg:
-                        await self.print(artifact_msg, False)
-
-                    # Check task status
-                    if task.status.state == TaskState.completed:
-                        response_msg = artifact_msg
+                    # Priority: process Task first if available
+                    if task is not None:
                         logger.debug(
-                            "[%s] Task completed successfully: %s",
-                            self.__class__.__name__,
-                            task.id,
-                        )
-                    else:
-                        response_msg = status_msg
-                        logger.debug(
-                            "[%s] Task update: %s, id: %s",
+                            "[%s] Task update: %s, task_id: %s",
                             self.__class__.__name__,
                             task.status.state.value,
                             task.id,
                         )
+
+                        # Construct message from task status
+                        status_msg = self._construct_msg_from_task_status(task)
+                        await self.print(status_msg, False)
+
+                        # Convert task artifacts
+                        artifact_msg = self._convert_task_artifacts_to_msg(
+                            task,
+                        )
+                        if artifact_msg:
+                            await self.print(artifact_msg, False)
+
+                        # Check task status to determine response
+                        if task.status.state == TaskState.completed:
+                            response_msg = artifact_msg or status_msg
+                            logger.debug(
+                                "[%s] Task completed successfully: %s",
+                                self.__class__.__name__,
+                                task.id,
+                            )
+                        else:
+                            response_msg = status_msg
+                            logger.debug(
+                                "[%s] Task update: %s, id: %s",
+                                self.__class__.__name__,
+                                task.status.state.value,
+                                task.id,
+                            )
+
+                    # Fallback: process update_event if no task
+                    elif update_event is not None:
+                        from a2a.types import (
+                            TaskStatusUpdateEvent,
+                            TaskArtifactUpdateEvent,
+                        )
+
+                        if isinstance(update_event, TaskStatusUpdateEvent):
+                            response_msg = self._convert_status_event_to_msg(
+                                update_event,
+                            )
+                            await self.print(response_msg, False)
+                            logger.debug(
+                                "[%s] Received status update event: %s",
+                                self.__class__.__name__,
+                                update_event.status.state.value,
+                            )
+
+                        elif isinstance(
+                            update_event,
+                            TaskArtifactUpdateEvent,
+                        ):
+                            response_msg = self._convert_artifact_event_to_msg(
+                                update_event,
+                            )
+                            await self.print(response_msg, False)
+                            logger.debug(
+                                "[%s] Received artifact update event: %s",
+                                self.__class__.__name__,
+                                update_event.artifact.artifact_id,
+                            )
 
         except asyncio.CancelledError:
             # User interruption - re-raise for proper cancellation handling
@@ -468,6 +510,80 @@ class A2aAgent(AgentBase):
 
         return response_msg
 
+    def _convert_task_status_to_msg(
+        self,
+        status: TaskStatus,
+        task_id: str,
+    ) -> Msg:
+        """Convert a TaskStatus to an AgentScope Msg.
+
+        This is the core method for converting TaskStatus, reused by both
+        Task processing and TaskStatusUpdateEvent processing.
+
+        Args:
+                status (`TaskStatus`):
+                        The TaskStatus object to convert.
+                task_id (`str`):
+                        The ID of the task.
+
+        Returns:
+                `Msg`:
+                        Constructed message with task state information.
+        """
+        if status.message:
+            # Convert A2A message to Msg
+            response_msg = self._convert_a2a_message_to_msg(status.message)
+
+            # Add task state info at the beginning of content
+            status_text = f"[Task ID: {task_id}, Status: {status.state.value}]"
+            state_info_block = TextBlock(type="text", text=status_text)
+
+            # Ensure content is a list and prepend state info
+            if isinstance(response_msg.content, str):
+                response_msg.content = [
+                    state_info_block,
+                    TextBlock(type="text", text=response_msg.content),
+                ]
+            elif isinstance(response_msg.content, list):
+                response_msg.content.insert(0, state_info_block)
+            else:
+                response_msg.content = [state_info_block]
+        else:
+            # No message in status, create new Msg with task state info
+            status_text = f"[Task ID: {task_id}, Status: {status.state.value}]"
+            state_info_block = TextBlock(type="text", text=status_text)
+            response_msg = Msg(
+                name=self.name,
+                content=[state_info_block],
+                role="assistant",
+            )
+
+        return response_msg
+
+    def _convert_artifact_to_content_blocks(
+        self,
+        artifact: Artifact,
+    ) -> list[ContentBlock]:
+        """Convert an Artifact to a list of ContentBlocks.
+
+        This is the core method for converting Artifact, reused by both
+        Task processing and TaskArtifactUpdateEvent processing.
+
+        Args:
+                artifact (`Artifact`):
+                        The Artifact object to convert.
+
+        Returns:
+                `list[ContentBlock]`:
+                        List of converted ContentBlocks.
+        """
+        content_blocks: list[ContentBlock] = []
+        for part in artifact.parts:
+            block = self._convert_part_to_content_block(part)
+            if block:
+                content_blocks.append(block)
+        return content_blocks
+
     def _construct_msg_from_task_status(self, task: Task) -> Msg:
         """Construct an AgentScope Msg from an A2A Task status.
 
@@ -481,44 +597,7 @@ class A2aAgent(AgentBase):
                         The message will include a TextBlock at the
                         beginning showing the task ID and current status.
         """
-        if task.status.message:
-            # Convert A2A message to Msg
-            response_msg = self._convert_a2a_message_to_msg(
-                task.status.message,
-            )
-
-            # Add task state info at the beginning of content
-            status_text = (
-                f"[Task ID: {task.id}，Status: {task.status.state.value}]"
-            )
-            state_info_block = TextBlock(type="text", text=status_text)
-
-            # Ensure content is a list and prepend state info
-            if isinstance(response_msg.content, str):
-                # Convert string to list with state info
-                response_msg.content = [
-                    state_info_block,
-                    TextBlock(type="text", text=response_msg.content),
-                ]
-            elif isinstance(response_msg.content, list):
-                # Prepend to existing list
-                response_msg.content.insert(0, state_info_block)
-            else:
-                # Fallback: create new list
-                response_msg.content = [state_info_block]
-        else:
-            # No message in task.status, create new Msg with task state info
-            status_text = (
-                f"[Task ID: {task.id}, " f"Status: {task.status.state.value}]"
-            )
-            state_info_block = TextBlock(type="text", text=status_text)
-            response_msg = Msg(
-                name=self.name,
-                content=[state_info_block],
-                role="assistant",
-            )
-
-        return response_msg
+        return self._convert_task_status_to_msg(task.status, task.id)
 
     def _convert_task_artifacts_to_msg(self, task: Task) -> Msg | None:
         """Convert all task artifacts to a single AgentScope Msg.
@@ -531,29 +610,119 @@ class A2aAgent(AgentBase):
                 `Msg | None`:
                         A merged message with all artifact parts as
                         ContentBlocks, or `None` if the task has no
-                        artifacts.
+                        artifacts. Each artifact's metadata is preserved
+                        in the Msg metadata using artifact_id as the key.
         """
         if not task.artifacts or len(task.artifacts) == 0:
             return None
 
         all_content_blocks: list[ContentBlock] = []
+        artifacts_metadata: dict = {}
 
-        # Process all artifacts
+        # Process all artifacts using the core method
         for artifact in task.artifacts:
-            # Convert each part to content block
-            for part in artifact.parts:
-                content_block = self._convert_part_to_content_block(part)
-                if content_block:
-                    all_content_blocks.append(content_block)
+            blocks = self._convert_artifact_to_content_blocks(artifact)
+            all_content_blocks.extend(blocks)
+
+            # Preserve artifact metadata using artifact_id as key
+            if artifact.metadata:
+                artifacts_metadata[artifact.artifact_id] = artifact.metadata
+
+        # Build final metadata
+        metadata: dict = {}
+        if artifacts_metadata:
+            metadata["_a2a_artifacts_metadata"] = artifacts_metadata
 
         # Create message with all content blocks
-        merged_msg = Msg(
+        return Msg(
             name=self.name,
             content=all_content_blocks if all_content_blocks else "",
             role="assistant",
+            metadata=metadata if metadata else None,
         )
 
-        return merged_msg
+    def _convert_status_event_to_msg(
+        self,
+        event: TaskStatusUpdateEvent,
+    ) -> Msg:
+        """Convert a TaskStatusUpdateEvent to an AgentScope Msg.
+
+        This method handles TaskStatusUpdateEvent from streaming responses,
+        reusing the core _convert_task_status_to_msg method.
+
+        Args:
+                event (`TaskStatusUpdateEvent`):
+                        The status update event to convert.
+
+        Returns:
+                `Msg`:
+                        Constructed message with task state information.
+        """
+        msg = self._convert_task_status_to_msg(event.status, event.task_id)
+
+        # Preserve existing metadata and add event-specific metadata
+        if msg.metadata is None:
+            msg.metadata = {}
+
+        # Preserve event's original metadata
+        if event.metadata:
+            msg.metadata.update(event.metadata)
+
+        # Add event-specific fields (these take precedence)
+        msg.metadata["_a2a_event_type"] = "status_update"
+        msg.metadata["_a2a_is_final"] = event.final
+        msg.metadata["_a2a_context_id"] = event.context_id
+
+        return msg
+
+    def _convert_artifact_event_to_msg(
+        self,
+        event: TaskArtifactUpdateEvent,
+    ) -> Msg:
+        """Convert a TaskArtifactUpdateEvent to an AgentScope Msg.
+
+        This method handles TaskArtifactUpdateEvent from streaming responses,
+        reusing the core _convert_artifact_to_content_blocks method.
+
+        Args:
+                event (`TaskArtifactUpdateEvent`):
+                        The artifact update event to convert.
+
+        Returns:
+                `Msg`:
+                        Constructed message with artifact content.
+        """
+        # Convert artifact to content blocks using core method
+        content_blocks = self._convert_artifact_to_content_blocks(
+            event.artifact,
+        )
+
+        # Build metadata: preserve original metadata from event and artifact
+        metadata: dict = {}
+
+        # Preserve artifact's original metadata
+        if event.artifact.metadata:
+            metadata.update(event.artifact.metadata)
+
+        # Preserve event's original metadata
+        if event.metadata:
+            metadata.update(event.metadata)
+
+        # Add event-specific fields (these take precedence)
+        metadata["_a2a_event_type"] = "artifact_update"
+        metadata["_a2a_task_id"] = event.task_id
+        metadata["_a2a_context_id"] = event.context_id
+        metadata["_a2a_artifact_id"] = event.artifact.artifact_id
+        metadata["_a2a_artifact_name"] = event.artifact.name
+        metadata["_a2a_is_append"] = event.append
+        metadata["_a2a_is_last_chunk"] = event.last_chunk
+
+        return Msg(
+            name=self.name,
+            content=content_blocks if content_blocks else "",
+            role="assistant",
+            metadata=metadata,
+        )
 
     def _convert_a2a_message_to_msg(self, a2a_message: A2AMessage) -> Msg:
         """Convert an A2A Message to an AgentScope Msg.

@@ -19,6 +19,8 @@ from a2a.types import (
     Task,
     TaskState,
     TaskStatus,
+    TaskStatusUpdateEvent,
+    TaskArtifactUpdateEvent,
     TextPart,
     Artifact,
 )
@@ -781,3 +783,169 @@ class A2aAgentTest(IsolatedAsyncioTestCase):
         # Check that response was added to observed messages
         self.assertEqual(len(agent._observed_msgs), 1)
         self.assertEqual(agent._observed_msgs[0], response)
+
+    async def test_convert_task_status_to_msg(self) -> None:
+        """Test core method _convert_task_status_to_msg."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        # Test with status message
+        status = TaskStatus(
+            state=TaskState.working,
+            message=A2AMessage(
+                message_id="msg-1",
+                role=A2ARole.agent,
+                parts=[Part(root=TextPart(text="Working on it..."))],
+            ),
+        )
+        msg = agent._convert_task_status_to_msg(status, "task-123")
+
+        self.assertEqual(msg.name, "TestAgent")
+        self.assertIn("Task ID: task-123", msg.content[0]["text"])
+
+        # Test without status message
+        status_no_msg = TaskStatus(state=TaskState.submitted)
+        msg_no_content = agent._convert_task_status_to_msg(
+            status_no_msg,
+            "task-456",
+        )
+
+        self.assertIn("Task ID: task-456", msg_no_content.content[0]["text"])
+        self.assertIn("submitted", msg_no_content.content[0]["text"])
+
+    async def test_convert_artifact_to_content_blocks(self) -> None:
+        """Test core method _convert_artifact_to_content_blocks."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        artifact = Artifact(
+            artifact_id="art-1",
+            name="test_artifact",
+            parts=[
+                Part(root=TextPart(text="Content 1")),
+                Part(root=TextPart(text="Content 2")),
+            ],
+        )
+
+        blocks = agent._convert_artifact_to_content_blocks(artifact)
+
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["text"], "Content 1")
+        self.assertEqual(blocks[1]["text"], "Content 2")
+
+    async def test_convert_status_event_to_msg(self) -> None:
+        """Test _convert_status_event_to_msg method."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        event = TaskStatusUpdateEvent(
+            task_id="task-789",
+            context_id="ctx-1",
+            final=False,
+            status=TaskStatus(
+                state=TaskState.working,
+                message=A2AMessage(
+                    message_id="msg-1",
+                    role=A2ARole.agent,
+                    parts=[Part(root=TextPart(text="Processing..."))],
+                ),
+            ),
+            metadata={"custom_key": "custom_value"},
+        )
+
+        msg = agent._convert_status_event_to_msg(event)
+
+        self.assertEqual(msg.name, "TestAgent")
+        self.assertIn("Task ID: task-789", msg.content[0]["text"])
+
+        # Check event-specific metadata
+        self.assertEqual(msg.metadata["_a2a_event_type"], "status_update")
+        self.assertEqual(msg.metadata["_a2a_is_final"], False)
+        self.assertEqual(msg.metadata["_a2a_context_id"], "ctx-1")
+
+        # Check preserved original metadata
+        self.assertEqual(msg.metadata["custom_key"], "custom_value")
+
+    async def test_convert_artifact_event_to_msg(self) -> None:
+        """Test _convert_artifact_event_to_msg method."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        event = TaskArtifactUpdateEvent(
+            task_id="task-999",
+            context_id="ctx-2",
+            append=False,
+            last_chunk=True,
+            artifact=Artifact(
+                artifact_id="art-2",
+                name="output_artifact",
+                parts=[Part(root=TextPart(text="Generated content"))],
+                metadata={"artifact_meta": "artifact_value"},
+            ),
+            metadata={"event_meta": "event_value"},
+        )
+
+        msg = agent._convert_artifact_event_to_msg(event)
+
+        self.assertEqual(msg.name, "TestAgent")
+        self.assertEqual(len(msg.content), 1)
+        self.assertEqual(msg.content[0]["text"], "Generated content")
+
+        # Check event-specific metadata
+        self.assertEqual(msg.metadata["_a2a_event_type"], "artifact_update")
+        self.assertEqual(msg.metadata["_a2a_task_id"], "task-999")
+        self.assertEqual(msg.metadata["_a2a_context_id"], "ctx-2")
+        self.assertEqual(msg.metadata["_a2a_artifact_id"], "art-2")
+        self.assertEqual(msg.metadata["_a2a_artifact_name"], "output_artifact")
+        self.assertEqual(msg.metadata["_a2a_is_append"], False)
+        self.assertEqual(msg.metadata["_a2a_is_last_chunk"], True)
+
+        # Check preserved original metadata
+        self.assertEqual(msg.metadata["artifact_meta"], "artifact_value")
+        self.assertEqual(msg.metadata["event_meta"], "event_value")
+
+    async def test_convert_task_artifacts_to_msg_with_metadata(self) -> None:
+        """Test artifact metadata preservation."""
+        agent = A2aAgent(
+            name="TestAgent",
+            agent_card=self.test_agent_card,
+        )
+
+        task = Task(
+            id="task-1",
+            context_id="context-1",
+            status=TaskStatus(state=TaskState.completed),
+            artifacts=[
+                Artifact(
+                    artifact_id="art-1",
+                    name="first",
+                    parts=[Part(root=TextPart(text="Content 1"))],
+                    metadata={"key1": "value1"},
+                ),
+                Artifact(
+                    artifact_id="art-2",
+                    name="second",
+                    parts=[Part(root=TextPart(text="Content 2"))],
+                    metadata={"key2": "value2"},
+                ),
+            ],
+        )
+
+        msg = agent._convert_task_artifacts_to_msg(task)
+
+        self.assertIsNotNone(msg)
+        self.assertEqual(len(msg.content), 2)
+
+        # Check artifacts metadata is preserved
+        self.assertIn("_a2a_artifacts_metadata", msg.metadata)
+        artifacts_meta = msg.metadata["_a2a_artifacts_metadata"]
+        self.assertEqual(artifacts_meta["art-1"], {"key1": "value1"})
+        self.assertEqual(artifacts_meta["art-2"], {"key2": "value2"})
