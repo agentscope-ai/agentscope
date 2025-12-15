@@ -16,6 +16,7 @@ from .._logging import logger
 
 if TYPE_CHECKING:
     from a2a.types import AgentCard
+    from v2.nacos.common.client_config import ClientConfig
 
 
 class AgentCardResolverBase:
@@ -242,7 +243,7 @@ class NacosAgentCardResolver(AgentCardResolverBase):
     def __init__(
         self,
         remote_agent_name: str,
-        nacos_client_config: Any | None = None,
+        nacos_client_config: ClientConfig | None = None,
         version: str | None = None,
     ) -> None:
         """Initialize the NacosAgentCardResolver.
@@ -250,18 +251,29 @@ class NacosAgentCardResolver(AgentCardResolverBase):
         Args:
             remote_agent_name (`str`):
                 Name of the remote agent in Nacos.
-            nacos_client_config (`Any | None`, optional):
-                Nacos client configuration. If None, uses default config.
+            nacos_client_config (`ClientConfig | None`, optional):
+                Nacos client configuration. If None, reads from environment
+                variables:
+                - NACOS_SERVER_ADDR: Server address (required if config None)
+                - NACOS_USERNAME: Username (optional)
+                - NACOS_PASSWORD: Password (optional)
+                - NACOS_NAMESPACE_ID: Namespace ID (optional, default: public)
+                - NACOS_ACCESS_KEY: Access key (optional)
+                - NACOS_SECRET_KEY: Secret key (optional)
                 Defaults to None.
             version (`str | None`, optional):
                 Version constraint for the agent card.
                 Defaults to None.
 
         Raises:
-            ValueError: If remote_agent_name is empty.
+            ValueError: If remote_agent_name is empty or NACOS_SERVER_ADDR
+                is not set when nacos_client_config is None.
         """
         if not remote_agent_name:
             raise ValueError("remote_agent_name is required")
+
+        if nacos_client_config is None:
+            nacos_client_config = self._build_config_from_env()
 
         self._nacos_client_config = nacos_client_config
         self._remote_agent_name = remote_agent_name
@@ -271,6 +283,59 @@ class NacosAgentCardResolver(AgentCardResolverBase):
         self._initialized = False
         self._nacos_ai_service: Any | None = None
         self._agent_card: AgentCard | None = None
+
+    def _build_config_from_env(self) -> ClientConfig:
+        """Build Nacos client config from environment variables.
+
+        Reads the following environment variables:
+        - NACOS_SERVER_ADDR: Server address (required)
+        - NACOS_USERNAME: Username (optional)
+        - NACOS_PASSWORD: Password (optional)
+        - NACOS_NAMESPACE_ID: Namespace ID (optional, default: public)
+        - NACOS_ACCESS_KEY: Access key (optional)
+        - NACOS_SECRET_KEY: Secret key (optional)
+
+        Returns:
+            `ClientConfig`:
+                The built Nacos client configuration.
+
+        Raises:
+            ValueError: If NACOS_SERVER_ADDR is not set.
+        """
+        import os
+
+        from v2.nacos.common.client_config_builder import ClientConfigBuilder
+
+        server_addr = os.environ.get("NACOS_SERVER_ADDR")
+        if not server_addr:
+            raise ValueError(
+                "NACOS_SERVER_ADDR environment variable is required "
+                "when nacos_client_config is not provided",
+            )
+
+        builder = ClientConfigBuilder()
+        builder.server_address(server_addr)
+
+        # Optional configurations
+        username = os.environ.get("NACOS_USERNAME")
+        password = os.environ.get("NACOS_PASSWORD")
+        if username:
+            builder.username(username)
+        if password:
+            builder.password(password)
+
+        namespace_id = os.environ.get("NACOS_NAMESPACE_ID")
+        if namespace_id:
+            builder.namespace_id(namespace_id)
+
+        access_key = os.environ.get("NACOS_ACCESS_KEY")
+        secret_key = os.environ.get("NACOS_SECRET_KEY")
+        if access_key:
+            builder.access_key(access_key)
+        if secret_key:
+            builder.secret_key(secret_key)
+
+        return builder.build()
 
     async def get_agent_card(self) -> AgentCard:
         """Get agent card from Nacos with lazy initialization.
