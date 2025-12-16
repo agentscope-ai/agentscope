@@ -393,6 +393,7 @@ class ReActAgent(ReActAgentBase):
         if reply_msg is None:
             reply_msg = await self._summarizing()
             reply_msg.metadata = structured_output
+            self.memory.add(reply_msg)
 
         # Post-process the memory, long-term memory
         if self._static_control:
@@ -404,7 +405,6 @@ class ReActAgent(ReActAgentBase):
                 ],
             )
 
-        await self.memory.add(reply_msg)
         return reply_msg
 
     # pylint: disable=too-many-branches
