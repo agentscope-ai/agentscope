@@ -262,8 +262,10 @@ class NacosAgentCardResolver(AgentCardResolverBase):
                 - NACOS_SECRET_KEY: Secret key (optional)
                 Defaults to None.
             version (`str | None`, optional):
-                Version constraint for the agent card.
-                Defaults to None.
+                Version of the agent card to fetch. If None, fetches the
+                latest version. This version is also used when subscribing
+                to agent card updates.
+                Defaults to None (latest version).
 
         Raises:
             ValueError: If remote_agent_name is empty or NACOS_SERVER_ADDR
