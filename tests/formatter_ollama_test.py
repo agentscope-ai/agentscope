@@ -131,7 +131,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output=[
                             TextBlock(
@@ -354,7 +354,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "tool",
-                "tool_call_id": "1",
+                "tool_call_id": "2",
                 "content": "- The capital of South Korea is Seoul.\n- The "
                 "returned image can be found at: ./image.png",
                 "name": "get_capital",
