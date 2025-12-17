@@ -21,7 +21,7 @@ AgentScope 实现了基于 OpenTelemetry 的追踪来监控和调试
 AgentScope Studio
 ---------------------------------------
 
-.. figure:: ../../_static/images/studio_tracing.png
+.. figure:: ../../_static/images/studio_tracing.webp
     :width: 100%
     :alt: AgentScope Studio 追踪页面
     :class: bordered-image
