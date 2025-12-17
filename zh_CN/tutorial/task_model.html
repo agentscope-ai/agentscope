@@ -465,7 +465,7 @@ AgentScope 目前支持的模型 API 和模型提供商包括：</p>
 <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;我应该在 Google 上搜索 AgentScope。&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我将在 Google 上搜索 AgentScope。&#39;}, {&#39;type&#39;: &#39;tool_use&#39;, &#39;id&#39;: &#39;642n298gjna&#39;, &#39;name&#39;: &#39;google_search&#39;, &#39;input&#39;: {&#39;query&#39;: &#39;AgentScope&#39;}}], id=&#39;2025-12-17 05:36:49.005_e45b86&#39;, created_at=&#39;2025-12-17 05:36:49.005&#39;, type=&#39;chat&#39;, usage=None, metadata=None)
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;我应该在 Google 上搜索 AgentScope。&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我将在 Google 上搜索 AgentScope。&#39;}, {&#39;type&#39;: &#39;tool_use&#39;, &#39;id&#39;: &#39;642n298gjna&#39;, &#39;name&#39;: &#39;google_search&#39;, &#39;input&#39;: {&#39;query&#39;: &#39;AgentScope&#39;}}], id=&#39;2025-12-17 05:49:26.002_6abe74&#39;, created_at=&#39;2025-12-17 05:49:26.002&#39;, type=&#39;chat&#39;, usage=None, metadata=None)
 </pre></div>
 </div>
 <p>以 <code class="docutils literal notranslate"><span class="pre">DashScopeChatModel</span></code> 为例，调用和返回结果如下：</p>
@@ -493,8 +493,8 @@ AgentScope 目前支持的模型 API 和模型提供商包括：</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_model_call</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>LLM 返回结果: ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！有什么可以帮助你的吗？&#39;}], id=&#39;2025-12-17 05:36:50.840_02a93c&#39;, created_at=&#39;2025-12-17 05:36:50.840&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=10, output_tokens=7, time=1.833895, type=&#39;chat&#39;), metadata=None)
-作为 Msg 的响应: Msg(id=&#39;XS5ZebquwbRz3cQBmFysyw&#39;, name=&#39;Friday&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！有什么可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-17 05:36:50.840&#39;, invocation_id=&#39;None&#39;)
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>LLM 返回结果: ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！有什么可以帮助你的吗？&#39;}], id=&#39;2025-12-17 05:49:27.834_23f55a&#39;, created_at=&#39;2025-12-17 05:49:27.834&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=10, output_tokens=7, time=1.831073, type=&#39;chat&#39;), metadata=None)
+作为 Msg 的响应: Msg(id=&#39;GuaXNBgmDvw4yMdF5zAKJJ&#39;, name=&#39;Friday&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！有什么可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2025-12-17 05:49:27.834&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <section id="id2">
@@ -537,51 +537,51 @@ AgentScope 目前支持的模型 API 和模型提供商包括：</p>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>响应的类型: &lt;class &#39;async_generator&#39;&gt;
 块 0
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1&#39;}], id=&#39;2025-12-17 05:36:52.285_330e2e&#39;, created_at=&#39;2025-12-17 05:36:52.285&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=1, time=1.443477, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1&#39;}], id=&#39;2025-12-17 05:49:28.979_c9a6ab&#39;, created_at=&#39;2025-12-17 05:49:28.979&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=1, time=1.143058, type=&#39;chat&#39;), metadata=None)
 
 块 1
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n&#39;}], id=&#39;2025-12-17 05:36:52.290_b939a2&#39;, created_at=&#39;2025-12-17 05:36:52.290&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=2, time=1.448951, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n&#39;}], id=&#39;2025-12-17 05:49:29.024_e27a6f&#39;, created_at=&#39;2025-12-17 05:49:29.024&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=2, time=1.188511, type=&#39;chat&#39;), metadata=None)
 
 块 2
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3&#39;}], id=&#39;2025-12-17 05:36:52.310_037912&#39;, created_at=&#39;2025-12-17 05:36:52.310&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=5, time=1.468497, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3&#39;}], id=&#39;2025-12-17 05:49:29.068_b7ff51&#39;, created_at=&#39;2025-12-17 05:49:29.068&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=5, time=1.232603, type=&#39;chat&#39;), metadata=None)
 
 块 3
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n&#39;}], id=&#39;2025-12-17 05:36:52.375_16227e&#39;, created_at=&#39;2025-12-17 05:36:52.375&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=8, time=1.53379, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n&#39;}], id=&#39;2025-12-17 05:49:29.241_22f6c7&#39;, created_at=&#39;2025-12-17 05:49:29.241&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=8, time=1.405107, type=&#39;chat&#39;), metadata=None)
 
 块 4
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n&#39;}], id=&#39;2025-12-17 05:36:52.500_2f2683&#39;, created_at=&#39;2025-12-17 05:36:52.500&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=14, time=1.658429, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n&#39;}], id=&#39;2025-12-17 05:49:29.340_74df5c&#39;, created_at=&#39;2025-12-17 05:49:29.340&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=14, time=1.503781, type=&#39;chat&#39;), metadata=None)
 
 块 5
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10&#39;}], id=&#39;2025-12-17 05:36:54.177_203b1d&#39;, created_at=&#39;2025-12-17 05:36:54.177&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=20, time=3.335372, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10&#39;}], id=&#39;2025-12-17 05:49:29.451_71b39b&#39;, created_at=&#39;2025-12-17 05:49:29.451&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=20, time=1.614971, type=&#39;chat&#39;), metadata=None)
 
 块 6
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12&#39;}], id=&#39;2025-12-17 05:36:54.311_17895d&#39;, created_at=&#39;2025-12-17 05:36:54.311&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=26, time=3.469872, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12&#39;}], id=&#39;2025-12-17 05:49:29.523_1f14e3&#39;, created_at=&#39;2025-12-17 05:49:29.523&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=26, time=1.687147, type=&#39;chat&#39;), metadata=None)
 
 块 7
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14&#39;}], id=&#39;2025-12-17 05:36:54.422_37a650&#39;, created_at=&#39;2025-12-17 05:36:54.422&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=32, time=3.580593, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14&#39;}], id=&#39;2025-12-17 05:49:29.682_076341&#39;, created_at=&#39;2025-12-17 05:49:29.682&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=32, time=1.846111, type=&#39;chat&#39;), metadata=None)
 
 块 8
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16&#39;}], id=&#39;2025-12-17 05:36:54.571_561035&#39;, created_at=&#39;2025-12-17 05:36:54.571&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=38, time=3.729514, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16&#39;}], id=&#39;2025-12-17 05:49:29.789_ba849b&#39;, created_at=&#39;2025-12-17 05:49:29.789&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=38, time=1.953008, type=&#39;chat&#39;), metadata=None)
 
 块 9
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18&#39;}], id=&#39;2025-12-17 05:36:54.691_04855c&#39;, created_at=&#39;2025-12-17 05:36:54.691&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=44, time=3.849973, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18&#39;}], id=&#39;2025-12-17 05:49:30.162_aa591a&#39;, created_at=&#39;2025-12-17 05:49:30.162&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=44, time=2.326365, type=&#39;chat&#39;), metadata=None)
 
 块 10
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;2025-12-17 05:36:54.828_c070ec&#39;, created_at=&#39;2025-12-17 05:36:54.828&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=50, time=3.986549, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;2025-12-17 05:49:30.251_e471c1&#39;, created_at=&#39;2025-12-17 05:49:30.251&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=50, time=2.415514, type=&#39;chat&#39;), metadata=None)
 
 块 11
         类型: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;2025-12-17 05:36:54.904_00426c&#39;, created_at=&#39;2025-12-17 05:36:54.904&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=50, time=4.062345, type=&#39;chat&#39;), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;2025-12-17 05:49:30.318_cbce8e&#39;, created_at=&#39;2025-12-17 05:49:30.318&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=26, output_tokens=50, time=2.482163, type=&#39;chat&#39;), metadata=None)
 </pre></div>
 </div>
 </section>
@@ -613,7 +613,7 @@ AgentScope 目前支持的模型 API 和模型提供商包括：</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>最终响应:
-ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;好的，用户问“我是谁？”这个问题看起来简单，但其实挺深奥的。首先，我需要理解用户为什么会问这个问题。可能他们正在经历自我怀疑，或者对自我身份感到困惑。也有可能他们是在哲学思考，或者只是随便问问。\n\n接下来，我要考虑用户的身份。可能是个学生，或者刚进入社会的人，正在寻找自我认同。也可能是有心理困扰的人，需要一些引导。不过用户没有提供更多信息，所以得保持回答的普遍性。\n\n然后，分析问题本身。“我是谁？”是一个经典的哲学问题，涉及存在主义、心理学等多个领域。不同的学科可能有不同的答案。比如，哲学上可能涉及自我意识、存在的本质；心理学可能讨论自我认同、人格结构；宗教或灵性方面可能有更超脱的答案。\n\n需要确保回答既全面又不显得过于复杂。可能需要分几个层面来解释，比如生理、心理、社会角色、哲学思考等。同时，要避免使用专业术语，让回答更易懂。\n\n还要注意用户可能的深层需求。他们可能不仅仅想知道表面的答案，而是寻求自我认知的方法，或者需要情感支持。因此，回答中应该包含一些引导性的思考，帮助他们自己探索答案。\n\n另外，考虑到文化差异，不同文化对“自我”的定义可能不同。比如东方文化可能更强调集体身份，而西方更强调个人主义。但用户没有说明文化背景，所以保持中立。\n\n最后，确保回答友好、开放，鼓励用户进一步思考或提问。避免给出绝对化的答案，因为“我是谁”没有标准答案，每个人的情况都不同。&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;“我是谁？”这个问题看似简单，却蕴含着深刻的哲学和心理学意义。它可能指向你对自我身份的探索，也可能源于对存在本质的思考。以下是一些可能的视角，或许能帮助你更深入地理解这个问题：\n\n---\n\n### 1. **从生物学角度**  \n从生理层面看，你是一个由细胞、器官、神经系统等组成的生物体，拥有独特的基因密码（DNA），构成了你身体的“硬件”。但“我是谁”显然不止于此——它关乎意识、记忆和体验。\n\n---\n\n### 2. **从心理学角度**  \n心理学认为，**自我**是通过经验、记忆、情感和思维逐渐形成的。你可能会通过以下问题回答：  \n- 我的**性格特征**是什么？（例如：内向、乐观、敏感）  \n- 我的**价值观**和**人生目标**是什么？  \n- 我如何与他人互动？（例如：独立、依赖、合作）  \n- 我的**记忆**和**经历**如何塑造了现在的我？  \n\n但心理学也指出，**自我是流动的**——它会随着时间、环境和成长不断变化。\n\n---\n\n### 3. **从哲学角度**  \n哲学家们对“我是谁”提出了许多思考：  \n- **笛卡尔**说：“我思故我在。”（思考是存在的证明）  \n- **存在主义**认为，人没有预设的本质，而是通过选择和行动“创造”自己。  \n- **佛教**则可能认为，“我”是五蕴（色、受、想、行、识）的暂时组合，本质上是“无我”的。  \n\n这些问题没有标准答案，但它们能引发你对“存在”和“意义”的反思。\n\n---\n\n### 4. **从社会角色角度**  \n你可能是某个家庭中的成员、职场中的同事、朋友或伴侣。这些社会角色会塑造你的身份感，但它们只是“我”的一部分。真正的自我可能超越这些标签。\n\n---\n\n### 5. **从灵性或超越性角度**  \n一些灵性传统认为，“我”不仅是肉体或意识，而是更深层的存在——比如：  \n- **灵魂**（某些宗教或哲学体系中的概念）  \n- **宇宙意识**（如某些东方哲学中的“道”或“梵”）  \n- **纯粹觉知**（如禅修中体验的“观察者”）  \n\n这种视角可能帮助你跳出日常的局限，重新定义“我”的边界。\n\n---\n\n### 6. **你可能正在经历的困惑**  \n如果这个问题突然浮现，可能是因为：  \n- 你对自己的身份感到迷茫（例如：职业、价值观、人际关系的冲突）。  \n- 你对生命的意义产生疑问（“我为什么存在？”）。  \n- 你希望更深入地了解自己，但不知从何入手。  \n\n---\n\n### 如何探索“我是谁”？  \n- **自我反思**：写下你的兴趣、恐惧、梦想、价值观，以及你认为最重要的品质。  \n- **与他人对话**：问问亲近的人他们如何看待你，可能会发现新的视角。  \n- **尝试新事物**：通过体验不同角色或领域，了解自己的潜力和边界。  \n- **冥想或写作**：静下心来观察自己的思维和感受，可能找到内在的“核心”。\n\n---\n\n最终，“我是谁”可能没有一个固定的答案，而是一个持续探索的过程。你可能会在不同阶段给出不同的回答——这正是人类自我意识的奇妙之处。如果需要更具体的引导，可以告诉我你的背景或困惑，我会尽力帮助你！ 🌱&#39;}], id=&#39;2025-12-17 05:37:07.555_e36667&#39;, created_at=&#39;2025-12-17 05:37:07.555&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=11, output_tokens=1090, time=12.646665, type=&#39;chat&#39;), metadata=None)
+ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;好的，用户问“我是谁？”，这是一个哲学性很强的问题。首先，我需要理解用户为什么会问这个问题。可能是在思考自我身份、存在意义，或者有心理上的困惑。接下来，我要考虑如何回答才能既全面又有帮助。\n\n从哲学角度来看，不同的哲学家有不同的观点。比如笛卡尔的“我思故我在”，强调思维作为存在的证明；存在主义认为自我是通过选择和行动构建的；佛教则认为自我是虚幻的，是五蕴的组合。这些观点可以提供不同的视角。\n\n心理学方面，自我认同涉及个人的内在认知和外在社会角色的整合。可能需要提到埃里克森的发展阶段理论，或者自我概念的形成过程。同时，用户可能在寻求自我探索的方法，比如通过反思、日记或心理咨询。\n\n还要考虑用户可能的深层需求。他们可能感到迷茫，或者对自我有困惑，需要一些引导来探索自己的身份。这时候，除了提供理论，也可以建议实际的方法，比如自我反思练习、与他人交流，或者专业帮助。\n\n另外，要避免过于抽象或学术化的回答，保持自然和易懂。可能需要用例子或比喻来说明，比如用镜子比喻自我认知，或者用拼图比喻自我构建的过程。\n\n最后，确保回答尊重用户的感受，不带评判，鼓励他们继续探索，并提供支持性的建议。同时，提醒他们如果需要更深入的帮助，可以寻求专业的心理咨询。\n&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;“我是谁？”这个问题看似简单，却蕴含着深刻的哲学、心理学和存在主义思考。以下是一些可能的视角和思考方向，或许能帮助你更接近自己的答案：\n\n---\n\n### **1. 从哲学角度看：**\n- **笛卡尔的“我思故我在”**：法国哲学家笛卡尔认为，即使怀疑一切，只要“我”在思考，就证明“我”存在。这提示你，“我是谁”可能与你的**思维、意识和存在感**有关。\n- **存在主义**（如萨特、海德格尔）：人是通过选择、行动和责任定义自己的。你的身份不是预先注定的，而是通过**自由选择**和**生活经历**逐渐形成的。\n- **佛教的“无我”**：佛教认为“我”是五蕴（色、受、想、行、识）的暂时组合，是流动的、无常的。或许“我是谁”并非一个固定的答案，而是一个动态的过程。\n\n---\n\n### **2. 从心理学角度看：**\n- **自我认同**：心理学家埃里克森（Erikson）提出，人的一生会经历多个阶段的“身份探索”，比如青少年时期的“我是谁？”可能与职业、价值观、人际关系相关。\n- **内在与外在的自我**：你可能在问“我是一个什么样的人？”（内在特质）或“我在社会中扮演什么角色？”（外在身份）。这两者可能并不完全一致。\n- **潜意识与记忆**：你的身份也受童年经历、文化背景、情感模式等影响。通过反思过去的经历，或许能更清晰地看到“我”的轮廓。\n\n---\n\n### **3. 从存在主义的角度：**\n- **“我是谁”是开放的问题**：没有标准答案，而是需要你主动去“创造”自己的身份。比如，你选择成为什么样的人？你希望未来的自己是什么样子？\n- **与他人关系中的“我”**：你通过与他人的互动（爱、冲突、合作）逐渐定义自己。比如，“我是父母的孩子”“我是朋友的知己”“我是某个团队的一员”。\n\n---\n\n### **4. 实践中的探索：**\n- **提问法**：试着回答以下问题：\n  - 我最珍视的价值观是什么？\n  - 我在哪些情境中感到最真实？\n  - 如果没有社会标签（如职业、学历），我会如何定义自己？\n  - 我的恐惧和渴望背后隐藏着什么？\n- **写日记**：记录每天的感受、选择和反思，可能会发现某些重复的模式或核心信念。\n- **与他人对话**：和信任的人聊聊“你是谁？”，他们的视角可能帮助你看到自己未曾注意到的层面。\n\n---\n\n### **5. 一个可能的答案：**\n“我是**一个正在寻找答案的人**。”  \n这个问题本身可能就是你探索自我旅程的起点。也许“我是谁”并不需要一个终极答案，而是通过不断提问、体验和成长，逐渐接近那个更真实的自己。\n\n---\n\n如果你愿意，可以分享更多关于你此刻的感受或困惑，我会尽力帮你一起探索。 🌱&#39;}], id=&#39;2025-12-17 05:49:42.153_faf026&#39;, created_at=&#39;2025-12-17 05:49:42.153&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=11, output_tokens=961, time=11.831034, type=&#39;chat&#39;), metadata=None)
 </pre></div>
 </div>
 </section>
@@ -653,7 +653,7 @@ ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &
 <li><p><a class="reference internal" href="quickstart_message.html#message"><span class="std std-ref">创建消息</span></a></p></li>
 <li><p><a class="reference internal" href="task_prompt.html#prompt"><span class="std std-ref">提示词格式化</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 18.554 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 16.156 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-model-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/6d26becb6abae50c483b7d863e1725fb/task_model.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_model.ipynb</span></code></a></p>
