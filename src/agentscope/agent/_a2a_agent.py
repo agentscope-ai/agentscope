@@ -15,6 +15,8 @@ from typing import Callable, Literal, Union, Type, TYPE_CHECKING
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
+
 from ._a2a_card_resolver import (
     AgentCardResolverBase,
     FixedAgentCardResolver,
@@ -36,7 +38,6 @@ from ..message import (
 )
 
 if TYPE_CHECKING:
-    import httpx
     from a2a.client import ClientConfig, ClientFactory, Consumer
     from a2a.client.client_factory import TransportProducer
     from a2a.types import (
@@ -1363,7 +1364,10 @@ class A2aAgent(AgentBase):
         a2a_client_config = ClientConfig(
             streaming=self._agent_config.streaming,
             polling=self._agent_config.polling,
-            httpx_client=self._agent_config.httpx_client,
+            httpx_client=self._agent_config.httpx_client
+            or httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout=600),
+            ),
             grpc_channel_factory=self._agent_config.grpc_channel_factory,
             supported_transports=self._agent_config.supported_transports
             or [TransportProtocol.jsonrpc],

@@ -308,4 +308,3 @@ This section demonstrates how to create an ``A2aAgent`` and communicate with rem
 # - :ref:`agent`
 # - :ref:`mcp`
 #
-

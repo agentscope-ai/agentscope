@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access,too-many-public-methods
 """The A2A agent unittests."""
 import json
 from pathlib import Path
@@ -116,6 +117,7 @@ class MockClientFactory:
 
     def create(self, card: AgentCard) -> MockA2AClient:
         """Create a mock client."""
+        _ = card  # Used by real ClientFactory, not needed in mock
         client = MockA2AClient(self.response_type)
         self.created_clients.append(client)
         return client
