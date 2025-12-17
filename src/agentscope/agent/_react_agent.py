@@ -729,7 +729,12 @@ class ReActAgent(ReActAgentBase):
             if isinstance(msg, Msg):
                 query = msg.get_text_content()
             elif isinstance(msg, list):
-                query = "\n".join(_.get_text_content() for _ in msg)
+                texts = []
+                for m in msg:
+                    text = m.get_text_content()
+                    if text:
+                        texts.append(text)
+                query = "\n".join(texts)
 
             # Skip if the query is empty
             if not query:
