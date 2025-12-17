@@ -225,7 +225,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_edccb6b032384c97a44d18",
+        "id": "call_95414ba2aba74c79a61499",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -233,7 +233,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_64a09b2cb8fa452990f661",
+        "id": "call_f0392810458d42b9aff433",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -241,32 +241,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_edccb6b032384c97a44d18",
+        "id": "call_95414ba2aba74c79a61499",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 05:42:00.976197 and ended at 05:42:03.976745. "
+                "text": "Tag tag1 started at 05:45:45.277764 and ended at 05:45:48.281020. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_64a09b2cb8fa452990f661",
+        "id": "call_f0392810458d42b9aff433",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 05:42:00.976291 and ended at 05:42:03.977321. "
+                "text": "Tag tag2 started at 05:45:45.277857 and ended at 05:45:48.281679. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' was called in parallel with two different tags, 'tag1' and 'tag2'. Here are the results:
+    Jarvis: The function 'example_tool_function' was called in parallel with two different tags. 
 
-    For 'tag1': It started at 05:42:00.976197 and ended at 05:42:03.976745.
-    For 'tag2': It started at 05:42:00.976291 and ended at 05:42:03.977321.
+    - For the tag 'tag1', it started at 05:45:45.277764 and ended at 05:45:48.281020.
+    - For the tag 'tag2', it started at 05:45:45.277857 and ended at 05:45:48.281679.
 
-    Both functions executed during the same time frame, which indicates that they ran concurrently as expected.
+    Both calls have executed successfully.
 
 
 
@@ -345,11 +345,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_1447c7afdf094bc19364a6",
+        "id": "call_20ab4016ed724c269c3ddc",
         "name": "generate_response",
         "input": {
-            "name": "Albert Einstein",
-            "description": "A renowned theoretical physicist who developed the theory of relativity",
+            "name": "Einstein",
+            "description": "A renowned physicist who developed the theory of relativity",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -360,7 +360,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_1447c7afdf094bc19364a6",
+        "id": "call_20ab4016ed724c269c3ddc",
         "name": "generate_response",
         "output": [
             {
@@ -369,12 +369,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein's contributions to science have left an indelible mark on the field. He was awarded the Nobel Prize in Physics in 1921, not for his work on relativity, but for his discovery of the law of the photoelectric effect, which was pivotal in the development of quantum theory. Throughout his career, he also received other prestigious awards, including the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that continues to influence both science and philosophy.
+    Jarvis: Albert Einstein, a name synonymous with genius, was a renowned physicist best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879 and passing away at the age of 76 in 1955, Einstein's contributions to science have left an indelible mark on the world. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, though his theories of relativity were also considered groundbreaking. He further received the Copley Medal in 1925 and the Max Planck Medal in 1929, cementing his legacy as one of the most influential scientists of the 20th century.
 
     The structured output:
     {
-        "name": "Albert Einstein",
-        "description": "A renowned theoretical physicist who developed the theory of relativity",
+        "name": "Einstein",
+        "description": "A renowned physicist who developed the theory of relativity",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -451,7 +451,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 20.596 seconds)
+   **Total running time of the script:** (0 minutes 24.891 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

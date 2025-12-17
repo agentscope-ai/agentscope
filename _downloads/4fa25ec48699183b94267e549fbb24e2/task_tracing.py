@@ -21,7 +21,7 @@ Setting Up
 AgentScope Studio
 ---------------------------------------
 
-.. figure:: ../../_static/images/studio_tracing.png
+.. figure:: ../../_static/images/studio_tracing.webp
     :width: 100%
     :alt: AgentScope Studio tracing Page
     :class: bordered-image
