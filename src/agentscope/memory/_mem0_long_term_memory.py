@@ -474,6 +474,14 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         # Filter out None
         msg_list = [_ for _ in msgs if _]
+
+        start_index = 0
+        for i in range(len(msg_list) - 1, -1, -1):
+            if msg_list[i].name == "User":
+                start_index = i
+                break
+        msg_list = msg_list[start_index:]
+
         if not all(isinstance(_, Msg) for _ in msg_list):
             raise TypeError(
                 "The input messages must be a list of Msg objects.",
