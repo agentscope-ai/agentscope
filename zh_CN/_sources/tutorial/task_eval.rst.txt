@@ -330,11 +330,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_b19bf5a2db304aee9a7b23"
+        "id": "call_c64f833ecfc24759ae8acc"
     }
     system: {
         "type": "tool_result",
-        "id": "call_b19bf5a2db304aee9a7b23",
+        "id": "call_c64f833ecfc24759ae8acc",
         "name": "generate_response",
         "output": [
             {
@@ -352,11 +352,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 73021
         },
-        "id": "call_47f11fd9eee64a0097b962"
+        "id": "call_4d9ce201a8fc4797886953"
     }
     system: {
         "type": "tool_result",
-        "id": "call_47f11fd9eee64a0097b962",
+        "id": "call_4d9ce201a8fc4797886953",
         "name": "generate_response",
         "output": [
             {
@@ -365,7 +365,7 @@ AgentScope 当前的实现包括：
             }
         ]
     }
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 73031. It seems there was a slight miscalculation in the provided answer which was 73021. Let me know if you need help with anything else!
+    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73021.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -384,7 +384,7 @@ AgentScope 当前的实现包括：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 17.428 seconds)
+   **Total running time of the script:** (0 minutes 7.977 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:
