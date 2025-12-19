@@ -33,10 +33,10 @@ Concurrent Agents
 
  .. code-block:: none
 
-    智能体 1 开始于 06:05:03.106
-    智能体 2 开始于 06:05:03.106
-    智能体 1 结束于 06:05:06.109
-    智能体 2 结束于 06:05:06.109
+    智能体 1 开始于 08:43:44.158
+    智能体 2 开始于 08:43:44.158
+    智能体 1 结束于 08:43:47.161
+    智能体 2 结束于 08:43:47.162
 
 
 
@@ -84,7 +84,7 @@ Concurrent Agents
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.006 seconds)
+   **Total running time of the script:** (0 minutes 3.005 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_concurrent_agents.py:
