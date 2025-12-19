@@ -78,15 +78,11 @@ class StatefulClientBase(MCPClientBase, ABC):
                 "closing.",
             )
 
-        try:
-            await self.stack.aclose()
-            logger.info("MCP client closed.")
-        except Exception as e:
-            logger.warning("Error during MCP client cleanup: %s", e)
-        finally:
-            self.stack = None
-            self.session = None
-            self.is_connected = False
+        await self.stack.aclose()
+        logger.info("MCP client closed.")
+        self.stack = None
+        self.session = None
+        self.is_connected = False
 
     async def list_tools(self) -> List[mcp.types.Tool]:
         """Get all available tools from the server.
