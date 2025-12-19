@@ -332,11 +332,11 @@ as well.
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_de24a577601e45f08b75a6"
+        "id": "call_01cfa36b95f34d94b07451"
     }
     system: {
         "type": "tool_result",
-        "id": "call_de24a577601e45f08b75a6",
+        "id": "call_01cfa36b95f34d94b07451",
         "name": "generate_response",
         "output": [
             {
@@ -354,11 +354,11 @@ as well.
         "input": {
             "answer_as_number": 73051
         },
-        "id": "call_417617f6534a4f71b93283"
+        "id": "call_acc67de833814a6aa91697"
     }
     system: {
         "type": "tool_result",
-        "id": "call_417617f6534a4f71b93283",
+        "id": "call_acc67de833814a6aa91697",
         "name": "generate_response",
         "output": [
             {
@@ -386,7 +386,7 @@ as well.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 15.649 seconds)
+   **Total running time of the script:** (0 minutes 8.588 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:
