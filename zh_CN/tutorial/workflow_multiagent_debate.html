@@ -463,43 +463,44 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 谢谢，我将作为正方阐述我的观点。当两个圆外切且没有相对滑动时，其中一个圆绕另一个圆滚动一圈回到起点的情况下，我们可以通过计算来确定较小的圆（这里指的是圆A）会旋转多少次。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 正方观点：圆A绕圆B滚动一圈回到起点时，圆A总共会旋转4次。
 
-给定条件是圆A的半径为圆B的1/3。设圆B的半径为R，则圆A的半径r = R/3。
+理由如下：
 
-- 圆B的周长C_B = 2πR
-- 圆A的周长C_A = 2π(R/3) = (2πR)/3
+首先，我们设圆B的半径为R，则圆A的半径为r = R/3。当圆A绕着圆B无滑动地滚动一周时，它走过的路径长度等于圆B的周长加上两倍的圆A的半径（因为是外切关系），即\[2\pi R + 2r = 2\pi R + \frac{2}{3}R = \frac{8}{3}R\]。
 
-当圆A沿着圆B外侧完全绕行一周时，它实际上是在一个比圆B的周长更大的路径上移动了。这个路径的长度等于圆B的周长加上两倍的圆A的半径（因为是从圆B的一边到另一边），即\(L = C_B + 2r = 2\pi R + 2(R/3) = 2\pi R(1 + \frac{1}{3\pi})\)。但更准确地讲，由于圆A是紧贴着圆B外侧滚动，因此其实际走过的路径长度正好就是圆B的周长\(2\pi R\)。
+但是，考虑到圆A是在绕着圆B滚动的同时也在自转，实际上圆A中心移动的距离就是圆B的周长，即\[2\pi R\]。因此，对于圆A来说，它沿着这条路径滚动了一圈，相当于其自身周长的几倍呢？我们知道圆A的周长是\[2\pi r = 2\pi (R/3) = \frac{2}{3}\pi R\]。
 
-考虑到圆A在没有打滑的情况下沿这条路径滚动，我们可以通过比较该路径长度与圆A自身的周长来确定圆A完成了多少次完整旋转。所以，圆A总共旋转的次数N可以通过以下公式计算得出：
+要计算圆A相对于自身旋转了多少圈，我们需要用圆A中心行进的距离除以圆A的周长：
+\[\frac{2\pi R}{\frac{2}{3}\pi R} = 3\]
 
-\[N = \frac{L}{C_A} = \frac{2\pi R}{(2\pi R)/3} = 3\]
+这表示如果只考虑圆A沿圆B外围滚动而不考虑它们之间的相对位置变化的话，圆A应该旋转3次。然而，由于圆A在绕圆B旋转的同时也经历了整体的旋转（即绕着圆B中心公转），根据几何分析，在完成一次完整的绕行后，圆A还需要额外旋转1次来调整方向，以确保最终能够准确对接到起始位置。因此，总的旋转次数为\(3+1=4\)次。
+Bob: 反方观点：圆A绕圆B滚动一圈回到起点时，圆A总共会旋转3次。
 
-因此，根据上述分析，我的结论是：当圆A绕着圆B滚动一圈回到原点时，圆A总共会旋转3次。
-Bob: 谢谢。我作为反方，不同意正方的观点。实际上，当圆A绕着圆B滚动一圈回到原点时，圆A总共会旋转4次而非3次。
+理由如下：
 
-让我们重新审视这个问题。根据题目条件，圆A的半径是圆B半径的1/3，设圆B的半径为R，则圆A的半径r = R/3。这意味着圆A的周长C_A = 2π(R/3)，而圆B的周长C_B = 2πR。
+根据题目条件，圆A的半径是圆B半径的1/3。设圆B的半径为R，则圆A的半径为r = R/3。当圆A绕着圆B无滑动地滚动一周时，它走过的路径长度等于圆B的周长，即\[2\pi R\]。这是因为圆A与圆B外切并且没有相对滑动，所以圆A中心移动的距离正好等于圆B的周长。
 
-关键在于理解圆A沿圆B外侧滚动一圈的真实路径长度以及这如何影响圆A的自转次数。圆A在沿着圆B外缘滚动时，它不仅覆盖了圆B的周长\(2\pi R\)，还因为其自身的位置变化额外增加了相对于自己中心的一圈转动。因此，圆A实际走过的路径长度等同于一个半径为\(R + r = \frac{4}{3}R\)的大圆的周长，即\(L = 2\pi(\frac{4}{3}R) = \frac{8\pi R}{3}\)。
+接下来计算圆A相对于自身旋转了多少圈。我们知道圆A的周长是\[2\pi r = 2\pi (R/3) = \frac{2}{3}\pi R\]。要确定圆A沿这条路径滚动了多少圈，我们需要用圆A中心行进的距离除以圆A的周长：
+\[\frac{2\pi R}{\frac{2}{3}\pi R} = 3\]
 
-但是，更直观地看，当圆A完成围绕圆B一周的运动时，它不仅按照圆B周长的距离移动了一次，而且由于它是紧贴着圆B边缘进行滚动，每当圆A接触到圆B上的一个新的点，它就完成了相对于自己中心的一次完整旋转。考虑到圆A的周长是圆B周长的1/3，那么沿着圆B滚动一圈的过程中，圆A将基于自身大小完成3次完整的旋转以覆盖圆B的周长。加上最开始为了与圆B接触而发生的那一次旋转（即从起始位置到第一次接触），总共就是4次旋转。
+这表明，在圆A沿着圆B外围滚动一圈的过程中，它相对于自身轴线恰好旋转了3次。这里需要注意的是，虽然圆A在绕圆B运动时确实经历了一种公转，但这种公转并不额外增加自转次数。也就是说，圆A在完成一次完整的绕行后，并不需要再进行额外的一次自转来调整方向，因为其自转已经足够使得它能够准确对接到起始位置了。
 
-因此，我的结论是：当圆A绕着圆B滚动一圈回到原点时，圆A总共会旋转4次。
+因此，总的旋转次数为3次，而不是4次。
 /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Aggregator: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
-        &quot;finished&quot;: false,
-        &quot;correct_answer&quot;: null
+        &quot;finished&quot;: true,
+        &quot;correct_answer&quot;: &quot;3次&quot;
     },
-    &quot;id&quot;: &quot;call_22a039ea953c4c1ea3bd4c&quot;
+    &quot;id&quot;: &quot;call_61cc4f7c29a24e5eaea207&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_22a039ea953c4c1ea3bd4c&quot;,
+    &quot;id&quot;: &quot;call_61cc4f7c29a24e5eaea207&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -508,87 +509,13 @@ system: {
         }
     ]
 }
-Aggregator: 感谢两位辩论者的精彩阐述。根据你们的讨论，我们可以看到对于这个问题有两种不同的理解方式。正方Alice认为圆A绕着圆B滚动一圈回到原点时，总共会旋转3次；而反方Bob则提出圆A实际上会旋转4次。这两种观点都基于对题目条件的不同解读。
+Aggregator: 感谢两位辩论者的精彩论述。根据双方的讨论，我们可以得出结论：当圆A绕着圆B无滑动地滚动一圈回到起点时，圆A总共会旋转3次。
 
-为了得出正确的结论，我们需要明确一点：当圆A绕着圆B外侧滚动一圈（即圆A中心绕圆B一周）时，它不仅覆盖了相对于圆B周长的距离，同时也完成了额外的自转。考虑到圆A与圆B半径的比例关系，每当圆A沿着圆B边缘前进一个自身周长的距离时，它就完成了一次完整的自我旋转。由于圆A的周长是圆B周长的1/3，这意味着在圆A中心绕圆B一周的过程中，它将完成3次基于其自身大小的完整旋转以覆盖整个圆B的周长。此外，在开始接触并沿圆B边缘移动之前，圆A还需要先完成一次旋转来达到初始接触位置。因此，综合考虑这两个方面，圆A在整个过程中确实会旋转4次。
+正方提出了一个观点认为圆A在完成一次完整的绕行后还需要额外旋转1次来调整方向以确保最终能够准确对接到起始位置，从而得到4次旋转的结果。然而，反方正确地指出了，在这种情况下，圆A在绕圆B运动时经历的公转并不额外增加自转次数。因此，仅需考虑圆A沿路径移动的距离与它自身周长的比例关系，即\[2\pi R / (\frac{2}{3}\pi R) = 3\]次旋转就足够了。
 
-所以，根据上述分析，我宣布反方Bob的观点是正确的：当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。这标志着本次辩论结束。再次感谢双方精彩的辩论！
+综上所述，正确的答案是圆A总共会旋转3次。再次感谢Alice和Bob为我们带来的深入分析！如果还有其他问题或需要进一步探讨的话题，请随时告诉我。
 
-工具&quot;generate_response&quot;被调用时使用了以下参数：
-{&quot;finished&quot;: true, &quot;correct_answer&quot;: 4}
-Alice: 谢谢。我理解反方的观点，但我想澄清一下关于圆A旋转次数的计算方法。反方提到当圆A绕着圆B滚动时，它会额外完成相对于自己中心的一圈转动，这实际上是基于一个常见的误解。实际上，当我们说圆A绕圆B滚动一圈回到起点时，我们指的是圆A沿着圆B的外侧路径移动了一整圈，而不是圆A自身中心绕着圆B中心转了一圈。
-
-为了更直观地理解这个问题，我们可以想象将圆A和圆B都放在一张纸上，并且让圆A沿着圆B的边缘滚动。在这个过程中，圆A与圆B接触点的变化正好反映了圆A自身的旋转情况。因此，圆A在没有打滑的情况下沿圆B周长滚动的距离正好等于圆A自身周长的三倍（因为圆B的周长是圆A周长的3倍），这意味着圆A会完成3次完整的自转来覆盖这段距离。
-
-所以，我的结论仍然保持不变：当圆A绕着圆B滚动一圈回到原点时，圆A总共会旋转3次。这个结果是基于几何学的基本原理得出的，而非额外考虑圆A中心位置的变化。
-Bob: 谢谢。我坚持我的观点，即当圆A绕着圆B滚动一圈回到原点时，圆A总共会旋转4次。
-
-让我进一步澄清我的理由。首先，我们需要明确的是，当一个圆沿着另一个圆的外侧滚动而没有打滑时，这个过程实际上包含了两个独立但相关的运动：一是圆A沿着圆B边缘移动的平移运动；二是圆A自身围绕其中心的旋转运动。
-
-根据题目条件，圆A的半径为圆B半径的1/3。设圆B的半径为R，则圆A的半径r = R/3。因此，圆A的周长C_A = 2π(R/3)，而圆B的周长C_B = 2πR。
-
-关键在于理解圆A在完成围绕圆B一周的过程中，它不仅覆盖了圆B的周长\(2\pi R\)，还因为它是紧贴着圆B边缘进行滚动，每当圆A接触到圆B上的一个新的点，它就完成了相对于自己中心的一次完整旋转。这意味着，在圆A沿圆B边缘滚动一周的过程中，它将基于自身大小完成3次完整的旋转以覆盖圆B的周长。然而，由于圆A是紧贴着圆B边缘开始滚动的，在第一次接触之前就已经处于一个初始位置，这可以被视为一次额外的“旋转”或定位，使得总旋转次数达到4次。
-
-为了更直观地理解这一点，我们可以考虑如果将圆A放置于圆B上并标记其与圆B接触的位置，然后让圆A开始滚动。当圆A首次回到起始位置时，你会发现标记已经转过了四个圆A的周长，而不是三个。这是因为最后一次旋转是在圆A回到起点后发生的，即使此时它已经停止了平移运动。
-
-综上所述，我的结论不变：当圆A绕着圆B滚动一圈回到原点时，考虑到所有相关因素，圆A总共会旋转4次。
-Aggregator: {
-    &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;name&quot;: &quot;generate_response&quot;,
-    &quot;input&quot;: {
-        &quot;finished&quot;: true,
-        &quot;correct_answer&quot;: 4
-    },
-    &quot;id&quot;: &quot;call_ef88ab44ae79426ab0b478&quot;
-}
-system: {
-    &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_ef88ab44ae79426ab0b478&quot;,
-    &quot;name&quot;: &quot;generate_response&quot;,
-    &quot;output&quot;: [
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Arguments Validation Error: 1 validation error for JudgeModel\ncorrect_answer\n  Input should be a valid string [type=string_type, input_value=4, input_type=int]\n    For further information visit https://errors.pydantic.dev/2.12/v/string_type&quot;
-        }
-    ]
-}
-Aggregator: {
-    &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;name&quot;: &quot;generate_response&quot;,
-    &quot;input&quot;: {
-        &quot;finished&quot;: true,
-        &quot;correct_answer&quot;: &quot;4&quot;
-    },
-    &quot;id&quot;: &quot;call_6d2f9cc4a0b44b6795fc27&quot;
-}
-system: {
-    &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_6d2f9cc4a0b44b6795fc27&quot;,
-    &quot;name&quot;: &quot;generate_response&quot;,
-    &quot;output&quot;: [
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Successfully generated response.&quot;
-        }
-    ]
-}
-Aggregator: 感谢两位辩论者Alice和Bob提供了深入且详细的分析。经过仔细考虑双方的观点，现在我将给出最终的结论。
-
-**问题核心**：当圆A（半径为圆B半径的1/3）绕着圆B滚动一圈回到起点时，圆A总共会旋转多少次？
-
-**正确答案**：圆A总共会旋转4次。
-
-**理由**：
-- 圆A的周长是圆B周长的1/3。
-- 当圆A沿着圆B外侧滚动一圈回到起点时，它不仅覆盖了圆B的周长\(2\pi R\)，还因为它是紧贴着圆B边缘进行滚动，每当圆A接触到圆B上的一个新的点，它就完成了相对于自己中心的一次完整旋转。
-- 因此，在圆A沿圆B边缘滚动一周的过程中，它将基于自身大小完成3次完整的旋转以覆盖圆B的周长。
-- 除此之外，还需要考虑到圆A在开始接触并沿圆B边缘移动之前，就已经处于一个初始位置，这可以被视为一次额外的“旋转”或定位。
-
-因此，综合考虑这两个方面，圆A在整个过程中确实会旋转4次。
-
-再次感谢Alice和Bob的精彩辩论。本次辩论结束，正确答案是4次旋转。
-
-辩论结束，正确答案是： 4
+辩论结束，正确答案是： 3次
 </pre></div>
 </div>
 <section id="id1">
@@ -597,7 +524,7 @@ Aggregator: 感谢两位辩论者Alice和Bob提供了深入且详细的分析。
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">管道 (Pipeline)</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 33.754 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 39.512 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>
