@@ -329,9 +329,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='jiavqH6wbxGCwYsYW9PfWR', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='3XT3NjJzUv8Y3T4MwXNeLe', embedding=None, score=0.5657136536003617) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='B73sS45uU7AbmynaiWsdaV', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='QgqeLcnFRyRhaMXX5LjqVL', embedding=None, score=0.5062624400117308) 
 
 
 
@@ -453,37 +453,13 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a close friend like John Doe. Is there anything specific you'd like to share or any plans you're making with your best friend?
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any particular way you'd like to celebrate your friendship?
 
 
     The second response: 
     Friday: {
         "type": "tool_use",
-        "id": "call_807278a50fc945aab4e326",
-        "name": "retrieve_knowledge",
-        "input": {
-            "query": "John Doe father",
-            "limit": 5,
-            "score_threshold": 0.7
-        }
-    }
-    system: {
-        "type": "tool_result",
-        "id": "call_807278a50fc945aab4e326",
-        "name": "retrieve_knowledge",
-        "output": [
-            {
-                "type": "text",
-                "text": "No relevant documents found. TRY to reduce the `score_threshold` parameter to get more results."
-            }
-        ]
-    }
-    Friday: I couldn't find any specific information about John Doe's father with the current search. It might be that the information is not available in my sources, or it could be that we need to broaden the search a bit.
-
-    Would you like me to try again with a less strict search, or do you have any additional details that might help, such as his father's name or occupation? If you're just curious and don't have more details, I can attempt a broader search.
-    {
-        "type": "tool_use",
-        "id": "call_6971bab5d6c44b7fb2dc73",
+        "id": "call_21e50b3f515644528b1567",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
@@ -491,19 +467,21 @@ and providing a proper description for the tool.
             "score_threshold": 0.5
         }
     }
-
     system: {
         "type": "tool_result",
-        "id": "call_6971bab5d6c44b7fb2dc73",
+        "id": "call_21e50b3f515644528b1567",
         "name": "retrieve_knowledge",
         "output": [
             {
                 "type": "text",
-                "text": "Score: 0.5653893900693138, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
+                "text": "Score: 0.5653893900693137, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
             }
         ]
     }
-    Friday: I found some information that suggests John Doe's father is Michael Doe, who works as a doctor. It also mentions that his mother is Sarah Doe, and she is a teacher. Is this the John Doe you're asking about, or would you like me to search for more information?
+    Friday: John Doe's father is Michael Doe, who is a doctor. It seems that John is very proud of his father. If you need more information about his family, feel free to ask.
+  
+
+    It appears there was some retrieved information about John Doe's father. According to the details, John Doe's father is Michael Doe, and he is a doctor. John is very proud of his father. If you need more information or if there's anything else I can help with, just let me know!
 
 
 
@@ -719,7 +697,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='cAWYmVauMkERUPumRqU6cu', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2025-12-19 08:41:35.693', invocation_id='None')
+    Msg(id='HwWdVMy6g8cskfjLkAA4w2', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2025-12-19 10:43:33.952', invocation_id='None')
 
 
 
@@ -732,7 +710,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 35.038 seconds)
+   **Total running time of the script:** (0 minutes 28.739 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:

@@ -654,6 +654,7 @@
         <span class="c1"># -------------- The reasoning-acting loop --------------</span>
         <span class="c1"># Cache the structured output generated in the finish function call</span>
         <span class="n">structured_output</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">reply_msg</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_iters</span><span class="p">):</span>
             <span class="c1"># -------------- The reasoning process --------------</span>
             <span class="n">msg_reasoning</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning</span><span class="p">(</span><span class="n">tool_choice</span><span class="p">)</span>
@@ -688,12 +689,13 @@
                     <span class="k">if</span> <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">has_content_blocks</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">):</span>
                         <span class="c1"># Re-use the existing text response if any to avoid</span>
                         <span class="c1"># duplicate text generation</span>
-                        <span class="k">return</span> <span class="n">Msg</span><span class="p">(</span>
+                        <span class="n">reply_msg</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
                             <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
                             <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;text&quot;</span><span class="p">),</span>
                             <span class="s2">&quot;assistant&quot;</span><span class="p">,</span>
                             <span class="n">metadata</span><span class="o">=</span><span class="n">structured_output</span><span class="p">,</span>
                         <span class="p">)</span>
+                        <span class="k">break</span>
 
                     <span class="c1"># Generate a textual response in the next iteration</span>
                     <span class="n">msg_hint</span> <span class="o">=</span> <span class="n">Msg</span><span class="p">(</span>
@@ -732,11 +734,15 @@
                 <span class="c1"># Exit the loop when no structured output is required (or</span>
                 <span class="c1"># already satisfied) and only text response is generated</span>
                 <span class="n">msg_reasoning</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">structured_output</span>
-                <span class="k">return</span> <span class="n">msg_reasoning</span>
+                <span class="n">reply_msg</span> <span class="o">=</span> <span class="n">msg_reasoning</span>
+                <span class="k">break</span>
 
         <span class="c1"># When the maximum iterations are reached</span>
-        <span class="n">reply_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_summarizing</span><span class="p">()</span>
-        <span class="n">reply_msg</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">structured_output</span>
+        <span class="c1"># and no reply message is generated</span>
+        <span class="k">if</span> <span class="n">reply_msg</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">reply_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_summarizing</span><span class="p">()</span>
+            <span class="n">reply_msg</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">structured_output</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">reply_msg</span><span class="p">)</span>
 
         <span class="c1"># Post-process the memory, long-term memory</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static_control</span><span class="p">:</span>
@@ -748,7 +754,6 @@
                 <span class="p">],</span>
             <span class="p">)</span>
 
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">reply_msg</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">reply_msg</span></div>
 
 
