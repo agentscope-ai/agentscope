@@ -138,3 +138,9 @@ todo.md
 
 # runtime outputs (logical filesystem runs)
 output/
+
+enable_spec_by_codex.sh
+todo.md
+/.codex/
+/.specify/
+/.claude/
