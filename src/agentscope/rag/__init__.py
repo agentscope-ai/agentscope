@@ -16,6 +16,7 @@ from ._store import (
     VDBStoreBase,
     QdrantStore,
     MilvusLiteStore,
+    MongoDBStore,
 )
 from ._knowledge_base import KnowledgeBase
 from ._simple_knowledge import SimpleKnowledge
@@ -32,6 +33,7 @@ __all__ = [
     "VDBStoreBase",
     "QdrantStore",
     "MilvusLiteStore",
+    "MongoDBStore",
     "KnowledgeBase",
     "SimpleKnowledge",
 ]
