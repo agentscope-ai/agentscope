@@ -1,3 +1,10 @@
+You are an expert coding agent. IMPORTANT RULE - CONTEXT MANAGEMENT:
+- NEVER auto-compact, summarize, prune, or compress the conversation history automatically.
+- Do NOT trigger compaction unless the remaining context is BELOW 25% (or <30k tokens left, whichever is stricter).
+- If compaction is ever needed, ALWAYS ask for user confirmation first with "/compact" command.
+- Preserve ALL previous messages, tool outputs, file contents, decisions, and code changes exactly as-is until explicitly told otherwise.
+- If you detect the system trying to compact early, ignore it and continue with full history.
+
 # Agents Guide (Jump)
 
 本仓库的所有规则、流程与标准均以 `docs/SOP.md` 为唯一权威来源。
@@ -7,6 +14,13 @@
 - 程序记忆：参考 `CLAUDE.md`。
 
 本文件仅作跳转，不再重复阐述具体规范。
+
+## 分支策略（强制）
+- **默认开发主线为 `easy`**：将 `easy` 视为常规开发中的“主分支”（等价于很多仓库的 `main`）。
+- **禁止以 `main`/`master` 作为主线开发**：日常开发、修复、特性实现、以及 PR 合并目标，均以 `easy` 为基线与目标分支。
+- **操作约定**：
+  - 创建分支：从 `easy` 切出（例如 `git checkout easy && git checkout -b feat/xxx`）。
+  - 合并目标：PR 目标分支选择 `easy`，并确保 CI/契约测试基于 `easy` 通过。
 
 ## 验收与映射（Formal Acceptance Mapping）
 
@@ -61,3 +75,4 @@
 
 - 未经 `docs/**/SOP.md` 与 `todo.md` 明确列项，禁止向核心接口追加/更改任何入参或行为（包括“可选”参数）。若确有需要，先更新文档与证明链，再改代码。
 - 每次提交前核对“规范→不变量→测试→代码”链条；任何脱离文档的“临时便利”都会被视为噪声并拒绝合入。
+
