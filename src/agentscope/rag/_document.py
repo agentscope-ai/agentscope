@@ -49,3 +49,20 @@ class Document:
 
     score: float | None = None
     """The relevance score of the data chunk."""
+
+    def get_text(self) -> str:
+        """Extract text content from this document.
+
+        Returns:
+            Text content as string
+
+        Raises:
+            ValueError: If content is not a TextBlock or doesn't contain text
+        """
+        content = self.metadata.content
+        if isinstance(content, dict) and content.get("type") == "text":
+            text = content.get("text", "")
+            return str(text) if text is not None else ""
+        raise ValueError(
+            f"Document {self.id} does not contain text content.",
+        )
