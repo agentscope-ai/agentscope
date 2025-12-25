@@ -6,9 +6,10 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from queue import Queue
 from threading import Event
-from typing import Any, Type, List
+from typing import Any, Type, List, Sequence
 
 import jsonschema
+import numpy as np
 import requests
 import shortuuid
 import socketio
@@ -29,7 +30,9 @@ from ..message import (
 class UserInputData:
     """The user input data."""
 
-    blocks_input: List[TextBlock | ImageBlock | AudioBlock | VideoBlock] = None
+    blocks_input: Sequence[
+        TextBlock | ImageBlock | AudioBlock | VideoBlock
+    ] = None
     """The text input from the user"""
 
     structured_input: dict[str, Any] | None = None
@@ -409,3 +412,151 @@ class StudioUserInput(UserInputBase):
                 self.studio_url,
                 str(e),
             )
+
+
+class AudioUserInput(UserInputBase):
+    """The audio user input using microphone."""
+
+    def __init__(
+        self,
+        input_hint: str = "Ready to interact. "
+        "Press Enter for VOICE or type for TEXT: ",
+        sample_rate: int = 16000,
+        channels: int = 1,
+        dtype: np.dtype = np.int16,
+        chunk_size: int = 3200,
+    ) -> None:
+        """Initialize the audio user input."""
+        try:
+            from .._utils._audio import MicrophoneRecorder, AudioProcessor
+        except ImportError as e:
+            raise ImportError(
+                "Please install the sounddevice package to use audio input.",
+            ) from e
+
+        self._MicrophoneRecorder = MicrophoneRecorder
+        self._AudioProcessor = AudioProcessor
+
+        self._AudioProcessor.validate_audio_params(
+            sample_rate,
+            channels,
+            chunk_size,
+        )
+
+        self.input_hint = input_hint
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.dtype = dtype
+        self.chunk_size = chunk_size
+
+    async def __call__(
+        self,
+        agent_id: str,
+        agent_name: str,
+        *args: Any,
+        structured_model: Type[BaseModel] | None = None,
+        **kwargs: Any,
+    ) -> UserInputData:
+        """Handle the user input from microphone or terminal."""
+        while True:
+            recorder = self._MicrophoneRecorder(
+                sample_rate=self.sample_rate,
+                channels=self.channels,
+                dtype=self.dtype,
+            )
+
+            user_input = input(self.input_hint)
+
+            if user_input == "":
+                try:
+                    recorder.start()
+                    recording_input = input(
+                        "Recording... Press Enter to stop, or type message "
+                        "to send text.\n",
+                    )
+
+                    recorded_audio = recorder.stop()
+
+                    if recording_input != "":
+                        blocks_input = [
+                            TextBlock(type="text", text=recording_input),
+                        ]
+                    else:
+                        if not recorded_audio:
+                            logger.info(
+                                "No valid audio recorded. Please try again.",
+                            )
+                            continue
+
+                        logger.info(
+                            "Successfully recorded audio: %d bytes",
+                            len(recorded_audio),
+                        )
+                        # process audio data
+                        blocks_input = (
+                            self._AudioProcessor.create_audio_blocks(
+                                recorded_audio,
+                                self.chunk_size,
+                            )
+                        )
+
+                except Exception as e:
+                    logger.info("Error during recording: %s", e)
+                    continue
+            else:
+                blocks_input = [TextBlock(type="text", text=user_input)]
+
+            # Handle structured input if needed
+            structured_input = None
+            if structured_model is not None:
+                structured_input = await self._handle_structured_input(
+                    structured_model,
+                )
+
+            return UserInputData(
+                blocks_input=blocks_input,
+                structured_input=structured_input,
+            )
+
+    async def _handle_structured_input(
+        self,
+        structured_model: Type[BaseModel],
+    ) -> dict[str, Any]:
+        """Handle structured input similar to TerminalUserInput"""
+        structured_input = {}
+        json_schema = structured_model.model_json_schema()
+        required = json_schema.get("required", [])
+        print("Structured input (press Enter to skip for optional):")
+
+        for key, item in json_schema.get("properties").items():
+            requirements = {**item}
+            requirements.pop("title")
+
+            while True:
+                res = input(f"\t{key} ({requirements}): ")
+
+                if res == "":
+                    if key in required:
+                        print(f"Key {key} is required.")
+                        continue
+                    res = item.get("default", None)
+
+                if item.get("type").lower() == "integer":
+                    try:
+                        res = json5.loads(res)
+                    except json.decoder.JSONDecodeError as e:
+                        print(
+                            f"\033[31mInvalid input with error:\n```\
+                            n{e}\n```\033[0m",
+                        )
+                        continue
+
+                try:
+                    jsonschema.validate(res, item)
+                    structured_input[key] = res
+                    break
+                except jsonschema.ValidationError as e:
+                    print(f"\033[31mValidation error:\n```\n{e}\n```\033[0m")
+                    time.sleep(0.5)
+
+        return structured_input
