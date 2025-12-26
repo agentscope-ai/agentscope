@@ -47,6 +47,10 @@ class AnthropicChatModel(ChatModelBase):
         thinking: dict | None = None,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        max_retries: int = 0,
+        retry_interval: float = 1.0,
+        fallback_model_name: str | None = None,
+        fallback_max_retries: int = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize the Anthropic chat model.
@@ -78,6 +82,17 @@ class AnthropicChatModel(ChatModelBase):
              optional):
                 The extra keyword arguments used in Anthropic API generation,
                 e.g. `temperature`, `seed`.
+            max_retries (`int`, default `0`):
+                Maximum number of retry attempts when API calls fail.
+            retry_interval (`float`, default `1.0`):
+                Initial retry interval in seconds. The interval will increase
+                exponentially with each retry attempt.
+            fallback_model_name (`str | None`, default `None`):
+                The fallback model name to use when all retries with the
+                primary model fail. If provided, a final attempt will be made
+                using this model before raising the exception.
+            fallback_max_retries (`int`, default `0`):
+                Maximum number of retry attempts for fallback model.
             **kwargs (`Any`):
                 Additional keyword arguments.
         """
@@ -113,7 +128,14 @@ class AnthropicChatModel(ChatModelBase):
                 "`pip install anthropic`.",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name,
+            stream,
+            max_retries,
+            retry_interval,
+            fallback_model_name,
+            fallback_max_retries,
+        )
 
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key,
@@ -124,13 +146,14 @@ class AnthropicChatModel(ChatModelBase):
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
-        **generate_kwargs: Any,
+        model_name_override: str | None = None,
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
         arguments.
@@ -184,8 +207,10 @@ class AnthropicChatModel(ChatModelBase):
                     both `tools` and `tool_choice` parameters are ignored,
                     and the model will only perform structured output
                     generation without calling any other tools.
-
-            **generate_kwargs (`Any`):
+            model_name_override (`str | None`, default `None`):
+                If provided, use this model name instead of the default
+                `self.model_name`. This is used for fallback model calls.
+            **kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API,
                 e.g. `temperature`, `top_p`, etc. Please
                 refer to the Anthropic API documentation for more details.
@@ -193,13 +218,15 @@ class AnthropicChatModel(ChatModelBase):
         Returns:
             `ChatResponse | AsyncGenerator[ChatResponse, None]`:
                 The response from the Anthropic chat completions API."""
+        # Use override model name if provided, otherwise use default
+        current_model_name = model_name_override or self.model_name
 
-        kwargs: dict[str, Any] = {
-            "model": self.model_name,
+        kwargs = {
+            "model": current_model_name,
             "max_tokens": self.max_tokens,
             "stream": self.stream,
             **self.generate_kwargs,
-            **generate_kwargs,
+            **kwargs,
         }
         if self.thinking and "thinking" not in kwargs:
             kwargs["thinking"] = self.thinking
