@@ -6,10 +6,10 @@
 <link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Handoffs" href="workflow_handoffs.html"><link rel="prev" title="Concurrent Agents" href="workflow_concurrent_agents.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
-    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.12.19 -->
         <title>Routing - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
-    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
@@ -437,13 +437,13 @@ Router: {
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;your_choice&quot;: &quot;Content Generation&quot;,
-        &quot;task_description&quot;: &quot;Write a poem as per the user&#39;s request&quot;
+        &quot;task_description&quot;: &quot;Write a poem&quot;
     },
-    &quot;id&quot;: &quot;call_cac74b7f648d46978e9498&quot;
+    &quot;id&quot;: &quot;call_8f4f55f2746848648058cb&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_cac74b7f648d46978e9498&quot;,
+    &quot;id&quot;: &quot;call_8f4f55f2746848648058cb&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -452,11 +452,11 @@ system: {
         }
     ]
 }
-Router: Sure, I can help with that! Could you please provide me with some themes or specific elements you&#39;d like to include in your poem? This could be anything from a particular mood, a story, nature, love, or any other ideas you have in mind.
+Router: Sure, I can help with that! Could you give me a bit more information to get started? Such as the theme, style, or any specific elements you&#39;d like included in the poem?
 The structured output:
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;Write a poem as per the user&#39;s request&quot;
+    &quot;task_description&quot;: &quot;Write a poem&quot;
 }
 </pre></div>
 </div>
@@ -555,9 +555,9 @@ The structured output:
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;a quick sort function&quot;
     },
-    &quot;id&quot;: &quot;call_a1fdbed651a3473ba6f2d2&quot;
+    &quot;id&quot;: &quot;call_16fbd9027a5948f9a31791&quot;
 }
-PythonAgent: Certainly! Here&#39;s a Python implementation of the Quick Sort algorithm. This is a popular and efficient sorting algorithm that uses a divide-and-conquer approach to sort elements.
+PythonAgent: Certainly! Here&#39;s a Python implementation of the Quick Sort algorithm:
 
 ```python
 def quick_sort(arr):
@@ -572,6 +572,7 @@ def quick_sort(arr):
 
 # Example usage:
 arr = [3, 6, 8, 10, 1, 2, 1]
+print(&quot;Original array:&quot;, arr)
 sorted_arr = quick_sort(arr)
 print(&quot;Sorted array:&quot;, sorted_arr)
 ```
@@ -579,25 +580,25 @@ print(&quot;Sorted array:&quot;, sorted_arr)
 ### Explanation:
 - **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.
 - **Pivot Selection**: We choose the middle element of the array as the pivot.
-- **Partitioning**: We create three sub-arrays:
+- **Partitioning**: We create three lists:
   - `left`: All elements less than the pivot.
   - `middle`: All elements equal to the pivot.
   - `right`: All elements greater than the pivot.
-- **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` sub-arrays and concatenate the results with the `middle` array.
+- **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` lists and concatenate the results with the `middle` list.
 
-This implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more efficient.
+This implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more memory-efficient.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a1fdbed651a3473ba6f2d2&quot;,
+    &quot;id&quot;: &quot;call_16fbd9027a5948f9a31791&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Certainly! Here&#39;s a Python implementation of the Quick Sort algorithm. This is a popular and efficient sorting algorithm that uses a divide-and-conquer approach to sort elements.\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(\&quot;Sorted array:\&quot;, sorted_arr)\n```\n\n### Explanation:\n- **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.\n- **Pivot Selection**: We choose the middle element of the array as the pivot.\n- **Partitioning**: We create three sub-arrays:\n  - `left`: All elements less than the pivot.\n  - `middle`: All elements equal to the pivot.\n  - `right`: All elements greater than the pivot.\n- **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` sub-arrays and concatenate the results with the `middle` array.\n\nThis implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more efficient.&quot;
+            &quot;text&quot;: &quot;Certainly! Here&#39;s a Python implementation of the Quick Sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nprint(\&quot;Original array:\&quot;, arr)\nsorted_arr = quick_sort(arr)\nprint(\&quot;Sorted array:\&quot;, sorted_arr)\n```\n\n### Explanation:\n- **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.\n- **Pivot Selection**: We choose the middle element of the array as the pivot.\n- **Partitioning**: We create three lists:\n  - `left`: All elements less than the pivot.\n  - `middle`: All elements equal to the pivot.\n  - `right`: All elements greater than the pivot.\n- **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` lists and concatenate the results with the `middle` list.\n\nThis implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more memory-efficient.&quot;
         }
     ]
 }
-Router: The Python function for the Quick Sort algorithm has been generated. Here&#39;s the code:
+Router: The Python code for a quick sort function has been generated. Here&#39;s the implementation:
 
 ```python
 def quick_sort(arr):
@@ -612,16 +613,17 @@ def quick_sort(arr):
 
 # Example usage:
 arr = [3, 6, 8, 10, 1, 2, 1]
+print(&quot;Original array:&quot;, arr)
 sorted_arr = quick_sort(arr)
 print(&quot;Sorted array:&quot;, sorted_arr)
 ```
 
-This implementation of Quick Sort uses a divide-and-conquer approach to sort elements. It selects a pivot (in this case, the middle element), and then partitions the other elements into those less than, equal to, and greater than the pivot, before recursively sorting the sub-arrays. This version is simple and clear but may not be the most space-efficient for large datasets, as it creates new lists during each recursive call.
+This version of Quick Sort is simple and easy to understand. It uses a pivot, which is the middle element of the array, and it partitions the other elements into three lists: `left` for elements less than the pivot, `middle` for elements equal to the pivot, and `right` for elements greater than the pivot. The function then recursively sorts the `left` and `right` lists and combines them with the `middle` list.
 
-You can use the `quick_sort` function by passing an array or list of numbers to it, and it will return a new list with the elements sorted.
+For large datasets, you might want to consider an in-place version of Quick Sort, which would be more memory-efficient. If you need that, feel free to ask!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 27.794 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 27.279 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>
