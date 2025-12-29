@@ -428,7 +428,8 @@
 
     <span class="c1"># Web url</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="ow">and</span> <span class="n">parsed_url</span><span class="o">.</span><span class="n">scheme</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
-        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">lower_url</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">support_image_extensions</span><span class="p">):</span>
+        <span class="n">path_lower</span> <span class="o">=</span> <span class="n">parsed_url</span><span class="o">.</span><span class="n">path</span> <span class="k">if</span> <span class="n">parsed_url</span><span class="o">.</span><span class="n">path</span> <span class="k">else</span> <span class="n">parsed_url</span><span class="o">.</span><span class="n">netloc</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">path_lower</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">support_image_extensions</span><span class="p">):</span>
             <span class="k">return</span> <span class="n">url</span>
 
     <span class="c1"># Check if it is a local file</span>
