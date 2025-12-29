@@ -6,10 +6,10 @@
 <link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="常见问题" href="faq.html"><link rel="prev" title="Routing" href="workflow_routing.html">
         <link rel="prefetch" href="../_static/logo.svg" as="image">
 
-    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.09.25 -->
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.12.19 -->
         <title>Handoffs - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
-    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=580074bf" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
@@ -366,46 +366,50 @@ to download the full example code.</p>
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;在 Python 中编写并执行一个打印 &#39;Hello, World!&#39; 的简单脚本。&quot;
+        &quot;task_description&quot;: &quot;在 Python 中编写并执行一个简单的 Hello World 程序，然后返回程序的输出结果。&quot;
     },
-    &quot;id&quot;: &quot;call_9aef0d69487745358bacad&quot;
+    &quot;id&quot;: &quot;call_a600e21d546649b19ee5dd&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
-        &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
-        &quot;timeout&quot;: 5
+        &quot;code&quot;: &quot;print(&#39;Hello World!&#39;)&quot;,
+        &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_858b0b5da1ae444197b3d9&quot;
+    &quot;id&quot;: &quot;call_125eaca909114907be19ab&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_858b0b5da1ae444197b3d9&quot;,
+    &quot;id&quot;: &quot;call_125eaca909114907be19ab&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
+            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
         }
     ]
 }
-Worker: Python 脚本已成功执行，并打印出了 &#39;Hello, World!&#39;。
+Worker: 这是 Python &quot;Hello World!&quot; 程序的输出结果：
+
+```
+Hello World!
+```
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_9aef0d69487745358bacad&quot;,
+    &quot;id&quot;: &quot;call_a600e21d546649b19ee5dd&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Python 脚本已成功执行，并打印出了 &#39;Hello, World!&#39;。&quot;
+            &quot;text&quot;: &quot;这是 Python \&quot;Hello World!\&quot; 程序的输出结果：\n\n```\nHello World!\n```&quot;
         }
     ]
 }
-Orchestrator: 子智能体已经成功地在 Python 中执行了 &quot;Hello, World!&quot; 的打印任务。以下是结果：
+Orchestrator: 子智能体已经完成了一个简单的 Python &quot;Hello World!&quot; 程序的执行，程序的输出结果如下：
 
 ```
-Hello, World!
+Hello World!
 ```
 </pre></div>
 </div>
@@ -489,7 +493,7 @@ Hello, World!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 13.450 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.520 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>
