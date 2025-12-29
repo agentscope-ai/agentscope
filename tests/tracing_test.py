@@ -138,10 +138,10 @@ class TracingTest(IsolatedAsyncioTestCase):
                 self.raise_error = raise_error
 
             @trace_llm
-            async def __call__(
+            async def _call_api(
                 self,
-                messages: list[dict],
-                **kwargs: Any,
+                _messages: list[dict],
+                **_kwargs: Any,
             ) -> AsyncGenerator[ChatResponse, None] | ChatResponse:
                 """Simulate LLM call"""
 
@@ -218,6 +218,7 @@ class TracingTest(IsolatedAsyncioTestCase):
                 )
 
             async def observe(self, msg: Msg) -> None:
+                """Observe message"""
                 raise NotImplementedError()
 
             async def handle_interrupt(

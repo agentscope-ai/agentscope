@@ -172,12 +172,13 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             mock_call.return_value = self._create_async_generator(chunks)
             result = await model(messages)
 
-            call_args = mock_call.call_args[1]
-            self.assertTrue(call_args["enable_thinking"])
-            self.assertTrue(call_args["stream"])
             responses = []
             async for response in result:
                 responses.append(response)
+
+            call_args = mock_call.call_args[1]
+            self.assertTrue(call_args["enable_thinking"])
+            self.assertTrue(call_args["stream"])
             self.assertGreater(len(responses), 0)
             self.assertIsInstance(responses[0], ChatResponse)
 

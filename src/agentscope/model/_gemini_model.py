@@ -41,6 +41,10 @@ class GeminiChatModel(ChatModelBase):
         thinking_config: dict | None = None,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        max_retries: int = 0,
+        retry_interval: float = 1.0,
+        fallback_model_name: str | None = None,
+        fallback_max_retries: int = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize the Gemini chat model.
@@ -72,6 +76,17 @@ class GeminiChatModel(ChatModelBase):
              optional):
                The extra keyword arguments used in Gemini API generation,
                e.g. `temperature`, `seed`.
+            max_retries (`int`, default `0`):
+                Maximum number of retry attempts when API calls fail.
+            retry_interval (`float`, default `1.0`):
+                Initial retry interval in seconds. The interval will increase
+                exponentially with each retry attempt.
+            fallback_model_name (`str | None`, default `None`):
+                The fallback model name to use when all retries with the
+                primary model fail. If provided, a final attempt will be made
+                using this model before raising the exception.
+            fallback_max_retries (`int`, default `0`):
+                Maximum number of retry attempts for fallback model.
             **kwargs (`Any`):
                 Additional keyword arguments.
         """
@@ -107,7 +122,14 @@ class GeminiChatModel(ChatModelBase):
                 "`pip install -q -U google-genai`",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name,
+            stream,
+            max_retries,
+            retry_interval,
+            fallback_model_name,
+            fallback_max_retries,
+        )
 
         self.client = genai.Client(
             api_key=api_key,
@@ -117,13 +139,14 @@ class GeminiChatModel(ChatModelBase):
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
-        **config_kwargs: Any,
+        model_name_override: str | None = None,
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
 
@@ -150,15 +173,19 @@ class GeminiChatModel(ChatModelBase):
 
                 For more details, please refer to
                     https://ai.google.dev/gemini-api/docs/structured-output
-
-            **config_kwargs (`Any`):
+            model_name_override (`str | None`, default `None`):
+                If provided, use this model name instead of the default
+                `self.model_name`. This is used for fallback model calls.
+            **kwargs (`Any`):
                 The keyword arguments for Gemini chat completions API.
         """
+        # Use override model name if provided, otherwise use default
+        current_model_name = model_name_override or self.model_name
 
         config: dict = {
             "thinking_config": self.thinking_config,
             **self.generate_kwargs,
-            **config_kwargs,
+            **kwargs,
         }
 
         if tools:
@@ -190,8 +217,8 @@ class GeminiChatModel(ChatModelBase):
             config["response_schema"] = structured_model
 
         # Prepare the arguments for the Gemini API call
-        kwargs: dict[str, JSONSerializableObject] = {
-            "model": self.model_name,
+        kwargs = {
+            "model": current_model_name,
             "contents": messages,
             "config": config,
         }
@@ -336,7 +363,7 @@ class GeminiChatModel(ChatModelBase):
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (`ChatCompletion`):
-                The OpenAI chat completion response object to parse.
+                The Gemini chat completion response object to parse.
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.

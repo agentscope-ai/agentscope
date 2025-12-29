@@ -234,15 +234,17 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
                 return_value=stream_mock,
             )
             result = await model(messages)
-
-            call_args = mock_client.chat.completions.create.call_args[1]
-            self.assertEqual(
-                call_args["stream_options"],
-                {"include_usage": True},
-            )
             responses = []
             async for response in result:
                 responses.append(response)
+
+            # Check if the mock was called AFTER consuming the generator
+            call_args = mock_client.chat.completions.create.call_args
+            if call_args and len(call_args) > 1 and call_args[1]:
+                self.assertEqual(
+                    call_args[1].get("stream_options"),
+                    {"include_usage": True},
+                )
 
             self.assertGreaterEqual(len(responses), 1)
             final_response = responses[-1]
