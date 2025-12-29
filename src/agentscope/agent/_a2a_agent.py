@@ -11,7 +11,7 @@ import asyncio
 import json
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Union, Type, TYPE_CHECKING
+from typing import Callable, Literal, Union, Type, TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -38,7 +38,7 @@ from ..message import (
 )
 
 if TYPE_CHECKING:
-    from a2a.client import ClientConfig, ClientFactory, Consumer
+    from a2a.client import ClientConfig, ClientFactory, Consumer, Client, BaseClient
     from a2a.client.client_factory import TransportProducer
     from a2a.types import (
         AgentCard,
@@ -331,10 +331,12 @@ class A2aAgent(AgentBase):
 
         response_msg = None
 
+        client : Optional[Client] = None
+
         try:
             # Create A2A client and send message
             client = self._a2a_client_factory.create(
-                card=await self._get_agent_card(),
+                card = await self._get_agent_card(),
             )
 
             logger.debug(
@@ -471,6 +473,9 @@ class A2aAgent(AgentBase):
                     role="assistant",
                     metadata={"error": True, "error_type": "NoResponse"},
                 )
+
+            if isinstance(client, BaseClient):
+                await client.close()
 
         # Clear observed messages after processing
         self._observed_msgs.clear()
