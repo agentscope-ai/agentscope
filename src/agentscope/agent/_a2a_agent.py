@@ -53,7 +53,7 @@ class A2AAgent(AgentBase):
         additional_transport_producers: dict[str, TransportProducer]
         | None = None,
     ) -> None:
-        """Initialize the A2A agent instance by the given agent card.;
+        """Initialize the A2A agent instance by the given agent card.
 
         Args:
             agent_card (`AgentCard`):

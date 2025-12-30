@@ -28,7 +28,7 @@ class FileAgentCardResolver(AgentCardResolverBase):
 
     Example JSON file content:
 
-        ... code-block:: json
+        .. code-block:: json
 
             {
                 "name": "RemoteAgent",

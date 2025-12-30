@@ -18,7 +18,7 @@ The example contains the following files:
 ```
 examples/agent/a2a_agent
 ├── main.py                  # The main script to run the A2A agent example
-├── setup_a2a_server.py      # The script to set up a simple A22 server
+├── setup_a2a_server.py      # The script to set up a simple A2A server
 ├── agent_card.py            # The agent card definition for the A2A agent
 └── README.md                # This README file
 ```

@@ -209,14 +209,15 @@ class A2AChatFormatter(FormatterBase):
         if mime_type is None:
             mime_type, _encoding = mimetypes.guess_type(uri or "")
 
-        if mime_type.startswith("image/"):
-            return "image"
+        if isinstance(mime_type, str):
+            if mime_type.startswith("image/"):
+                return "image"
 
-        if mime_type.startswith("video/"):
-            return "video"
+            if mime_type.startswith("video/"):
+                return "video"
 
-        if mime_type.startswith("audio/"):
-            return "audio"
+            if mime_type.startswith("audio/"):
+                return "audio"
 
         return "unknown"
 
