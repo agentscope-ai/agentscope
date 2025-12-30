@@ -7,122 +7,107 @@ A2A Agent
 
 A2A (Agent-to-Agent) is an open standard protocol for enabling interoperable communication between different AI agents.
 
-AgentScope provides built-in support for the A2A protocol through the ``A2aAgent`` class, allowing developers to communicate with any remote agent that conforms to the A2A standard.
-
-The relevant APIs are as follows:
+AgentScope provides support for the A2A protocol at two levels: obtaining Agent Card information and connecting to remote agents. The related APIs are as follows:
 
 .. list-table:: A2A Related Classes
     :header-rows: 1
 
     * - Class
       - Description
-    * - ``A2aAgent``
-      - Agent for communicating with remote A2A agents
-    * - ``A2aAgentConfig``
-      - Configuration class for A2A client
-    * - ``FixedAgentCardResolver``
-      - Resolver that uses a fixed Agent Card
+    * - ``A2AAgent``
+      - Agent class for communicating with remote A2A agents
+    * - ``A2AChatFormatter``
+      - Formatter for converting between AgentScope messages and A2A message/task formats
+    * - ``AgentCardResolverBase``
+      - Base class for Agent Card resolvers
     * - ``FileAgentCardResolver``
-      - Resolver that loads Agent Card from a local JSON file
+      - Resolver for loading Agent Cards from local JSON files
     * - ``WellKnownAgentCardResolver``
-      - Resolver that fetches Agent Card from a URL's well-known path
+      - Resolver for fetching Agent Cards from the well-known path of a URL
     * - ``NacosAgentCardResolver``
-      - Resolver that fetches Agent Card from Nacos Agent Registry
+      - Resolver for fetching Agent Cards from the Nacos Agent Registry
 
-This section demonstrates how to create an ``A2aAgent`` and communicate with remote A2A agents.
+This section demonstrates how to create an ``A2AAgent`` and communicate with remote A2A agents.
+
+.. note:: Note that A2A support is an **experimental feature** and may change in future versions. Due to limitations of the A2A protocol itself, ``A2AAgent`` cannot fully align with local agents like ``ReActAgent``, including:
+
+ - Only supports chatbot scenarios, i.e., only supports conversations between one user and one agent (does not affect handoff/router usage patterns)
+ - Does not support real-time interruption during conversations
+ - Does not support agentic structured output
+ - In the current implementation, messages received by the ``observe`` method are stored locally and sent to the remote agent together when the ``reply`` method is called. Therefore, if several ``observe`` calls are made without a subsequent ``reply`` call, those messages will not be seen by the remote agent
+
+
 """
 
-# %%
-# Creating A2aAgent
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#
-# First, we need to create an Agent Card resolver to obtain information about the remote agent.
-# Here we use ``WellKnownAgentCardResolver`` as an example to fetch the Agent Card from a remote service's standard path:
-#
-# .. code-block:: python
-#
-#     from agentscope.agent import A2aAgent
-#     from agentscope.agent._a2a_agent import A2aAgentConfig
-#     from agentscope.agent._a2a_card_resolver import WellKnownAgentCardResolver
-#
-#     # Create Agent Card resolver
-#     resolver = WellKnownAgentCardResolver(
-#         base_url="http://localhost:8000",
-#     )
-#
-#     # Create A2A agent
-#     agent = A2aAgent(
-#         name="RemoteAgent",
-#         agent_card=resolver,
-#         agent_config=A2aAgentConfig(
-#             streaming=True,  # Enable streaming responses
-#         ),
-#     )
-#
+from a2a.types import AgentCard, AgentCapabilities
+from v2.nacos import ClientConfig
+
+from agentscope.a2a import WellKnownAgentCardResolver, NacosAgentCardResolver
+from agentscope.agent import A2AAgent, UserAgent
+from agentscope.message import Msg, TextBlock
+from agentscope.tool import ToolResponse
 
 # %%
-# Agent Card Resolvers
+# Obtaining Agent Cards
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
-# An Agent Card is metadata that describes the capabilities and access methods of a remote agent.
-# AgentScope provides several resolvers to obtain Agent Cards.
+# First, we need to obtain an Agent Card to connect to the corresponding agent. An Agent Card contains information such as the agent's name, description, capabilities, and connection details.
 #
-# FixedAgentCardResolver
+# Manually Creating Agent Card
 # --------------------------------
 #
-# Uses a fixed Agent Card object, suitable for scenarios where remote agent information is already known.
+# If you know all the information of an Agent Card, you can directly create an Agent Card object from `a2a.types.AgentCard`.
 #
-# .. list-table:: FixedAgentCardResolver Parameters
-#     :header-rows: 1
+
+# Create an Agent Card object
+agent_card = AgentCard(
+    name="Friday",  # Agent name
+    description="A fun chatting companion",  # Agent description
+    url="http://localhost:8000",  # Agent's RPC service URL
+    version="1.0.0",  # Agent version
+    capabilities=AgentCapabilities(  # Agent capability configuration
+        push_notifications=False,
+        state_transition_history=True,
+        streaming=True,
+    ),
+    default_input_modes=["text/plain"],  # Supported input formats
+    default_output_modes=["text/plain"],  # Supported output formats
+    skills=[],  # Agent skill list
+)
+
+# %%
 #
-#     * - Parameter
-#       - Type
-#       - Description
-#     * - ``agent_card``
-#       - AgentCard
-#       - A2A Agent Card object containing complete information about the remote agent
+# Fetching from Remote Services
+# --------------------------------
+# AgentScope also supports fetching from the standard path of remote services (well-known server).
+# Here's an example using ``WellKnownAgentCardResolver`` to fetch an Agent Card from the standard path of a remote service:
 #
-# .. code-block:: python
-#
-#     from a2a.types import AgentCard, AgentCapabilities
-#     from agentscope.agent._a2a_card_resolver import FixedAgentCardResolver
-#
-#     # Create Agent Card object
-#     agent_card = AgentCard(
-#         name="RemoteAgent",              # Agent name
-#         url="http://localhost:8000",     # Agent's RPC service URL
-#         version="1.0.0",                 # Agent version
-#         capabilities=AgentCapabilities(),  # Agent capabilities config
-#         default_input_modes=["text/plain"],   # Supported input formats
-#         default_output_modes=["text/plain"],  # Supported output formats
-#         skills=[],                       # Agent skills list
-#     )
-#
-#     resolver = FixedAgentCardResolver(agent_card)
-#
-# FileAgentCardResolver
+
+
+async def agent_card_from_well_known_website() -> AgentCard:
+    """Example of fetching an Agent Card from the well-known path of a remote service."""
+    # Create an Agent Card resolver
+    resolver = WellKnownAgentCardResolver(
+        base_url="http://localhost:8000",
+    )
+    # Fetch and return the Agent Card
+    return await resolver.get_agent_card()
+
+
+# %%
+# Loading Agent Cards from Local Files
 # --------------------------------
 #
-# Loads Agent Card from a local JSON file, suitable for configuration file management scenarios.
-#
-# .. list-table:: FileAgentCardResolver Parameters
-#     :header-rows: 1
-#
-#     * - Parameter
-#       - Type
-#       - Description
-#     * - ``file_path``
-#       - str
-#       - Path to the Agent Card JSON file
-#
-# Example JSON file format:
+# The ``FileAgentCardResolver`` class supports loading Agent Cards from local JSON files, suitable for configuration file management scenarios.
+# An example of an Agent Card in JSON format is shown below:
 #
 # .. code-block:: json
+#     :caption: Example Agent Card JSON file content
 #
 #     {
 #         "name": "RemoteAgent",
 #         "url": "http://localhost:8000",
-#         "description": "A remote A2A agent",
+#         "description": "Remote A2A Agent",
 #         "version": "1.0.0",
 #         "capabilities": {},
 #         "default_input_modes": ["text/plain"],
@@ -130,181 +115,98 @@ This section demonstrates how to create an ``A2aAgent`` and communicate with rem
 #         "skills": []
 #     }
 #
-# .. code-block:: python
+# You can easily load this file using ``FileAgentCardResolver``:
 #
-#     from agentscope.agent._a2a_card_resolver import FileAgentCardResolver
-#
-#     # Load Agent Card from JSON file
-#     resolver = FileAgentCardResolver(
-#         file_path="./agent_card.json",  # JSON file path
-#     )
-#
-# WellKnownAgentCardResolver
+
+
+async def agent_card_from_file() -> AgentCard:
+    """Example of loading an Agent Card from a local JSON file."""
+    from agentscope.a2a import FileAgentCardResolver
+
+    # Load Agent Card from JSON file
+    resolver = FileAgentCardResolver(
+        file_path="./agent_card.json",  # JSON file path
+    )
+    # Fetch and return the Agent Card
+    return await resolver.get_agent_card()
+
+
+# %%
+# Fetching Agent Cards from Nacos Registry
 # --------------------------------
 #
-# Fetches Agent Card from a remote service's well-known path, which is the standard A2A protocol service discovery method.
-# By default, it fetches from ``{base_url}/.well-known/agent.json``.
+# Nacos is an open-source dynamic service discovery, configuration management, and service management platform. In version 3.1.0, it introduced the Agent Registry feature, supporting distributed registration, discovery, and version management of A2A agents.
 #
-# .. list-table:: WellKnownAgentCardResolver Parameters
-#     :header-rows: 1
-#
-#     * - Parameter
-#       - Type
-#       - Description
-#     * - ``base_url``
-#       - str
-#       - Base URL of the remote agent (e.g., http://localhost:8000)
-#     * - ``agent_card_path``
-#       - str | None
-#       - Optional, custom Agent Card path, defaults to A2A standard path
-#
-# .. code-block:: python
-#
-#     from agentscope.agent._a2a_card_resolver import WellKnownAgentCardResolver
-#
-#     # Use default well-known path
-#     resolver = WellKnownAgentCardResolver(
-#         base_url="http://localhost:8000",
-#     )
-#
-#     # Or specify custom path
-#     resolver = WellKnownAgentCardResolver(
-#         base_url="http://localhost:8000",
-#         agent_card_path="/custom/agent-card.json",
-#     )
-#
-# NacosAgentCardResolver
-# --------------------------------
-#
-# Fetches Agent Card from Nacos Agent Registry. Nacos introduced the Agent Registry capability in version 3.1.0,
-# enabling distributed registration, discovery, and version management of A2A Agents.
-#
-# .. important:: Using ``NacosAgentCardResolver`` requires that you have deployed Nacos server version 3.1.0 or above.
-#
-# For Nacos quick deployment and Agent Registry details, please refer to: https://nacos.io/docs/latest/quickstart/quick-start
-#
-# .. list-table:: NacosAgentCardResolver Parameters
-#     :header-rows: 1
-#
-#     * - Parameter
-#       - Type
-#       - Description
-#     * - ``remote_agent_name``
-#       - str
-#       - Name of the remote agent registered in Nacos
-#     * - ``nacos_client_config``
-#       - ClientConfig | None
-#       - Nacos client configuration, reads from environment variables when None
-#     * - ``version``
-#       - str | None
-#       - Optional, specify the agent version to fetch. Fetches latest version when None
-#
-# **Method 1: Using Environment Variables**
-#
-# .. code-block:: python
-#
-#     from agentscope.agent._a2a_card_resolver import NacosAgentCardResolver
-#
-#     # Requires NACOS_SERVER_ADDR environment variable to be set
-#     resolver = NacosAgentCardResolver(
-#         remote_agent_name="my-remote-agent",  # Agent name registered in Nacos
-#     )
-#
-# Supported environment variables:
-#
-# - ``NACOS_SERVER_ADDR``: Nacos server address (required, e.g., localhost:8848)
-# - ``NACOS_USERNAME``: Username (optional)
-# - ``NACOS_PASSWORD``: Password (optional)
-# - ``NACOS_NAMESPACE_ID``: Namespace ID (optional)
-# - ``NACOS_ACCESS_KEY``: Alibaba Cloud AccessKey (optional)
-# - ``NACOS_SECRET_KEY``: Alibaba Cloud SecretKey (optional)
-#
-# **Method 2: Using ClientConfig**
-#
-# .. code-block:: python
-#
-#     from agentscope.agent._a2a_card_resolver import NacosAgentCardResolver
-#     from v2.nacos.common.client_config_builder import ClientConfigBuilder
-#
-#     # Build Nacos client configuration
-#     config = (
-#         ClientConfigBuilder()
-#         .server_address("localhost:8848")
-#         .username("nacos")
-#         .password("nacos")
-#         .build()
-#     )
-#
-#     resolver = NacosAgentCardResolver(
-#         remote_agent_name="my-remote-agent",
-#         nacos_client_config=config,
-#         version="1.0.0",  # Optional; fetches latest version if not specified
-#     )
+# .. important:: The prerequisite for using ``NacosAgentCardResolver`` is that the user has deployed a Nacos server version 3.1.0 or higher. For deployment and registration procedures, please refer to the `official documentation <https://nacos.io/docs/latest/quickstart/quick-start>`_.
 #
 
-# %%
-# Communicating with Remote Agents
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#
-# ``A2aAgent`` provides an interface consistent with other AgentScope agents:
-#
-# .. code-block:: python
-#
-#     from agentscope.message import Msg
-#
-#     async def main():
-#         # Send message and get response
-#         response = await agent(
-#             Msg("user", "Hello, please introduce yourself", "user"),
-#         )
-#         print(response.content)
-#
-#     asyncio.run(main())
-#
-# ``A2aAgent`` automatically handles the following conversions:
-#
-# - AgentScope's ``Msg`` messages are converted to A2A protocol's ``Message`` format
-# - A2A protocol responses are converted back to AgentScope's ``Msg`` format
-# - Supports multiple content types including text, images, audio, and video
-#
+
+async def agent_card_from_nacos() -> AgentCard:
+    """Example of fetching an Agent Card from the Nacos registry."""
+
+    # Create a Nacos Agent Card resolver
+    resolver = NacosAgentCardResolver(
+        remote_agent_name="my-remote-agent",  # Agent name registered in Nacos
+        nacos_client_config=ClientConfig(
+            server_addresses="http://localhost:8848",  # Nacos server address
+            # Other optional configuration items
+        ),
+    )
+    # Fetch and return the Agent Card
+    return await resolver.get_agent_card()
+
 
 # %%
-# A2aAgentConfig Configuration
+# Building an A2A Agent
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
-# ``A2aAgentConfig`` is used to configure the behavior of the A2A client:
-#
-# .. code-block:: python
-#
-#     from agentscope.agent._a2a_agent import A2aAgentConfig
-#
-#     config = A2aAgentConfig(
-#         streaming=True,           # Whether to support streaming responses
-#         polling=False,            # Whether to use polling mode
-#         use_client_preference=False,  # Whether to use client transport preferences
-#     )
-#
+# The ``A2AAgent`` class provided by AgentScope is used to communicate with remote A2A agents, and its usage is similar to regular agents.
+
+agent = A2AAgent(agent_card=agent_card)
 
 # %%
-# The observe Method
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Using ``A2AAgent``, developers can build chatbot scenario conversations, or encapsulate it as a tool function to build more complex application scenarios such as handoff/router.
+# Currently, the format protocol conversion supported by ``A2AAgent`` is handled by ``agentscope.formatter.A2AChatFormatter``, which supports:
 #
-# ``A2aAgent`` supports the ``observe`` method for receiving messages without immediately generating a reply:
-#
-# .. code-block:: python
-#
-#     async def example_observe():
-#         # Observe message (without generating reply)
-#         await agent.observe(Msg("user", "This is context information", "user"))
-#
-#         # When called later, observed messages are merged
-#         response = await agent(Msg("user", "Answer based on the context", "user"))
+# - Converting AgentScope's ``Msg`` messages to A2A protocol's ``Message`` format
+# - Converting A2A protocol responses back to AgentScope's ``Msg`` format
+# - Converting A2A protocol's ``Task`` responses to AgentScope's ``Msg`` format
+# - Supporting multiple content types such as text, images, audio, and video
 #
 
+
+async def a2a_in_chatbot() -> None:
+    """Example of chatting using A2AAgent."""
+
+    user = UserAgent("user")
+
+    msg = None
+    while True:
+        msg = await user(msg)
+        if msg.get_text_content() == "exit":
+            break
+        msg = await agent(msg)
+
+
 # %%
-# Further Reading
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#
-# - :ref:`agent`
-# - :ref:`mcp`
-#
+# Or encapsulate it as a tool function for invocation:
+
+
+async def create_worker(query: str) -> ToolResponse:
+    """Complete a given task through a sub-agent
+
+    Args:
+        query (`str`):
+            Description of the task to be completed by the sub-agent
+    """
+    res = await agent(
+        Msg("user", query, "user"),
+    )
+    return ToolResponse(
+        content=[
+            TextBlock(
+                type="text",
+                text=res.get_text_content(),
+            ),
+        ],
+    )

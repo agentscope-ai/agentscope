@@ -48,6 +48,7 @@ a2a = [
     "httpx",
     "nacos-sdk-python>=3.0.0",
 ]
+
 full = [
     # Model
     "ollama>=0.5.4",
