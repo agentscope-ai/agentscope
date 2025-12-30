@@ -1,0 +1,7 @@
+agentscope.a2a
+==============
+
+.. automodule:: agentscope.a2a
+   :members:
+   :undoc-members:
+   :show-inheritance:

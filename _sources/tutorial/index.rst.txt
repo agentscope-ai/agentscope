@@ -334,6 +334,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="A2A (Agent-to-Agent) is an open standard protocol for enabling interoperable communication between different AI agents.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_a2a_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_a2a`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">A2A Agent</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides out-of-the-box ReAct agent ReActAgent under agentscope.agent that can be used directly.">
 
 .. only:: html
@@ -531,6 +548,7 @@
    /tutorial/workflow_conversation
    /tutorial/task_tts
    /tutorial/task_model
+   /tutorial/task_a2a
    /tutorial/quickstart_agent
    /tutorial/task_state
    /tutorial/task_agent

@@ -267,6 +267,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent.html">Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_a2a.html">A2A Agent</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -453,7 +454,11 @@
 <span class="sd">                The user input data.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
 
-        <span class="n">text_input</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_hint</span><span class="p">)</span>
+        <span class="n">text_input</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="nb">input</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">input_hint</span><span class="p">)</span>
+            <span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;ignore&quot;</span><span class="p">)</span>
+            <span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+        <span class="p">)</span>
 
         <span class="n">structured_input</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="n">structured_model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>

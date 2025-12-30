@@ -192,17 +192,9 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personal experience that homestays offer when visiting Hangzhou! Homestays can be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and get personalized recommendations from your hosts about hidden gems in the city.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique opportunity to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who can share insider tips about the city.
 
-    If you're planning another trip to Hangzhou and looking for homestay options, I can help suggest some neighborhoods or areas that are popular for unique homestay experiences. For example:
-
-    1. **West Lake (Xi Hu) Area**: Staying near West Lake offers beautiful scenery right at your doorstep. Many homestays here provide easy access to walking paths, traditional tea houses, and stunning views of the lake.
-   
-    2. **Longjing Tea Village**: If you love tea, this area is famous for its Longjing (Dragon Well) tea plantations. You could stay with locals who might even invite you to join in tea-picking or brewing sessions!
-
-    3. **Hefang Street / Qinghefang Ancient Street**: This historic street is lined with traditional Chinese architecture, shops selling local crafts, and delicious street food. A homestay nearby would give you an authentic feel of old Hangzhou.
-
-    Would you like more specific suggestions or tips on finding great homestays in Hangzhou?
+    If you're planning another trip to Hangzhou and looking for recommendations or specific areas to find great homestays, I can help suggest neighborhoods or platforms where you can discover charming places to stay. Would you like some suggestions tailored to your preferences?
 
 
 
@@ -238,7 +230,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: Based on the information available, when you travel to Hangzhou, you prefer staying in homestays. There's no other specific preference indicated in the available data.
+    Friday: You prefer staying in homestays, especially enjoying the experience of living in民宿 (homestays) in Hangzhou.
 
 
 
@@ -540,7 +532,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 39.071 seconds)
+   **Total running time of the script:** (0 minutes 32.478 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

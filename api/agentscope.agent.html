@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_a2a.html">A2A Agent</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -1113,6 +1114,175 @@ user or something else.</p>
 
 </dd></dl>
 
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">A2AAgent</span></span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.agent.AgentBase" title="agentscope.agent._agent_base.AgentBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">AgentBase</span></code></a></p>
+<p>An A2A agent implementation in AgentScope, which supports</p>
+<ul class="simple">
+<li><p>Communication with remote agents using the A2A protocol</p></li>
+<li><p>Bidirectional message conversion between AgentScope and A2A formats</p></li>
+<li><p>Task lifecycle management with streaming and polling</p></li>
+<li><p>Artifact handling and status tracking</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Due to the limitation of A2A protocol. The A2AAgent class</p>
+</div>
+<ul class="simple">
+<li><p>Only support chatbot-scenario (a user and an assistant) interactions.</p></li>
+</ul>
+<blockquote>
+<div><p>To support multi-agent interactions requires the server side to handle
+the <cite>name</cite> field in the A2A messages properly.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>Does not support structured output in <cite>reply()</cite> method due to the lack</p></li>
+</ul>
+<blockquote>
+<div><p>of structured output support in A2A protocol.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>Stores observed messages locally and merges them with input messages</p></li>
+</ul>
+<blockquote>
+<div><p>when <cite>reply()</cite> is called. Observed messages are cleared after processing.</p>
+</div></blockquote>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agent_card</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">consumers</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">additional_transport_producers</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the A2A agent instance by the given agent card.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>agent_card</strong> (<cite>AgentCard</cite>) – The agent card that contains the information about the remote
+agent, such as its URL and capabilities.</p></li>
+<li><p><strong>client_config</strong> (<cite>ClientConfig | None</cite>, optional) – The configuration for the A2A client, including transport
+preferences and streaming options.</p></li>
+<li><p><strong>consumers</strong> (<cite>list[Consumer] | None</cite>, optional) – The list of consumers for handling A2A client events.
+These intercept request/response flows for logging,
+metrics, and security.</p></li>
+<li><p><strong>additional_transport_producers</strong> (<cite>dict[str, TransportProducer] |             None</cite>, optional) – Additional transport producers for creating A2A clients
+with specific transport protocols.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.state_dict">
+<span class="sig-name descname"><span class="pre">state_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.state_dict"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.state_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Get the state dictionary of the A2A agent.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The state dictionary containing the observed messages.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>dict</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.load_state_dict">
+<span class="sig-name descname"><span class="pre">load_state_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state_dict</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.load_state_dict"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.load_state_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Load the state dictionary into the module.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>state_dict</strong> (<cite>dict</cite>) – The state dictionary to load.</p></li>
+<li><p><strong>strict</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – If <cite>True</cite>, raises an error if any key in the module is not
+found in the state_dict. If <cite>False</cite>, skips missing keys.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>KeyError</strong> – If a required key is missing in the state_dict when strict
+    is <cite>True</cite>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.observe">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">observe</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.observe"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.observe" title="Link to this definition">¶</a></dt>
+<dd><p>Receive the given message(s) without generating a reply.</p>
+<p>The observed messages are stored and will be merged with the
+input messages when <cite>reply</cite> is called. After <cite>reply</cite> completes,
+the stored messages will be cleared.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>) – The message(s) to be observed. If None, no action is taken.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.reply">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">reply</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.reply"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.reply" title="Link to this definition">¶</a></dt>
+<dd><p>Send message(s) to the remote A2A agent and receive a response.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>This method merges any previously observed messages with the</p>
+</div>
+<p>input messages, sends them to the remote agent, and clears the
+observed messages after processing.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The A2A protocol does not support structured output, so the
+<cite>structured_model</cite> parameter is not supported in this method.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msg</strong> (<cite>Msg | list[Msg] | None</cite>, optional) – The message(s) to send to the remote agent. Can be a single
+Msg, a list of Msgs, or None. If None, only observed messages
+will be sent. Defaults to None.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The response message from the remote agent. For tasks, this
+may be either a status update message or the final artifacts
+message, depending on the task state. If no messages are
+provided (both msg and observed messages are empty), returns
+a prompt message. If an error occurs during communication,
+returns an error message.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Msg</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.agent.A2AAgent.handle_interrupt">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">handle_interrupt</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">structured_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_a2a_agent.html#A2AAgent.handle_interrupt"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.agent.A2AAgent.handle_interrupt" title="Link to this definition">¶</a></dt>
+<dd><p>The post-processing logic when the reply is interrupted by the
+user or something else.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msg</strong> (<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em> | </em><em>list</em><em>[</em><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a><em>] </em><em>| </em><em>None</em>)</p></li>
+<li><p><strong>structured_model</strong> (<em>Type</em><em>[</em><em>BaseModel</em><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
 </section>
 
         </article>
@@ -1253,6 +1423,15 @@ user or something else.</p>
 <li><a class="reference internal" href="#agentscope.agent.UserAgent.override_class_input_method"><code class="docutils literal notranslate"><span class="pre">UserAgent.override_class_input_method()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.agent.UserAgent.handle_interrupt"><code class="docutils literal notranslate"><span class="pre">UserAgent.handle_interrupt()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.agent.UserAgent.observe"><code class="docutils literal notranslate"><span class="pre">UserAgent.observe()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent"><code class="docutils literal notranslate"><span class="pre">A2AAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.__init__"><code class="docutils literal notranslate"><span class="pre">A2AAgent.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.state_dict"><code class="docutils literal notranslate"><span class="pre">A2AAgent.state_dict()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.load_state_dict"><code class="docutils literal notranslate"><span class="pre">A2AAgent.load_state_dict()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.observe"><code class="docutils literal notranslate"><span class="pre">A2AAgent.observe()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.reply"><code class="docutils literal notranslate"><span class="pre">A2AAgent.reply()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.A2AAgent.handle_interrupt"><code class="docutils literal notranslate"><span class="pre">A2AAgent.handle_interrupt()</span></code></a></li>
 </ul>
 </li>
 </ul>

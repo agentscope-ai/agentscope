@@ -266,6 +266,7 @@
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_a2a.html">A2A Agent</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -405,9 +406,11 @@
           <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__call__">(WordReader method)</a>
 </li>
         </ul></li>
-        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy.__init__">__init__() (ACEAccuracy method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.__init__">__init__() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy.__init__">(ACEAccuracy method)</a>
+</li>
           <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.__init__">(ACEBenchmark method)</a>
 </li>
           <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.__init__">(ACEPhone method)</a>
@@ -460,6 +463,8 @@
 </li>
           <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline.__init__">(FanoutPipeline method)</a>
 </li>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver.__init__">(FileAgentCardResolver method)</a>
+</li>
           <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.__init__">(FileEmbeddingCache method)</a>
 </li>
           <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.__init__">(FileEvaluatorStorage method)</a>
@@ -507,6 +512,8 @@
           <li><a href="api/agentscope.message.html#agentscope.message.Msg.__init__">(Msg method)</a>
 </li>
           <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.__init__">(MsgHub method)</a>
+</li>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver.__init__">(NacosAgentCardResolver method)</a>
 </li>
           <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.__init__">(OllamaChatFormatter method)</a>
 </li>
@@ -576,6 +583,8 @@
 </li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.__init__">(UserInputData method)</a>
 </li>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver.__init__">(WellKnownAgentCardResolver method)</a>
+</li>
           <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__init__">(WordReader method)</a>
 </li>
         </ul></li>
@@ -639,6 +648,10 @@
   <h2>A</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent">A2AAgent (class in agentscope.agent)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter">A2AChatFormatter (class in agentscope.formatter)</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy">ACEAccuracy (class in agentscope.evaluate)</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark">ACEBenchmark (class in agentscope.evaluate)</a>
@@ -677,6 +690,8 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase">AgentBase (class in agentscope.agent)</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.AgentCardResolverBase">AgentCardResolverBase (class in agentscope.a2a)</a>
+</li>
         <li><a href="api/agentscope.exception.html#agentscope.exception.AgentOrientedExceptionBase">AgentOrientedExceptionBase</a>
 </li>
         <li>
@@ -684,6 +699,13 @@
 
         <ul>
           <li><a href="api/agentscope.html#module-agentscope">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.a2a
+
+        <ul>
+          <li><a href="api/agentscope.a2a.html#module-agentscope.a2a">module</a>
 </li>
         </ul></li>
         <li>
@@ -742,6 +764,8 @@
           <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.message
 
@@ -749,8 +773,6 @@
           <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.model
 
@@ -1131,6 +1153,8 @@
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline">FanoutPipeline (class in agentscope.pipeline)</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver">FileAgentCardResolver (class in agentscope.a2a)</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache">FileEmbeddingCache (class in agentscope.embedding)</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage">FileEvaluatorStorage (class in agentscope.evaluate)</a>
@@ -1143,10 +1167,10 @@
         </ul></li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.finish_function_name">finish_function_name (ReActAgent attribute)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_plan">finish_plan() (PlanNotebook method)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_subtask">finish_subtask() (PlanNotebook method)</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.finished_at">finished_at (Plan attribute)</a>
@@ -1155,12 +1179,18 @@
           <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.finished_at">(SubTask attribute)</a>
 </li>
         </ul></li>
-        <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.format">format() (FormatterBase method)</a>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format">format() (A2AChatFormatter method)</a>
 
         <ul>
+          <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.format">(FormatterBase method)</a>
+</li>
           <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.format">(TruncatedFormatterBase method)</a>
 </li>
         </ul></li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format_a2a_message">format_a2a_message() (A2AChatFormatter method)</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format_a2a_task">format_a2a_task() (A2AChatFormatter method)</a>
+</li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase">FormatterBase (class in agentscope.formatter)</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.from_dict">from_dict() (Msg class method)</a>
@@ -1191,6 +1221,16 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.get_activated_notes">get_activated_notes() (Toolkit method)</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.AgentCardResolverBase.get_agent_card">get_agent_card() (AgentCardResolverBase method)</a>
+
+        <ul>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver.get_agent_card">(FileAgentCardResolver method)</a>
+</li>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver.get_agent_card">(NacosAgentCardResolver method)</a>
+</li>
+          <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver.get_agent_card">(WellKnownAgentCardResolver method)</a>
+</li>
+        </ul></li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook">get_agent_pre_print_hook() (EvaluatorStorageBase method)</a>
 
         <ul>
@@ -1219,12 +1259,12 @@
         </ul></li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() (Msg method)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() (PlanNotebook method)</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() (ACEPhone method)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader.get_doc_id">get_doc_id() (ImageReader method)</a>
 
         <ul>
@@ -1291,9 +1331,11 @@
   <h2>H</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.handle_interrupt">handle_interrupt() (AgentBase method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.handle_interrupt">handle_interrupt() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.handle_interrupt">(AgentBase method)</a>
+</li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.handle_interrupt">(ReActAgent method)</a>
 </li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.handle_interrupt">(UserAgent method)</a>
@@ -1427,9 +1469,11 @@
         </ul></li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.load_state_dict">load_state_dict() (InMemoryMemory method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.load_state_dict">load_state_dict() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.load_state_dict">(InMemoryMemory method)</a>
+</li>
           <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.load_state_dict">(MemoryBase method)</a>
 </li>
           <li><a href="api/agentscope.module.html#agentscope.module.StateModule.load_state_dict">(StateModule method)</a>
@@ -1503,13 +1547,13 @@
           <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.model_name">(TTSModelBase attribute)</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     module
 
         <ul>
           <li><a href="api/agentscope.html#module-agentscope">agentscope</a>
+</li>
+          <li><a href="api/agentscope.a2a.html#module-agentscope.a2a">agentscope.a2a</a>
 </li>
           <li><a href="api/agentscope.agent.html#module-agentscope.agent">agentscope.agent</a>
 </li>
@@ -1554,6 +1598,8 @@
           <li><a href="api/agentscope.types.html#module-agentscope.types">agentscope.types</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg">Msg (class in agentscope.message)</a>
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub">MsgHub (class in agentscope.pipeline)</a>
@@ -1566,6 +1612,8 @@
   <h2>N</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver">NacosAgentCardResolver (class in agentscope.a2a)</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase.name">name (BenchmarkBase attribute)</a>
 
         <ul>
@@ -1598,9 +1646,11 @@
   <h2>O</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.observe">observe() (AgentBase method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.observe">observe() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.observe">(AgentBase method)</a>
+</li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.observe">(ReActAgent method)</a>
 </li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.observe">(UserAgent method)</a>
@@ -1624,10 +1674,10 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_audio">openai_text_to_audio() (in module agentscope.tool)</a>
 </li>
-        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image() (in module agentscope.tool)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image() (in module agentscope.tool)</a>
+</li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">OpenAIChatFormatter (class in agentscope.formatter)</a>
 </li>
         <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel">OpenAIChatModel (class in agentscope.model)</a>
@@ -1772,19 +1822,21 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() (Toolkit method)</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.remove_plan_change_hook">remove_plan_change_hook() (PlanNotebook method)</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_subscribers">remove_subscribers() (AgentBase method)</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_function">remove_tool_function() (Toolkit method)</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_groups">remove_tool_groups() (Toolkit method)</a>
 </li>
-        <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.reply">reply() (AgentBase method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.reply">reply() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.reply">(AgentBase method)</a>
+</li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.reply">(ReActAgent method)</a>
 </li>
           <li><a href="api/agentscope.agent.html#agentscope.agent.UserAgent.reply">(UserAgent method)</a>
@@ -1962,9 +2014,11 @@
           <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.state">(SubTask attribute)</a>
 </li>
         </ul></li>
-        <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.state_dict">state_dict() (InMemoryMemory method)</a>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.state_dict">state_dict() (A2AAgent method)</a>
 
         <ul>
+          <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.state_dict">(InMemoryMemory method)</a>
+</li>
           <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.state_dict">(MemoryBase method)</a>
 </li>
           <li><a href="api/agentscope.module.html#agentscope.module.StateModule.state_dict">(StateModule method)</a>
@@ -2342,12 +2396,14 @@
   <h2>W</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_a_subtask_in_progress">when_a_subtask_in_progress (DefaultPlanToHint attribute)</a>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver">WellKnownAgentCardResolver (class in agentscope.a2a)</a>
 </li>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_no_subtask_in_progress">when_no_subtask_in_progress (DefaultPlanToHint attribute)</a>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_a_subtask_in_progress">when_a_subtask_in_progress (DefaultPlanToHint attribute)</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_no_subtask_in_progress">when_no_subtask_in_progress (DefaultPlanToHint attribute)</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader">WordReader (class in agentscope.rag)</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.write_text_file">write_text_file() (in module agentscope.tool)</a>
