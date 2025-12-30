@@ -69,20 +69,30 @@ class StatefulClientBase(MCPClientBase, ABC):
             self.stack = None
             raise
 
-    async def close(self) -> None:
+    async def close(self, ignore_errors: bool = True) -> None:
         """Clean up the MCP client resources. You must call this method when
-        your application is done."""
+        your application is done.
+
+        Args:
+            ignore_errors (`bool`):
+                Whether to ignore errors during cleanup. Defaults to `True`.
+        """
         if not self.is_connected:
             raise RuntimeError(
                 "The MCP server is not connected. Call connect() before "
                 "closing.",
             )
 
-        await self.stack.aclose()
-        logger.info("MCP client closed.")
-        self.stack = None
-        self.session = None
-        self.is_connected = False
+        try:
+            await self.stack.aclose()
+        except Exception as e:
+            if not ignore_errors:
+                raise e
+            logger.warning("Error during MCP client cleanup: %s", e)
+        finally:
+            self.stack = None
+            self.session = None
+            self.is_connected = False
 
     async def list_tools(self) -> List[mcp.types.Tool]:
         """Get all available tools from the server.
