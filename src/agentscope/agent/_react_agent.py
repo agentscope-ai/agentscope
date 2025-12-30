@@ -17,6 +17,7 @@ from ..message import (
     ToolUseBlock,
     ToolResultBlock,
     TextBlock,
+    AudioBlock,
 )
 from ..model import ChatModelBase
 from ..rag import KnowledgeBase, Document
@@ -304,6 +305,7 @@ class ReActAgent(ReActAgentBase):
         # -------------- The reasoning-acting loop --------------
         # Cache the structured output generated in the finish function call
         structured_output = None
+        reply_msg = None
         for _ in range(self.max_iters):
             # -------------- The reasoning process --------------
             msg_reasoning = await self._reasoning(tool_choice)
@@ -338,12 +340,13 @@ class ReActAgent(ReActAgentBase):
                     if msg_reasoning.has_content_blocks("text"):
                         # Re-use the existing text response if any to avoid
                         # duplicate text generation
-                        return Msg(
+                        reply_msg = Msg(
                             self.name,
                             msg_reasoning.get_content_blocks("text"),
                             "assistant",
                             metadata=structured_output,
                         )
+                        break
 
                     # Generate a textual response in the next iteration
                     msg_hint = Msg(
@@ -382,11 +385,15 @@ class ReActAgent(ReActAgentBase):
                 # Exit the loop when no structured output is required (or
                 # already satisfied) and only text response is generated
                 msg_reasoning.metadata = structured_output
-                return msg_reasoning
+                reply_msg = msg_reasoning
+                break
 
         # When the maximum iterations are reached
-        reply_msg = await self._summarizing()
-        reply_msg.metadata = structured_output
+        # and no reply message is generated
+        if reply_msg is None:
+            reply_msg = await self._summarizing()
+            reply_msg.metadata = structured_output
+            await self.memory.add(reply_msg)
 
         # Post-process the memory, long-term memory
         if self._static_control:
@@ -398,7 +405,6 @@ class ReActAgent(ReActAgentBase):
                 ],
             )
 
-        await self.memory.add(reply_msg)
         return reply_msg
 
     # pylint: disable=too-many-branches
@@ -439,7 +445,7 @@ class ReActAgent(ReActAgentBase):
 
         # TTS model context manager
         tts_context = self.tts_model or _AsyncNullContext()
-        speech = None
+        speech: AudioBlock | list[AudioBlock] | None = None
 
         try:
             async with tts_context:
@@ -608,7 +614,7 @@ class ReActAgent(ReActAgentBase):
 
         # TTS model context manager
         tts_context = self.tts_model or _AsyncNullContext()
-        speech = None
+        speech: AudioBlock | list[AudioBlock] | None = None
 
         async with tts_context:
             res_msg = Msg(self.name, [], "assistant")
@@ -648,18 +654,19 @@ class ReActAgent(ReActAgentBase):
 
             return res_msg
 
+    # pylint: disable=unused-argument
     async def handle_interrupt(
         self,
-        _msg: Msg | list[Msg] | None = None,
-        _structured_model: Type[BaseModel] | None = None,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
         user or something else.
 
         Args:
-            _msg (`Msg | list[Msg] | None`, optional):
+            msg (`Msg | list[Msg] | None`, optional):
                 The input message(s) to the agent.
-            _structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`Type[BaseModel] | None`, optional):
                 The required structured output model.
         """
 
@@ -774,7 +781,12 @@ class ReActAgent(ReActAgentBase):
             if isinstance(msg, Msg):
                 query = msg.get_text_content()
             elif isinstance(msg, list):
-                query = "\n".join(_.get_text_content() for _ in msg)
+                texts = []
+                for m in msg:
+                    text = m.get_text_content()
+                    if text:
+                        texts.append(text)
+                query = "\n".join(texts)
 
             # Skip if the query is empty
             if not query:

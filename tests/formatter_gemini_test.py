@@ -159,7 +159,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolUseBlock(
                         type="tool_use",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         input={"country": "South Korea"},
                     ),
@@ -171,7 +171,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output=[
                             TextBlock(
@@ -532,7 +532,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": "2",
                             "name": "get_capital",
                             "args": {
                                 "country": "South Korea",
@@ -546,7 +546,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_response": {
-                            "id": "1",
+                            "id": "2",
                             "name": "get_capital",
                             "response": {
                                 "output": "- The capital of South Korea is "
