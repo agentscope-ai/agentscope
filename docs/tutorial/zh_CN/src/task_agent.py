@@ -268,9 +268,7 @@ asyncio.run(example_structured_output())
 #       -
 #       - 代表用户的特殊智能体，用于与智能体交互
 #     * - ``A2aAgent``
-#       - | ``reply``
-#         | ``observe``
-#         | ``handle_interrupt``
+#       - \-
 #       - | pre\_/post_reply
 #         | pre\_/post_observe
 #         | pre\_/post_print

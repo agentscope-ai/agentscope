@@ -290,9 +290,7 @@ asyncio.run(example_structured_output())
 #       -
 #       - A special agent that represents the user, used to interact with the agent
 #     * - ``A2aAgent``
-#       - | ``reply``
-#         | ``observe``
-#         | ``handle_interrupt``
+#       - \-
 #       - | pre\_/post_reply
 #         | pre\_/post_observe
 #         | pre\_/post_print
