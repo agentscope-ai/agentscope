@@ -69,12 +69,13 @@ full = [
     # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
     # the version to 1.15.1 here.
     "qdrant-client==1.15.1",
-    # A2A protocol support
-    "agentscope[a2a]",
 ]
+
 dev = [
     # Include full dependencies from local package
     "agentscope[full]",
+    # A2A protocol support
+    "agentscope[a2a]",
     # Development tools
     "pre-commit",
     "pytest",
