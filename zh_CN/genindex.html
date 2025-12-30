@@ -266,6 +266,7 @@
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tutorial/task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tutorial/task_a2a.html">A2A 智能体</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -403,6 +404,8 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__call__">__call__() （WordReader 方法）</a>
 </li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.__init__">__init__() （A2AAgent 方法）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy.__init__">__init__() （ACEAccuracy 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark.__init__">__init__() （ACEBenchmark 方法）</a>
@@ -457,6 +460,8 @@
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline.__init__">__init__() （FanoutPipeline 方法）</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver.__init__">__init__() （FileAgentCardResolver 方法）</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache.__init__">__init__() （FileEmbeddingCache 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.__init__">__init__() （FileEvaluatorStorage 方法）</a>
@@ -506,6 +511,8 @@
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.__init__">__init__() （Msg 方法）</a>
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.__init__">__init__() （MsgHub 方法）</a>
+</li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver.__init__">__init__() （NacosAgentCardResolver 方法）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.OllamaChatFormatter.__init__">__init__() （OllamaChatFormatter 方法）</a>
 </li>
@@ -575,6 +582,8 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.UserInputData.__init__">__init__() （UserInputData 方法）</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver.__init__">__init__() （WellKnownAgentCardResolver 方法）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader.__init__">__init__() （WordReader 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricType.__new__">__new__() （MetricType 方法）</a>
@@ -629,6 +638,10 @@
   <h2>A</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent">A2AAgent（agentscope.agent 中的类）</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter">A2AChatFormatter（agentscope.formatter 中的类）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEAccuracy">ACEAccuracy（agentscope.evaluate 中的类）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEBenchmark">ACEBenchmark（agentscope.evaluate 中的类）</a>
@@ -661,6 +674,8 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase">AgentBase（agentscope.agent 中的类）</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.AgentCardResolverBase">AgentCardResolverBase（agentscope.a2a 中的类）</a>
+</li>
         <li><a href="api/agentscope.exception.html#agentscope.exception.AgentOrientedExceptionBase">AgentOrientedExceptionBase</a>
 </li>
         <li>
@@ -668,6 +683,13 @@
 
         <ul>
           <li><a href="api/agentscope.html#module-agentscope">module</a>
+</li>
+        </ul></li>
+        <li>
+    agentscope.a2a
+
+        <ul>
+          <li><a href="api/agentscope.a2a.html#module-agentscope.a2a">module</a>
 </li>
         </ul></li>
         <li>
@@ -726,6 +748,8 @@
           <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.message
 
@@ -733,8 +757,6 @@
           <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.model
 
@@ -1091,6 +1113,8 @@
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.FanoutPipeline">FanoutPipeline（agentscope.pipeline 中的类）</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver">FileAgentCardResolver（agentscope.a2a 中的类）</a>
+</li>
         <li><a href="api/agentscope.embedding.html#agentscope.embedding.FileEmbeddingCache">FileEmbeddingCache（agentscope.embedding 中的类）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage">FileEvaluatorStorage（agentscope.evaluate 中的类）</a>
@@ -1101,19 +1125,25 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.finish_function_name">finish_function_name（ReActAgent 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_plan">finish_plan() （PlanNotebook 方法）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.finish_subtask">finish_subtask() （PlanNotebook 方法）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.finished_at">finished_at（Plan 属性）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.finished_at">finished_at（SubTask 属性）</a>
 </li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format">format() （A2AChatFormatter 方法）</a>
+</li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase.format">format() （FormatterBase 方法）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.TruncatedFormatterBase.format">format() （TruncatedFormatterBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format_a2a_message">format_a2a_message() （A2AChatFormatter 方法）</a>
+</li>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.A2AChatFormatter.format_a2a_task">format_a2a_task() （A2AChatFormatter 方法）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.FormatterBase">FormatterBase（agentscope.formatter 中的类）</a>
 </li>
@@ -1145,6 +1175,14 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.get_activated_notes">get_activated_notes() （Toolkit 方法）</a>
 </li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.AgentCardResolverBase.get_agent_card">get_agent_card() （AgentCardResolverBase 方法）</a>
+</li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.FileAgentCardResolver.get_agent_card">get_agent_card() （FileAgentCardResolver 方法）</a>
+</li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver.get_agent_card">get_agent_card() （NacosAgentCardResolver 方法）</a>
+</li>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver.get_agent_card">get_agent_card() （WellKnownAgentCardResolver 方法）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.get_agent_pre_print_hook">get_agent_pre_print_hook() （EvaluatorStorageBase 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.FileEvaluatorStorage.get_agent_pre_print_hook">get_agent_pre_print_hook() （FileEvaluatorStorage 方法）</a>
@@ -1167,12 +1205,12 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() （Msg 方法）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() （PlanNotebook 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() （ACEPhone 方法）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.rag.html#agentscope.rag.ImageReader.get_doc_id">get_doc_id() （ImageReader 方法）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.PDFReader.get_doc_id">get_doc_id() （PDFReader 方法）</a>
@@ -1225,6 +1263,8 @@
   <h2>H</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.handle_interrupt">handle_interrupt() （A2AAgent 方法）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.handle_interrupt">handle_interrupt() （AgentBase 方法）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.handle_interrupt">handle_interrupt() （ReActAgent 方法）</a>
@@ -1349,6 +1389,8 @@
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.load_state_dict">load_state_dict() （A2AAgent 方法）</a>
+</li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.load_state_dict">load_state_dict() （InMemoryMemory 方法）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.load_state_dict">load_state_dict() （MemoryBase 方法）</a>
@@ -1417,13 +1459,13 @@
 </li>
         <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.model_name">model_name（TTSModelBase 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     module
 
         <ul>
           <li><a href="api/agentscope.html#module-agentscope">agentscope</a>
+</li>
+          <li><a href="api/agentscope.a2a.html#module-agentscope.a2a">agentscope.a2a</a>
 </li>
           <li><a href="api/agentscope.agent.html#module-agentscope.agent">agentscope.agent</a>
 </li>
@@ -1468,6 +1510,8 @@
           <li><a href="api/agentscope.types.html#module-agentscope.types">agentscope.types</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub">MsgHub（agentscope.pipeline 中的类）</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg">Msg（agentscope.message 中的类）</a>
@@ -1480,6 +1524,8 @@
   <h2>N</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.NacosAgentCardResolver">NacosAgentCardResolver（agentscope.a2a 中的类）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.BenchmarkBase.name">name（BenchmarkBase 属性）</a>
 </li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.MCPToolFunction.name">name（MCPToolFunction 属性）</a>
@@ -1488,10 +1534,10 @@
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.name">name（MetricResult 属性）</a>
 </li>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.name">name（Plan 属性）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.name">name（Plan 属性）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.name">name（SubTask 属性）</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.ToolResultBlock.name">name（ToolResultBlock 属性）</a>
@@ -1510,6 +1556,8 @@
   <h2>O</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.observe">observe() （A2AAgent 方法）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.observe">observe() （AgentBase 方法）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.observe">observe() （ReActAgent 方法）</a>
@@ -1534,10 +1582,10 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_audio">openai_text_to_audio()（在 agentscope.tool 模块中）</a>
 </li>
-        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image()（在 agentscope.tool 模块中）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.openai_text_to_image">openai_text_to_image()（在 agentscope.tool 模块中）</a>
+</li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.OpenAIChatFormatter">OpenAIChatFormatter（agentscope.formatter 中的类）</a>
 </li>
         <li><a href="api/agentscope.model.html#agentscope.model.OpenAIChatModel">OpenAIChatModel（agentscope.model 中的类）</a>
@@ -1670,15 +1718,17 @@
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() （Toolkit 方法）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.remove_plan_change_hook">remove_plan_change_hook() （PlanNotebook 方法）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_subscribers">remove_subscribers() （AgentBase 方法）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_function">remove_tool_function() （Toolkit 方法）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_tool_groups">remove_tool_groups() （Toolkit 方法）</a>
+</li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.reply">reply() （A2AAgent 方法）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.reply">reply() （AgentBase 方法）</a>
 </li>
@@ -1824,6 +1874,8 @@
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.VideoBlock.source">source（VideoBlock 属性）</a>
 </li>
+        <li><a href="api/agentscope.agent.html#agentscope.agent.A2AAgent.state_dict">state_dict() （A2AAgent 方法）</a>
+</li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.state_dict">state_dict() （InMemoryMemory 方法）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.state_dict">state_dict() （MemoryBase 方法）</a>
@@ -1872,10 +1924,10 @@
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeChatFormatter.support_multiagent">support_multiagent（DashScopeChatFormatter 属性）</a>
 </li>
-        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent">support_multiagent（DashScopeMultiAgentFormatter 属性）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.formatter.html#agentscope.formatter.DashScopeMultiAgentFormatter.support_multiagent">support_multiagent（DashScopeMultiAgentFormatter 属性）</a>
+</li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekChatFormatter.support_multiagent">support_multiagent（DeepSeekChatFormatter 属性）</a>
 </li>
         <li><a href="api/agentscope.formatter.html#agentscope.formatter.DeepSeekMultiAgentFormatter.support_multiagent">support_multiagent（DeepSeekMultiAgentFormatter 属性）</a>
@@ -2178,12 +2230,14 @@
   <h2>W</h2>
   <table style="width: 100%" class="indextable genindextable"><tr>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_a_subtask_in_progress">when_a_subtask_in_progress（DefaultPlanToHint 属性）</a>
+        <li><a href="api/agentscope.a2a.html#agentscope.a2a.WellKnownAgentCardResolver">WellKnownAgentCardResolver（agentscope.a2a 中的类）</a>
 </li>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_no_subtask_in_progress">when_no_subtask_in_progress（DefaultPlanToHint 属性）</a>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_a_subtask_in_progress">when_a_subtask_in_progress（DefaultPlanToHint 属性）</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.DefaultPlanToHint.when_no_subtask_in_progress">when_no_subtask_in_progress（DefaultPlanToHint 属性）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.WordReader">WordReader（agentscope.rag 中的类）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.write_text_file">write_text_file()（在 agentscope.tool 模块中）</a>

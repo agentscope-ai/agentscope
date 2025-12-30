@@ -334,6 +334,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="A2A（Agent-to-Agent）是一种开放标准协议，用于实现不同 AI 智能体之间的互操作通信。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_a2a_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_a2a`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">A2A 智能体</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="Multi-Agent debate 模拟不同智能体之间的多轮讨论场景，通常包括几个 solver 和一个 aggregator。 典型情况下，solver 生成并交换他们的答案，而 aggregator 收集并总结答案。">
 
 .. only:: html
@@ -531,6 +548,7 @@
    /tutorial/task_tts
    /tutorial/task_agent
    /tutorial/workflow_conversation
+   /tutorial/task_a2a
    /tutorial/workflow_multiagent_debate
    /tutorial/task_model
    /tutorial/quickstart_agent

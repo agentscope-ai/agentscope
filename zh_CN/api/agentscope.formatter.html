@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_a2a.html">A2A 智能体</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -1544,6 +1545,79 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 
 </dd></dl>
 
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.formatter.A2AChatFormatter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">A2AChatFormatter</span></span><a class="reference internal" href="../_modules/agentscope/formatter/_a2a_formatter.html#A2AChatFormatter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.A2AChatFormatter" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.formatter.FormatterBase" title="agentscope.formatter._formatter_base.FormatterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">FormatterBase</span></code></a></p>
+<p>A2A message formatter class, which convert AgentScope messages into
+A2A message format.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.A2AChatFormatter.format">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">format</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_a2a_formatter.html#A2AChatFormatter.format"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.A2AChatFormatter.format" title="Link to this definition">¶</a></dt>
+<dd><p>Convert AgentScope messages into a A2A message object. Note that
+A2A server only supports single request message, so the input msgs
+list will be merged into a single A2A Message.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>Note the A2A protocol receives a single message per request,
+so multi-message inputs will be merged into one A2A Message with role
+'user'.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>msgs</strong> (<cite>list[Msg]</cite>) -- List of AgentScope Msg objects to be converted.</p>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The converted A2A Message object.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>Message</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.A2AChatFormatter.format_a2a_message">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">format_a2a_message</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">message</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_a2a_formatter.html#A2AChatFormatter.format_a2a_message"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.A2AChatFormatter.format_a2a_message" title="Link to this definition">¶</a></dt>
+<dd><p>Convert A2A Message object back to AgentScope Msg format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> (<cite>str</cite>) -- The name of the message sender.</p></li>
+<li><p><strong>message</strong> (<cite>Message</cite>) -- The A2A Message object to be converted.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>List of converted AgentScope Msg objects.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Msg]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.formatter.A2AChatFormatter.format_a2a_task">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">format_a2a_task</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">task</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/formatter/_a2a_formatter.html#A2AChatFormatter.format_a2a_task"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.formatter.A2AChatFormatter.format_a2a_task" title="Link to this definition">¶</a></dt>
+<dd><p>Convert A2A Task object back to AgentScope Msg format.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> (<cite>str</cite>) -- The name of the message sender.</p></li>
+<li><p><strong>task</strong> (<cite>Task</cite>) -- The A2A Task object to be converted.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>Converted AgentScope Msg objects.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Msg]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
 </section>
 
         </article>
@@ -1744,6 +1818,12 @@ If <cite>True</cite>, the conversation history prompt will be included.</p></li>
 <li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter.__init__"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_tool_sequence"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter._format_tool_sequence()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.formatter.DeepSeekMultiAgentFormatter._format_agent_message"><code class="docutils literal notranslate"><span class="pre">DeepSeekMultiAgentFormatter._format_agent_message()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.formatter.A2AChatFormatter"><code class="docutils literal notranslate"><span class="pre">A2AChatFormatter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.formatter.A2AChatFormatter.format"><code class="docutils literal notranslate"><span class="pre">A2AChatFormatter.format()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.A2AChatFormatter.format_a2a_message"><code class="docutils literal notranslate"><span class="pre">A2AChatFormatter.format_a2a_message()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.formatter.A2AChatFormatter.format_a2a_task"><code class="docutils literal notranslate"><span class="pre">A2AChatFormatter.format_a2a_task()</span></code></a></li>
 </ul>
 </li>
 </ul>

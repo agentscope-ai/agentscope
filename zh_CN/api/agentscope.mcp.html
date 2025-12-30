@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_a2a.html">A2A 智能体</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -491,12 +492,15 @@ across the MCP servers.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.mcp.StatefulClientBase.close">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_stateful_client_base.html#StatefulClientBase.close"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.StatefulClientBase.close" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ignore_errors</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_stateful_client_base.html#StatefulClientBase.close"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.StatefulClientBase.close" title="Link to this definition">¶</a></dt>
 <dd><p>Clean up the MCP client resources. You must call this method when
 your application is done.</p>
 <dl class="field-list simple">
-<dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>None</p>
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>ignore_errors</strong> (<cite>bool</cite>) -- Whether to ignore errors during cleanup. Defaults to <cite>True</cite>.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
 </dd>
 </dl>
 </dd></dl>

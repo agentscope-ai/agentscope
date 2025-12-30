@@ -267,6 +267,12 @@ asyncio.run(example_structured_output())
 #       -
 #       -
 #       - 代表用户的特殊智能体，用于与智能体交互
+#     * - ``A2aAgent``
+#       - \-
+#       - | pre\_/post_reply
+#         | pre\_/post_observe
+#         | pre\_/post_print
+#       - 用于与远程 A2A 代理通信的智能体，详见 :ref:`a2a`
 #
 #
 #
@@ -274,4 +280,5 @@ asyncio.run(example_structured_output())
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # - :ref:`tool`
 # - :ref:`hook`
+# - :ref:`a2a`
 #

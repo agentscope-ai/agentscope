@@ -267,6 +267,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_a2a.html">A2A 智能体</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">Features</span></p>
 <ul>
@@ -421,9 +422,14 @@
 
 <div class="viewcode-block" id="StatefulClientBase.close">
 <a class="viewcode-back" href="../../../api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">[文档]</a>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Clean up the MCP client resources. You must call this method when</span>
-<span class="sd">        your application is done.&quot;&quot;&quot;</span>
+<span class="sd">        your application is done.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            ignore_errors (`bool`):</span>
+<span class="sd">                Whether to ignore errors during cleanup. Defaults to `True`.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_connected</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
                 <span class="s2">&quot;The MCP server is not connected. Call connect() before &quot;</span>
@@ -432,8 +438,9 @@
 
         <span class="k">try</span><span class="p">:</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">stack</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;MCP client closed.&quot;</span><span class="p">)</span>
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">ignore_errors</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">e</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;Error during MCP client cleanup: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
         <span class="k">finally</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">stack</span> <span class="o">=</span> <span class="kc">None</span>
