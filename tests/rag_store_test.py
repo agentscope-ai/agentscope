@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
+import importlib
+import importlib.abc
+import sys
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
     QdrantStore,
+    MilvusLiteStore,
+    VDBStoreBase,
     Document,
     DocMetadata,
 )
@@ -12,6 +17,40 @@ from agentscope.rag import (
 
 class RAGStoreTest(IsolatedAsyncioTestCase):
     """Test cases for RAG store implementations."""
+
+    def test_rag_import_does_not_eagerly_import_pymilvus(self) -> None:
+        """Importing agentscope.rag should not import pymilvus eagerly."""
+        forbidden_prefixes = ("pymilvus",)
+
+        saved = {}
+        for name in list(sys.modules):
+            if name == "agentscope.rag" or name.startswith("agentscope.rag."):
+                saved[name] = sys.modules.pop(name)
+            elif any(name == p or name.startswith(p + ".") for p in forbidden_prefixes):
+                saved[name] = sys.modules.pop(name)
+
+        class _Blocker(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):  # type: ignore[override]
+                if any(
+                    fullname == p or fullname.startswith(p + ".")
+                    for p in forbidden_prefixes
+                ):
+                    raise AssertionError(
+                        f"agentscope.rag import attempted forbidden module: {fullname}",
+                    )
+                return None
+
+        blocker = _Blocker()
+        sys.meta_path.insert(0, blocker)
+        try:
+            importlib.import_module("agentscope.rag")
+        finally:
+            sys.meta_path.remove(blocker)
+            sys.modules.update(saved)
+
+    def test_milvuslite_store_exported(self) -> None:
+        """MilvusLiteStore should be importable without optional deps."""
+        self.assertTrue(issubclass(MilvusLiteStore, VDBStoreBase))
 
     async def test_qdrant_store(self) -> None:
         """Test the QdrantStore implementation."""

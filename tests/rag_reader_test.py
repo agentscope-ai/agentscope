@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Test the RAG reader implementations."""
+import importlib
+import importlib.abc
 import os
+import sys
+import tempfile
+from pathlib import Path
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.rag import TextReader, PDFReader
@@ -8,6 +13,44 @@ from agentscope.rag import TextReader, PDFReader
 
 class RAGReaderText(IsolatedAsyncioTestCase):
     """Test cases for RAG reader implementations."""
+
+    def test_py_typed_exists(self) -> None:
+        """`py.typed` should exist in the agentscope package."""
+        import agentscope
+
+        pkg_root = Path(next(iter(getattr(agentscope, "__path__", [])), ""))
+        self.assertTrue((pkg_root / "py.typed").is_file())
+
+    def test_rag_import_does_not_eagerly_import_docx(self) -> None:
+        """Importing agentscope.rag should not import python-docx eagerly."""
+
+        forbidden_prefixes = ("docx",)
+
+        saved = {}
+        for name in list(sys.modules):
+            if name == "agentscope.rag" or name.startswith("agentscope.rag."):
+                saved[name] = sys.modules.pop(name)
+            elif any(name == p or name.startswith(p + ".") for p in forbidden_prefixes):
+                saved[name] = sys.modules.pop(name)
+
+        class _Blocker(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):  # type: ignore[override]
+                if any(
+                    fullname == p or fullname.startswith(p + ".")
+                    for p in forbidden_prefixes
+                ):
+                    raise AssertionError(
+                        f"agentscope.rag import attempted forbidden module: {fullname}",
+                    )
+                return None
+
+        blocker = _Blocker()
+        sys.meta_path.insert(0, blocker)
+        try:
+            importlib.import_module("agentscope.rag")
+        finally:
+            sys.meta_path.remove(blocker)
+            sys.modules.update(saved)
 
     async def test_text_reader(self) -> None:
         """Test the TextReader implementation."""
@@ -70,6 +113,35 @@ class RAGReaderText(IsolatedAsyncioTestCase):
             [_.metadata.content["text"] for _ in docs],
             ["01234", "56789", "10111", "213.", "1415"],
         )
+
+    async def test_word_reader_minimal_docx(self) -> None:
+        """WordReader should parse a minimal generated .docx file."""
+        try:
+            from docx import Document as DocxDocument
+        except ImportError as e:
+            raise AssertionError(
+                "python-docx is required for this test; install with "
+                "`pip install -e .[dev]`.",
+            ) from e
+
+        from agentscope.rag import WordReader
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc_path = os.path.join(tmpdir, "example.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("Hello WordReader.")
+            doc.save(doc_path)
+
+            reader = WordReader(
+                chunk_size=64,
+                split_by="paragraph",
+                include_image=False,
+            )
+            docs = await reader(word_path=doc_path)
+
+        self.assertGreaterEqual(len(docs), 1)
+        self.assertEqual(docs[0].metadata.content["type"], "text")
+        self.assertIn("Hello WordReader.", docs[0].metadata.content["text"])
 
     async def test_pdf_reader(self) -> None:
         """Test the PDFReader implementation."""

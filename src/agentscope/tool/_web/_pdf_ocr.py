@@ -21,7 +21,6 @@ import os
 import traceback
 
 from .._response import ToolResponse
-from ...message import TextBlock
 from ..._logging import logger
 from ._common import normalize_and_validate_url, error_response
 
@@ -81,4 +80,3 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
 
 
 __all__ = ["web_pdf_ocr_markdown"]
-

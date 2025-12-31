@@ -20,7 +20,6 @@ from __future__ import annotations
 import traceback
 
 from .._response import ToolResponse
-from ...message import TextBlock
 from ..._logging import logger
 from ._common import normalize_and_validate_url, sanitize_html, error_response
 
@@ -39,7 +38,7 @@ def web_html_render_markdown(url: str) -> ToolResponse:
         html = ""  # placeholder
 
         # TODO: apply real sanitation/cleanup
-        cleaned = sanitize_html(html)
+        sanitize_html(html)
 
         # TODO: convert to Markdown via readability+markdownify (or similar)
         # md = html2md(cleaned)
@@ -58,4 +57,3 @@ def web_html_render_markdown(url: str) -> ToolResponse:
 
 
 __all__ = ["web_html_render_markdown"]
-

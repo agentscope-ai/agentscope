@@ -16,7 +16,6 @@ from urllib.parse import urlparse
 
 from .._response import ToolResponse
 from ...message import TextBlock
-from ..._logging import logger
 
 
 USER_AGENT: Final[str] = "AgentScope-Web/1.0 (+https://github.com/)"
@@ -69,4 +68,3 @@ __all__ = [
     "error_response",
     "sanitize_html",
 ]
-

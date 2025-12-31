@@ -22,6 +22,7 @@ from ._subagent_base import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..model import ChatModelBase
     from ..tool import ToolResponse
 
 

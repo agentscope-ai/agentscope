@@ -51,6 +51,8 @@ extra_requires = [
     "pypdf",
     "nltk",
     "qdrant-client",
+    "python-docx",
+    "pymilvus[milvus_lite]; platform_system != \"Windows\"",
 ]
 
 dev_requires = [
@@ -78,6 +80,7 @@ setuptools.setup(
     keywords=["deep-learning", "multi agents", "agents"],
     package_dir={"": "src"},
     packages=setuptools.find_packages("src"),
+    package_data={"agentscope": ["py.typed"]},
     install_requires=minimal_requires,
     extras_require={
         "full": minimal_requires + extra_requires,
