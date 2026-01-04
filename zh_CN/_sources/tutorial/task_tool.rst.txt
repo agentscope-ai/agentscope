@@ -334,7 +334,7 @@ AgentScope 在 ``agentscope.tool`` 模块下提供了几个内置工具函数，
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-01-04 07:18:05.410_156975')
+    ToolResponse(content=[{'type': 'text', 'text': "正在使用 API 密钥 'xxx' 搜索 'AgentScope'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-01-04 07:36:08.860_1882e6')
 
 
 
@@ -499,7 +499,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     工具响应：
-    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-01-04 07:18:06.415_877407')
+    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-01-04 07:36:09.864_84a03d')
     中断标志：
     True
 
@@ -580,11 +580,11 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
  .. code-block:: none
 
     块 0：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2026-01-04 07:18:06.417_cc3b03')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2026-01-04 07:36:09.866_8d5757')
     中断标志： False 
 
     块 1：
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-01-04 07:18:06.417_cc3b03')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-01-04 07:36:09.866_8d5757')
     中断标志： True 
 
 
@@ -973,7 +973,7 @@ Toolkit 允许通过调用 ``set_extended_model`` 方法动态扩展工具函数
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.022 seconds)
+   **Total running time of the script:** (0 minutes 1.019 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tool.py:
