@@ -42,6 +42,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# A2A protocol support
+a2a = [
+    "a2a-sdk",
+    "httpx",
+    "nacos-sdk-python>=3.0.0",
+]
+
 full = [
     # Model
     "ollama>=0.5.4",
@@ -63,9 +70,12 @@ full = [
     # the version to 1.15.1 here.
     "qdrant-client==1.15.1",
 ]
+
 dev = [
     # Include full dependencies from local package
     "agentscope[full]",
+    # A2A protocol support
+    "agentscope[a2a]",
     # Development tools
     "pre-commit",
     "pytest",
