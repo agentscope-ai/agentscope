@@ -23,7 +23,7 @@ def _client_kwargs() -> dict[str, str]:
 def _create_store(
     collection_name: str,
     dimensions: int = 4,
-    distance: str = "cosine",
+    distance: str = "COSINE",
 ) -> OceanBaseStore:
     return OceanBaseStore(
         collection_name=collection_name,
@@ -294,7 +294,7 @@ async def example_distance_metrics() -> None:
     print("Test 4: Different Distance Metrics")
     print("=" * 60)
 
-    metrics = ["cosine", "l2", "inner_product"]
+    metrics = ["COSINE", "L2", "IP"]
 
     for metric in metrics:
         print(f"\n--- Testing {metric} metric ---")
