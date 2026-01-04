@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
 import os
+import uuid
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.message import TextBlock
@@ -9,6 +10,7 @@ from agentscope.rag import (
     Document,
     DocMetadata,
     MilvusLiteStore,
+    OceanBaseStore,
 )
 
 
@@ -127,6 +129,87 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             res[0].metadata.content["text"],
             "This is a test document.",
         )
+
+    async def test_oceanbase_store(self) -> None:
+        """Test the OceanBaseStore implementation."""
+        required_vars = [
+            "OCEANBASE_URI",
+            "OCEANBASE_USER",
+            "OCEANBASE_DB",
+        ]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        if missing_vars:
+            self.skipTest(
+                "OceanBase env vars not set: "
+                f"{', '.join(missing_vars)}",
+            )
+
+        try:
+            import pyobvector  # noqa: F401
+        except ImportError:
+            self.skipTest("pyobvector is not installed.")
+
+        collection_name = f"test_ob_{uuid.uuid4().hex[:8]}"
+        store = OceanBaseStore(
+            collection_name=collection_name,
+            dimensions=3,
+            client_kwargs={
+                "uri": os.getenv("OCEANBASE_URI", ""),
+                "user": os.getenv("OCEANBASE_USER", ""),
+                "password": os.getenv("OCEANBASE_PASSWORD", ""),
+                "db_name": os.getenv("OCEANBASE_DB", ""),
+            },
+        )
+
+        client = store.get_client()
+        client.drop_collection(collection_name)
+
+        try:
+            await store.add(
+                [
+                    Document(
+                        embedding=[0.1, 0.2, 0.3],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is a test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=0,
+                            total_chunks=2,
+                        ),
+                    ),
+                    Document(
+                        embedding=[0.9, 0.1, 0.4],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is another test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=1,
+                            total_chunks=2,
+                        ),
+                    ),
+                ],
+            )
+
+            res = await store.search(
+                query_embedding=[0.15, 0.25, 0.35],
+                limit=3,
+                score_threshold=0.8,
+            )
+            self.assertEqual(len(res), 1)
+            self.assertEqual(
+                round(res[0].score, 4),
+                0.9974,
+            )
+            self.assertEqual(
+                res[0].metadata.content["text"],
+                "This is a test document.",
+            )
+        finally:
+            client.drop_collection(collection_name)
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests."""
