@@ -2,6 +2,7 @@
 """Test the RAG store implementations."""
 import os
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import MagicMock, patch, AsyncMock
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
@@ -9,6 +10,7 @@ from agentscope.rag import (
     Document,
     DocMetadata,
     MilvusLiteStore,
+    LindormStore,
 )
 
 
@@ -130,6 +132,89 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests."""
-        # Remove Milvus Lite database file
         if os.path.exists("./milvus_demo.db"):
             os.remove("./milvus_demo.db")
+
+    @patch("opensearchpy.OpenSearch")
+    async def test_lindorm_store(self, mock_opensearch_class: MagicMock) -> None:
+        """Test the LindormStore implementation."""
+        mock_client = MagicMock()
+        mock_opensearch_class.return_value = mock_client
+
+        mock_client.indices.exists.return_value = False
+        mock_client.indices.create.return_value = {"acknowledged": True}
+        mock_client.index.return_value = {"result": "created"}
+        mock_client.indices.refresh.return_value = {"_shards": {"successful": 1}}
+        mock_client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_score": 0.95,
+                        "_source": {
+                            "vector": [0.1, 0.2, 0.3],
+                            "doc_id": "doc1",
+                            "chunk_id": 0,
+                            "content": "This is a test document.",
+                            "total_chunks": 2,
+                        },
+                    },
+                ],
+            },
+        }
+
+        store = LindormStore(
+            hosts=["http://localhost:9200"],
+            index_name="test_index",
+            dimensions=3,
+            http_auth=("user", "pass"),
+            enable_routing=True,
+            enable_hybrid_search=True,
+        )
+
+        await store.add(
+            [
+                Document(
+                    embedding=[0.1, 0.2, 0.3],
+                    metadata=DocMetadata(
+                        content=TextBlock(
+                            type="text",
+                            text="This is a test document.",
+                        ),
+                        doc_id="doc1",
+                        chunk_id=0,
+                        total_chunks=2,
+                    ),
+                ),
+            ],
+            routing="user123",
+        )
+
+        mock_client.indices.create.assert_called_once()
+        self.assertTrue(mock_client.index.called)
+
+        res = await store.search(
+            query_embedding=[0.15, 0.25, 0.35],
+            limit=3,
+            score_threshold=0.9,
+            routing="user123",
+            query_text="test document",
+            scalar_filters=[{"range": {"total_chunks": {"gt": 1}}}],
+        )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].score, 0.95)
+        self.assertEqual(
+            res[0].metadata.content,
+            "This is a test document.",
+        )
+
+        call_args = mock_client.search.call_args
+        query_body = call_args[1]["body"]
+        self.assertIn("ext", query_body)
+        self.assertIn("lvector", query_body["ext"])
+        self.assertEqual(
+            query_body["ext"]["lvector"]["hybrid_search_type"],
+            "filter_rrf",
+        )
+        self.assertIn("filter", query_body["query"]["knn"]["vector"])
+
