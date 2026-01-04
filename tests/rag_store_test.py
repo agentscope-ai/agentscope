@@ -2,7 +2,7 @@
 """Test the RAG store implementations."""
 import os
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
@@ -136,7 +136,10 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             os.remove("./milvus_demo.db")
 
     @patch("opensearchpy.OpenSearch")
-    async def test_lindorm_store(self, mock_opensearch_class: MagicMock) -> None:
+    async def test_lindorm_store(
+        self,
+        mock_opensearch_class: MagicMock,
+    ) -> None:
         """Test the LindormStore implementation."""
         mock_client = MagicMock()
         mock_opensearch_class.return_value = mock_client
@@ -144,7 +147,9 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         mock_client.indices.exists.return_value = False
         mock_client.indices.create.return_value = {"acknowledged": True}
         mock_client.index.return_value = {"result": "created"}
-        mock_client.indices.refresh.return_value = {"_shards": {"successful": 1}}
+        mock_client.indices.refresh.return_value = {
+            "_shards": {"successful": 1}
+        }
         mock_client.search.return_value = {
             "hits": {
                 "hits": [
@@ -168,7 +173,6 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             dimensions=3,
             http_auth=("user", "pass"),
             enable_routing=True,
-            enable_hybrid_search=True,
         )
 
         await store.add(
@@ -197,8 +201,6 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             limit=3,
             score_threshold=0.9,
             routing="user123",
-            query_text="test document",
-            scalar_filters=[{"range": {"total_chunks": {"gt": 1}}}],
         )
 
         self.assertEqual(len(res), 1)
@@ -210,11 +212,5 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
 
         call_args = mock_client.search.call_args
         query_body = call_args[1]["body"]
-        self.assertIn("ext", query_body)
-        self.assertIn("lvector", query_body["ext"])
-        self.assertEqual(
-            query_body["ext"]["lvector"]["hybrid_search_type"],
-            "filter_rrf",
-        )
-        self.assertIn("filter", query_body["query"]["knn"]["vector"])
-
+        self.assertEqual(query_body["size"], 3)
+        self.assertIn("knn", query_body["query"])

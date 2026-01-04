@@ -17,7 +17,7 @@ else:
 
 class LindormStore(VDBStoreBase):
     """The Lindorm vector store implementation, supporting Aliyun Lindorm
-    vector engine with hybrid search and custom routing.
+    vector engine with vector similarity search and custom routing.
 
     .. note:: Lindorm uses OpenSearch-compatible API. We store metadata in
     document fields including doc_id, chunk_id, and content.
@@ -30,15 +30,8 @@ class LindormStore(VDBStoreBase):
         index_name: str,
         dimensions: int,
         http_auth: tuple[str, str] | None = None,
-        use_ssl: bool = False,
-        verify_certs: bool = False,
         distance_metric: Literal["l2", "cosine", "inner_product"] = "cosine",
         enable_routing: bool = False,
-        enable_hybrid_search: bool = True,
-        rrf_rank_constant: int = 2,
-        rrf_knn_weight_factor: float = 0.5,
-        client_kwargs: dict[str, Any] | None = None,
-        index_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Lindorm vector store.
 
@@ -51,25 +44,11 @@ class LindormStore(VDBStoreBase):
                 The dimension of the embeddings.
             http_auth (`tuple[str, str] | None`, optional):
                 HTTP authentication (username, password) tuple.
-            use_ssl (`bool`, defaults to True):
-                Whether to use SSL/TLS connection.
-            verify_certs (`bool`, defaults to True):
-                Whether to verify SSL certificates.
             distance_metric (`Literal["l2", "cosine", "inner_product"]`, \
             defaults to "cosine"):
                 The distance metric for vector similarity.
             enable_routing (`bool`, defaults to False):
                 Whether to enable custom routing for data isolation.
-            enable_hybrid_search (`bool`, defaults to False):
-                Whether to enable full-text and vector hybrid search.
-            rrf_rank_constant (`int`, defaults to 60):
-                RRF rank constant for hybrid search fusion.
-            rrf_knn_weight_factor (`float`, defaults to 1.0):
-                Weight factor for KNN in hybrid search.
-            client_kwargs (`dict[str, Any] | None`, optional):
-                Additional keyword arguments for OpenSearch client.
-            index_kwargs (`dict[str, Any] | None`, optional):
-                Additional keyword arguments for index creation.
         """
 
         try:
@@ -80,23 +59,17 @@ class LindormStore(VDBStoreBase):
                 "`pip install opensearch-py`.",
             ) from e
 
-        client_kwargs = client_kwargs or {}
         self._client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
-            use_ssl=use_ssl,
-            verify_certs=verify_certs,
-            **client_kwargs,
+            use_ssl=False,
+            verify_certs=False,
         )
 
         self.index_name = index_name
         self.dimensions = dimensions
         self.distance_metric = distance_metric
         self.enable_routing = enable_routing
-        self.enable_hybrid_search = enable_hybrid_search
-        self.rrf_rank_constant = rrf_rank_constant
-        self.rrf_knn_weight_factor = rrf_knn_weight_factor
-        self.index_kwargs = index_kwargs or {}
 
     def _create_index_body(self) -> dict[str, Any]:
         """Create the index body configuration for Lindorm."""
@@ -123,7 +96,6 @@ class LindormStore(VDBStoreBase):
                     "knn": True,
                     **knn_settings,
                 },
-                **self.index_kwargs.get("settings", {}),
             },
             "mappings": {
                 "_source": {"excludes": ["vector"]},
@@ -142,7 +114,6 @@ class LindormStore(VDBStoreBase):
                     "content": {"type": "object", "enabled": False},
                     "total_chunks": {"type": "integer"},
                 },
-                **self.index_kwargs.get("mappings", {}),
             },
         }
 
@@ -221,89 +192,21 @@ class LindormStore(VDBStoreBase):
             **kwargs (`Any`):
                 Additional arguments:
                 - routing (`str`): Custom routing key for targeted search.
-                - query_text (`str`): Text query for hybrid search.
-                - scalar_filters (`list[dict]`): Scalar filters for filtering.
-                - filter_type (`str`): Filter type, defaults to \
-                "efficient_filter".
         """
         routing = kwargs.get("routing", None)
-        query_text = kwargs.get("query_text", None)
-        scalar_filters = kwargs.get("scalar_filters", None)
-        filter_type = kwargs.get("filter_type", "efficient_filter")
 
-        knn_query: dict[str, Any] = {
-            "vector": query_embedding,
-            "k": limit,
+        query_body = {
+            "size": limit,
+            "query": {
+                "knn": {
+                    "vector": {
+                        "vector": query_embedding,
+                        "k": limit,
+                    },
+                },
+            },
+            "_source": True,
         }
-
-        if self.enable_hybrid_search and (query_text or scalar_filters):
-            filter_conditions = []
-
-            if query_text:
-                filter_conditions.append(
-                    {
-                        "bool": {
-                            "must": [
-                                {
-                                    "match": {
-                                        "content": {
-                                            "query": query_text,
-                                        },
-                                    },
-                                },
-                            ],
-                        },
-                    },
-                )
-
-            if scalar_filters:
-                filter_conditions.append(
-                    {
-                        "bool": {
-                            "filter": scalar_filters,
-                        },
-                    },
-                )
-
-            if len(filter_conditions) == 1:
-                knn_query["filter"] = filter_conditions[0]
-            else:
-                knn_query["filter"] = {
-                    "bool": {
-                        "must": filter_conditions,
-                    },
-                }
-
-            query_body = {
-                "size": limit,
-                "query": {
-                    "knn": {
-                        "vector": knn_query,
-                    },
-                },
-                "ext": {
-                    "lvector": {
-                        "hybrid_search_type": "filter_rrf",
-                        "rrf_rank_constant": str(self.rrf_rank_constant),
-                        "rrf_knn_weight_factor": str(self.rrf_knn_weight_factor),
-                    },
-                },
-            }
-
-            if scalar_filters:
-                query_body["ext"]["lvector"]["filter_type"] = filter_type
-        else:
-            query_body = {
-                "size": limit,
-                "query": {
-                    "knn": {
-                        "vector": knn_query,
-                    },
-                },
-            }
-
-        # Add _source to retrieve document fields
-        query_body["_source"] = True
 
         search_params: dict[str, Any] = {
             "index": self.index_name,
