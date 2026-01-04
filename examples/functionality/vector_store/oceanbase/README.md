@@ -36,7 +36,7 @@ from agentscope.rag import OceanBaseStore
 store = OceanBaseStore(
     collection_name="test_collection",
     dimensions=768,
-    distance="cosine",
+    distance="COSINE",
     client_kwargs={
         "uri": "127.0.0.1:2881",
         "user": "root",
@@ -103,7 +103,7 @@ await store.delete(where=[table.c["doc_id"] == "doc_1"])
 |--------|-------------|----------|
 | **COSINE** | Cosine similarity | Text embeddings (recommended) |
 | **L2** | Euclidean distance | Spatial data |
-| **INNER_PRODUCT** | Inner product | Recommendation systems |
+| **IP** | Inner product | Recommendation systems |
 
 ## Filter Expressions
 
