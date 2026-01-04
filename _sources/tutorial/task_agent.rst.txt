@@ -225,7 +225,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_bd32b11f1b574f30ac1314",
+        "id": "call_1984d450d44345e4a39706",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -233,7 +233,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_f9aed03bf50943ae863755",
+        "id": "call_2a52d3cb881941f48dc630",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -241,30 +241,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_bd32b11f1b574f30ac1314",
+        "id": "call_1984d450d44345e4a39706",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 04:18:29.026337 and ended at 04:18:32.029598. "
+                "text": "Tag tag1 started at 07:08:42.181537 and ended at 07:08:45.184771. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_f9aed03bf50943ae863755",
+        "id": "call_2a52d3cb881941f48dc630",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 04:18:29.026436 and ended at 04:18:32.030209. "
+                "text": "Tag tag2 started at 07:08:42.181631 and ended at 07:08:45.185340. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called with two tags 'tag1' and 'tag2' in parallel. Here are the results:
+    Jarvis: The function 'example_tool_function' was called in parallel with the tags 'tag1' and 'tag2'. Here are the results:
 
-    - For tag 'tag1', the function started at 04:18:29.026337 and ended at 04:18:32.029598.
-    - For tag 'tag2', the function started at 04:18:29.026436 and ended at 04:18:32.030209.
+    - For 'tag1', the process started at 07:08:42.181537 and ended at 07:08:45.184771.
+    - For 'tag2', the process started at 07:08:42.181631 and ended at 07:08:45.185340.
+
+    Both processes have been executed concurrently as requested.
 
 
 
@@ -343,7 +345,7 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_7c51590abde447748b0d2a",
+        "id": "call_485f25dc137e41a1981e60",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
@@ -358,7 +360,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_7c51590abde447748b0d2a",
+        "id": "call_485f25dc137e41a1981e60",
         "name": "generate_response",
         "output": [
             {
@@ -367,7 +369,7 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned physicist best known for developing the theory of relativity, one of the two pillars of modern physics. Born in 1879, Einstein made significant contributions to the field of theoretical physics and is widely regarded as one of the most influential scientists of the 20th century. He was awarded the Nobel Prize in Physics in 1921, not primarily for his work on relativity, but for his services to theoretical physics and his discovery of the law of the photoelectric effect. Among his many honors, he also received the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that continues to influence scientific thought and research today.
+    Jarvis: Allow me to introduce Albert Einstein, a renowned physicist best known for developing the theory of relativity. Born in 1879 and passing away at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. Among his many accolades are the Nobel Prize in Physics, which he received in 1921, the Copley Medal from the Royal Society in 1925, and the Max Planck Medal in 1929. His work continues to influence physics and inspire scientists around the globe.
 
     The structured output:
     {
@@ -456,7 +458,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 18.495 seconds)
+   **Total running time of the script:** (0 minutes 22.679 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

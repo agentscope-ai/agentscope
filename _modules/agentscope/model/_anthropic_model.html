@@ -655,7 +655,10 @@
                     <span class="n">thinking_block</span><span class="p">[</span><span class="s2">&quot;signature&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">content_block</span><span class="o">.</span><span class="n">signature</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">thinking_block</span><span class="p">)</span>
 
-                <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">content_block</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">):</span>
+                <span class="k">elif</span> <span class="p">(</span>
+                    <span class="nb">hasattr</span><span class="p">(</span><span class="n">content_block</span><span class="p">,</span> <span class="s2">&quot;type&quot;</span><span class="p">)</span>
+                    <span class="ow">and</span> <span class="n">content_block</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;text&quot;</span>
+                <span class="p">):</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="n">TextBlock</span><span class="p">(</span>
                             <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>

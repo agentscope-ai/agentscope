@@ -329,9 +329,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='disddrm5zDAiNFWb6aZyxm', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='gPd6tQ32iDFmdaKHZAyepL', embedding=None, score=0.5657136536003619) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='9MpSw9q9AC9W2iBsin3ucj', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='2cydHJvZuKYz9avxTnBVhj', embedding=None, score=0.5062624400117309) 
 
 
 
@@ -453,38 +453,48 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any particular reason you're mentioning him? Maybe there's something I can help with or suggest, like ideas for things to do together or advice on how to be a good friend.
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any special memories you two have together? Or is there something I can help you with related to your friendship?
 
 
     The second response: 
-    Friday: I don't have any specific information about John Doe's father. To find out, we would need to look up this information or for you to provide it. If you're asking because you're curious and you don't know the details, I can try to help you find more information. However, if you do know the name or have more details, feel free to share them and I can assist you further.
-
-    If you'd like me to search for information, I will need a bit more context or specific details to work with. Can you provide me with additional information that might be helpful? If not, I can still attempt a general search for "John Doe's father." Let me know how you'd like to proceed.
-    {
+    Friday: {
         "type": "tool_use",
-        "id": "call_49e0e1de3bcc4e0cbfb81e",
+        "id": "call_41134e649e2c4dbb938e92",
         "name": "retrieve_knowledge",
         "input": {
-            "query": "John Doe's father",
+            "query": "John Doe father",
             "limit": 5,
-            "score_threshold": 0.7
+            "score_threshold": null
         }
     }
-
     system: {
         "type": "tool_result",
-        "id": "call_49e0e1de3bcc4e0cbfb81e",
+        "id": "call_41134e649e2c4dbb938e92",
         "name": "retrieve_knowledge",
         "output": [
             {
                 "type": "text",
-                "text": "No relevant documents found. TRY to reduce the `score_threshold` parameter to get more results."
+                "text": "Score: 0.5653893900693138, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.4790107771624694, Content: I'm John Doe, 28 years old."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.2473851245249162, Content: My best friend is James Smith."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.15979023413058244, Content: I live in San Francisco. I work at OpenAI as a software engineer. I love hiking and photography."
+            },
+            {
+                "type": "text",
+                "text": "Score: 0.15195164753879928, Content: I'm now a PhD student at Stanford University, majoring in Computer Science. My advisor is Prof. Jane Williams, who is a leading expert in artificial intelligence. I have published several papers in top conferences, such as NeurIPS and ICML."
             }
         ]
     }
-    Friday: I couldn't find any information about John Doe's father with the details provided, and it seems there's no specific public information available under that query. It's possible that the name "John Doe" is a placeholder or that there isn't enough publicly available information to identify his father.
-
-    If you can provide more specific details such as John's full name, location, or any other relevant information, I might be able to help you find what you're looking for. If this is a personal matter and the information is not publicly available, it would be best to ask John directly if you feel comfortable doing so. Would you like to try with additional information or take a different approach?
+    Friday: According to the information I found, John Doe's father is Michael Doe, and he is a doctor. It seems that John is proud of his father. If you need more details or have any other questions about John, feel free to ask!
 
 
 
@@ -700,7 +710,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='iELqruQXMpmZkxLHoqvrSp', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-01-04 04:20:21.029', invocation_id='None')
+    Msg(id='WxQbV8iDsnnLj5Ttwn9cr6', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-01-04 07:10:49.415', invocation_id='None')
 
 
 
@@ -713,7 +723,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 37.010 seconds)
+   **Total running time of the script:** (0 minutes 27.807 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:
