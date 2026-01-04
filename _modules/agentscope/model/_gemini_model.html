@@ -344,6 +344,7 @@
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="c1"># mypy: disable-error-code=&quot;dict-item&quot;</span>
 <span class="sd">&quot;&quot;&quot;The Google Gemini model in agentscope.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">copy</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -371,6 +372,85 @@
     <span class="kn">from</span><span class="w"> </span><span class="nn">google.genai.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">GenerateContentResponse</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="n">GenerateContentResponse</span> <span class="o">=</span> <span class="s2">&quot;google.genai.types.GenerateContentResponse&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_flatten_json_schema</span><span class="p">(</span><span class="n">schema</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Flatten a JSON schema by resolving all $ref references.</span>
+
+<span class="sd">    .. note::</span>
+<span class="sd">        Gemini API does not support `$defs` and `$ref` in JSON schemas.</span>
+<span class="sd">        This function resolves all `$ref` references by inlining the</span>
+<span class="sd">        referenced definitions, producing a self-contained schema without</span>
+<span class="sd">        any references.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        schema (`dict`):</span>
+<span class="sd">            The JSON schema that may contain `$defs` and `$ref` references.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        `dict`:</span>
+<span class="sd">            A flattened JSON schema with all references resolved inline.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Deep copy to avoid modifying the original schema</span>
+    <span class="n">schema</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">schema</span><span class="p">)</span>
+
+    <span class="c1"># Extract $defs if present</span>
+    <span class="n">defs</span> <span class="o">=</span> <span class="n">schema</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;$defs&quot;</span><span class="p">,</span> <span class="p">{})</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_ref</span><span class="p">(</span><span class="n">obj</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">visited</span><span class="p">:</span> <span class="nb">set</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Recursively resolve $ref references in the schema.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">visited</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">visited</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="k">return</span> <span class="p">[</span><span class="n">_resolve_ref</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">visited</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">obj</span>
+
+        <span class="c1"># Handle $ref</span>
+        <span class="k">if</span> <span class="s2">&quot;$ref&quot;</span> <span class="ow">in</span> <span class="n">obj</span><span class="p">:</span>
+            <span class="n">ref_path</span> <span class="o">=</span> <span class="n">obj</span><span class="p">[</span><span class="s2">&quot;$ref&quot;</span><span class="p">]</span>
+            <span class="c1"># Extract definition name from &quot;#/$defs/DefinitionName&quot;</span>
+            <span class="k">if</span> <span class="n">ref_path</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;#/$defs/&quot;</span><span class="p">):</span>
+                <span class="n">def_name</span> <span class="o">=</span> <span class="n">ref_path</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s2">&quot;#/$defs/&quot;</span><span class="p">)</span> <span class="p">:]</span>
+
+                <span class="c1"># Prevent infinite recursion for circular references</span>
+                <span class="k">if</span> <span class="n">def_name</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                        <span class="s2">&quot;Circular reference detected for &#39;</span><span class="si">%s</span><span class="s2">&#39; in tool schema&quot;</span><span class="p">,</span>
+                        <span class="n">def_name</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="k">return</span> <span class="p">{</span>
+                        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;(circular: </span><span class="si">{</span><span class="n">def_name</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span>
+                    <span class="p">}</span>
+
+                <span class="n">visited</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">def_name</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">def_name</span> <span class="ow">in</span> <span class="n">defs</span><span class="p">:</span>
+                    <span class="c1"># Recursively resolve any nested refs in the definition</span>
+                    <span class="n">resolved</span> <span class="o">=</span> <span class="n">_resolve_ref</span><span class="p">(</span>
+                        <span class="n">defs</span><span class="p">[</span><span class="n">def_name</span><span class="p">],</span>
+                        <span class="n">visited</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+                    <span class="p">)</span>
+                    <span class="c1"># Merge any additional properties from the original object</span>
+                    <span class="c1"># (excluding $ref itself)</span>
+                    <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                        <span class="k">if</span> <span class="n">key</span> <span class="o">!=</span> <span class="s2">&quot;$ref&quot;</span><span class="p">:</span>
+                            <span class="n">resolved</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">_resolve_ref</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">visited</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+                    <span class="k">return</span> <span class="n">resolved</span>
+
+            <span class="c1"># If we can&#39;t resolve the ref, return as-is (shouldn&#39;t happen)</span>
+            <span class="k">return</span> <span class="n">obj</span>
+
+        <span class="c1"># Recursively process all nested objects</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">result</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">_resolve_ref</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">visited</span><span class="o">.</span><span class="n">copy</span><span class="p">())</span>
+
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">return</span> <span class="n">_resolve_ref</span><span class="p">(</span><span class="n">schema</span><span class="p">)</span>
 
 
 <div class="viewcode-block" id="GeminiChatModel">
@@ -661,11 +741,7 @@
                     <span class="p">),</span>
                 <span class="p">)</span>
 
-            <span class="n">content_block</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span>
-                <span class="p">[</span>
-                    <span class="o">*</span><span class="n">tool_calls</span><span class="p">,</span>
-                <span class="p">],</span>
-            <span class="p">)</span>
+            <span class="n">content_block</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">tool_calls</span><span class="p">)</span>
 
             <span class="n">parsed_chunk</span> <span class="o">=</span> <span class="n">ChatResponse</span><span class="p">(</span>
                 <span class="n">content</span><span class="o">=</span><span class="n">content_block</span><span class="p">,</span>
@@ -686,8 +762,8 @@
 <span class="sd">        Args:</span>
 <span class="sd">            start_datetime (`datetime`):</span>
 <span class="sd">                The start datetime of the response generation.</span>
-<span class="sd">            response (`ChatCompletion`):</span>
-<span class="sd">                The OpenAI chat completion response object to parse.</span>
+<span class="sd">            response (`GenerateContentResponse`):</span>
+<span class="sd">                The Gemini generation response object to parse.</span>
 <span class="sd">            structured_model (`Type[BaseModel] | None`, default `None`):</span>
 <span class="sd">                A Pydantic BaseModel class that defines the expected structure</span>
 <span class="sd">                for the model&#39;s output.</span>
@@ -761,6 +837,11 @@
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Format the tools JSON schema into required format for Gemini API.</span>
 
+<span class="sd">        .. note:: Gemini API does not support `$defs` and `$ref` in JSON</span>
+<span class="sd">         schemas. This function resolves all `$ref` references by inlining the</span>
+<span class="sd">         referenced definitions, producing a self-contained schema without</span>
+<span class="sd">         any references.</span>
+
 <span class="sd">        Args:</span>
 <span class="sd">            schemas (`dict[str, Any]`):</span>
 <span class="sd">                The tools JSON schemas.</span>
@@ -825,14 +906,19 @@
 <span class="sd">                        ]</span>
 <span class="sd">                    }</span>
 <span class="sd">                ]</span>
+
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="p">[</span>
-            <span class="p">{</span>
-                <span class="s2">&quot;function_declarations&quot;</span><span class="p">:</span> <span class="p">[</span>
-                    <span class="n">_</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">schemas</span> <span class="k">if</span> <span class="s2">&quot;function&quot;</span> <span class="ow">in</span> <span class="n">_</span>
-                <span class="p">],</span>
-            <span class="p">},</span>
-        <span class="p">]</span>
+        <span class="n">function_declarations</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">schema</span> <span class="ow">in</span> <span class="n">schemas</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;function&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">schema</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">func</span> <span class="o">=</span> <span class="n">schema</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+            <span class="c1"># Flatten the parameters schema to resolve $ref references</span>
+            <span class="k">if</span> <span class="s2">&quot;parameters&quot;</span> <span class="ow">in</span> <span class="n">func</span><span class="p">:</span>
+                <span class="n">func</span><span class="p">[</span><span class="s2">&quot;parameters&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_flatten_json_schema</span><span class="p">(</span><span class="n">func</span><span class="p">[</span><span class="s2">&quot;parameters&quot;</span><span class="p">])</span>
+            <span class="n">function_declarations</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="p">[{</span><span class="s2">&quot;function_declarations&quot;</span><span class="p">:</span> <span class="n">function_declarations</span><span class="p">}]</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">_format_tool_choice</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
@@ -847,6 +933,7 @@
 <span class="sd">                 Can be &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;, or specific tool name.</span>
 <span class="sd">                 For more details, please refer to</span>
 <span class="sd">                 https://ai.google.dev/gemini-api/docs/function-calling?hl=en&amp;example=meeting#function_calling_modes</span>
+
 <span class="sd">        Returns:</span>
 <span class="sd">            `dict | None`:</span>
 <span class="sd">                The formatted tool choice configuration dict, or None if</span>
