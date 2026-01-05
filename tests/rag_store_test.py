@@ -140,14 +140,8 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         if missing_vars:
             self.skipTest(
-                "OceanBase env vars not set: "
-                f"{', '.join(missing_vars)}",
+                "OceanBase env vars not set: " f"{', '.join(missing_vars)}",
             )
-
-        try:
-            import pyobvector  # noqa: F401
-        except ImportError:
-            self.skipTest("pyobvector is not installed.")
 
         collection_name = f"test_ob_{uuid.uuid4().hex[:8]}"
         store = OceanBaseStore(
