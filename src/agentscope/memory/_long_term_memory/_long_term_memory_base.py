@@ -3,9 +3,9 @@
 
 from typing import Any
 
-from ..message import Msg
-from ..module import StateModule
-from ..tool import ToolResponse
+from agentscope.message import Msg
+from agentscope.module import StateModule
+from agentscope.tool import ToolResponse
 
 
 class LongTermMemoryBase(StateModule):

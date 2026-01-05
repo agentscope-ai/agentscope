@@ -13,11 +13,13 @@ from importlib import metadata
 
 from pydantic import field_validator
 
-from ..embedding import EmbeddingModelBase
-from ._long_term_memory_base import LongTermMemoryBase
-from ..message import Msg, TextBlock
-from ..model import ChatModelBase
-from ..tool import ToolResponse
+from agentscope.embedding import EmbeddingModelBase
+from agentscope.memory._long_term_memory._long_term_memory_base import (
+    LongTermMemoryBase,
+)
+from agentscope.message import Msg, TextBlock
+from agentscope.model import ChatModelBase
+from agentscope.tool import ToolResponse
 
 
 if TYPE_CHECKING:

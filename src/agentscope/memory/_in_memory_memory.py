@@ -3,6 +3,8 @@
 
 from typing import Union, Iterable, Any
 
+from sqlalchemy.ext.asyncio import AsyncEngine
+
 from ._memory_base import MemoryBase
 from ..message import Msg
 

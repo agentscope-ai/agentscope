@@ -1,20 +1,15 @@
 # -*- coding: utf-8 -*-
-"""The memory module."""
+"""The long-term memory module for AgentScope."""
 
-from ._memory_base import MemoryBase
-from ._in_memory_memory import InMemoryMemory
-from ._long_term_memory import (
-    LongTermMemoryBase,
-    Mem0LongTermMemory,
+from ._long_term_memory_base import LongTermMemoryBase
+from ._mem0 import Mem0LongTermMemory
+from ._reme import (
     ReMePersonalLongTermMemory,
     ReMeTaskLongTermMemory,
     ReMeToolLongTermMemory,
 )
 
-
 __all__ = [
-    "MemoryBase",
-    "InMemoryMemory",
     "LongTermMemoryBase",
     "Mem0LongTermMemory",
     "ReMePersonalLongTermMemory",
