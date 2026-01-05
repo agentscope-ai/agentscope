@@ -11,7 +11,7 @@ Install dependencies (including `pyobvector`):
 pip install -e .[full]
 ```
 
-Start SeekDB (a minimal OceanBase-compatible instance):
+Start seekdb (a minimal OceanBase-compatible instance):
 
 ```bash
 docker run -d -p 2881:2881 oceanbase/seekdb
@@ -144,7 +144,7 @@ Match your embedding model's output dimension (e.g., 768 for BERT, 1536 for Open
 No, create a new collection with the desired metric.
 
 **How do I clean up test data?**
-Drop the collection via the underlying client or remove the SeekDB container volume.
+Drop the collection via the underlying client or remove the seekdb container volume.
 
 ## Environment Variables
 
