@@ -14,11 +14,13 @@ graph TD
         TXT[TextReader]
         PDF[PDFReader]
         IMG[ImageReader]
+        WORD[WordReader]
         DOC[Document]
     end
     subgraph Storage
         STORE_BASE[VDBStoreBase]
         QDR[QdrantStore]
+        MLV[MilvusLiteStore]
     end
     subgraph Retrieval
         KB[KnowledgeBase]
@@ -27,10 +29,13 @@ graph TD
     SourceDocs --> TXT
     SourceDocs --> PDF
     SourceDocs --> IMG
+    SourceDocs --> WORD
     TXT & PDF & IMG --> DOC
+    WORD --> DOC
     DOC --> KB
     KB --> STORE_BASE
     STORE_BASE --> QDR
+    STORE_BASE --> MLV
     Agent --> KB
     KB --> Agent
     KB -->|ToolResponse| Toolkit
@@ -42,7 +47,8 @@ graph TD
   - `TextReader`：读取纯文本/Markdown，按行或规则切分为 `Document`。  
   - `PDFReader`：调用 `pypdf` 抽取文本，支持分页切分。  
   - `ImageReader`：用于 OCR 或图像嵌入前的包装（输出 `ImageBlock`）。  
-- **VDBStoreBase / QdrantStore**：定义 `add_documents`、`retrieve` 等向量库接口；`QdrantStore` 调用 Qdrant 客户端写入/查询，存储向量与元数据。  
+  - `WordReader`：读取 `.docx` 文档（文本/表格/可选图片），输出 `Document`；默认 `include_image=False`，启用后会产生 `ImageBlock(Base64Source)` 并要求下游多模态 embedding。  
+- **VDBStoreBase / QdrantStore / MilvusLiteStore**：定义 `add_documents`、`retrieve` 等向量库接口；`QdrantStore` 调用 Qdrant 客户端写入/查询；`MilvusLiteStore` 通过 `pymilvus`（MilvusClient）连接 Milvus Lite/Server。  
 - **KnowledgeBase**：持有 `embedding_model` 与 `embedding_store`；`add_documents` 将 Document 嵌入后写入向量库；`retrieve` 基于查询向量检索；`retrieve_knowledge` 将结果封装为 `ToolResponse`。  
 - **SimpleKnowledgeBase**（若存在）：快速实现，无需外部向量库，用内存向量集合完成检索。  
 - **工具函数**：`retrieve_knowledge` 提供 Agent 工具化接口，返回包含得分与文本的 `TextBlock` 列表。
@@ -56,7 +62,7 @@ graph TD
 - **Agent/ReActAgent**：在 `_reasoning` 前调用 `knowledge.retrieve` 注入 `<retrieved_knowledge>` 提示；亦可通过 Toolkit 暴露 `retrieve_knowledge` 让 LLM 自主检索。  
 - **Embedding 模块**：KnowledgeBase 依赖 `EmbeddingModelBase` 将 `Document` 生成向量。  
 - **Toolkit**：`retrieve_knowledge` 返回 `ToolResponse`，可注册为工具供 Agent 使用。  
-- **存储后端**：`QdrantStore` 需配置连接信息（host/port/api_key），兼容本地或云端 Qdrant。  
+- **存储后端**：`QdrantStore` 需配置连接信息（host/port/api_key），兼容本地或云端 Qdrant；`MilvusLiteStore` 通过 `uri` 指向本地 `.db` 或远端 Milvus 服务（Milvus Lite 在 Windows 上不支持）。  
 - **责任边界**：模块不负责答案生成、摘要或排序后的解释；仅提供检索结果与得分。
 
 ## 二、文件/类/函数/成员变量映射到 src 路径
@@ -65,9 +71,11 @@ graph TD
 - `src/agentscope/rag/_reader/_reader_base.py` 及子类  
   - `ReaderBase`：抽象 `read`/`split` 接口。  
   - `_text_reader.py`、`_pdf_reader.py`、`_image_reader.py`：实现不同格式的解析。  
+  - `_word_reader.py`：`WordReader` 基于 `python-docx` 读取 `.docx`（文本/表格/可选图片）。  
 - `src/agentscope/rag/_store/_store_base.py`  
   - `VDBStoreBase`：抽象 `init_store`、`add`、`search` 等接口。  
   - `_qdrant_store.py`：`QdrantStore` 基于 `qdrant-client` 实现 CRUD 与检索。  
+  - `_milvuslite_store.py`：`MilvusLiteStore` 基于 `pymilvus[milvus_lite]` 实现写入/检索/删除（Windows 通过 marker 排除安装）。  
 - `src/agentscope/rag/_knowledge_base.py`  
   - `KnowledgeBase`：抽象类，定义 `retrieve`、`add_documents`、`retrieve_knowledge`。  
 - `src/agentscope/rag/_simple_knowledge.py`  
