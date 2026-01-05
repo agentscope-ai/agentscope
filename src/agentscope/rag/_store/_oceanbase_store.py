@@ -36,7 +36,7 @@ _SCORE_CONVERTERS: dict[str, Callable[[float], float]] = {
 
 class OceanBaseStore(VDBStoreBase):
     """The OceanBase vector store implementation, supporting OceanBase and
-    SeekDB via pyobvector."""
+    seekdb via pyobvector."""
 
     # Field names - using descriptive constants to avoid magic strings
     PRIMARY_FIELD = "id"
