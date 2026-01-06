@@ -52,6 +52,7 @@ class TestReMeMemory(IsolatedAsyncioTestCase):
         self.mock_embedding_model = MagicMock(spec=DashScopeTextEmbedding)
         self.mock_embedding_model.model_name = "text-embedding-v4"
         self.mock_embedding_model.api_key = "test_embedding_key"
+        self.mock_embedding_model.dimensions = 1024
 
         # Set the memory class based on MEMORY_TYPE
         self.memory_type = MEMORY_TYPE

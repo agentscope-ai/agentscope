@@ -96,7 +96,9 @@ class ToolResultBlock(TypedDict, total=False):
     """The type of the block"""
     id: Required[str]
     """The identity of the tool call result"""
-    output: Required[str | List[TextBlock | ImageBlock | AudioBlock]]
+    output: Required[
+        str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+    ]
     """The output of the tool function"""
     name: Required[str]
     """The name of the tool function"""
@@ -112,3 +114,13 @@ ContentBlock = (
     | AudioBlock
     | VideoBlock
 )
+
+ContentBlockTypes = Literal[
+    "text",
+    "thinking",
+    "tool_use",
+    "tool_result",
+    "image",
+    "audio",
+    "video",
+]

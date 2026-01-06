@@ -326,6 +326,10 @@ async def example_generic_manner() -> None:
         ),
     )
 
+    print("Take a look at the agent's memory:")
+    content = (await agent.memory.get_memory())[1].content
+    print(json.dumps(content, indent=2, ensure_ascii=False))
+
 
 asyncio.run(example_generic_manner())
 
@@ -408,7 +412,7 @@ async def example_multimodal_rag() -> None:
 
     # Let's see the last message from the agent
     print("\nThe image is attached in the agent's memory:")
-    print((await agent.memory.get_memory())[-4])
+    print((await agent.memory.get_memory())[1])
 
 
 asyncio.run(example_multimodal_rag())

@@ -35,7 +35,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
     def test_init_with_custom_params(self) -> None:
         """Test initialization with custom parameters."""
         generate_kwargs = {"temperature": 0.7, "max_tokens": 1000}
-        client_args = {"timeout": 30}
+        client_kwargs = {"timeout": 30}
         with patch("openai.AsyncClient") as mock_client:
             model = OpenAIChatModel(
                 model_name="gpt-4o",
@@ -43,7 +43,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
                 stream=False,
                 reasoning_effort="high",
                 organization="org-123",
-                client_args=client_args,
+                client_kwargs=client_kwargs,
                 generate_kwargs=generate_kwargs,
             )
             self.assertEqual(model.model_name, "gpt-4o")
@@ -244,7 +244,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
             async for response in result:
                 responses.append(response)
 
-            self.assertGreaterEqual(len(responses), 1)
+            self.assertEqual(len(responses), 2)
             final_response = responses[-1]
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)

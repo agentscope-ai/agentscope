@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches
+# pylint: disable=too-many-branches, too-many-nested-blocks
 """The OpenAI formatter for agentscope."""
 import base64
 import json
@@ -22,6 +22,43 @@ from ..message import (
     ToolResultBlock,
 )
 from ..token import TokenCounterBase
+
+
+def _format_openai_image_block(
+    image_block: ImageBlock,
+) -> dict[str, Any]:
+    """Format an image block for OpenAI API.
+
+    Args:
+        image_block (`ImageBlock`):
+            The image block to format.
+
+    Returns:
+        `dict[str, Any]`:
+            A dictionary with "type" and "image_url" keys in OpenAI format.
+
+    Raises:
+        `ValueError`:
+            If the source type is not supported.
+    """
+    source = image_block["source"]
+    if source["type"] == "url":
+        url = _to_openai_image_url(source["url"])
+    elif source["type"] == "base64":
+        data = source["data"]
+        media_type = source["media_type"]
+        url = f"data:{media_type};base64,{data}"
+    else:
+        raise ValueError(
+            f"Unsupported image source type: {source['type']}",
+        )
+
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": url,
+        },
+    }
 
 
 def _to_openai_image_url(url: str) -> str:
@@ -49,7 +86,8 @@ def _to_openai_image_url(url: str) -> str:
 
     # Web url
     if not os.path.exists(url) and parsed_url.scheme != "":
-        if any(lower_url.endswith(_) for _ in support_image_extensions):
+        path_lower = parsed_url.path if parsed_url.path else parsed_url.netloc
+        if any(path_lower.endswith(_) for _ in support_image_extensions):
             return url
 
     # Check if it is a local file
@@ -118,8 +156,10 @@ def _to_openai_audio_data(source: URLSource | Base64Source) -> dict:
 
 
 class OpenAIChatFormatter(TruncatedFormatterBase):
-    """The class used to format message objects into the OpenAI API required
-    format."""
+    """The OpenAI formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `name` field in OpenAI API to
+    identify different entities in the conversation.
+    """
 
     support_tools_api: bool = True
     """Whether support tools API"""
@@ -139,6 +179,33 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
     ]
     """Supported message blocks for OpenAI API"""
 
+    def __init__(
+        self,
+        promote_tool_result_images: bool = False,
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize the OpenAI chat formatter.
+
+        Args:
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
+        """
+        super().__init__(token_counter=token_counter, max_tokens=max_tokens)
+        self.promote_tool_result_images = promote_tool_result_images
+
     async def _format(
         self,
         msgs: list[Msg],
@@ -157,7 +224,9 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
         self.assert_list_of_msgs(msgs)
 
         messages: list[dict] = []
-        for msg in msgs:
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
             content_blocks = []
             tool_calls = []
 
@@ -182,39 +251,75 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block["output"])
+
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": block.get("id"),
-                            "content": self.convert_tool_result_to_string(
-                                block.get("output"),  # type: ignore[arg-type]
+                            "content": (  # type: ignore[arg-type]
+                                textual_output
                             ),
                             "name": block.get("name"),
                         },
                     )
 
-                elif typ == "image":
-                    source_type = block["source"]["type"]
-                    if source_type == "url":
-                        url = _to_openai_image_url(block["source"]["url"])
+                    # Then, handle the multimodal data if any
+                    promoted_blocks: list = []
+                    for url, multimodal_block in multimodal_data:
+                        if (
+                            multimodal_block["type"] == "image"
+                            and self.promote_tool_result_images
+                        ):
+                            promoted_blocks.extend(
+                                [
+                                    TextBlock(
+                                        type="text",
+                                        text=f"\n- The image from '{url}': ",
+                                    ),
+                                    ImageBlock(
+                                        type="image",
+                                        source=URLSource(
+                                            type="url",
+                                            url=url,
+                                        ),
+                                    ),
+                                ],
+                            )
 
-                    elif source_type == "base64":
-                        data = block["source"]["data"]
-                        media_type = block["source"]["media_type"]
-                        url = f"data:{media_type};base64,{data}"
+                    if promoted_blocks:
+                        # Insert promoted blocks as new user message(s)
+                        promoted_blocks = [
+                            TextBlock(
+                                type="text",
+                                text="<system-info>The following are "
+                                "the image contents from the tool "
+                                f"result of '{block['name']}':",
+                            ),
+                            *promoted_blocks,
+                            TextBlock(
+                                type="text",
+                                text="</system-info>",
+                            ),
+                        ]
 
-                    else:
-                        raise ValueError(
-                            f"Unsupported image source type: {source_type}",
+                        msgs.insert(
+                            i + 1,
+                            Msg(
+                                name="user",
+                                content=promoted_blocks,
+                                role="user",
+                            ),
                         )
 
+                elif typ == "image":
                     content_blocks.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": url,
-                            },
-                        },
+                        _format_openai_image_block(
+                            block,  # type: ignore[arg-type]
+                        ),
                     )
 
                 elif typ == "audio":
@@ -244,6 +349,9 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
             # When both content and tool_calls are None, skipped
             if msg_openai["content"] or msg_openai.get("tool_calls"):
                 messages.append(msg_openai)
+
+            # Move to next message
+            i += 1
 
         return messages
 
@@ -281,6 +389,7 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
+        promote_tool_result_images: bool = False,
         token_counter: TokenCounterBase | None = None,
         max_tokens: int | None = None,
     ) -> None:
@@ -289,9 +398,24 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
         Args:
             conversation_history_prompt (`str`):
                 The prompt to use for the conversation history section.
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
         """
         super().__init__(token_counter=token_counter, max_tokens=max_tokens)
         self.conversation_history_prompt = conversation_history_prompt
+        self.promote_tool_result_images = promote_tool_result_images
 
     async def _format_tool_sequence(
         self,
@@ -299,7 +423,9 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
     ) -> list[dict[str, Any]]:
         """Given a sequence of tool call/result messages, format them into
         the required format for the OpenAI API."""
-        return await OpenAIChatFormatter().format(msgs)
+        return await OpenAIChatFormatter(
+            promote_tool_result_images=self.promote_tool_result_images,
+        ).format(msgs)
 
     async def _format_agent_message(
         self,
@@ -328,27 +454,7 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
                     accumulated_text.append(f"{msg.name}: {block['text']}")
 
                 elif block["type"] == "image":
-                    source_type = block["source"]["type"]
-                    if source_type == "url":
-                        url = _to_openai_image_url(block["source"]["url"])
-
-                    elif source_type == "base64":
-                        data = block["source"]["data"]
-                        media_type = block["source"]["media_type"]
-                        url = f"data:{media_type};base64,{data}"
-
-                    else:
-                        raise ValueError(
-                            f"Unsupported image source type: {source_type}",
-                        )
-                    images.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": url,
-                            },
-                        },
-                    )
+                    images.append(_format_openai_image_block(block))
                 elif block["type"] == "audio":
                     input_audio = _to_openai_audio_data(block["source"])
                     audios.append(

@@ -261,7 +261,9 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
             # Check winning
             res = players.check_winning()
             if res:
-                await moderator(res)
+                async with MsgHub(players.all_players) as all_players_hub:
+                    res_msg = await moderator(res)
+                    await all_players_hub.broadcast(res_msg)
                 break
 
             # Discussion

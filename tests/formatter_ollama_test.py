@@ -131,7 +131,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output=[
                             TextBlock(
@@ -354,7 +354,7 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "tool",
-                "tool_call_id": "1",
+                "tool_call_id": "2",
                 "content": "- The capital of South Korea is Seoul.\n- The "
                 "returned image can be found at: ./image.png",
                 "name": "get_capital",
@@ -406,6 +406,81 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_chat[: -len(self.msgs_tools)],
         )
+
+    async def test_chat_formatter_with_extract_image_blocks(
+        self,
+    ) -> None:
+        """Test the Ollama chat formatter with
+        promote_tool_result_images=True."""
+        formatter = OllamaChatFormatter(promote_tool_result_images=True)
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+
+        # Expected result: image blocks should be extracted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "content": "You're a helpful assistant.",
+            },
+            {
+                "role": "user",
+                "content": "What is the capital of France?",
+                "images": [
+                    "ZmFrZSBpbWFnZSBjb250ZW50",
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The capital of France is Paris.",
+            },
+            {
+                "role": "user",
+                "content": "What is the capital of Japan?",
+            },
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": {
+                                "country": "Japan",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n- The returned "
+                "image can be found at: ./image.png",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "content": "<system-info>The following are "
+                "the image contents from the tool "
+                "result of 'get_capital':\n\n- The image from "
+                "'./image.png': \n</system-info>",
+                "images": [
+                    "ZmFrZSBpbWFnZSBjb250ZW50",
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "The capital of Japan is Tokyo.",
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
 
     async def test_multi_agent_formatter(
         self,
@@ -495,6 +570,85 @@ class TestOllamaFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_multiagent_without_first_conversation[1:],
         )
+
+    async def test_multi_agent_formatter_with_promote_tool_result_images(
+        self,
+    ) -> None:
+        """Test the Ollama multi-agent formatter with
+        promote_tool_result_images=True."""
+        formatter = OllamaMultiAgentFormatter(
+            promote_tool_result_images=True,
+        )
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [
+                *self.msgs_system,
+                *self.msgs_conversation,
+                *self.msgs_tools,
+            ],
+        )
+
+        # Expected result: image blocks should be promoted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "system",
+                "content": "You're a helpful assistant.",
+            },
+            {
+                "role": "user",
+                "content": "# Conversation History\nThe content between"
+                " <history></history> tags contains your"
+                " conversation history\n<history>\nuser: What is"
+                " the capital of France?\n\nassistant: The capital"
+                " of France is Paris.\nuser: What is the capital"
+                " of Japan?\n</history>",
+                "images": [
+                    "ZmFrZSBpbWFnZSBjb250ZW50",
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_capital",
+                            "arguments": {
+                                "country": "Japan",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n- The returned"
+                " image can be found at: ./image.png",
+                "name": "get_capital",
+            },
+            {
+                "role": "user",
+                "content": "<system-info>The following are "
+                "the image contents from the tool "
+                "result of 'get_capital':\n\n- The image from "
+                "'./image.png': \n</system-info>",
+                "images": [
+                    "ZmFrZSBpbWFnZSBjb250ZW50",
+                ],
+            },
+            {
+                "role": "user",
+                "content": "<history>\nassistant: The"
+                " capital of Japan is Tokyo.\n</history>",
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
 
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""

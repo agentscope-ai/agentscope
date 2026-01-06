@@ -9,8 +9,43 @@ from urllib.parse import urlparse
 from ._truncated_formatter_base import TruncatedFormatterBase
 from .._logging import logger
 from .._utils._common import _get_bytes_from_web_url
-from ..message import Msg, TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock
+from ..message import (
+    Msg,
+    TextBlock,
+    ImageBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+    URLSource,
+)
 from ..token import TokenCounterBase
+
+
+def _format_ollama_image_block(
+    image_block: ImageBlock,
+) -> str:
+    """Format an image block for Ollama API.
+
+    Args:
+        image_block (`ImageBlock`):
+            The image block to format.
+
+    Returns:
+        `str`:
+            Base64 encoded image data as a string.
+
+    Raises:
+        `ValueError`:
+            If the source type is not supported.
+    """
+    source = image_block["source"]
+    if source["type"] == "url":
+        return _convert_ollama_image_url_to_base64_data(source["url"])
+    elif source["type"] == "base64":
+        return source["data"]
+    else:
+        raise ValueError(
+            f"Unsupported image source type: {source['type']}",
+        )
 
 
 def _convert_ollama_image_url_to_base64_data(url: str) -> str:
@@ -34,7 +69,10 @@ def _convert_ollama_image_url_to_base64_data(url: str) -> str:
 
 
 class OllamaChatFormatter(TruncatedFormatterBase):
-    """Formatter for Ollama messages."""
+    """The Ollama formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `role` field to identify different
+    participants in the conversation.
+    """
 
     support_tools_api: bool = True
     """Whether support tools API"""
@@ -55,6 +93,33 @@ class OllamaChatFormatter(TruncatedFormatterBase):
     ]
     """The list of supported message blocks"""
 
+    def __init__(
+        self,
+        promote_tool_result_images: bool = False,
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize the Ollama chat formatter.
+
+        Args:
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
+        """
+        super().__init__(token_counter, max_tokens)
+        self.promote_tool_result_images = promote_tool_result_images
+
     async def _format(
         self,
         msgs: list[Msg],
@@ -71,8 +136,10 @@ class OllamaChatFormatter(TruncatedFormatterBase):
         """
         self.assert_list_of_msgs(msgs)
 
-        messages: list[dict] = []
-        for msg in msgs:
+        messages: list = []
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
             content_blocks: list = []
             tool_calls = []
             images = []
@@ -95,27 +162,74 @@ class OllamaChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "tool_result":
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block["output"])
+
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": block.get("id"),
-                            "content": self.convert_tool_result_to_string(
-                                block.get("output"),  # type: ignore[arg-type]
-                            ),
+                            "content": textual_output,
                             "name": block.get("name"),
                         },
                     )
 
-                elif typ == "image":
-                    source_type = block["source"]["type"]
-                    if source_type == "url":
-                        images.append(
-                            _convert_ollama_image_url_to_base64_data(
-                                block["source"]["url"],
+                    # Then, handle the multimodal data if any
+                    promoted_blocks: list = []
+                    for url, multimodal_block in multimodal_data:
+                        if (
+                            multimodal_block["type"] == "image"
+                            and self.promote_tool_result_images
+                        ):
+                            promoted_blocks.extend(
+                                [
+                                    TextBlock(
+                                        type="text",
+                                        text=f"\n- The image from '{url}': ",
+                                    ),
+                                    ImageBlock(
+                                        type="image",
+                                        source=URLSource(
+                                            type="url",
+                                            url=url,
+                                        ),
+                                    ),
+                                ],
+                            )
+
+                    if promoted_blocks:
+                        # Insert promoted blocks as new user message(s)
+                        promoted_blocks = [
+                            TextBlock(
+                                type="text",
+                                text="<system-info>The following are "
+                                "the image contents from the tool "
+                                f"result of '{block['name']}':",
+                            ),
+                            *promoted_blocks,
+                            TextBlock(
+                                type="text",
+                                text="</system-info>",
+                            ),
+                        ]
+
+                        msgs.insert(
+                            i + 1,
+                            Msg(
+                                name="user",
+                                content=promoted_blocks,
+                                role="user",
                             ),
                         )
-                    elif source_type == "base64":
-                        images.append(block["source"]["data"])
+
+                elif typ == "image":
+                    images.append(
+                        _format_ollama_image_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
 
                 else:
                     logger.warning(
@@ -136,8 +250,15 @@ class OllamaChatFormatter(TruncatedFormatterBase):
             if images:
                 msg_ollama["images"] = images
 
-            if msg_ollama["content"] or msg_ollama.get("tool_calls"):
+            if (
+                msg_ollama["content"]
+                or msg_ollama.get("images")
+                or msg_ollama.get("tool_calls")
+            ):
                 messages.append(msg_ollama)
+
+            # Move to next message
+            i += 1
 
         return messages
 
@@ -174,6 +295,7 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
+        promote_tool_result_images: bool = False,
         token_counter: TokenCounterBase | None = None,
         max_tokens: int | None = None,
     ) -> None:
@@ -182,6 +304,12 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
         Args:
             conversation_history_prompt (`str`):
                 The prompt to use for the conversation history section.
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
             token_counter (`TokenCounterBase | None`, optional):
                 The token counter used for truncation.
             max_tokens (`int | None`, optional):
@@ -190,6 +318,7 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
         """
         super().__init__(token_counter=token_counter, max_tokens=max_tokens)
         self.conversation_history_prompt = conversation_history_prompt
+        self.promote_tool_result_images = promote_tool_result_images
 
     async def _format_system_message(
         self,
@@ -216,7 +345,9 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
             `list[dict[str, Any]]`:
                 A list of dictionaries formatted for the Ollama API.
         """
-        return await OllamaChatFormatter().format(msgs)
+        return await OllamaChatFormatter(
+            promote_tool_result_images=self.promote_tool_result_images,
+        ).format(msgs)
 
     async def _format_agent_message(
         self,
@@ -257,23 +388,13 @@ class OllamaMultiAgentFormatter(TruncatedFormatterBase):
 
                 elif block["type"] == "image":
                     # Handle the accumulated text as a single block
-                    source = block["source"]
                     if accumulated_text:
                         conversation_blocks.append(
                             {"text": "\n".join(accumulated_text)},
                         )
                         accumulated_text.clear()
 
-                    if source["type"] == "url":
-                        images.append(
-                            _convert_ollama_image_url_to_base64_data(
-                                source["url"],
-                            ),
-                        )
-
-                    elif source["type"] == "base64":
-                        images.append(source["data"])
-
+                    images.append(_format_ollama_image_block(block))
                     conversation_blocks.append({**block})
 
         if accumulated_text:

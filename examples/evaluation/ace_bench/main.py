@@ -46,7 +46,7 @@ async def react_agent_solution(
         "Try to solve the task as best as you can.",
         model=DashScopeChatModel(
             api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen-max",
+            model_name="qwen3-max",
             stream=False,
         ),
         formatter=DashScopeChatFormatter(),
@@ -65,12 +65,10 @@ async def react_agent_solution(
     await agent.print(msg_input)
     await agent(msg_input)
 
-    # Obtain tool calls sequence
-    memory_msgs = await agent.memory.get_memory()
-    # Obtain tool_use blocks as trajectory
+    # Obtain the trajectory of the agent's memory
     traj = []
-    for msg in memory_msgs:
-        traj.extend(msg.get_content_blocks("tool_use"))
+    for msg in await agent.memory.get_memory():
+        traj.extend(msg.get_content_blocks(["tool_use", "tool_result"]))
 
     # Obtain the final state of the phone and travel system
     phone: ACEPhone = ace_task.metadata["phone"]

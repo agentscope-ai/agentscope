@@ -98,6 +98,7 @@ class DeepResearchAgent(ReActAgent):
         sys_prompt: str = _DEEP_RESEARCH_AGENT_DEFAULT_SYS_PROMPT,
         max_iters: int = 30,
         max_depth: int = 3,
+        max_tool_results_words: int = 10000,
         tmp_file_storage_dir: str = "tmp",
     ) -> None:
         """Initialize the Deep Research Agent.
@@ -125,6 +126,10 @@ class DeepResearchAgent(ReActAgent):
             max_depth (int, optional):
                 The maximum depth of query expansion during deep searching.
                 Defaults to 3.
+            max_tool_results_words (int, optional):
+                The maximum number of words to keep from a tool's output before
+                truncation to fit the model's context.
+                Defaults to 10000.
             tmp_file_storage_dir (str, optional):
                 The storage dir for generated files.
                 Default to 'tmp'
@@ -153,6 +158,7 @@ class DeepResearchAgent(ReActAgent):
             max_iters=max_iters,
         )
         self.max_depth = max_depth
+        self.max_tool_results_words = max_tool_results_words
         self.memory = memory
         self.tmp_file_storage_dir = tmp_file_storage_dir
         self.current_subtask = []
@@ -179,6 +185,7 @@ class DeepResearchAgent(ReActAgent):
         self.user_query = None
 
         # add functions into toolkit
+        self.toolkit.register_tool_function(self.generate_response)
         self.toolkit.register_tool_function(self.reflect_failure)
         self.toolkit.register_tool_function(
             self.summarize_intermediate_results,
@@ -352,6 +359,7 @@ class DeepResearchAgent(ReActAgent):
                 ]:
                     tool_res_msg.content[0]["output"] = truncate_search_result(
                         tool_res_msg.content[0]["output"],
+                        self.max_tool_results_words,
                     )
 
                 # Update memory when an intermediate report is generated
@@ -629,6 +637,7 @@ class DeepResearchAgent(ReActAgent):
                     "output"
                 ] = truncate_search_result(
                     extract_tool_res_msg.content[0]["output"],
+                    self.max_tool_results_words,
                 )
                 # await self.memory.add(tool_res_msg)
                 await self.print(extract_tool_res_msg, True)

@@ -20,7 +20,7 @@ async def main() -> None:
         sys_prompt="You are a helpful assistant",
         model=OpenAIChatModel(
             model_name="qwen3-omni-flash",
-            client_args={
+            client_kwargs={
                 "base_url": "https://dashscope.aliyuncs.com/"
                 "compatible-mode/v1",
             },

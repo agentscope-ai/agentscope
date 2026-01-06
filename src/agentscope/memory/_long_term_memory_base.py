@@ -35,6 +35,7 @@ class LongTermMemoryBase(StateModule):
     async def retrieve(
         self,
         msg: Msg | list[Msg] | None,
+        limit: int = 5,
         **kwargs: Any,
     ) -> str:
         """A developer-designed method to retrieve information from the
@@ -68,6 +69,7 @@ class LongTermMemoryBase(StateModule):
     async def retrieve_from_memory(
         self,
         keywords: list[str],
+        limit: int = 5,
         **kwargs: Any,
     ) -> ToolResponse:
         """Retrieve the memory based on the given keywords.
@@ -77,6 +79,10 @@ class LongTermMemoryBase(StateModule):
                 The keywords to search for in the memory, which should be
                 specific and concise, e.g. the person's name, the date, the
                 location, etc.
+            limit (`int`, optional):
+                The maximum number of memories to retrieve per search, i.e.,
+                the number of memories to retrieve for each keyword. Defaults
+                to 5.
 
         Returns:
             `list[Msg]`:
