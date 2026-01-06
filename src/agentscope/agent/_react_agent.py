@@ -852,3 +852,90 @@ class ReActAgent(ReActAgentBase):
                 if self.print_hint_msg:
                     await self.print(retrieved_msg, True)
                 await self.memory.add(retrieved_msg)
+
+
+    async def _compress_memory_if_needed(self) -> None:
+        """Compress the memory content if needed."""
+
+        if self.compression_config is None:
+            return
+
+        prompt = await self.formatter.format(
+            msgs=[
+                Msg("system", self.sys_prompt, "system"),
+                *await self.memory.get_memory(),
+                # The hint messages to guide the agent's behavior, maybe empty
+                *await self._reasoning_hint_msgs.get_memory(),
+            ],
+        )
+
+        memory_msgs = await self.memory.get_memory()
+        # keep the recent n messages uncompressed
+        n_keep = 0
+        accumulated_tool_call_ids = set()
+
+        index = None
+        for i in reversed(range(len(memory_msgs))):
+            msg = memory_msgs[i]
+            if msg.get_content_blocks("tool_result"):
+                for block in msg.get_content_blocks("tool_result"):
+                    accumulated_tool_call_ids.add(block["id"])
+
+            if msg.get_content_blocks("tool_use"):
+                for block in msg.get_content_blocks("tool_use"):
+                    if block["id"] in accumulated_tool_call_ids:
+                        accumulated_tool_call_ids.remove(block["id"])
+
+            if len(accumulated_tool_call_ids) == 0:
+                n_keep += 1
+
+            if n_keep >= self.compression_config.keep_recent_n:
+                index = i
+                break
+
+        # Remove the messages that should be kept uncompressed
+        memory_msgs = memory_msgs[: index if index is not None else 0]
+
+        if await self.compression_config.token_counter(prompt) > self.compression_config.trigger_threshold:
+            prompt = await self.formatter.format(
+                Msg("system", self.sys_prompt, "system"),
+                *memory_msgs,
+                # The hint messages to guide the agent's behavior, maybe empty
+                *await self._reasoning_hint_msgs.get_memory(),
+                Msg(
+                    "user",
+                    self.compression_config.compression_prompt,
+                    "user",
+                )
+            )
+
+            res = await self.model(
+                prompt,
+                structured_model=self.compression_config.compression_model,
+            )
+
+            last_chunk = None
+            if self.model.stream:
+                async for chunk in res:
+                    last_chunk = chunk
+            else:
+                last_chunk = res
+
+            compressed_memory = last_chunk.metadata
+
+            self.memory.compressed_summary = self.compression_config.summary_template.format(
+                **compressed_memory
+            )
+
+            # Set the memory as compressed
+            self.memory.update_messages_mark(
+                msg_ids=[_.id for _ in memory_msgs],
+                old_mark="uncompressed",
+                new_mark=None
+            )
+
+    def register_middleware(
+        self,
+        middleware: "AgentMiddleware",
+    ) -> None:
+        """Register a middleware to the agent."""

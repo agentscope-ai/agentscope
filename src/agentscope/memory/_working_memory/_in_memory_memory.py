@@ -3,10 +3,8 @@
 
 from typing import Union, Iterable, Any
 
-from sqlalchemy.ext.asyncio import AsyncEngine
-
-from ._memory_base import MemoryBase
-from ..message import Msg
+from agentscope.memory._working_memory._memory_base import MemoryBase
+from agentscope.message import Msg
 
 
 class InMemoryMemory(MemoryBase):
@@ -56,7 +54,7 @@ class InMemoryMemory(MemoryBase):
             f"{self.__class__.__name__} class.",
         )
 
-    async def delete(self, index: Union[Iterable, int]) -> None:
+    async def delete(self, index: Iterable | int) -> None:
         """Delete the specified item by index(es).
 
         Args:
@@ -79,13 +77,13 @@ class InMemoryMemory(MemoryBase):
 
     async def add(
         self,
-        memories: Union[list[Msg], Msg, None],
+        memories: Msg | list[Msg] | None,
         allow_duplicates: bool = False,
     ) -> None:
         """Add message into the memory.
 
         Args:
-            memories (`Union[list[Msg], Msg, None]`):
+            memories (`Msg | list[Msg] | None`):
                 The message to add.
             allow_duplicates (`bool`, defaults to `False`):
                 If allow adding duplicate messages (with the same id) into

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """"""
+import json
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -12,11 +13,30 @@ from ...message import Msg
 
 
 class RedisStorageBase(MemoryStorageBase):
-    """Redis storage implementation for memory storage."""
+    """Redis storage implementation for memory storage.
 
+    .. note:: All the operations in this class are within a specific session
+     and user context, identified by `session_id` and `user_id`. Cross-session
+     or cross-user operations are not supported. For example, the
+     `remove_messages` method will only remove messages that belong to the
+     specified `session_id` and `user_id`.
+
+    """
+
+    SESSION_KEY = "user_id:{user_id}:session:{session_id}:messages"
+    """The Redis key pattern to store messages for a specific session."""
+
+    MARK_KEY = "user_id:{user_id}:session:{session_id}:mark:{mark}"
+    """The Redis key pattern to store message ids that belong to a specific
+    mark."""
+
+    MESSAGE_KEY = "user_id:{user_id}:msg:{msg_id}"
+    """The Redis key pattern for storing message data."""
 
     def __init__(
         self,
+        session_id: str = "default_session",
+        user_id: str = "default_user",
         host: str = "localhost",
         port: int = 6379,
         db: int = 0,
@@ -29,6 +49,10 @@ class RedisStorageBase(MemoryStorageBase):
         existing connection pool.
 
         Args:
+            session_id (`str`, default to `"default_session"`):
+                The session ID for the storage.
+            user_id (`str`, default to `"default_user"`):
+                The user ID for the storage.
             host (`str`, default to `"localhost"`):
                 The Redis server host.
             port (`int`, default to `6379`):
@@ -48,8 +72,11 @@ class RedisStorageBase(MemoryStorageBase):
         except ImportError as e:
             raise ImportError(
                 "The 'redis' package is required for RedisStorage. "
-                "Please install it via 'pip install redis[async]'."
+                "Please install it via 'pip install redis[async]'.",
             ) from e
+
+        self.session_id = session_id
+        self.user_id = user_id
 
         self._client = redis.Redis(
             host=host,
@@ -73,45 +100,33 @@ class RedisStorageBase(MemoryStorageBase):
             `list[Msg]`:
                 The list of messages retrieved from the storage.
         """
-        import json
 
         if mark is None:
-            # Get all message IDs from the set
-            msg_ids = await self._client.smembers("agentscope:msg_ids")
-            if not msg_ids:
-                return []
-
-            # Retrieve all messages
-            messages = []
-            for msg_id in msg_ids:
-                msg_data = await self._client.get(f"agentscope:msg:{msg_id.decode()}")
-                if msg_data:
-                    messages.append(Msg.from_dict(json.loads(msg_data)))
-            return messages
-
-        if not isinstance(mark, str):
-            raise TypeError(
-                f"The mark should be a string or None, but got {type(mark)}.",
+            # Obtain the message IDs from the session list
+            mark_key = self.MARK_KEY.format(
+                session_id=self.session_id, mark=mark
             )
+            msg_ids = await self._client.lrange(mark_key, 0, -1)
 
-        # Get message IDs associated with the mark
-        msg_ids = await self._client.smembers(f"agentscope:mark:{mark}")
-        if not msg_ids:
-            return []
+        else:
+            # Obtain the message IDs from the session list directly
+            session_key = self.SESSION_KEY.format(session_id=self.session_id)
+            msg_ids = await self._client.lrange(session_key, 0, -1)
 
-        # Retrieve messages by IDs
-        messages = []
+        messages: list[Msg] = []
         for msg_id in msg_ids:
-            msg_data = await self._client.get(f"agentscope:msg:{msg_id.decode()}")
-            if msg_data:
-                messages.append(Msg.from_dict(json.loads(msg_data)))
-        return messages
+            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            msg_data = await self._client.get(message_key)
+            if msg_data is not None:
+                msg_dict = json.loads(msg_data, encoding="utf-8")
+                messages.append(Msg.from_dict(msg_dict))
 
+        return messages
 
     async def add_message(
         self,
         msg: Msg | list[Msg],
-        mark: str | None = None
+        mark: str | None = None,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
 
@@ -122,38 +137,66 @@ class RedisStorageBase(MemoryStorageBase):
                 The mark to associate with the message(s). If `None`, no mark
                 is associated.
         """
-        import json
-
         if isinstance(msg, Msg):
             msg = [msg]
 
+        # Push message ids into the session list
+        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        await self._client.rpush(session_key, *[m.id for m in msg])
+
+        # Push message id into the message hash
+        mark_key = self.MARK_KEY.format(session_id=self.session_id, mark=mark)
+
+        # Store message data
         for m in msg:
-            msg_id = m.id
-            # Store the message as JSON
-            await self._client.set(
-                f"agentscope:msg:{msg_id}",
-                json.dumps(m.to_dict()),
-            )
-
-            # Add message ID to the global set
-            await self._client.sadd("agentscope:msg_ids", msg_id)
-
-            # If mark is provided, associate the message with the mark
+            # Record the mark if provided
             if mark is not None:
-                await self._client.sadd(f"agentscope:mark:{mark}", msg_id)
-                # Store the reverse mapping for cleanup purposes
-                await self._client.sadd(f"agentscope:msg_marks:{msg_id}", mark)
+                await self._client.rpush(mark_key, m.id)
+
+            # Record the message data
+            message_key = self.MESSAGE_KEY.format(msg_id=m.id)
+            await self._client.set(
+                message_key,
+                json.dumps(m.to_dict(), ensure_ascii=False, encodings="utf-8"),
+            )
 
     async def remove_messages(
         self,
-        msg_ids: list[int],
+        msg_ids: list[str],
     ) -> int:
         """Remove message(s) from the storage by their IDs.
 
         Args:
-            msg_ids (`list[int]`):
+            msg_ids (`list[str]`):
                 The list of message IDs to be removed.
         """
+        if not msg_ids:
+            return 0
+
+        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        removed_count = 0
+
+        pipe = self._client.pipeline()
+        for msg_id in msg_ids:
+            # Remove from the session
+            await pipe.lrem(session_key, msg_id)
+
+            # Remove the message data
+            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            await pipe.delete(message_key)
+
+            # Remove from all marks
+            mark_pattern = self.MARK_KEY.format(
+                session_id=self.session_id, mark="*"
+            )
+            mark_keys = await self._client.keys(mark_pattern)
+            for mark_key in mark_keys:
+                await pipe.lrem(mark_key, msg_id)
+
+            removed_count += 1
+
+        await pipe.execute()
+        return removed_count
 
     async def remove_messages_by_mark(
         self,
@@ -169,9 +212,52 @@ class RedisStorageBase(MemoryStorageBase):
             `int`:
                 The number of messages removed.
         """
+        if isinstance(mark, str):
+            mark = [mark]
+
+        total_removed = 0
+
+        for m in mark:
+            mark_key = self.MARK_KEY.format(session_id=self.session_id, mark=m)
+            msg_ids = await self._client.lrange(mark_key, 0, -1)
+
+            if not msg_ids:
+                continue
+
+            # Remove messages by IDs
+            removed_count = await self.remove_messages(
+                [msg_id for msg_id in msg_ids]
+            )
+            total_removed += removed_count
+
+            # Delete the mark list
+            await self._client.delete(mark_key)
+
+        return total_removed
 
     async def clear(self) -> None:
-        """Clear all messages from the storage."""
+        """Clear all messages belong to this section from the storage."""
+        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        msg_ids = await self._client.lrange(session_key, 0, -1)
+
+        pipe = self._client.pipeline()
+        for msg_id in msg_ids:
+            # Remove the message data
+            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            await pipe.delete(message_key)
+
+        # Delete the session list
+        await pipe.delete(session_key)
+
+        # Delete all mark lists
+        mark_pattern = self.MARK_KEY.format(
+            session_id=self.session_id, mark="*"
+        )
+        mark_keys = await self._client.keys(mark_pattern)
+        for mark_key in mark_keys:
+            await pipe.delete(mark_key)
+
+        await pipe.execute()
 
     async def size(self) -> int:
         """Get the number of messages in the storage.
@@ -180,3 +266,6 @@ class RedisStorageBase(MemoryStorageBase):
             `int`:
                 The number of messages in the storage.
         """
+        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        size = await self._client.llen(session_key)
+        return size
