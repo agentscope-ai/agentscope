@@ -18,8 +18,8 @@ description: "Absorb main Tier-A RAG additions into easy (py.typed + MilvusLiteS
 
 ## Phase 1: Setup (Shared)
 
-- [ ] T001 Confirm local `main` is up-to-date and available for cherry-pick sources (no fetch required)
-- [ ] T002 Identify upstream source files and commits for A1/A2/A3 (record in PR description)
+- [X] T001 Confirm local `main` is up-to-date and available for cherry-pick sources (no fetch required)
+- [X] T002 Identify upstream source files and commits for A1/A2/A3 (record in PR description)
 - [X] T003 Update `docs/rag/SOP.md` to include `MilvusLiteStore` and `WordReader` (document `include_image=False` default)
 - [X] T004 Update root `todo.md` with acceptance items for A1/A2/A3 (exports, optional-dep behavior, extras policy, Windows marker)
  
