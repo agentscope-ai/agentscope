@@ -7,10 +7,22 @@ from ._tool import (
     ToolNotFoundError,
     ToolInvalidArgumentsError,
 )
+from ._rag import (
+    RAGExceptionBase,
+    DatabaseConnectionError,
+    GraphQueryError,
+    EntityExtractionError,
+    IndexNotFoundError,
+)
 
 __all__ = [
     "AgentOrientedExceptionBase",
     "ToolInterruptedError",
     "ToolNotFoundError",
     "ToolInvalidArgumentsError",
+    "RAGExceptionBase",
+    "DatabaseConnectionError",
+    "GraphQueryError",
+    "EntityExtractionError",
+    "IndexNotFoundError",
 ]

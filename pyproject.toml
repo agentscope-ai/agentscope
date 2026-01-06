@@ -66,6 +66,7 @@ full = [
     "pypdf",
     "python-docx",
     "nltk",
+    "neo4j",
     # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
     # the version to 1.15.1 here.
     "qdrant-client==1.15.1",
@@ -79,6 +80,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-asyncio",
     "pytest-forked",
     "sphinx-gallery",
     "furo",
