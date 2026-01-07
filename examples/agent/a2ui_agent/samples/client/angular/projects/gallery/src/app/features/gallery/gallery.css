@@ -1,0 +1,118 @@
+/*
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      https://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+*/
+
+dialog {
+  min-width: 800px;
+  min-height: 600px;
+  padding: 1rem;
+  border-radius: 8px;
+  border: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transform: translateY(-20px) scale(0.95);
+  transition:
+    opacity 0.2s ease-out,
+    transform 0.2s ease-out;
+  display: flex;
+  flex-direction: column;
+}
+
+dialog[open] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  animation: slide-in 0.2s ease-out forwards;
+}
+
+dialog::backdrop {
+  opacity: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  transition: opacity 0.2s ease-out;
+}
+
+dialog[open]::backdrop {
+  opacity: 1;
+  animation: fade-in 0.2s ease-out forwards;
+}
+
+dialog article {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.sample-widget {
+  border: solid 1px;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  break-inside: avoid;
+  margin-bottom: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 1rem;
+  background: white;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.section-title {
+  font-weight: bold;
+  font-size: 1.3rem;
+  margin-top: 2px;
+}
+
+.widget-gallery {
+
+    display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  margin: 0 2em;
+}
+
+dialog .dialog-content-grid {
+  flex-grow: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  height: 100%;
+  align-items: stretch;
+}
+
+dialog .dialog-content-grid > .sample-surface {
+  margin-right: 10px;
+  height: 100%;
+}
+
+.json-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.json-pane pre {
+  background-color: #272822;
+  color: #f8f8f2;
+  padding: 1em;
+  border-radius: 4px;
+  flex-grow: 1;
+  overflow: auto;
+  height: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

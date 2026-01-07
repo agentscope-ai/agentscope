@@ -1,0 +1,50 @@
+<!--
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      https://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<section class="block-gallery">
+  @for (block of blocks; track block.name) {
+    <article class="block-card" (click)="openDialog(block)" animate.enter="fade-in">
+      <section class="block-header">
+        <p class="block-title">{{ block.name }}</p>
+      </section>
+      <a2ui-surface [surfaceId]="'lib-' + block.name" [surface]="block.surface" />
+    </article>
+  }
+</section>
+
+<dialog #dialog>
+  <article>
+    @if (selectedBlock) {
+      <section class="block-header">
+        <p class="block-title">{{ selectedBlock.name }}</p>
+        <button (click)="closeDialog()">Close</button>
+      </section>
+      <div class="dialog-content-grid">
+        <section class="block-surface">
+          <a2ui-surface
+            [surfaceId]="'dialog-' + selectedBlock.name"
+            [surface]="selectedBlock.surface"
+          />
+        </section>
+        <section class="json-pane">
+            <pre>{{ getJson(selectedBlock.surface) }}</pre>
+        </section>
+      </div>
+    } @else {
+      <h3>Please select a component from the gallery</h3>
+    }
+  </article>
+</dialog>

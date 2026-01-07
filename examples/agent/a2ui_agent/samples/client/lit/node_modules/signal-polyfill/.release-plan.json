@@ -1,0 +1,21 @@
+{
+  "solution": {
+    "signal-polyfill": {
+      "impact": "patch",
+      "oldVersion": "0.2.1",
+      "newVersion": "0.2.2",
+      "constraints": [
+        {
+          "impact": "patch",
+          "reason": "Appears in changelog section :bug: Bug Fix"
+        },
+        {
+          "impact": "patch",
+          "reason": "Appears in changelog section :house: Internal"
+        }
+      ],
+      "pkgJSONPath": "./package.json"
+    }
+  },
+  "description": "## Release (2025-01-17)\n\nsignal-polyfill 0.2.2 (patch)\n\n#### :bug: Bug Fix\n* `signal-polyfill`\n  * [#42](https://github.com/proposal-signals/signal-polyfill/pull/42) fix assignment of subtypes (#7) ([@Gvozd](https://github.com/Gvozd))\n  * [#45](https://github.com/proposal-signals/signal-polyfill/pull/45) fix isState / isComputed guards to allow all parameter types ([@fcrozatier](https://github.com/fcrozatier))\n\n#### :house: Internal\n* `signal-polyfill`\n  * [#37](https://github.com/proposal-signals/signal-polyfill/pull/37) Add type-tests to ensure consistent public API expectations ([@NullVoxPopuli](https://github.com/NullVoxPopuli))\n\n#### Committers: 3\n- Frédéric Crozatier ([@fcrozatier](https://github.com/fcrozatier))\n- Gvozd ([@Gvozd](https://github.com/Gvozd))\n- [@NullVoxPopuli](https://github.com/NullVoxPopuli)\n"
+}

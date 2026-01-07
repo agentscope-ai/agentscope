@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "pretty": true,
+    "moduleResolution": "node",
+    "module": "ESNext",
+    "target": "ES2022",
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmitOnError": false,
+    "lib": ["DOM", "ES2021"],
+    "strict": true,
+    "composite": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowImportingTsExtensions": true
+  },
+  "exclude": ["**/node_modules/**", "**/*.spec.ts", "**/dist/**/*"],
+  "include": ["src"]
+}

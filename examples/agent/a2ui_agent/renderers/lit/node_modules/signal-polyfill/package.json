@@ -1,0 +1,46 @@
+{
+  "name": "signal-polyfill",
+  "version": "0.2.2",
+  "description": "A polyfill for the TC39 Signal proposal.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/proposal-signals/signal-polyfill.git"
+  },
+  "license": "Apache-2.0",
+  "author": "EisenbergEffect",
+  "contributors": [
+    "Google LLC",
+    "Bloomberg Finance L.P.",
+    "EisenbergEffect"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "devDependencies": {
+    "@types/node": "^20.11.25",
+    "@vitest/browser": "^1.5.3",
+    "concurrently": "^9.0.1",
+    "expect-type": "^1.0.0",
+    "prettier": "^3.2.5",
+    "release-plan": "^0.9.0",
+    "typescript": "latest",
+    "vite": "^5.2.6",
+    "vite-plugin-dts": "^3.7.3",
+    "vitest": "^1.4.0",
+    "webdriverio": "^8.36.1"
+  },
+  "volta": {
+    "node": "22.0.0",
+    "pnpm": "9.0.6"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "watch:types": "tsc --noEmit --watch",
+    "lint": "concurrently 'npm:lint:*(!fix)' --names 'lint:' --prefixColors=auto",
+    "lint:types": "tsc --noEmit",
+    "lint:prettier": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "test": "vitest"
+  }
+}

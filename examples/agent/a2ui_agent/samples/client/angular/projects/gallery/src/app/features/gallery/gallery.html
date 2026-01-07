@@ -1,0 +1,62 @@
+<!--
+ Copyright 2025 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      https://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<article class="widget-gallery">
+  @for (sample of samples; track sample.id) {
+    <article class="sample-widget" [id]="'section-' + sample.id" animate.enter="fade-in">
+      <section class="section-header">
+        <div>
+          <h3>{{ sample.title }}</h3>
+          <p class="description">{{ sample.description }}</p>
+        </div>
+        <button class="json-toggle" (click)="openDialog(sample)">
+          {{ showJsonId === sample.id ? 'Hide JSON' : 'Show JSON' }}
+        </button>
+      </section>
+
+      <div class="preview-card">
+        <a2ui-surface
+          [surfaceId]="'gallery-' + sample.id"
+          [surface]="sample.surface"
+        ></a2ui-surface>
+      </div>
+    </article>
+  }
+</article>
+
+<dialog #dialog>
+  <article>
+    @if (selectedSample) {
+      <section class="section-header">
+        <p class="section-title">{{ selectedSample.title }}</p>
+        <button (click)="closeDialog()">Close</button>
+      </section>
+      <div class="dialog-content-grid">
+        <section class="sample-surface">
+          <a2ui-surface
+            [surfaceId]="'dialog-' + selectedSample.id"
+            [surface]="selectedSample.surface"
+          />
+        </section>
+        <section class="json-pane">
+            <pre>{{ getJson(selectedSample.surface) }}</pre>
+        </section>
+      </div>
+    } @else {
+      <h3>Please select a component from the gallery</h3>
+    }
+  </article>
+</dialog>
