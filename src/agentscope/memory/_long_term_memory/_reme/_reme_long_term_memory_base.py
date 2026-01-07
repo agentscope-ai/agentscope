@@ -69,17 +69,9 @@ Example:
 from abc import ABCMeta
 from typing import Any
 
-from agentscope.memory._long_term_memory._long_term_memory_base import (
-    LongTermMemoryBase,
-)
-from agentscope.embedding import (
-    DashScopeTextEmbedding,
-    OpenAITextEmbedding,
-)
-from agentscope.model import (
-    DashScopeChatModel,
-    OpenAIChatModel,
-)
+from .._long_term_memory_base import LongTermMemoryBase
+from ....embedding import DashScopeTextEmbedding, OpenAITextEmbedding
+from ....model import DashScopeChatModel, OpenAIChatModel
 
 
 class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):

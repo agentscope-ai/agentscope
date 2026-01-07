@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The SQLAlchemy database storage module, which supports storing messages in
 a SQL database using SQLAlchemy ORM (e.g., SQLite, PostgreSQL, MySQL)."""
+from typing import Any
+
 from sqlalchemy import (
     Column,
     String,
@@ -16,13 +18,13 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 
-from ._base import MemoryStorageBase
+from ._base import MemoryBase
 from ...message import Msg
 
-Base = declarative_base()
+Base: Any = declarative_base()
 
 
-class SQLAlchemyMemoryStorage(MemoryStorageBase):
+class SQLAlchemyMemoryStorage(MemoryBase):
     """The SQLAlchemy database storage class for storing messages in a SQL
     database using SQLAlchemy ORM, such as SQLite, PostgreSQL, MySQL, etc.
 
@@ -52,7 +54,11 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         )
         """The foreign key to the session id relationship"""
 
-        session_id = Column(String(255), ForeignKey("session.id"), nullable=False)
+        session_id = Column(
+            String(255),
+            ForeignKey("session.id"),
+            nullable=False,
+        )
         """The foreign key to the session id"""
 
         index = Column(BigInteger, nullable=False, index=True)
@@ -129,6 +135,8 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 `sqlalchemy.ext.asyncio.AsyncEngine`.
         """
 
+        super().__init__()
+
         if not isinstance(engine, AsyncEngine):
             raise ValueError(
                 "The 'engine' parameter must be an instance of "
@@ -139,7 +147,10 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         self.session_id = session_id or "default_session"
         self.user_id = user_id or "default_user"
 
-        self._session_factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+        self._session_factory = async_sessionmaker(
+            bind=engine,
+            expire_on_commit=False,
+        )
         self._db_session: AsyncSession | None = None
 
     @property
@@ -163,7 +174,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         result = await self.session.execute(
             select(self.UserTable).filter(
                 self.UserTable.id == self.user_id,
-            )
+            ),
         )
         user_record = result.scalar_one_or_none()
 
@@ -178,7 +189,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         result = await self.session.execute(
             select(self.SessionTable).filter(
                 self.SessionTable.id == self.session_id,
-            )
+            ),
         )
         session_record = result.scalar_one_or_none()
 
@@ -190,11 +201,11 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
             self.session.add(session_record)
             await self.session.commit()
 
-    async def get_messages(
+    async def get_memory(
         self,
         mark: str | None = None,
     ) -> list[Msg]:
-        """Get messages from the database.
+        """Get messages from the database with the given mark (if provided).
 
         Args:
             mark (`str | None`, optional):
@@ -223,24 +234,28 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         results = result.scalars().all()
         return [Msg.from_dict(result.msg) for result in results]
 
-    async def add_message(
+    async def add(
         self,
-        msg: Msg | list[Msg],
-        mark: str | None = None,
+        memories: Msg | list[Msg] | None,
+        mark: str | list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
 
         Args:
-            msg (`Msg | list[Msg]`):
+            memories (`Msg | list[Msg] | None`):
                 The message(s) to be added.
-            mark (`str | None`, optional):
+            mark (`str | list[str] | None`, optional):
                 The mark to associate with the message(s). If `None`, no mark
                 is associated.
         """
-        if not isinstance(msg, list):
-            msg = [msg]
+        if memories is None:
+            return
 
-        for m in msg:
+        if not isinstance(memories, list):
+            memories = [memories]
+
+        for m in memories:
             message_record = self.MessageTable(
                 id=m.id,
                 msg=m.to_dict(),
@@ -251,7 +266,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
 
         # create mark records if mark is provided
         if mark is not None:
-            for m in msg:
+            for m in memories:
                 mark_record = self.MessageMarkTable(
                     msg_id=m.id,
                     mark=mark,
@@ -271,7 +286,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
             select(self.MessageTable.index)
             .filter(self.MessageTable.session_id == self.session_id)
             .order_by(self.MessageTable.index.desc())
-            .limit(1)
+            .limit(1),
         )
         max_index = result.scalar_one_or_none()
         return (max_index + 1) if max_index is not None else 0
@@ -287,7 +302,9 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 storage = SqlAlchemyDBStorage(...)
                 session = storage.get_db_session()
                 # The database operations can be performed using the session
-                result = await session.execute(select(MessageTable).filter(...))
+                result = await session.execute(
+                    select(MessageTable).filter(...)
+                )
                 messages = result.scalars().all()
 
 
@@ -304,7 +321,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         result = await self.session.execute(
             select(func.count(self.MessageTable.id)).filter(
                 self.MessageTable.session_id == self.session_id,
-            )
+            ),
         )
         count = result.scalar_one()
         return count
@@ -316,8 +333,8 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         # First get all message IDs in this session
         result = await self.session.execute(
             select(self.MessageTable.id).filter(
-                self.MessageTable.session_id == self.session_id
-            )
+                self.MessageTable.session_id == self.session_id,
+            ),
         )
         msg_ids = [row[0] for row in result.all()]
 
@@ -326,19 +343,23 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
             await self.session.execute(
                 delete(self.MessageMarkTable).filter(
                     self.MessageMarkTable.msg_id.in_(msg_ids),
-                )
+                ),
             )
 
         # Then delete all messages
         await self.session.execute(
             delete(self.MessageTable).filter(
                 self.MessageTable.session_id == self.session_id,
-            )
+            ),
         )
 
         await self.session.commit()
 
-    async def remove_messages_by_mark(self, mark: str | list[str]) -> int:
+    async def delete_by_mark(
+        self,
+        mark: str | list[str],
+        **kwargs: Any,
+    ) -> int:
         """Remove messages from the storage by their marks.
 
         Args:
@@ -377,7 +398,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         await self.session.execute(
             delete(self.MessageMarkTable).filter(
                 self.MessageMarkTable.msg_id.in_(msg_ids),
-            )
+            ),
         )
 
         # Then delete the messages
@@ -387,7 +408,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 self.MessageTable.session_id == self.session_id,
                 self.MessageTable.id.in_(msg_ids),
             )
-            .returning(self.MessageTable.id)
+            .returning(self.MessageTable.id),
         )
 
         deleted_count = len(result.all())
@@ -395,7 +416,11 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         await self.session.commit()
         return deleted_count
 
-    async def remove_messages(self, msg_ids: list[int]) -> int:
+    async def delete(
+        self,
+        msg_ids: list[str],
+        **kwargs: Any,
+    ) -> int:
         """Remove message(s) from the storage by their IDs.
 
         .. note:: Although MessageMarkTable has CASCADE delete on foreign key,
@@ -405,7 +430,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
          explicitly enabled.
 
         Args:
-            msg_ids (`list[int]`):
+            msg_ids (`list[str]`):
                 The list of message IDs to be removed.
 
         Returns:
@@ -418,7 +443,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
         await self.session.execute(
             delete(self.MessageMarkTable).filter(
                 self.MessageMarkTable.msg_id.in_(msg_ids),
-            )
+            ),
         )
 
         # Then delete the messages
@@ -428,7 +453,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 self.MessageTable.session_id == self.session_id,
                 self.MessageTable.id.in_(msg_ids),
             )
-            .returning(self.MessageTable.id)
+            .returning(self.MessageTable.id),
         )
 
         deleted_count = len(result.all())
@@ -481,7 +506,10 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 f"but got {type(old_mark)}.",
             )
 
-        if msg_ids is not None and not (isinstance(msg_ids, list) and all(isinstance(_, str) for _ in msg_ids)):
+        if msg_ids is not None and not (
+            isinstance(msg_ids, list)
+            and all(isinstance(_, str) for _ in msg_ids)
+        ):
             raise ValueError(
                 f"The 'msg_ids' parameter must be a list of strings or None, "
                 f"but got {type(msg_ids)}.",
@@ -505,7 +533,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
 
         # Obtain the message records
         result = await self.session.execute(query)
-        msg_ids: list[str] = [str(_.id) for _ in result.scalars().all()]
+        msg_ids = [str(_.id) for _ in result.scalars().all()]
 
         # Return early if no messages found
         if not msg_ids:
@@ -532,8 +560,12 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
             old_mark=old_mark,
         )
 
-
-    async def _replace_message_mark(self, msg_ids: list[str], old_mark: str, new_mark: str) -> int:
+    async def _replace_message_mark(
+        self,
+        msg_ids: list[str],
+        old_mark: str,
+        new_mark: str,
+    ) -> int:
         """Replace the old mark with the new mark for the given messages by
         updating records in the message_mark table.
 
@@ -557,7 +589,7 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 self.MessageMarkTable.msg_id.in_(msg_ids),
                 self.MessageMarkTable.mark == old_mark,
             )
-            .values(mark=new_mark)
+            .values(mark=new_mark),
         )
         await self.session.commit()
         return len(msg_ids)
@@ -581,12 +613,16 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 self.MessageMarkTable(
                     msg_id=msg_id,
                     mark=mark,
-                )
+                ),
             )
         await self.session.commit()
         return len(msg_ids)
 
-    async def _remove_message_mark(self, msg_ids: list[str], old_mark: str | None) -> int:
+    async def _remove_message_mark(
+        self,
+        msg_ids: list[str],
+        old_mark: str | None,
+    ) -> int:
         """Remove marks from the messages by deleting records from the
         message_mark table.
 
@@ -609,14 +645,14 @@ class SQLAlchemyMemoryStorage(MemoryStorageBase):
                 delete(self.MessageMarkTable).filter(
                     self.MessageMarkTable.msg_id.in_(msg_ids),
                     self.MessageMarkTable.mark == old_mark,
-                )
+                ),
             )
         else:
             # Remove all marks for the specified msg IDs
             await self.session.execute(
                 delete(self.MessageMarkTable).filter(
                     self.MessageMarkTable.msg_id.in_(msg_ids),
-                )
+                ),
             )
 
         await self.session.commit()

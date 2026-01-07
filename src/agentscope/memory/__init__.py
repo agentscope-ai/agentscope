@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 """The memory module."""
 
-from ._storage import (
-    MemoryStorageBase,
-    InMemoryMemoryStorage,
-    SQLAlchemyMemoryStorage,
-)
 from ._working_memory import (
     MemoryBase,
     InMemoryMemory,
-    AutoCompressionMemory,
+    RedisStorageBase,
+    SQLAlchemyMemoryStorage,
 )
 from ._long_term_memory import (
     LongTermMemoryBase,
@@ -21,16 +17,11 @@ from ._long_term_memory import (
 
 
 __all__ = [
-    # Working memory storage
-    "MemoryStorageBase",
-    "InMemoryMemoryStorage",
-    "SQLAlchemyMemoryStorage",
-
     # Working memory
     "MemoryBase",
     "InMemoryMemory",
-    "AutoCompressionMemory",
-
+    "RedisStorageBase",
+    "SQLAlchemyMemoryStorage",
     # Long-term memory
     "LongTermMemoryBase",
     "Mem0LongTermMemory",

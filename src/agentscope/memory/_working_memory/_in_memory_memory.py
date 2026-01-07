@@ -1,93 +1,65 @@
 # -*- coding: utf-8 -*-
-"""The dialogue memory class"""
+"""The in-memory storage module for memory storage."""
+from typing import Any
 
-from typing import Union, Iterable, Any
-
-from agentscope.memory._working_memory._memory_base import MemoryBase
-from agentscope.message import Msg
+from ...message import Msg
+from ._base import MemoryBase
 
 
 class InMemoryMemory(MemoryBase):
-    """The in-memory memory class for storing messages."""
+    """The in-memory implementation of memory storage."""
 
-    def __init__(
-        self,
-    ) -> None:
-        """Initialize the in-memory memory object."""
+    def __init__(self) -> None:
+        """Initialize the in-memory storage."""
         super().__init__()
-        self.content: list[Msg] = []
+        # Use a list of tuples to store messages along with their marks
+        self.content: list[tuple[Msg, list[str]]] = []
 
-    def state_dict(self) -> dict:
-        """Convert the current memory into JSON data format."""
-        return {
-            "content": [_.to_dict() for _ in self.content],
-        }
+        # Register the state for serialization
+        self.register_state("content")
 
-    def load_state_dict(
-        self,
-        state_dict: dict,
-        strict: bool = True,
-    ) -> None:
-        """Load the memory from JSON data.
+    async def get_memory(self, mark: str | None = None) -> list[Msg]:
+        """Get the messages from the memory by mark (if provided). Otherwise,
+        get all messages.
 
         Args:
-            state_dict (`dict`):
-                The state dictionary to load, which should have a "content"
-                field.
-            strict (`bool`, defaults to `True`):
-                If `True`, raises an error if any key in the module is not
-                found in the state_dict. If `False`, skips missing keys.
+            mark (`str | None`, optional):
+                The mark to filter messages. If `None`, retrieves all
+                messages.
+
+        Raises:
+            `TypeError`:
+                If the provided mark is not a string or None.
+
+        Returns:
+            `list[Msg]`:
+                The list of messages retrieved from the storage.
         """
-        self.content = []
-        for data in state_dict["content"]:
-            data.pop("type", None)
-            self.content.append(Msg.from_dict(data))
+        if mark is None:
+            return [msg for msg, _ in self.content]
 
-    async def size(self) -> int:
-        """The size of the memory."""
-        return len(self.content)
-
-    async def retrieve(self, *args: Any, **kwargs: Any) -> None:
-        """Retrieve items from the memory."""
-        raise NotImplementedError(
-            "The retrieve method is not implemented in "
-            f"{self.__class__.__name__} class.",
-        )
-
-    async def delete(self, index: Iterable | int) -> None:
-        """Delete the specified item by index(es).
-
-        Args:
-            index (`Union[Iterable, int]`):
-                The index to delete.
-        """
-        if isinstance(index, int):
-            index = [index]
-
-        invalid_index = [_ for _ in index if 0 > _ or _ >= len(self.content)]
-
-        if invalid_index:
-            raise IndexError(
-                f"The index {invalid_index} does not exist.",
+        if not isinstance(mark, str):
+            raise TypeError(
+                f"The mark should be a string or None, but got {type(mark)}.",
             )
 
-        self.content = [
-            _ for idx, _ in enumerate(self.content) if idx not in index
-        ]
+        return [msg for msg, marks in self.content if mark in marks]
 
     async def add(
         self,
         memories: Msg | list[Msg] | None,
-        allow_duplicates: bool = False,
+        mark: str | list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
-        """Add message into the memory.
+        """Add message(s) into the memory storage with the given mark
+        (if provided).
 
         Args:
             memories (`Msg | list[Msg] | None`):
-                The message to add.
-            allow_duplicates (`bool`, defaults to `False`):
-                If allow adding duplicate messages (with the same id) into
-                the memory.
+                The message(s) to be added.
+            mark (`str | list[str] | None`, optional):
+                The mark(s) to associate with the message(s). If `None`, no
+                mark is associated.
         """
         if memories is None:
             return
@@ -95,28 +67,153 @@ class InMemoryMemory(MemoryBase):
         if isinstance(memories, Msg):
             memories = [memories]
 
-        if not isinstance(memories, list):
+        if mark is None:
+            marks = []
+        elif isinstance(mark, str):
+            marks = [mark]
+        elif isinstance(mark, list) and all(isinstance(m, str) for m in mark):
+            marks = mark
+        else:
             raise TypeError(
-                f"The memories should be a list of Msg or a single Msg, "
-                f"but got {type(memories)}.",
+                f"The mark should be a string, a list of strings, or None, "
+                f"but got {type(mark)}.",
             )
 
         for msg in memories:
-            if not isinstance(msg, Msg):
-                raise TypeError(
-                    f"The memories should be a list of Msg or a single Msg, "
-                    f"but got {type(msg)}.",
-                )
+            self.content.append((msg, marks))
 
-        if not allow_duplicates:
-            existing_ids = [_.id for _ in self.content]
-            memories = [_ for _ in memories if _.id not in existing_ids]
-        self.content.extend(memories)
+    async def delete(
+        self,
+        msg_ids: list[str],
+        **kwargs: Any,
+    ) -> int:
+        """Remove message(s) from the storage by their IDs.
 
-    async def get_memory(self) -> list[Msg]:
-        """Get the memory content."""
-        return self.content
+        Args:
+            msg_ids (`list[str]`):
+                The list of message IDs to be removed.
+
+        Returns:
+            `int`:
+                The number of messages removed.
+        """
+        initial_size = len(self.content)
+        self.content = [
+            (msg, marks)
+            for msg, marks in self.content
+            if msg.id not in msg_ids
+        ]
+        return initial_size - len(self.content)
+
+    async def delete_by_mark(
+        self,
+        mark: str | list[str],
+        **kwargs: Any,
+    ) -> int:
+        """Remove messages from the memory by their marks.
+
+        Args:
+            mark (`str | list[str]`):
+                The mark(s) of the messages to be removed.
+
+        Raises:
+            `TypeError`:
+                If the provided mark is not a string or a list of strings.
+
+        Returns:
+            `int`:
+                The number of messages removed.
+        """
+        if isinstance(mark, str):
+            mark = [mark]
+
+        if isinstance(mark, list) and not all(
+            isinstance(m, str) for m in mark
+        ):
+            raise TypeError(
+                f"The mark should be a string or a list of strings, "
+                f"but got {type(mark)} with elements of types "
+                f"{[type(m) for m in mark]}.",
+            )
+
+        initial_size = len(self.content)
+        for m in mark:
+            self.content = [
+                (msg, marks) for msg, marks in self.content if m not in marks
+            ]
+
+        return initial_size - len(self.content)
 
     async def clear(self) -> None:
-        """Clear the memory content."""
-        self.content = []
+        """Clear all messages from the storage."""
+        self.content.clear()
+
+    async def size(self) -> int:
+        """Get the number of messages in the storage.
+
+        Returns:
+            `int`:
+                The number of messages in the storage.
+        """
+        return len(self.content)
+
+    async def update_messages_mark(
+        self,
+        new_mark: str | None,
+        old_mark: str | None = None,
+        msg_ids: list[str] | None = None,
+    ) -> int:
+        """A unified method to update marks of messages in the storage (add,
+        remove, or change marks).
+
+        - If `msg_ids` is provided, the update will be applied to the messages
+         with the specified IDs.
+        - If `old_mark` is provided, the update will be applied to the
+         messages with the specified old mark. Otherwise, the `new_mark` will
+         be added to all messages (or those filtered by `msg_ids`).
+        - If `new_mark` is `None`, the mark will be removed from the messages.
+
+        Args:
+            new_mark (`str | None`, optional):
+                The new mark to set for the messages. If `None`, the mark
+                will be removed.
+            old_mark (`str | None`, optional):
+                The old mark to filter messages. If `None`, this constraint
+                is ignored.
+            msg_ids (`list[str] | None`, optional):
+                The list of message IDs to be updated. If `None`, this
+                constraint is ignored.
+
+        Returns:
+            `int`:
+                The number of messages updated.
+        """
+        updated_count = 0
+
+        for idx, (msg, marks) in enumerate(self.content):
+            # If msg_ids is provided, skip messages not in the list
+            if msg_ids is not None and msg.id not in msg_ids:
+                continue
+
+            # If old_mark is provided, skip messages that do not have the old
+            # mark
+            if old_mark is not None and old_mark not in marks:
+                continue
+
+            # If new_mark is None, remove the old_mark
+            if new_mark is None:
+                if old_mark in marks:
+                    marks.remove(old_mark)
+                    updated_count += 1
+
+            else:
+                # If new_mark is provided, add or replace the old_mark
+                if old_mark is not None and old_mark in marks:
+                    marks.remove(old_mark)
+                if new_mark not in marks:
+                    marks.append(new_mark)
+                    updated_count += 1
+
+            self.content[idx] = (msg, marks)
+
+        return updated_count

@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The redis based memory storage implementation."""
 import json
 from typing import Any, TYPE_CHECKING
+
+from ._base import MemoryBase
+from ...message import Msg
 
 if TYPE_CHECKING:
     from redis.asyncio import ConnectionPool
 else:
-    ConnectionPool = "redis.asyncio.ConnectionPool"
-
-from ._base import MemoryStorageBase
-from ...message import Msg
+    ConnectionPool = Any
 
 
-class RedisStorageBase(MemoryStorageBase):
-    """Redis storage implementation for memory storage.
+class RedisStorageBase(MemoryBase):
+    """Redis memory storage implementation, which supports session and user
+    context.
 
     .. note:: All the operations in this class are within a specific session
      and user context, identified by `session_id` and `user_id`. Cross-session
@@ -75,6 +76,8 @@ class RedisStorageBase(MemoryStorageBase):
                 "Please install it via 'pip install redis[async]'.",
             ) from e
 
+        super().__init__()
+
         self.session_id = session_id
         self.user_id = user_id
 
@@ -87,9 +90,9 @@ class RedisStorageBase(MemoryStorageBase):
             **kwargs,
         )
 
-    async def get_messages(self, mark: str | None = None) -> list[Msg]:
-        """Get the messages from the storage by mark (if provided). Otherwise,
-        get all messages.
+    async def get_memory(self, mark: str | None = None) -> list[Msg]:
+        """Get the messages from the memory storage by mark (if provided).
+        Otherwise, get all messages.
 
         Args:
             mark (`str | None`, optional):
@@ -104,7 +107,8 @@ class RedisStorageBase(MemoryStorageBase):
         if mark is None:
             # Obtain the message IDs from the session list
             mark_key = self.MARK_KEY.format(
-                session_id=self.session_id, mark=mark
+                session_id=self.session_id,
+                mark=mark,
             )
             msg_ids = await self._client.lrange(mark_key, 0, -1)
 
@@ -123,32 +127,36 @@ class RedisStorageBase(MemoryStorageBase):
 
         return messages
 
-    async def add_message(
+    async def add(
         self,
-        msg: Msg | list[Msg],
-        mark: str | None = None,
+        memories: Msg | list[Msg] | None,
+        mark: str | list[str] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
 
         Args:
-            msg (`Msg | list[Msg]`):
+            memories (`Msg | list[Msg]`):
                 The message(s) to be added.
             mark (`str | None`, optional):
                 The mark to associate with the message(s). If `None`, no mark
                 is associated.
         """
-        if isinstance(msg, Msg):
-            msg = [msg]
+        if memories is None:
+            return
+
+        if isinstance(memories, Msg):
+            memories = [memories]
 
         # Push message ids into the session list
         session_key = self.SESSION_KEY.format(session_id=self.session_id)
-        await self._client.rpush(session_key, *[m.id for m in msg])
+        await self._client.rpush(session_key, *[m.id for m in memories])
 
         # Push message id into the message hash
         mark_key = self.MARK_KEY.format(session_id=self.session_id, mark=mark)
 
         # Store message data
-        for m in msg:
+        for m in memories:
             # Record the mark if provided
             if mark is not None:
                 await self._client.rpush(mark_key, m.id)
@@ -160,9 +168,10 @@ class RedisStorageBase(MemoryStorageBase):
                 json.dumps(m.to_dict(), ensure_ascii=False, encodings="utf-8"),
             )
 
-    async def remove_messages(
+    async def delete(
         self,
         msg_ids: list[str],
+        **kwargs: Any,
     ) -> int:
         """Remove message(s) from the storage by their IDs.
 
@@ -187,7 +196,8 @@ class RedisStorageBase(MemoryStorageBase):
 
             # Remove from all marks
             mark_pattern = self.MARK_KEY.format(
-                session_id=self.session_id, mark="*"
+                session_id=self.session_id,
+                mark="*",
             )
             mark_keys = await self._client.keys(mark_pattern)
             for mark_key in mark_keys:
@@ -198,9 +208,10 @@ class RedisStorageBase(MemoryStorageBase):
         await pipe.execute()
         return removed_count
 
-    async def remove_messages_by_mark(
+    async def delete_by_mark(
         self,
         mark: str | list[str],
+        **kwargs: Any,
     ) -> int:
         """Remove messages from the storage by their marks.
 
@@ -225,8 +236,8 @@ class RedisStorageBase(MemoryStorageBase):
                 continue
 
             # Remove messages by IDs
-            removed_count = await self.remove_messages(
-                [msg_id for msg_id in msg_ids]
+            removed_count = await self.delete(
+                msg_ids,
             )
             total_removed += removed_count
 
@@ -251,7 +262,8 @@ class RedisStorageBase(MemoryStorageBase):
 
         # Delete all mark lists
         mark_pattern = self.MARK_KEY.format(
-            session_id=self.session_id, mark="*"
+            session_id=self.session_id,
+            mark="*",
         )
         mark_keys = await self._client.keys(mark_pattern)
         for mark_key in mark_keys:
