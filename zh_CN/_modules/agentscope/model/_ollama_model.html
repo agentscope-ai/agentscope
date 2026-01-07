@@ -612,7 +612,7 @@
                     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Error parsing tool call input: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 
             <span class="c1"># Generate response when there&#39;s new content or at final chunk</span>
-            <span class="k">if</span> <span class="n">chunk</span><span class="o">.</span><span class="n">done</span> <span class="ow">and</span> <span class="n">contents</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">chunk</span><span class="o">.</span><span class="n">done</span> <span class="ow">or</span> <span class="n">contents</span><span class="p">:</span>
                 <span class="n">res</span> <span class="o">=</span> <span class="n">ChatResponse</span><span class="p">(</span>
                     <span class="n">content</span><span class="o">=</span><span class="n">contents</span><span class="p">,</span>
                     <span class="n">usage</span><span class="o">=</span><span class="n">usage</span><span class="p">,</span>
