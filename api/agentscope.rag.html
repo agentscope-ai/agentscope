@@ -1052,6 +1052,149 @@ the full functionality of Milvus.</p>
 </dd></dl>
 
 <dl class="py class">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AlibabaCloudMySQLStore</span></span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.rag.VDBStoreBase" title="agentscope.rag._store._store_base.VDBStoreBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">VDBStoreBase</span></code></a></p>
+<p>The AlibabaCloud MySQL vector store implementation, supporting vector
+search operations using MySQL’s native vector functions.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>AlibabaCloud MySQL vector search requires MySQL 8.0+.</p>
+</div>
+<p>This implementation uses MySQL’s native vector functions
+(VEC_DISTANCE_COSINE, VEC_DISTANCE_EUCLIDEAN, VEC_FROMTEXT) for
+efficient vector similarity search with ORDER BY in SQL.
+Only COSINE and EUCLIDEAN distance metrics are supported.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Requires mysql-connector-python package. Install with:</p>
+</div>
+<p><cite>pip install mysql-connector-python</cite></p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For AlibabaCloud MySQL instances, ensure vector search plugin</p>
+</div>
+<p>is enabled. Contact AlibabaCloud support if needed.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">password</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">database</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">table_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'COSINE'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">hnsw_m</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">16</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">connection_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the AlibabaCloud MySQL vector store.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>) – The hostname of the AlibabaCloud MySQL server.
+Example: “rm-xxxxx.mysql.rds.aliyuncs.com”</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>) – The port number of the MySQL server (typically 3306).</p></li>
+<li><p><strong>user</strong> (<cite>str</cite>) – The username for authentication.</p></li>
+<li><p><strong>password</strong> (<cite>str</cite>) – The password for authentication.</p></li>
+<li><p><strong>database</strong> (<cite>str</cite>) – The database name to use.</p></li>
+<li><p><strong>table_name</strong> (<cite>str</cite>) – The name of the table to store the embeddings.</p></li>
+<li><p><strong>dimensions</strong> (<cite>int</cite>) – The dimension of the embeddings.</p></li>
+<li><p><strong>distance</strong> (<cite>Literal[“COSINE”, “EUCLIDEAN”]</cite>, default to “COSINE”) – The distance metric to use for similarity search. Can be
+one of “COSINE” (cosine similarity) or “EUCLIDEAN”
+(Euclidean distance). Defaults to “COSINE”.</p></li>
+<li><p><strong>hnsw_m</strong> (<cite>int</cite>, default to 16) – The M parameter for HNSW vector index, which controls
+the number of bi-directional links created for each node
+during construction. Higher values create denser graphs
+with better recall but use more memory. Typical values
+range from 4 to 64. Defaults to 16.</p></li>
+<li><p><strong>connection_kwargs</strong> (<cite>dict[str, Any] | None</cite>, optional) – Other keyword arguments for the MySQL connector.
+Example: {“ssl_ca”: “/path/to/ca.pem”, “charset”: “utf8mb4”}</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.add">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">documents</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.add"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add embeddings to the AlibabaCloud MySQL vector store.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>documents</strong> (<cite>list[Document]</cite>) – A list of embedding records to be recorded in the MySQL store.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional arguments for the insert operation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.search">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">search</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">query_embedding</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">score_threshold</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.search"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.search" title="Link to this definition">¶</a></dt>
+<dd><p>Search relevant documents from the AlibabaCloud MySQL vector store.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>query_embedding</strong> (<cite>Embedding</cite>) – The embedding of the query text.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>) – The number of relevant documents to retrieve.</p></li>
+<li><p><strong>score_threshold</strong> (<cite>float | None</cite>, optional) – The minimum similarity score threshold to filter the
+results. Score is calculated as 1 - distance, where
+higher scores indicate higher similarity. Only documents
+with score &gt;= score_threshold will be returned.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional arguments for the search operation.
+- filter (<cite>str</cite>): WHERE clause to filter the search results.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[<a class="reference internal" href="#agentscope.rag.Document" title="agentscope.rag._document.Document"><em>Document</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.delete">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.delete"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Delete documents from the AlibabaCloud MySQL vector store.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ids</strong> (<cite>list[str] | None</cite>, optional) – List of entity IDs to delete.</p></li>
+<li><p><strong>filter</strong> (<cite>str | None</cite>, optional) – WHERE clause expression to filter documents to delete.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional arguments for the delete operation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.get_client">
+<span class="sig-name descname"><span class="pre">get_client</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.get_client"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.get_client" title="Link to this definition">¶</a></dt>
+<dd><p>Get the underlying MySQL connection, so that developers can access
+the full functionality of AlibabaCloud MySQL.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The underlying MySQL connection.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>MySQLConnection</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore.close">
+<span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore.close"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore.close" title="Link to this definition">¶</a></dt>
+<dd><p>Close the database connection.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
 <dt class="sig sig-object py" id="agentscope.rag.KnowledgeBase">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">KnowledgeBase</span></span><a class="reference internal" href="../_modules/agentscope/rag/_knowledge_base.html#KnowledgeBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.KnowledgeBase" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
@@ -1345,6 +1488,15 @@ The threshold of the score to filter the results.</p></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.search"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.search()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.delete"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.delete()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.get_client"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.get_client()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.__init__"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.add"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.add()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.search"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.search()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.delete"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.delete()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.get_client"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.get_client()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore.close"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore.close()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.rag.KnowledgeBase"><code class="docutils literal notranslate"><span class="pre">KnowledgeBase</span></code></a><ul>
