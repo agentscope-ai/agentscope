@@ -376,8 +376,8 @@ store = AlibabaCloudMySQLStore(
 ## Related Resources
 
 - [AlibabaCloud RDS Documentation](https://www.alibabacloud.com/help/en/apsaradb-for-rds)
-- [MySQL Vector Functions](https://dev.mysql.com/doc/)
-- [AgentScope RAG Module](../../../src/agentscope/rag/)
+- [AlibabaCloud MySQL Vector Functions](https://www.alibabacloud.com/help/en/rds/apsaradb-rds-for-mysql/vector-storage-1)
+- [AgentScope RAG Tutorial](https://doc.agentscope.io/tutorial/task_rag.html)
 - [MySQL Connector Python](https://dev.mysql.com/doc/connector-python/en/)
 
 ## Example Use Cases
