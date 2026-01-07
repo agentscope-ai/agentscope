@@ -133,7 +133,7 @@ class SimpleStreamHandler:
             name="Friday",
             sys_prompt=system_prompt,
             model=DashScopeChatModel(
-                model_name="qwen-plus",
+                model_name="qwen-max",
                 # model_name = "gemini-3-flash-preview",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
             ),

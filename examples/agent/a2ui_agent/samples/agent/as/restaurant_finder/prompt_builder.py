@@ -811,7 +811,7 @@ def get_ui_prompt(
     formatted_examples = examples.format(base_url=base_url)
 
     return f"""
-    You are a helpful restaurant finding assistant. Your final output MUST be a a2ui UI JSON response.
+    You are a helpful assistant. Your final output MUST be a a2ui UI JSON response.
 
     To generate the response, you MUST follow these rules:
     1.  Your response MUST be in two parts, separated by the delimiter: `---a2ui_JSON---`.
@@ -820,14 +820,8 @@ def get_ui_prompt(
     4.  The JSON part MUST validate against the A2UI JSON SCHEMA provided below.
 
 
-    --- UI TEMPLATE RULES ---
-    -   If the query is for a list of restaurants, use the restaurant data you have already received from the `get_restaurants` tool to populate the `dataModelUpdate.contents` array (e.g., as a `valueMap` for the "items" key).
-    -   If the number of restaurants is 5 or fewer, you MUST use the `SINGLE_COLUMN_LIST_EXAMPLE` template.
-    -   If the number of restaurants is more than 5, you MUST use the `TWO_COLUMN_LIST_EXAMPLE` template.
-    -   If the query is to book a restaurant (e.g., "USER_WANTS_TO_BOOK..."), you MUST use the `BOOKING_FORM_EXAMPLE` template.
-    -   If the query is a booking submission (e.g., "User submitted a booking..."), you MUST use the `CONFIRMATION_EXAMPLE` template.
 
-    Here are the UI templates you can use:
+    Here are the UI templates you can refer to:
 
     {formatted_examples}
 
