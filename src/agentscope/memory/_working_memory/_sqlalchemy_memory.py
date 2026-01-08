@@ -191,7 +191,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         # Create session record if not exists
         result = await self.session.execute(
             select(self.SessionTable).filter(
-                self.SessionTable.id == self.session_id
+                self.SessionTable.id == self.session_id,
             ),
         )
         session_record = result.scalar_one_or_none()
@@ -276,7 +276,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                     self.MessageMarkTable.msg_id.in_(
                         select(self.MessageTable.id).filter(
                             self.MessageTable.session_id == self.session_id,
-                        )
+                        ),
                     ),
                     self.MessageMarkTable.mark == exclude_mark,
                 )
@@ -327,7 +327,10 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         # Type checking
         if isinstance(memories, Msg):
             memories = [memories]
-        elif not (isinstance(memories, list) and all(isinstance(_, Msg) for _ in memories)):
+        elif not (
+            isinstance(memories, list)
+            and all(isinstance(_, Msg) for _ in memories)
+        ):
             raise TypeError(
                 "The 'memories' parameter must be a Msg instance or a list of "
                 f"Msg instances, but got {type(memories)}.",
@@ -335,7 +338,9 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
         if isinstance(marks, str):
             marks = [marks]
-        elif marks is not None and not (isinstance(marks, list) and all(isinstance(m, str) for m in marks)):
+        elif marks is not None and not (
+            isinstance(marks, list) and all(isinstance(m, str) for m in marks)
+        ):
             raise TypeError(
                 "The 'marks' parameter must be a string or a list of strings, "
                 f"but got {type(marks)}.",
@@ -401,8 +406,8 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 self.MessageMarkTable.msg_id.in_(
                     select(self.MessageTable.id).filter(
                         self.MessageTable.session_id == self.session_id,
-                    )
-                )
+                    ),
+                ),
             ),
         )
 

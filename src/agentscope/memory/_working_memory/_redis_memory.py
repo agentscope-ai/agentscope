@@ -7,9 +7,10 @@ from ._base import MemoryBase
 from ...message import Msg
 
 if TYPE_CHECKING:
-    from redis.asyncio import ConnectionPool
+    from redis.asyncio import ConnectionPool, Redis
 else:
     ConnectionPool = Any
+    Redis = Any
 
 
 class RedisMemory(MemoryBase):
@@ -89,6 +90,15 @@ class RedisMemory(MemoryBase):
             connection_pool=connection_pool,
             **kwargs,
         )
+
+    def get_client(self) -> Redis:
+        """Get the underlying Redis client.
+
+        Returns:
+            `Redis`:
+                The Redis client instance.
+        """
+        return self._client
 
     async def get_memory(
         self,
@@ -196,8 +206,8 @@ class RedisMemory(MemoryBase):
             memories (`Msg | list[Msg]`):
                 The message(s) to be added.
             marks (`str | list[str] | None`, optional):
-                The mark(s) to associate with the message(s). If `None`, no mark
-                is associated.
+                The mark(s) to associate with the message(s). If `None`, no
+                mark is associated.
         """
         if memories is None:
             return
@@ -458,11 +468,11 @@ class RedisMemory(MemoryBase):
                     session_id=self.session_id,
                     mark=new_mark,
                 )
-                # Check if msg_id is already in the new mark list to avoid duplicates
+                # Check if msg_id is already in the new mark list to avoid
+                # duplicates
                 existing_ids = await self._client.lrange(new_mark_key, 0, -1)
                 if msg_id not in existing_ids:
                     await self._client.rpush(new_mark_key, msg_id)
                 updated_count += 1
 
         return updated_count
-

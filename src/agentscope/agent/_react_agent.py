@@ -1075,7 +1075,7 @@ class ReActAgent(ReActAgentBase):
             # Format the compressed memory summary
             if last_chunk.metadata:
                 # Update the compressed summary in the memory storage
-                self.memory.update_compressed_summary(
+                await self.memory.update_compressed_summary(
                     self.compression_config.summary_template.format(
                         **last_chunk.metadata,
                     ),

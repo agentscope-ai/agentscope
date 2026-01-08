@@ -4,8 +4,12 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from agentscope.memory import MemoryBase, InMemoryMemory, \
-    AsyncSQLAlchemyMemory, RedisMemory
+from agentscope.memory import (
+    MemoryBase,
+    InMemoryMemory,
+    AsyncSQLAlchemyMemory,
+    RedisMemory,
+)
 from agentscope.message import Msg
 
 
@@ -48,7 +52,7 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         await self.memory.update_compressed_summary("abc")
         self.assertEqual(
             len(await self.memory.get_memory()),
-            1
+            1,
         )
 
         await self.memory.update_compressed_summary("")
@@ -82,7 +86,7 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         msgs = await self.memory.get_memory()
         self.assertListEqual(
             [_.id for _ in msgs],
-            [str(_) for _ in [0, 1, 3, 5, 6, 7, 8, 9 ]],
+            [str(_) for _ in [0, 1, 3, 5, 6, 7, 8, 9]],
         )
 
         # test clearing memory
@@ -98,7 +102,7 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         await self.memory.add(self.msgs[:5])
         self.assertListEqual(
             [_.id for _ in await self.memory.get_memory()],
-            [str(_) for _ in range(5)]
+            [str(_) for _ in range(5)],
         )
         self.assertEqual(
             len(await self.memory.get_memory(mark="nonexistent")),
@@ -172,12 +176,12 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         msgs = await self.memory.get_memory(mark="unread")
         self.assertListEqual(
             [_.id for _ in msgs],
-            [str(_) for _ in [6, 7, 9]]
+            [str(_) for _ in [6, 7, 9]],
         )
         msgs = await self.memory.get_memory(mark="important")
         self.assertListEqual(
             [_.id for _ in msgs],
-            [str(_) for _ in [5, 6, 7, 8, 9]]
+            [str(_) for _ in [5, 6, 7, 8, 9]],
         )
 
         # test unmarking messages
@@ -188,7 +192,7 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         )
         self.assertListEqual(
             [_.id for _ in await self.memory.get_memory(mark="important")],
-            [str(_) for _ in [6, 8, 9]]
+            [str(_) for _ in [6, 8, 9]],
         )
 
         # test updating marks
@@ -216,19 +220,18 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         msgs = await self.memory.get_memory()
         self.assertListEqual(
             [_.id for _ in msgs],
-            [str(_) for _ in [0, 1,2,3,4,5,6,7,8,10,11]],
+            [str(_) for _ in [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11]],
         )
 
         await self.memory.delete_by_mark(["review", "archived"])
         msgs = await self.memory.get_memory()
         self.assertListEqual(
             [_.id for _ in msgs],
-            [str(_) for _ in [3,4,5,7,10,11]],
+            [str(_) for _ in [3, 4, 5, 7, 10, 11]],
         )
 
     async def _multi_tenant_tests(self) -> None:
         """Test the multi-tenant functionalities of the short-term memory."""
-
 
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""
@@ -274,6 +277,7 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
         if isinstance(self.engine, AsyncEngine):
             await self.engine.dispose()
 
+
 class RedisMemoryTest(ShortTermMemoryTest):
     """The Redis short-term memory tests."""
 
@@ -285,7 +289,7 @@ class RedisMemoryTest(ShortTermMemoryTest):
         except ImportError:
             self.skipTest(
                 "fakeredis is not installed. Install it via "
-                "'pip install fakeredis' to run this test."
+                "'pip install fakeredis' to run this test.",
             )
 
         # Use fakeredis for in-memory testing without a real Redis server
@@ -302,6 +306,6 @@ class RedisMemoryTest(ShortTermMemoryTest):
     async def asyncTearDown(self) -> None:
         """Clean up the Redis memory instance after testing."""
         await super().asyncTearDown()
-        # Close the fakeredis connection pool
-        if hasattr(self.memory, '_client'):
-            await self.memory._client.aclose()
+        # Close the client connection by get_client method from the memory
+        client = await self.memory.get_client()
+        await client.close()

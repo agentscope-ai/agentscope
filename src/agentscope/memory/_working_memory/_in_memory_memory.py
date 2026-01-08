@@ -116,9 +116,9 @@ class InMemoryMemory(MemoryBase):
             marks = []
         elif isinstance(marks, str):
             marks = [marks]
-        elif isinstance(marks, list) and all(isinstance(m, str) for m in marks):
-            marks = marks
-        else:
+        elif not isinstance(marks, list) and not all(
+            isinstance(m, str) for m in marks
+        ):
             raise TypeError(
                 f"The mark should be a string, a list of strings, or None, "
                 f"but got {type(marks)}.",

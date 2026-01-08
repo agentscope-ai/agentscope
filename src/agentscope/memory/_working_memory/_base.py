@@ -123,3 +123,7 @@ class MemoryBase(StateModule):
             `int`:
                 The number of messages updated.
         """
+        raise NotImplementedError(
+            "The update_messages_mark method is not implemented in "
+            f"{self.__class__.__name__} class.",
+        )
