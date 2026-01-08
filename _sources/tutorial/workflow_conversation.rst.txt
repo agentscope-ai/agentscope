@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student who's really into exploring new ideas and learning about different cultures. I love reading, especially science fiction and fantasy, and I also enjoy spending time outdoors, hiking and camping. What about you?
-    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm pretty passionate about technology and how it can be used to solve real-world problems. In my free time, I like to tinker with electronics and coding projects. I also enjoy playing basketball and listening to all kinds of music. It's nice to meet you!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I'm really into sports, particularly soccer, and I play on a local team. When I'm not on the field, I enjoy cooking and experimenting with recipes from around the world. I also have a bit of a green thumb and like to garden. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different subjects. It's nice to meet you! What about you?
+    Bob: Hi Alice! I'm Bob, also a student. I'm really into sports and technology. It's great to meet you too! What kind of subjects are you most interested in?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's cool to meet you both! Alice, what specific subjects are you exploring these days?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student who's really into exploring new ideas and learning about different cultures. I love reading, especially science fiction and fantasy, and I also enjoy spending time outdoors, hiking and camping. What about you?
-    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm pretty passionate about technology and how it can be used to solve real-world problems. In my free time, I like to tinker with electronics and coding projects. I also enjoy playing basketball and listening to all kinds of music. It's nice to meet you!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I'm really into sports, particularly soccer, and I play on a local team. When I'm not on the field, I enjoy cooking and experimenting with recipes from around the world. I also have a bit of a green thumb and like to garden. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different subjects. It's nice to meet you! What about you?
+    Bob: Hi Alice! I'm Bob, also a student. I'm really into sports and technology. It's great to meet you too! What kind of subjects are you most interested in?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's cool to meet you both! Alice, what specific subjects are you exploring these days?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 17.438 seconds)
+   **Total running time of the script:** (0 minutes 7.451 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

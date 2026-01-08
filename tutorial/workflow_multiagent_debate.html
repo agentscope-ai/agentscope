@@ -475,48 +475,59 @@ At each round a moderator agent will decide whether the correct answer can be ob
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Thank you, and I&#39;m glad to present the affirmative side of this debate. The topic at hand is to determine how many times circle A will revolve in total as it rolls around circle B, given that the radius of circle A (r_A) is 1/3 the radius of circle B (r_B), and there is no relative sliding between them.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Thank you. As the affirmative side, I will argue that when circle A, with a radius one-third that of circle B, rolls around the outside of circle B without sliding, it will revolve 4 times in total by the time it returns to its starting point.
 
-To solve this, we can use the relationship between the circumferences of the two circles. The circumference (C) of a circle is given by C = 2πr, where r is the radius of the circle. Therefore, the circumference of circle A, C_A, is 2πr_A, and the circumference of circle B, C_B, is 2πr_B.
+To understand why, let&#39;s break down the problem:
 
-Given that r_A = 1/3 * r_B, we can substitute and find:
-C_A = 2π(1/3 * r_B) = (2/3)πr_B
-C_B = 2πr_B
+- Let the radius of circle B be \( R \).
+- The radius of circle A is then \( \frac{1}{3}R \).
 
-When circle A rolls around circle B without slipping, it will have traveled a distance equal to the circumference of the path it follows, which is the circumference of circle B. To find out how many times circle A has revolved, we divide the distance it travels (which is C_B) by its own circumference (C_A):
+When circle A rolls around circle B, it follows a path that is the circumference of a larger circle, which has a radius equal to \( R + \frac{1}{3}R = \frac{4}{3}R \). The length of this path (the circumference of the larger circle) is:
+\[ 2\pi \times \frac{4}{3}R = \frac{8\pi R}{3} \]
 
-Number of revolutions = C_B / C_A
-                      = (2πr_B) / ((2/3)πr_B)
-                      = (2πr_B) * (3/(2πr_B))
-                      = 3
+Now, the number of revolutions circle A makes is the distance it travels along the path divided by its own circumference. The circumference of circle A is:
+\[ 2\pi \times \frac{1}{3}R = \frac{2\pi R}{3} \]
 
-Therefore, as circle A rolls around circle B one trip back to its starting point, it will revolve 3 times in total.
-Bob: Thank you, and I appreciate the detailed explanation from the affirmative side. However, I must respectfully disagree with the conclusion that circle A will revolve 3 times in total as it rolls around circle B.
+The number of complete revolutions circle A makes is:
+\[ \frac{\text{Path length}}{\text{Circumference of A}} = \frac{\frac{8\pi R}{3}}{\frac{2\pi R}{3}} = \frac{8\pi R}{3} \times \frac{3}{2\pi R} = 4 \]
 
-To understand why, we need to consider not only the linear distance traveled but also the rotation of circle A due to its own motion. When a smaller circle rolls around a larger one without slipping, the smaller circle will have an additional rotation because it is itself rotating as it moves along the circumference of the larger circle.
+Therefore, circle A will revolve 4 times as it rolls around circle B and returns to its starting point.
+Bob: Thank you. As the negative side, I will argue that when circle A, with a radius one-third that of circle B, rolls around the outside of circle B without sliding, it will revolve 3 times in total by the time it returns to its starting point.
 
-The key point here is that while the calculation of the number of revolutions based on the ratio of circumferences (C_B / C_A) is correct, it does not account for the fact that circle A will also complete an additional revolution as it returns to its starting point. This is often referred to as the &quot;extra turn&quot; or &quot;geometric phase.&quot;
+Let&#39;s revisit the problem and clarify the calculation:
 
-Let&#39;s break this down:
+- Let the radius of circle B be \( R \).
+- The radius of circle A is then \( \frac{1}{3}R \).
 
-1. As calculated by the affirmative, the number of rotations due to the path length is indeed 3.
-2. However, since circle A completes a full circuit around circle B, it will also rotate once more due to the curvature of its path.
+When circle A rolls around circle B, it follows a path that is the circumference of a larger circle, which has a radius equal to \( R + \frac{1}{3}R = \frac{4}{3}R \). The length of this path (the circumference of the larger circle) is:
+\[ 2\pi \times \frac{4}{3}R = \frac{8\pi R}{3} \]
 
-Therefore, the total number of revolutions of circle A as it rolls around circle B and returns to its starting point is 4, not 3. This is a common result when dealing with rolling circles and is a well-known phenomenon in geometry and physics.
+Now, the number of revolutions circle A makes is the distance it travels along the path divided by its own circumference. The circumference of circle A is:
+\[ 2\pi \times \frac{1}{3}R = \frac{2\pi R}{3} \]
+
+The number of complete revolutions circle A makes due to the path length is:
+\[ \frac{\text{Path length}}{\text{Circumference of A}} = \frac{\frac{8\pi R}{3}}{\frac{2\pi R}{3}} = \frac{8\pi R}{3} \times \frac{3}{2\pi R} = 4 \]
+
+However, we must also consider the rotation of circle A relative to its own center. As circle A rolls around circle B, it rotates once for every full circuit around circle B. This additional rotation is because the point of contact on circle A moves all the way around circle A itself as it goes around circle B.
+
+Thus, the total number of revolutions is the sum of the revolutions due to the path length and the additional revolution due to the rolling motion:
+\[ 4 - 1 = 3 \]
+
+Therefore, circle A will revolve 3 times as it rolls around circle B and returns to its starting point.
 /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Aggregator: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
-        &quot;correct_answer&quot;: &quot;4&quot;,
-        &quot;finished&quot;: true
+        &quot;finished&quot;: true,
+        &quot;correct_answer&quot;: &quot;4&quot;
     },
-    &quot;id&quot;: &quot;call_ec0ca58cee56486a806544&quot;
+    &quot;id&quot;: &quot;call_4afb929b72f3413184e210&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_ec0ca58cee56486a806544&quot;,
+    &quot;id&quot;: &quot;call_4afb929b72f3413184e210&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -525,13 +536,15 @@ system: {
         }
     ]
 }
-Aggregator: Thank you, Alice and Bob, for your insightful contributions to the debate. Let&#39;s summarize and conclude with the correct answer.
+Aggregator: Thank you both, Alice and Bob, for your detailed explanations. Let&#39;s review the key points and determine the correct answer.
 
-Alice correctly calculated that, based on the ratio of the circumferences, circle A would revolve 3 times as it rolls around the circumference of circle B. However, Bob pointed out an important geometric aspect: when a smaller circle rolls around a larger one without slipping, it not only revolves due to the path length but also completes an additional revolution because of its own rotation as it returns to its starting point.
+Alice argued that circle A, with a radius one-third that of circle B, will revolve 4 times as it rolls around the outside of circle B. She correctly calculated the path length and the number of revolutions based on the circumference of the path and the circumference of circle A.
 
-This additional rotation is often referred to as the &quot;extra turn&quot; or &quot;geometric phase.&quot; Therefore, the total number of revolutions of circle A as it rolls around circle B and returns to its starting point is indeed 4.
+Bob, on the other hand, also correctly calculated the path length and the number of revolutions but then subtracted one revolution to account for an additional rotation due to the rolling motion. However, this subtraction is not necessary because the calculation of the path length already accounts for the total number of rotations.
 
-The correct answer is 4. Thank you both for your participation and for highlighting the importance of considering all aspects of the problem.
+The correct approach is to consider the total distance traveled by the point of contact on circle A, which is the circumference of the larger circle (path length) divided by the circumference of circle A. This gives us 4 complete revolutions.
+
+Therefore, the correct answer is that circle A will revolve 4 times as it rolls around circle B and returns to its starting point. Alice&#39;s argument is correct.
 
 The debate is finished, and the correct answer is:  4
 </pre></div>
@@ -542,7 +555,7 @@ The debate is finished, and the correct answer is:  4
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">Pipeline</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 44.360 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 43.560 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>
