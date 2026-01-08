@@ -50,7 +50,7 @@ def tune_prompt(
             "Model is a TunerChatModel, which will not be optimized during prompt tuning.",
         )
     check_judge_function(judge_func)
-    
+
     logger.info("loading training dataset...")
     trainset = load_dataset(
         path=train_dataset.path,

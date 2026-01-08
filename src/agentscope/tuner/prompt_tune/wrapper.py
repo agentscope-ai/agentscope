@@ -28,93 +28,48 @@ class OptimizableAgent(Predict):
 
         self._agent = agent
         # sync init instruction from agent to dspy signature
-        self.instructions=self._agent._sys_prompt
-        self.signature.instructions=self.instructions
-        
+        self.instructions = self._agent._sys_prompt
+        self.signature.instructions = self.instructions
+
     def forward(self, **kwargs):
-        raise NotImplementedError("OptimizableAgent is a wrapper, not callable")
-    
+        raise NotImplementedError(
+            "OptimizableAgent is a wrapper, not callable")
+
     def _sync_instruction_i2a(self):
         """sync instruction from dspy signature to agent"""
-        self.instructions=self.signature.instructions
-        self._agent._sys_prompt=self.instructions
-
+        self.instructions = self.signature.instructions
+        self._agent._sys_prompt = self.instructions
 
 
 class WorkflowWrapperModule(Module):
-    def __init__(self, workflow: Callable[[ReActAgent],WorkflowType],init_agent:ReActAgent):
+    def __init__(self, workflow: Callable[[ReActAgent], WorkflowType], init_agent: ReActAgent):
         super().__init__()
         self._workflow = workflow
-        self._agent=init_agent
-        
+        self._agent = init_agent
+
         self.predictor = OptimizableAgent(self._agent)
-        
 
     def _set_chatmodel(self, model: ChatModelBase, auxiliary_models: dict[str, ChatModelBase]):
         self._model = model
         self._auxiliary_models = auxiliary_models
-
 
     def forward(self, inp):
         """
         Args:
             inputs (Dict): The inputs from dspy, including data only.
         """
-        
+
         self.predictor._sync_instruction_i2a()
-        
-        print("instruction:",self._agent.sys_prompt)
+
         async def _workflow():
             # dspy deepcopy modules during optimization,
             # the new agent must be injected in real-time.
             return await self._workflow(self._agent)(inp, self._model, self._auxiliary_models)
 
         result = asyncio.run(_workflow())
-        
+
         if result.reward:
-            logger.warning("reward in workflow output will be ignored, use separate judge function")
+            logger.warning(
+                "reward in workflow output will be ignored, use separate judge function")
 
         return result.response
-    
-
-
-######################################
-
-def create_workflow(agent:ReActAgent)->WorkflowType:
-    
-    async def run_react_agent(
-        task: dict,
-        model: ChatModelBase,
-        auxiliary_models: dict[str, ChatModelBase],
-    ) -> WorkflowOutput:
-        """A simple workflow function using the ReAct agent to solve tasks.
-
-        Args:
-            task (Dict): The task to be solved.
-            model (TunerChatModel): The language model to use.
-            auxiliary_models (Dict[str, TunerChatModel]):
-                A dictionary of additional chat models available for
-                LLM-as-a-Judge. Not used in this workflow.
-
-        Returns:
-            float: The reward obtained by solving the task.
-        """
-        assert (
-            len(auxiliary_models) == 0
-        ), "No auxiliary models are used in this workflow."
-        
-        # set model
-        agent.model=model
-        
-        response = await agent.reply(
-            msg=Msg("user", task["text"], role="user"),
-        )
-        
-        resp=SimpleNamespace()
-        resp.label=response.get_text_content()
-        
-        return WorkflowOutput(
-            response=resp,
-        )
-    
-    return run_react_agent
