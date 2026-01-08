@@ -11,6 +11,23 @@ from ...module import StateModule
 class MemoryBase(StateModule):
     """The base class for memory in agentscope."""
 
+    def __init__(self) -> None:
+        """Initialize the memory base."""
+        super().__init__()
+
+        self._compressed_summary: str = ""
+
+        self.register_state("_compressed_summary")
+
+    def update_compressed_summary(self, summary: str) -> None:
+        """Update the compressed summary of the memory.
+
+        Args:
+            summary (`str`):
+                The new compressed summary.
+        """
+        self._compressed_summary = summary
+
     @abstractmethod
     async def add(
         self,
@@ -49,5 +66,28 @@ class MemoryBase(StateModule):
         """Clear the memory content."""
 
     @abstractmethod
-    async def get_memory(self, *args: Any, **kwargs: Any) -> list[Msg]:
-        """Get the memory content."""
+    async def get_memory(
+        self,
+        mark: str | None = None,
+        exclude_mark: str | None = None,
+        **kwargs: Any,
+    ) -> list[Msg]:
+        """Get the messages from the memory by mark (if provided). Otherwise,
+        get all messages.
+
+        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
+         these marks will be treated as an OR condition.
+
+        .. note:: `mark` and `exclude_mark` should not overlap.
+
+        Args:
+            mark (`str | None`, optional):
+                The mark to filter messages. If `None`, return all messages.
+            exclude_mark (`str | None`, optional):
+                The mark to exclude messages. If provided, messages with
+                this mark will be excluded from the results.
+
+        Returns:
+            `list[Msg]`:
+                The list of messages retrieved from the storage.
+        """

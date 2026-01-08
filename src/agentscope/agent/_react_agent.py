@@ -39,7 +39,7 @@ class _QueryRewriteModel(BaseModel):
     )
 
 
-class CompressedMemoryModel(BaseModel):
+class SummarySchema(BaseModel):
     """The compressed memory model, used to generate summary of old memories"""
 
     task_overview: str = Field(
@@ -87,9 +87,9 @@ class CompressedMemoryModel(BaseModel):
 class MemoryMark(str, Enum):
     """The memory marks used in the ReAct agent."""
 
-    hint = "hint"
+    HINT = "hint"
 
-    compressed = "compressed"
+    COMPRESSED = "compressed"
 
 
 class ReActAgent(ReActAgentBase):
@@ -105,6 +105,10 @@ class ReActAgent(ReActAgentBase):
         """The compression related configuration in AgentScope"""
 
         model_config = {"arbitrary_types_allowed": True}
+        """Allow arbitrary types in the pydantic model."""
+
+        enable: bool
+        """Whether to enable the auto compression feature."""
 
         agent_token_counter: TokenCounterBase
         """The token counter for the agent's model, which must be consistent
@@ -132,7 +136,7 @@ class ReActAgent(ReActAgentBase):
         compressed summary, which will be wrapped into a user message and
         attach to the end of the current memory."""
 
-        compression_summary_template: str = (
+        summary_template: str = (
             "<system-info>Here is a summary of your previous work\n"
             "# Task Overview\n"
             "{task_overview}\n\n"
@@ -143,14 +147,14 @@ class ReActAgent(ReActAgentBase):
             "# Next Steps\n"
             "{next_steps}\n\n"
             "# Context to Preserve\n"
-            "{context_to_preserve}\n\n"
+            "{context_to_preserve}"
             "</system-info>"
         )
         """The string template to present the compressed summary to the agent,
         which will be formatted with the fields from the
         `compression_summary_model`."""
 
-        compression_summary_model: Type[BaseModel] = CompressedMemoryModel
+        summary_schema: Type[BaseModel] = SummarySchema
         """The structured model used to guide the agent to generate the
         structured compressed summary."""
 
@@ -477,7 +481,7 @@ class ReActAgent(ReActAgentBase):
                     )
                     await self.memory.add(
                         msg_hint,
-                        MemoryMark.hint,
+                        MemoryMark.HINT,
                     )
 
                     # Just generate text response in the next reasoning step
@@ -496,7 +500,7 @@ class ReActAgent(ReActAgentBase):
                         f"required structured output.</system-hint>",
                         "user",
                     )
-                    await self.memory.add(msg_hint, MemoryMark.hint)
+                    await self.memory.add(msg_hint, MemoryMark.HINT)
                     # Require tool call in the next reasoning step
                     tool_choice = "required"
 
@@ -518,7 +522,9 @@ class ReActAgent(ReActAgentBase):
             await self.long_term_memory.record(
                 [
                     *([*msg] if isinstance(msg, list) else [msg]),
-                    *await self.memory.get_memory(),
+                    *await self.memory.get_memory(
+                        exclude_mark=MemoryMark.COMPRESSED,
+                    ),
                     reply_msg,
                 ],
             )
@@ -538,7 +544,7 @@ class ReActAgent(ReActAgentBase):
             hint_msg = await self.plan_notebook.get_current_hint()
             if self.print_hint_msg and hint_msg:
                 await self.print(hint_msg)
-            await self.memory.add(hint_msg, MemoryMark.hint)
+            await self.memory.add(hint_msg, MemoryMark.HINT)
 
         # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(
@@ -548,7 +554,7 @@ class ReActAgent(ReActAgentBase):
             ],
         )
         # Clear the hint messages after use
-        await self.memory.delete_by_mark(MemoryMark.hint)
+        await self.memory.delete_by_mark(MemoryMark.HINT)
 
         res = await self.model(
             prompt,
@@ -978,38 +984,43 @@ class ReActAgent(ReActAgentBase):
 
     async def _compress_memory_if_needed(self) -> None:
         """Compress the memory content if needed."""
-        if self.compression_config is None:
+        if (
+            self.compression_config is None
+            or not self.compression_config.enable
+        ):
             return
 
-        # Obtain the messages that need to be compressed
-        to_compressed_msgs = await self.memory.get_memory()
+        # Obtain the messages that have not been compressed yet
+        to_compressed_msgs = await self.memory.get_memory(
+            exclude_mark=MemoryMark.COMPRESSED,
+        )
 
-        # keep the recent n messages uncompressed
+        # keep the recent n messages uncompressed, note messages with tool
+        #  use and result pairs should be kept together
         n_keep = 0
         accumulated_tool_call_ids = set()
-        index = None
-        for i in reversed(range(len(to_compressed_msgs))):
+        for i in range(len(to_compressed_msgs) - 1, -1, -1):
             msg = to_compressed_msgs[i]
-            if msg.get_content_blocks("tool_result"):
-                for block in msg.get_content_blocks("tool_result"):
-                    accumulated_tool_call_ids.add(block["id"])
+            for block in msg.get_content_blocks("tool_result"):
+                accumulated_tool_call_ids.add(block["id"])
 
-            if msg.get_content_blocks("tool_use"):
-                for block in msg.get_content_blocks("tool_use"):
-                    if block["id"] in accumulated_tool_call_ids:
-                        accumulated_tool_call_ids.remove(block["id"])
+            for block in msg.get_content_blocks("tool_use"):
+                if block["id"] in accumulated_tool_call_ids:
+                    accumulated_tool_call_ids.remove(block["id"])
 
+            # Handle the tool use/result pairs
             if len(accumulated_tool_call_ids) == 0:
                 n_keep += 1
 
+            # Break if reach the number of messages to keep
             if n_keep >= self.compression_config.keep_recent:
-                index = i
+                # Remove the messages that should be kept uncompressed
+                to_compressed_msgs = to_compressed_msgs[:i]
                 break
 
-        # Remove the messages that should be kept uncompressed
-        to_compressed_msgs = to_compressed_msgs[
-            : index or len(to_compressed_msgs)
-        ]
+        # Skip compression if no messages to compress
+        if not to_compressed_msgs:
+            return
 
         # Calculate the token
         prompt = await self.formatter.format(
@@ -1050,9 +1061,7 @@ class ReActAgent(ReActAgentBase):
             )
             res = await compression_model(
                 compression_prompt,
-                structured_model=(
-                    self.compression_config.compression_summary_model
-                ),
+                structured_model=(self.compression_config.summary_schema),
             )
 
             # Obtain the structured output from the model response
@@ -1064,18 +1073,29 @@ class ReActAgent(ReActAgentBase):
                 last_chunk = res
 
             # Format the compressed memory summary
-            compressed_memory = last_chunk.metadata
-
-            # Update the compressed summary in the memory storage
-            self.memory.compressed_summary = (
-                self.compression_config.compression_summary_template.format(
-                    compressed_memory,
+            if last_chunk.metadata:
+                # Update the compressed summary in the memory storage
+                self.memory.update_compressed_summary(
+                    self.compression_config.summary_template.format(
+                        **last_chunk.metadata,
+                    ),
                 )
-            )
 
-            # Remove the uncompressed mark from the messages
-            await self.memory.update_messages_mark(
-                msg_ids=[_.id for _ in to_compressed_msgs],
-                old_mark=None,
-                new_mark=None,
-            )
+                # Mark the compressed messages in the memory storage
+                await self.memory.update_messages_mark(
+                    msg_ids=[_.id for _ in to_compressed_msgs],
+                    new_mark=MemoryMark.COMPRESSED,
+                )
+
+                logger.info(
+                    "Finished compressing %d messages in agent %s.",
+                    len(to_compressed_msgs),
+                    self.name,
+                )
+
+            else:
+                logger.warning(
+                    "Failed to obtain compression summary from the model "
+                    "structured output in agent %s.",
+                    self.name,
+                )

@@ -90,19 +90,42 @@ class RedisStorageBase(MemoryBase):
             **kwargs,
         )
 
-    async def get_memory(self, mark: str | None = None) -> list[Msg]:
-        """Get the messages from the memory storage by mark (if provided).
-        Otherwise, get all messages.
+    async def get_memory(
+        self,
+        mark: str | None = None,
+        exclude_mark: str | None = None,
+        **kwargs: Any,
+    ) -> list[Msg]:
+        """Get the messages from the memory by mark (if provided). Otherwise,
+        get all messages.
+
+        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
+         these marks will be treated as an OR condition.
+
+        .. note:: `mark` and `exclude_mark` should not overlap.
 
         Args:
             mark (`str | None`, optional):
-                The mark to filter messages. If `None`, all messages are
-                returned.
+                The mark to filter messages. If `None`, return all messages.
+            exclude_mark (`str | None`, optional):
+                The mark to exclude messages. If provided, messages with
+                this mark will be excluded from the results.
 
         Returns:
             `list[Msg]`:
                 The list of messages retrieved from the storage.
         """
+        # Type checks
+        if not (mark is None or isinstance(mark, str)):
+            raise TypeError(
+                f"The mark should be a string or None, but got {type(mark)}.",
+            )
+
+        if not (exclude_mark is None or isinstance(exclude_mark, str)):
+            raise TypeError(
+                f"The exclude_mark should be a string or None, but got "
+                f"{type(exclude_mark)}.",
+            )
 
         if mark is None:
             # Obtain the message IDs from the session list
@@ -116,6 +139,19 @@ class RedisStorageBase(MemoryBase):
             # Obtain the message IDs from the session list directly
             session_key = self.SESSION_KEY.format(session_id=self.session_id)
             msg_ids = await self._client.lrange(session_key, 0, -1)
+
+        # Exclude messages by exclude_mark
+        if exclude_mark:
+            exclude_mark_key = self.MARK_KEY.format(
+                session_id=self.session_id,
+                mark=exclude_mark,
+            )
+            exclude_msg_ids = await self._client.lrange(
+                exclude_mark_key,
+                0,
+                -1,
+            )
+            msg_ids = [_ for _ in msg_ids if _ not in exclude_msg_ids]
 
         messages: list[Msg] = []
         for msg_id in msg_ids:

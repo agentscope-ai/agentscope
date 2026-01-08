@@ -204,28 +204,48 @@ class SQLAlchemyMemoryStorage(MemoryBase):
     async def get_memory(
         self,
         mark: str | None = None,
+        exclude_mark: str | None = None,
+        **kwargs: Any,
     ) -> list[Msg]:
-        """Get messages from the database with the given mark (if provided).
+        """Get the messages from the memory by mark (if provided). Otherwise,
+        get all messages.
+
+        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
+         these marks will be treated as an OR condition.
+
+        .. note:: `mark` and `exclude_mark` should not overlap.
 
         Args:
             mark (`str | None`, optional):
-                The mark to filter messages. If `None`, retrieves all
-                messages.
+                The mark to filter messages. If `None`, return all messages.
+            exclude_mark (`str | None`, optional):
+                The mark to exclude messages. If provided, messages with
+                this mark will be excluded from the results.
 
         Returns:
             `list[Msg]`:
-                The list of messages retrieved from the database.
+                The list of messages retrieved from the storage.
         """
         query = select(self.MessageTable).filter(
             self.MessageTable.session_id == self.session_id,
         )
 
-        if mark is not None:
+        if mark:
             query = query.join(
                 self.MessageMarkTable,
                 self.MessageTable.id == self.MessageMarkTable.msg_id,
             ).filter(
                 self.MessageMarkTable.mark == mark,
+            )
+
+        if exclude_mark:
+            query = query.join(
+                self.MessageMarkTable,
+                self.MessageTable.id == self.MessageMarkTable.msg_id,
+                isouter=True,
+            ).filter(
+                (self.MessageMarkTable.mark != exclude_mark)
+                | (self.MessageMarkTable.mark.is_(None)),
             )
 
         query = query.order_by(self.MessageTable.index)

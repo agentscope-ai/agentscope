@@ -17,10 +17,11 @@ async def main() -> None:
         sys_prompt="You are a helpful assistant named Friday.",
         model=DashScopeChatModel(
             api_key=os.getenv("DASHSCOPE_API_KEY"),
-            model_name="qwen-max",
+            model_name="qwen3-max",
         ),
         formatter=DashScopeChatFormatter(),
         compression_config=ReActAgent.CompressionConfig(
+            enable=True,
             agent_token_counter=CharTokenCounter(),
             # We set a small trigger threshold for demonstration purposes.
             trigger_threshold=1000,
