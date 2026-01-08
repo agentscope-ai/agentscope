@@ -420,6 +420,7 @@
         <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="n">reasoning_effort</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">organization</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">client_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;openai&quot;</span><span class="p">,</span> <span class="s2">&quot;azure&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;openai&quot;</span><span class="p">,</span>
         <span class="n">client_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">generate_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
@@ -443,6 +444,8 @@
 <span class="sd">            organization (`str`, default `None`):</span>
 <span class="sd">                The organization ID for OpenAI API. If not specified, it will</span>
 <span class="sd">                be read from the environment variable `OPENAI_ORGANIZATION`.</span>
+<span class="sd">            client_type (`Literal[&quot;openai&quot;, &quot;azure&quot;]`, default `openai`):</span>
+<span class="sd">                Selects which OpenAI-compatible client to initialize.</span>
 <span class="sd">            client_kwargs (`dict[str, JSONSerializableObject] | None`, \</span>
 <span class="sd">             optional):</span>
 <span class="sd">                The extra keyword arguments to initialize the OpenAI client.</span>
@@ -481,11 +484,23 @@
 
         <span class="kn">import</span><span class="w"> </span><span class="nn">openai</span>
 
-        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span>
-            <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
-            <span class="n">organization</span><span class="o">=</span><span class="n">organization</span><span class="p">,</span>
-            <span class="o">**</span><span class="p">(</span><span class="n">client_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
-        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">client_type</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;openai&quot;</span><span class="p">,</span> <span class="s2">&quot;azure&quot;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;Invalid client_type. Supported values: &#39;openai&#39;, &#39;azure&#39;.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">client_type</span> <span class="o">==</span> <span class="s2">&quot;azure&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">AsyncAzureOpenAI</span><span class="p">(</span>
+                <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
+                <span class="n">organization</span><span class="o">=</span><span class="n">organization</span><span class="p">,</span>
+                <span class="o">**</span><span class="p">(</span><span class="n">client_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span>
+                <span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span>
+                <span class="n">organization</span><span class="o">=</span><span class="n">organization</span><span class="p">,</span>
+                <span class="o">**</span><span class="p">(</span><span class="n">client_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
+            <span class="p">)</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">reasoning_effort</span> <span class="o">=</span> <span class="n">reasoning_effort</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">generate_kwargs</span> <span class="o">=</span> <span class="n">generate_kwargs</span> <span class="ow">or</span> <span class="p">{}</span></div>
