@@ -19,7 +19,7 @@ class MemoryBase(StateModule):
 
         self.register_state("_compressed_summary")
 
-    def update_compressed_summary(self, summary: str) -> None:
+    async def update_compressed_summary(self, summary: str) -> None:
         """Update the compressed summary of the memory.
 
         Args:
@@ -32,7 +32,7 @@ class MemoryBase(StateModule):
     async def add(
         self,
         memories: Msg | list[Msg] | None,
-        mark: str | list[str] | None = None,
+        marks: str | list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Add items to the memory."""
@@ -75,8 +75,8 @@ class MemoryBase(StateModule):
         """Get the messages from the memory by mark (if provided). Otherwise,
         get all messages.
 
-        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
-         these marks will be treated as an OR condition.
+        .. note:: If `mark` and `exclude_mark` are both provided, the messages
+         will be filtered by both arguments.
 
         .. note:: `mark` and `exclude_mark` should not overlap.
 
@@ -90,4 +90,36 @@ class MemoryBase(StateModule):
         Returns:
             `list[Msg]`:
                 The list of messages retrieved from the storage.
+        """
+
+    async def update_messages_mark(
+        self,
+        new_mark: str | None,
+        old_mark: str | None = None,
+        msg_ids: list[str] | None = None,
+    ) -> int:
+        """A unified method to update marks of messages in the storage (add,
+        remove, or change marks).
+
+        - If `msg_ids` is provided, the update will be applied to the messages
+         with the specified IDs.
+        - If `old_mark` is provided, the update will be applied to the
+         messages with the specified old mark. Otherwise, the `new_mark` will
+         be added to all messages (or those filtered by `msg_ids`).
+        - If `new_mark` is `None`, the mark will be removed from the messages.
+
+        Args:
+            new_mark (`str | None`, optional):
+                The new mark to set for the messages. If `None`, the mark
+                will be removed.
+            old_mark (`str | None`, optional):
+                The old mark to filter messages. If `None`, this constraint
+                is ignored.
+            msg_ids (`list[str] | None`, optional):
+                The list of message IDs to be updated. If `None`, this
+                constraint is ignored.
+
+        Returns:
+            `int`:
+                The number of messages updated.
         """

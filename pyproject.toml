@@ -75,6 +75,8 @@ dev = [
     "myst_parser",
     "matplotlib",
     "pymilvus[milvus_lite]",
+    # For unittests
+    "fakeredis"
 ]
 
 [project.urls]

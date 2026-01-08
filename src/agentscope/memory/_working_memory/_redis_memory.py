@@ -12,7 +12,7 @@ else:
     ConnectionPool = Any
 
 
-class RedisStorageBase(MemoryBase):
+class RedisMemory(MemoryBase):
     """Redis memory storage implementation, which supports session and user
     context.
 
@@ -94,13 +94,14 @@ class RedisStorageBase(MemoryBase):
         self,
         mark: str | None = None,
         exclude_mark: str | None = None,
+        prepend_summary: bool = True,
         **kwargs: Any,
     ) -> list[Msg]:
         """Get the messages from the memory by mark (if provided). Otherwise,
         get all messages.
 
-        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
-         these marks will be treated as an OR condition.
+        .. note:: If `mark` and `exclude_mark` are both provided, the messages
+         will be filtered by both arguments.
 
         .. note:: `mark` and `exclude_mark` should not overlap.
 
@@ -110,6 +111,8 @@ class RedisStorageBase(MemoryBase):
             exclude_mark (`str | None`, optional):
                 The mark to exclude messages. If provided, messages with
                 this mark will be excluded from the results.
+            prepend_summary (`bool`, defaults to True):
+                Whether to prepend the compressed summary as a message
 
         Returns:
             `list[Msg]`:
@@ -129,20 +132,25 @@ class RedisStorageBase(MemoryBase):
 
         if mark is None:
             # Obtain the message IDs from the session list
+            session_key = self.SESSION_KEY.format(
+                user_id=self.user_id,
+                session_id=self.session_id,
+            )
+            msg_ids = await self._client.lrange(session_key, 0, -1)
+
+        else:
+            # Obtain the message IDs from the mark list
             mark_key = self.MARK_KEY.format(
+                user_id=self.user_id,
                 session_id=self.session_id,
                 mark=mark,
             )
             msg_ids = await self._client.lrange(mark_key, 0, -1)
 
-        else:
-            # Obtain the message IDs from the session list directly
-            session_key = self.SESSION_KEY.format(session_id=self.session_id)
-            msg_ids = await self._client.lrange(session_key, 0, -1)
-
         # Exclude messages by exclude_mark
         if exclude_mark:
             exclude_mark_key = self.MARK_KEY.format(
+                user_id=self.user_id,
                 session_id=self.session_id,
                 mark=exclude_mark,
             )
@@ -155,18 +163,31 @@ class RedisStorageBase(MemoryBase):
 
         messages: list[Msg] = []
         for msg_id in msg_ids:
-            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            message_key = self.MESSAGE_KEY.format(
+                user_id=self.user_id,
+                msg_id=msg_id,
+            )
             msg_data = await self._client.get(message_key)
             if msg_data is not None:
-                msg_dict = json.loads(msg_data, encoding="utf-8")
+                msg_dict = json.loads(msg_data)
                 messages.append(Msg.from_dict(msg_dict))
+
+        if prepend_summary and self._compressed_summary:
+            return [
+                Msg(
+                    "user",
+                    self._compressed_summary,
+                    "user",
+                ),
+                *messages,
+            ]
 
         return messages
 
     async def add(
         self,
         memories: Msg | list[Msg] | None,
-        mark: str | list[str] | None = None,
+        marks: str | list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
@@ -174,8 +195,8 @@ class RedisStorageBase(MemoryBase):
         Args:
             memories (`Msg | list[Msg]`):
                 The message(s) to be added.
-            mark (`str | None`, optional):
-                The mark to associate with the message(s). If `None`, no mark
+            marks (`str | list[str] | None`, optional):
+                The mark(s) to associate with the message(s). If `None`, no mark
                 is associated.
         """
         if memories is None:
@@ -184,25 +205,41 @@ class RedisStorageBase(MemoryBase):
         if isinstance(memories, Msg):
             memories = [memories]
 
+        # Normalize marks to a list
+        if marks is None:
+            mark_list = []
+        elif isinstance(marks, str):
+            mark_list = [marks]
+        else:
+            mark_list = marks
+
         # Push message ids into the session list
-        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        session_key = self.SESSION_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
         await self._client.rpush(session_key, *[m.id for m in memories])
 
-        # Push message id into the message hash
-        mark_key = self.MARK_KEY.format(session_id=self.session_id, mark=mark)
-
-        # Store message data
+        # Store message data and marks
         for m in memories:
-            # Record the mark if provided
-            if mark is not None:
-                await self._client.rpush(mark_key, m.id)
-
             # Record the message data
-            message_key = self.MESSAGE_KEY.format(msg_id=m.id)
+            message_key = self.MESSAGE_KEY.format(
+                user_id=self.user_id,
+                msg_id=m.id,
+            )
             await self._client.set(
                 message_key,
-                json.dumps(m.to_dict(), ensure_ascii=False, encodings="utf-8"),
+                json.dumps(m.to_dict(), ensure_ascii=False),
             )
+
+            # Record the marks if provided
+            for mark in mark_list:
+                mark_key = self.MARK_KEY.format(
+                    user_id=self.user_id,
+                    session_id=self.session_id,
+                    mark=mark,
+                )
+                await self._client.rpush(mark_key, m.id)
 
     async def delete(
         self,
@@ -218,26 +255,33 @@ class RedisStorageBase(MemoryBase):
         if not msg_ids:
             return 0
 
-        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        session_key = self.SESSION_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
         removed_count = 0
 
         pipe = self._client.pipeline()
         for msg_id in msg_ids:
-            # Remove from the session
-            await pipe.lrem(session_key, msg_id)
+            # Remove from the session (0 means remove all occurrences)
+            await pipe.lrem(session_key, 0, msg_id)
 
             # Remove the message data
-            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            message_key = self.MESSAGE_KEY.format(
+                user_id=self.user_id,
+                msg_id=msg_id,
+            )
             await pipe.delete(message_key)
 
             # Remove from all marks
             mark_pattern = self.MARK_KEY.format(
+                user_id=self.user_id,
                 session_id=self.session_id,
                 mark="*",
             )
             mark_keys = await self._client.keys(mark_pattern)
             for mark_key in mark_keys:
-                await pipe.lrem(mark_key, msg_id)
+                await pipe.lrem(mark_key, 0, msg_id)
 
             removed_count += 1
 
@@ -265,7 +309,11 @@ class RedisStorageBase(MemoryBase):
         total_removed = 0
 
         for m in mark:
-            mark_key = self.MARK_KEY.format(session_id=self.session_id, mark=m)
+            mark_key = self.MARK_KEY.format(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                mark=m,
+            )
             msg_ids = await self._client.lrange(mark_key, 0, -1)
 
             if not msg_ids:
@@ -284,13 +332,19 @@ class RedisStorageBase(MemoryBase):
 
     async def clear(self) -> None:
         """Clear all messages belong to this section from the storage."""
-        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        session_key = self.SESSION_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
         msg_ids = await self._client.lrange(session_key, 0, -1)
 
         pipe = self._client.pipeline()
         for msg_id in msg_ids:
             # Remove the message data
-            message_key = self.MESSAGE_KEY.format(msg_id=msg_id)
+            message_key = self.MESSAGE_KEY.format(
+                user_id=self.user_id,
+                msg_id=msg_id,
+            )
             await pipe.delete(message_key)
 
         # Delete the session list
@@ -298,6 +352,7 @@ class RedisStorageBase(MemoryBase):
 
         # Delete all mark lists
         mark_pattern = self.MARK_KEY.format(
+            user_id=self.user_id,
             session_id=self.session_id,
             mark="*",
         )
@@ -314,6 +369,100 @@ class RedisStorageBase(MemoryBase):
             `int`:
                 The number of messages in the storage.
         """
-        session_key = self.SESSION_KEY.format(session_id=self.session_id)
+        session_key = self.SESSION_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
         size = await self._client.llen(session_key)
         return size
+
+    async def update_messages_mark(
+        self,
+        new_mark: str | None,
+        old_mark: str | None = None,
+        msg_ids: list[str] | None = None,
+    ) -> int:
+        """A unified method to update marks of messages in the storage (add,
+        remove, or change marks).
+
+        - If `msg_ids` is provided, the update will be applied to the messages
+         with the specified IDs.
+        - If `old_mark` is provided, the update will be applied to the
+         messages with the specified old mark. Otherwise, the `new_mark` will
+         be added to all messages (or those filtered by `msg_ids`).
+        - If `new_mark` is `None`, the mark will be removed from the messages.
+
+        Args:
+            new_mark (`str | None`, optional):
+                The new mark to set for the messages. If `None`, the mark
+                will be removed.
+            old_mark (`str | None`, optional):
+                The old mark to filter messages. If `None`, this constraint
+                is ignored.
+            msg_ids (`list[str] | None`, optional):
+                The list of message IDs to be updated. If `None`, this
+                constraint is ignored.
+
+        Returns:
+            `int`:
+                The number of messages updated.
+        """
+        updated_count = 0
+
+        # Determine which message IDs to update
+        if old_mark is not None:
+            # Get message IDs from the old mark list
+            old_mark_key = self.MARK_KEY.format(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                mark=old_mark,
+            )
+            mark_msg_ids = await self._client.lrange(old_mark_key, 0, -1)
+        else:
+            # Get all message IDs from the session
+            session_key = self.SESSION_KEY.format(
+                user_id=self.user_id,
+                session_id=self.session_id,
+            )
+            mark_msg_ids = await self._client.lrange(session_key, 0, -1)
+
+        # Filter by msg_ids if provided
+        if msg_ids is not None:
+            mark_msg_ids = [mid for mid in mark_msg_ids if mid in msg_ids]
+
+        # Update marks for each message
+        for msg_id in mark_msg_ids:
+            # If new_mark is None, remove the old_mark
+            if new_mark is None:
+                if old_mark is not None:
+                    old_mark_key = self.MARK_KEY.format(
+                        user_id=self.user_id,
+                        session_id=self.session_id,
+                        mark=old_mark,
+                    )
+                    await self._client.lrem(old_mark_key, 0, msg_id)
+                    updated_count += 1
+            else:
+                # Remove from old_mark list if applicable
+                if old_mark is not None:
+                    old_mark_key = self.MARK_KEY.format(
+                        user_id=self.user_id,
+                        session_id=self.session_id,
+                        mark=old_mark,
+                    )
+                    await self._client.lrem(old_mark_key, 0, msg_id)
+
+                # Add to new_mark list
+                new_mark_key = self.MARK_KEY.format(
+                    user_id=self.user_id,
+                    session_id=self.session_id,
+                    mark=new_mark,
+                )
+                # Check if msg_id is already in the new mark list to avoid duplicates
+                existing_ids = await self._client.lrange(new_mark_key, 0, -1)
+                if msg_id not in existing_ids:
+                    await self._client.rpush(new_mark_key, msg_id)
+                updated_count += 1
+
+        return updated_count
+

@@ -10,6 +10,9 @@ from sqlalchemy import (
     BigInteger,
     ForeignKey,
     select,
+    delete,
+    update,
+    func,
 )
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -24,8 +27,8 @@ from ...message import Msg
 Base: Any = declarative_base()
 
 
-class SQLAlchemyMemoryStorage(MemoryBase):
-    """The SQLAlchemy database storage class for storing messages in a SQL
+class AsyncSQLAlchemyMemory(MemoryBase):
+    """The SQLAlchemy memory storage class for storing messages in a SQL
     database using SQLAlchemy ORM, such as SQLite, PostgreSQL, MySQL, etc.
 
     .. note:: All the operations in this class are within a specific session
@@ -188,7 +191,7 @@ class SQLAlchemyMemoryStorage(MemoryBase):
         # Create session record if not exists
         result = await self.session.execute(
             select(self.SessionTable).filter(
-                self.SessionTable.id == self.session_id,
+                self.SessionTable.id == self.session_id
             ),
         )
         session_record = result.scalar_one_or_none()
@@ -205,13 +208,14 @@ class SQLAlchemyMemoryStorage(MemoryBase):
         self,
         mark: str | None = None,
         exclude_mark: str | None = None,
+        prepend_summary: bool = True,
         **kwargs: Any,
     ) -> list[Msg]:
         """Get the messages from the memory by mark (if provided). Otherwise,
         get all messages.
 
-        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
-         these marks will be treated as an OR condition.
+        .. note:: If `mark` and `exclude_mark` are both provided, the messages
+         will be filtered by both arguments.
 
         .. note:: `mark` and `exclude_mark` should not overlap.
 
@@ -221,43 +225,91 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             exclude_mark (`str | None`, optional):
                 The mark to exclude messages. If provided, messages with
                 this mark will be excluded from the results.
+            prepend_summary (`bool`, defaults to True):
+                Whether to prepend the compressed summary as a message
+
+        Raises:
+            `TypeError`:
+                If the provided mark is not a string or None.
 
         Returns:
             `list[Msg]`:
                 The list of messages retrieved from the storage.
         """
-        query = select(self.MessageTable).filter(
+        # Type checks
+        if mark is not None and not isinstance(mark, str):
+            raise TypeError(
+                f"The mark should be a string or None, but got {type(mark)}.",
+            )
+
+        if exclude_mark is not None and not isinstance(exclude_mark, str):
+            raise TypeError(
+                f"The exclude_mark should be a string or None, but got "
+                f"{type(exclude_mark)}.",
+            )
+
+        await self._create_table()
+
+        # Step 1: First filter by session_id to narrow down the dataset
+        # This ensures the database uses the session_id index first
+        base_query = select(self.MessageTable).filter(
             self.MessageTable.session_id == self.session_id,
         )
 
+        # Step 2: Apply mark filtering if provided
         if mark:
-            query = query.join(
+            # Join with mark table only on the session-filtered messages
+            base_query = base_query.join(
                 self.MessageMarkTable,
                 self.MessageTable.id == self.MessageMarkTable.msg_id,
             ).filter(
                 self.MessageMarkTable.mark == mark,
             )
 
+        # Step 3: Apply exclude_mark filtering if provided
         if exclude_mark:
-            query = query.join(
-                self.MessageMarkTable,
-                self.MessageTable.id == self.MessageMarkTable.msg_id,
-                isouter=True,
-            ).filter(
-                (self.MessageMarkTable.mark != exclude_mark)
-                | (self.MessageMarkTable.mark.is_(None)),
+            # Use a subquery to find message IDs with the exclude_mark
+            # within the current session only
+            exclude_subquery = (
+                select(self.MessageMarkTable.msg_id)
+                .filter(
+                    self.MessageMarkTable.msg_id.in_(
+                        select(self.MessageTable.id).filter(
+                            self.MessageTable.session_id == self.session_id,
+                        )
+                    ),
+                    self.MessageMarkTable.mark == exclude_mark,
+                )
+                .scalar_subquery()
+            )
+            # Exclude messages whose IDs are in the subquery
+            base_query = base_query.filter(
+                self.MessageTable.id.notin_(exclude_subquery),
             )
 
-        query = query.order_by(self.MessageTable.index)
+        # Step 4: Order by index to maintain message order
+        query = base_query.order_by(self.MessageTable.index)
 
         result = await self.session.execute(query)
         results = result.scalars().all()
-        return [Msg.from_dict(result.msg) for result in results]
+
+        msgs = [Msg.from_dict(result.msg) for result in results]
+        if prepend_summary and self._compressed_summary:
+            return [
+                Msg(
+                    "user",
+                    self._compressed_summary,
+                    "user",
+                ),
+                *msgs,
+            ]
+
+        return msgs
 
     async def add(
         self,
         memories: Msg | list[Msg] | None,
-        mark: str | list[str] | None = None,
+        marks: str | list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
@@ -265,33 +317,54 @@ class SQLAlchemyMemoryStorage(MemoryBase):
         Args:
             memories (`Msg | list[Msg] | None`):
                 The message(s) to be added.
-            mark (`str | list[str] | None`, optional):
-                The mark to associate with the message(s). If `None`, no mark
-                is associated.
+            marks (`str | list[str] | None`, optional):
+                The mark(s) to associate with the message(s). If `None`, no
+                mark is associated.
         """
         if memories is None:
             return
 
-        if not isinstance(memories, list):
+        # Type checking
+        if isinstance(memories, Msg):
             memories = [memories]
+        elif not (isinstance(memories, list) and all(isinstance(_, Msg) for _ in memories)):
+            raise TypeError(
+                "The 'memories' parameter must be a Msg instance or a list of "
+                f"Msg instances, but got {type(memories)}.",
+            )
 
+        if isinstance(marks, str):
+            marks = [marks]
+        elif marks is not None and not (isinstance(marks, list) and all(isinstance(m, str) for m in marks)):
+            raise TypeError(
+                "The 'marks' parameter must be a string or a list of strings, "
+                f"but got {type(marks)}.",
+            )
+
+        # Create table if not exists
+        await self._create_table()
+
+        # First add message to message table
         for m in memories:
+            index = await self._get_next_index()
             message_record = self.MessageTable(
                 id=m.id,
                 msg=m.to_dict(),
                 session_id=self.session_id,
-                index=await self._get_next_index(),
+                index=index,
             )
             self.session.add(message_record)
 
         # create mark records if mark is provided
-        if mark is not None:
-            for m in memories:
-                mark_record = self.MessageMarkTable(
-                    msg_id=m.id,
-                    mark=mark,
-                )
-                self.session.add(mark_record)
+        if marks:
+            for msg in memories:
+                for mark in marks:
+                    mark_record = self.MessageMarkTable(
+                        msg_id=msg.id,
+                        mark=mark,
+                    )
+
+                    self.session.add(mark_record)
 
         await self.session.commit()
 
@@ -311,60 +384,27 @@ class SQLAlchemyMemoryStorage(MemoryBase):
         max_index = result.scalar_one_or_none()
         return (max_index + 1) if max_index is not None else 0
 
-    def get_db_session(self) -> AsyncSession:
-        """Get the current database session.
-
-        Example:
-
-            .. code-block:: python
-                :caption: Example of using `get_db_session`.
-
-                storage = SqlAlchemyDBStorage(...)
-                session = storage.get_db_session()
-                # The database operations can be performed using the session
-                result = await session.execute(
-                    select(MessageTable).filter(...)
-                )
-                messages = result.scalars().all()
-
-
-        Returns:
-            `AsyncSession`:
-                The current database session.
-        """
-        return self._db_session
-
     async def size(self) -> int:
         """Get the size of the messages in the storage."""
-        from sqlalchemy import func
-
         result = await self.session.execute(
             select(func.count(self.MessageTable.id)).filter(
                 self.MessageTable.session_id == self.session_id,
             ),
         )
-        count = result.scalar_one()
-        return count
+        return result.scalar_one()
 
     async def clear(self) -> None:
         """Clear all messages from the storage."""
-        from sqlalchemy import delete
-
-        # First get all message IDs in this session
-        result = await self.session.execute(
-            select(self.MessageTable.id).filter(
-                self.MessageTable.session_id == self.session_id,
+        # Delete all marks for messages in this session
+        await self.session.execute(
+            delete(self.MessageMarkTable).where(
+                self.MessageMarkTable.msg_id.in_(
+                    select(self.MessageTable.id).filter(
+                        self.MessageTable.session_id == self.session_id,
+                    )
+                )
             ),
         )
-        msg_ids = [row[0] for row in result.all()]
-
-        # Delete all marks for these messages
-        if msg_ids:
-            await self.session.execute(
-                delete(self.MessageMarkTable).filter(
-                    self.MessageMarkTable.msg_id.in_(msg_ids),
-                ),
-            )
 
         # Then delete all messages
         await self.session.execute(
@@ -390,8 +430,6 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             `int`:
                 The number of messages removed.
         """
-        from sqlalchemy import delete
-
         if isinstance(mark, str):
             mark = [mark]
 
@@ -431,10 +469,8 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             .returning(self.MessageTable.id),
         )
 
-        deleted_count = len(result.all())
-
         await self.session.commit()
-        return deleted_count
+        return len(result.all())
 
     async def delete(
         self,
@@ -457,8 +493,6 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             `int`:
                 The number of messages removed.
         """
-        from sqlalchemy import delete
-
         # Delete related marks first (explicit cleanup for reliability)
         await self.session.execute(
             delete(self.MessageMarkTable).filter(
@@ -476,10 +510,8 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             .returning(self.MessageTable.id),
         )
 
-        deleted_count = len(result.all())
-
         await self.session.commit()
-        return deleted_count
+        return len(result.all())
 
     async def update_messages_mark(
         self,
@@ -514,13 +546,13 @@ class SQLAlchemyMemoryStorage(MemoryBase):
         """
 
         # Type checking
-        if not (isinstance(new_mark, str) or new_mark is None):
+        if new_mark is not None and not isinstance(new_mark, str):
             raise ValueError(
                 f"The 'new_mark' parameter must be a string or None, "
                 f"but got {type(new_mark)}.",
             )
 
-        if not (isinstance(old_mark, str) or old_mark is None):
+        if old_mark is not None and not isinstance(old_mark, str):
             raise ValueError(
                 f"The 'old_mark' parameter must be a string or None, "
                 f"but got {type(old_mark)}.",
@@ -601,7 +633,6 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             `int`:
                 The number of messages updated.
         """
-        from sqlalchemy import update
 
         await self.session.execute(
             update(self.MessageMarkTable)
@@ -657,23 +688,15 @@ class SQLAlchemyMemoryStorage(MemoryBase):
             `int`:
                 The number of messages unmarked.
         """
-        from sqlalchemy import delete
+        delete_query = delete(self.MessageMarkTable).filter(
+            self.MessageMarkTable.msg_id.in_(msg_ids),
+        )
 
         if old_mark:
-            # Remove the records with the specified old_mark and msg ID
-            await self.session.execute(
-                delete(self.MessageMarkTable).filter(
-                    self.MessageMarkTable.msg_id.in_(msg_ids),
-                    self.MessageMarkTable.mark == old_mark,
-                ),
-            )
-        else:
-            # Remove all marks for the specified msg IDs
-            await self.session.execute(
-                delete(self.MessageMarkTable).filter(
-                    self.MessageMarkTable.msg_id.in_(msg_ids),
-                ),
+            delete_query = delete_query.filter(
+                self.MessageMarkTable.mark == old_mark,
             )
 
+        await self.session.execute(delete_query)
         await self.session.commit()
         return len(msg_ids)

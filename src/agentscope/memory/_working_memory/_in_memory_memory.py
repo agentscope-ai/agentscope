@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The in-memory storage module for memory storage."""
+from copy import deepcopy
 from typing import Any
 
 from ...message import Msg
@@ -28,8 +29,8 @@ class InMemoryMemory(MemoryBase):
         """Get the messages from the memory by mark (if provided). Otherwise,
         get all messages.
 
-        .. note:: If provided a list of strings as `mark` or `exclude_mark`,
-         these marks will be treated as an OR condition.
+        .. note:: If `mark` and `exclude_mark` are both provided, the messages
+         will be filtered by both arguments.
 
         .. note:: `mark` and `exclude_mark` should not overlap.
 
@@ -92,7 +93,7 @@ class InMemoryMemory(MemoryBase):
     async def add(
         self,
         memories: Msg | list[Msg] | None,
-        mark: str | list[str] | None = None,
+        marks: str | list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Add message(s) into the memory storage with the given mark
@@ -101,7 +102,7 @@ class InMemoryMemory(MemoryBase):
         Args:
             memories (`Msg | list[Msg] | None`):
                 The message(s) to be added.
-            mark (`str | list[str] | None`, optional):
+            marks (`str | list[str] | None`, optional):
                 The mark(s) to associate with the message(s). If `None`, no
                 mark is associated.
         """
@@ -111,20 +112,20 @@ class InMemoryMemory(MemoryBase):
         if isinstance(memories, Msg):
             memories = [memories]
 
-        if mark is None:
+        if marks is None:
             marks = []
-        elif isinstance(mark, str):
-            marks = [mark]
-        elif isinstance(mark, list) and all(isinstance(m, str) for m in mark):
-            marks = mark
+        elif isinstance(marks, str):
+            marks = [marks]
+        elif isinstance(marks, list) and all(isinstance(m, str) for m in marks):
+            marks = marks
         else:
             raise TypeError(
                 f"The mark should be a string, a list of strings, or None, "
-                f"but got {type(mark)}.",
+                f"but got {type(marks)}.",
             )
 
         for msg in memories:
-            self.content.append((msg, marks))
+            self.content.append((deepcopy(msg), deepcopy(marks)))
 
     async def delete(
         self,

@@ -5,12 +5,12 @@ storing and managing the short-term memory with specific marks."""
 
 from ._base import MemoryBase
 from ._in_memory_memory import InMemoryMemory
-from ._redis_memory import RedisStorageBase
-from ._sqlalchemy_memory import SQLAlchemyMemoryStorage
+from ._redis_memory import RedisMemory
+from ._sqlalchemy_memory import AsyncSQLAlchemyMemory
 
 __all__ = [
     "MemoryBase",
     "InMemoryMemory",
-    "RedisStorageBase",
-    "SQLAlchemyMemoryStorage",
+    "RedisMemory",
+    "AsyncSQLAlchemyMemory",
 ]
