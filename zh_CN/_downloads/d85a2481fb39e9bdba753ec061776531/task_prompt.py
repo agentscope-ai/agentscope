@@ -41,7 +41,7 @@ AgentScope 内置的格式化器如下所列
     * - Ollama
       - ``OllamaChatFormatter``
       - ``OllamaMultiAgentFormatter``
-    * - DeedSeek
+    * - DeepSeek
       - ``DeepSeekChatFormatter``
       - ``DeepSeekMultiAgentFormatter``
     * - vLLM
