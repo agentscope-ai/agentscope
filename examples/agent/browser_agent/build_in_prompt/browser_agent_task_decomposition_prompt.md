@@ -9,11 +9,11 @@ Before you begin, ensure that the set of subtasks you create, when completed, wi
 Please decompose the following task into a sequence of specific, atomic subtasks. Each subtask should be:
 
 - **Indivisible**: Cannot be further broken down.
-- **Clear and Actionable**: Each step should be easy to understand and perform.
+- **Clear**: Each step should be easy to understand and perform.
 - **Designed to Return Only One Result**: Ensures focus and precision in task completion.
-- **Not Too Detailed**: Avoid simple actions; each subtask should encompass multiple steps.
-- **Each Subtask Should Involve At Least Two Actions**
-- **Avoid Verify**: Do not include verification steps in the subtasks.
+- **Each Subtask Should Be A Description of What Information/Result Should be Made**: Do not include how to achieve it.
+- **Avoid Verify**: Do not include verification in the subtasks.
+- **Use Direct Language**: All statements should be direct and assertive. "If" statement should not be used in subtask descriptions.
 
 ### Formatting Instructions
 

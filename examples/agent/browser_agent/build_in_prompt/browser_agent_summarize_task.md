@@ -14,7 +14,8 @@ Review the execution trace above and generate a comprehensive summary report tha
 
 3. **Final Answer**
    - If the task is a question and is fully complete, provide exact the final answer
-   - Else, respond exactly "NO_ANSWER"
+   - If the task is an action, provide your summarized findings
+   - Else, respond exactly "NO_ANSWER" for this subsection
    - No thinking or reasoning is needed
 
 Format your report professionally with consistent heading levels, proper spacing, and appropriate emphasis for key information.

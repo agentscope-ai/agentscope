@@ -25,7 +25,6 @@ class FinalResult(BaseModel):
 
 
 async def main(
-    use_dfs_reply_param: bool = False,
     start_url_param: str = "https://www.google.com",
     max_iters_param: int = 50,
 ) -> None:
@@ -43,11 +42,8 @@ async def main(
         await browser_client.connect()
         await toolkit.register_mcp_client(browser_client)
 
-        # Create browser agent
-        # Set use_dfs_reply=True to use the DFS search-based reply method
-        # Set use_dfs_reply=False to use the default loop method
         agent = BrowserAgent(
-            name="BrowserBot",
+            name="Browser-Use Agent",
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
                 model_name="qwen-max",
@@ -58,9 +54,8 @@ async def main(
             toolkit=toolkit,
             max_iters=max_iters_param,
             start_url=start_url_param,
-            use_dfs_reply=use_dfs_reply_param,
         )
-        user = UserAgent("Bob")
+        user = UserAgent("User")
 
         msg = None
         while True:
@@ -89,14 +84,6 @@ def parse_arguments() -> argparse.Namespace:
         description="Browser Agent Example with configurable reply method",
     )
     parser.add_argument(
-        "--use-dfs-reply",
-        action="store_true",
-        help=(
-            "Use DFS search-based reply method instead of "
-            "default reasoning-acting loop"
-        ),
-    )
-    parser.add_argument(
         "--start-url",
         type=str,
         default="https://www.google.com",
@@ -123,26 +110,13 @@ if __name__ == "__main__":
         "by `npx @playwright/mcp@latest`",
     )
     print("\nUsage examples:")
-    print("  python main.py                           # Use default method")
-    print("  python main.py --use-dfs-reply          # Use DFS search method")
+    print("  python main.py                           # Start with defaults")
     print("  python main.py --start-url https://example.com --max-iters 100")
     print("  python main.py --help                   # Show all options")
     print()
 
     # Parse command line arguments
     args = parse_arguments()
-
-    # Determine which reply method to use
-    if args.use_dfs_reply:
-        use_dfs_reply = True
-        print("Using DFS search-based reply method")
-    else:
-        # Default behavior - use default reasoning-acting loop method
-        use_dfs_reply = False
-        print(
-            "Using default reasoning-acting loop method "
-            "(use --use-dfs-reply to enable DFS method)",
-        )
 
     # Get other parameters
     start_url = args.start_url
@@ -160,4 +134,4 @@ if __name__ == "__main__":
     print(f"Starting URL: {start_url}")
     print(f"Maximum iterations: {max_iters}")
 
-    asyncio.run(main(use_dfs_reply, start_url, max_iters))
+    asyncio.run(main(start_url, max_iters))
