@@ -192,11 +192,21 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a more authentic and local feel compared to hotels. You get to interact with hosts who often have great insights into the area, including hidden gems that tourists might miss.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique opportunity to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who often have great recommendations for exploring the area.
 
-    If you're planning another trip to Hangzhou, I can help suggest some popular neighborhoods or areas where homestays are common, or even guide you on how to find the best ones based on your preferences—whether it's proximity to **West Lake**, **tea plantations**, or vibrant **night markets**.
+    If you're planning another trip to Hangzhou and looking for homestay options, here are a few tips to enhance your experience:
 
-    Do you have any specific requirements for your next homestay? Or would you like general recommendations around Hangzhou?
+    1. **Location**: Consider staying near West Lake (Xi Hu), one of Hangzhou's most iconic attractions. Many homestays in this area offer beautiful views and easy access to walking paths, tea plantations, and historical sites.
+
+    2. **Local Hosts**: Look for homestays hosted by locals who can share insights about hidden gems or lesser-known spots in Hangzhou. They might also introduce you to traditional activities like silk-making or tea ceremonies.
+
+    3. **Amenities**: Decide what amenities matter most to you—whether it’s a private room, breakfast included, or proximity to public transportation.
+
+    4. **Reviews**: Check platforms like Airbnb, Booking.com, or Xiaozhu (a popular Chinese platform) for reviews from previous guests. This will help ensure the homestay meets your expectations.
+
+    5. **Seasonal Activities**: Depending on when you visit, some homestays may offer seasonal perks, such as plum blossom viewing in spring or enjoying autumn foliage around the lake.
+
+    Would you like me to recommend specific neighborhoods or types of homestays based on your preferences?
 
 
 
@@ -534,7 +544,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 36.039 seconds)
+   **Total running time of the script:** (0 minutes 47.143 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
