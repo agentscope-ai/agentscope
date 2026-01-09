@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The dashscope API model classes."""
 import collections
+import warnings
 from datetime import datetime
 from http import HTTPStatus
 from typing import (
@@ -55,6 +56,7 @@ class DashScopeChatModel(ChatModelBase):
         enable_thinking: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
+        **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
 
@@ -77,6 +79,8 @@ class DashScopeChatModel(ChatModelBase):
             base_http_api_url (`str | None`, optional):
                 The base URL for DashScope API requests. If not provided,
                 the default base URL from the DashScope SDK will be used.
+            **_kwargs (`Any`):
+                Additional keyword arguments.
         """
         if enable_thinking and not stream:
             logger.info(
@@ -101,9 +105,7 @@ class DashScopeChatModel(ChatModelBase):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -120,10 +122,12 @@ class DashScopeChatModel(ChatModelBase):
                 required.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
              |  None`,  default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", or specific tool name.
+                 Can be "auto", "none", "required", or specific tool name.
+                 Note: DashScope API only supports "auto" and "none", so
+                 "required" will be converted to "auto".
                  For more details, please refer to
                  https://help.aliyun.com/zh/model-studio/qwen-function-calling
             structured_model (`Type[BaseModel] | None`, default `None`):
@@ -173,6 +177,15 @@ class DashScopeChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
+            # Handle deprecated "any" option with warning
+            if tool_choice in ["any", "required"]:
+                warnings.warn(
+                    f"'{tool_choice}' is not supported by DashScope API. "
+                    "It will be converted to 'auto'.",
+                    DeprecationWarning,
+                )
+                tool_choice = "auto"
+
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
@@ -493,17 +506,17 @@ class DashScopeChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "any", "required"] | str | None,
+        tool_choice: Literal["auto", "none", "required"] | str | None,
     ) -> str | dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none",  "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default  `None`):
-                Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", or specific tool name.
-                 For more details, please refer to
-                 https://help.aliyun.com/zh/model-studio/qwen-function-calling
+                Controls which (if any) tool is called by the model. For more
+                details, please refer to
+                https://help.aliyun.com/zh/model-studio/qwen-function-calling
+
         Returns:
             `dict | None`:
                 The formatted tool choice configuration dict, or None if
@@ -513,12 +526,6 @@ class DashScopeChatModel(ChatModelBase):
             return None
         if tool_choice in ["auto", "none"]:
             return tool_choice
-        if tool_choice in ["any", "required"]:
-            logger.warning(
-                "tool_choice '%s' is not supported by DashScope API. "
-                "Supported options are 'auto', 'none', or specific function "
-                "name. Automatically using 'auto' instead.",
-                tool_choice,
-            )
+        if tool_choice == "required":
             return "auto"
         return {"type": "function", "function": {"name": tool_choice}}

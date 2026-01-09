@@ -1,37 +1,39 @@
 # -*- coding: utf-8 -*-
-"""The toolkit class for tool calls in agentscope."""
+"""The toolkit class for tool calls in agentscope.
 
+TODO: We should consider to split this `Toolkit` class in the future.
+"""
+# pylint: disable=too-many-lines
 import asyncio
 import inspect
+import os
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import partial
 from typing import (
     AsyncGenerator,
     Literal,
-    Dict,
     Any,
     Type,
     Generator,
     Callable,
+    Awaitable,
 )
 
+import shortuuid
 from pydantic import (
     BaseModel,
     Field,
     create_model,
-    ConfigDict,
 )
-from docstring_parser import parse
 
 from ._async_wrapper import (
     _async_generator_wrapper,
     _object_wrapper,
     _sync_generator_wrapper,
 )
-from ._registered_tool_function import RegisteredToolFunction
 from ._response import ToolResponse
-from .._utils._common import _remove_title_field
+from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
+from .._utils._common import _parse_tool_function
 from ..mcp import (
     MCPToolFunction,
     MCPClientBase,
@@ -50,55 +52,69 @@ from ..tracing._trace import trace_toolkit
 from .._logging import logger
 
 
-@dataclass
-class ToolGroup:
-    """The tool group class"""
-
-    name: str
-    """The group name, which will be used in the reset function as the group
-    identifier."""
-    active: bool
-    """If the tool group is active, meaning the tool functions in this group
-    is included in the JSON schema"""
-    description: str
-    """The description of the tool group to tell the agent what the tool
-    group is about."""
-    notes: str | None = None
-    """The using notes of the tool group, to remind the agent how to use"""
-
-
 class Toolkit(StateModule):
-    """The class that supports both function- and group-level tool management.
+    """Toolkit is the core module to register, manage and delete tool
+    functions, MCP clients, Agent skills in AgentScope.
 
-    Use the following methods to manage the tool functions:
+    About tool functions:
 
-    - `register_tool_function`
-    - `remove_tool_function`
+    - Register and parse JSON schemas from their docstrings automatically.
+    - Group-wise tools management, and agentic tools activation/deactivation.
+    - Extend the tool function JSON schema dynamically with Pydantic BaseModel.
+    - Tool function execution with unified streaming interface.
 
-    For group-level management:
+    About MCP clients:
 
-    - `create_tool_group`
-    - `update_tool_groups`
-    - `remove_tool_groups`
+    - Register tool functions from MCP clients directly.
+    - Client-level tool functions removal.
 
-    MCP related methods:
+    About Agent skills:
 
-    - `register_mcp_server`
-    - `remove_mcp_servers`
-
-    To run the tool functions or get the data from the activated tools:
-
-    - `call_tool_function`
-    - `get_json_schemas`
-    - `get_tool_group_notes`
+    - Register agent skills from the given directory.
+    - Provide prompt for the registered skills to the agent.
     """
 
-    def __init__(self) -> None:
-        """Initialize the toolkit."""
+    _DEFAULT_AGENT_SKILL_INSTRUCTION = (
+        "# Agent Skills\n"
+        "The agent skills are a collection of folds of instructions, scripts, "
+        "and resources that you can load dynamically to improve performance "
+        "on specialized tasks. Each agent skill has a `SKILL.md` file in its "
+        "folder that describes how to use the skill. If you want to use a "
+        "skill, you MUST read its `SKILL.md` file carefully."
+    )
+
+    _DEFAULT_AGENT_SKILL_TEMPLATE = """## {name}
+{description}
+Check "{dir}/SKILL.md" for how to use this skill"""
+
+    def __init__(
+        self,
+        agent_skill_instruction: str | None = None,
+        agent_skill_template: str | None = None,
+    ) -> None:
+        """Initialize the toolkit.
+
+        Args:
+            agent_skill_instruction (`str | None`, optional):
+                The instruction for agent skills in the system prompt. If not
+                provided, a default instruction will be used.
+            agent_skill_template (`str | None`, optional):
+                The template to present one agent skill in the system prompt,
+                which should contain `{name}`, `{description}`, and `{dir}`
+                placeholders. If not provided, a default template will be used.
+        """
         super().__init__()
 
         self.tools: dict[str, RegisteredToolFunction] = {}
         self.groups: dict[str, ToolGroup] = {}
+        self.skills: dict[str, AgentSkill] = {}
+
+        self._agent_skill_instruction = (
+            agent_skill_instruction or self._DEFAULT_AGENT_SKILL_INSTRUCTION
+        )
+        self._agent_skill_template = (
+            agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
+        )
 
     def create_tool_group(
         self,
@@ -186,7 +202,8 @@ class Toolkit(StateModule):
             if self.tools[tool_name].group in group_names:
                 self.tools.pop(tool_name)
 
-    def register_tool_function(  # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches, too-many-statements
+    def register_tool_function(
         self,
         tool_func: ToolFunction,
         group_name: str | Literal["basic"] = "basic",
@@ -196,14 +213,23 @@ class Toolkit(StateModule):
         include_long_description: bool = True,
         include_var_positional: bool = False,
         include_var_keyword: bool = False,
-        postprocess_func: Callable[
-            [
-                ToolUseBlock,
-                ToolResponse,
-            ],
-            ToolResponse | None,
-        ]
+        postprocess_func: (
+            Callable[
+                [ToolUseBlock, ToolResponse],
+                ToolResponse | None,
+            ]
+            | Callable[
+                [ToolUseBlock, ToolResponse],
+                Awaitable[ToolResponse | None],
+            ]
+        )
         | None = None,
+        namesake_strategy: Literal[
+            "override",
+            "skip",
+            "raise",
+            "rename",
+        ] = "raise",
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -237,14 +263,24 @@ class Toolkit(StateModule):
             include_var_keyword (`bool`, defaults to `False`):
                 Whether to include the variable keyword arguments (`**kwargs`)
                 in the function schema.
-            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | None`, optional):
+            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
-                response as arguments. If it returns `None`, the tool
-                result will be returned as is. If it returns a
-                `ToolResponse`, the returned block will be used as the
-                final tool result.
+                response as arguments. The function can be either sync or
+                async. If it returns `None`, the tool result will be
+                returned as is. If it returns a `ToolResponse`,
+                the returned block will be used as the final tool result.
+            namesake_strategy (`Literal['raise', 'override', 'skip', \
+            'rename']`, defaults to `'raise'`):
+                The strategy to handle the tool function name conflict:
+                - 'raise': raise a ValueError (default behavior).
+                - 'override': override the existing tool function with the new
+                  one.
+                - 'skip': skip the registration of the new tool function.
+                - 'rename': rename the new tool function by appending a random
+                  suffix to make it unique.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -267,7 +303,6 @@ class Toolkit(StateModule):
         if isinstance(tool_func, MCPToolFunction):
             func_name = tool_func.name
             original_func = tool_func.__call__
-            self._validate_tool_function(func_name)
             json_schema = json_schema or tool_func.json_schema
             mcp_name = tool_func.mcp_name
 
@@ -290,8 +325,7 @@ class Toolkit(StateModule):
 
             func_name = tool_func.func.__name__
             original_func = tool_func.func
-            self._validate_tool_function(func_name)
-            json_schema = json_schema or self._parse_tool_function(
+            json_schema = json_schema or _parse_tool_function(
                 tool_func.func,
                 include_long_description=include_long_description,
                 include_var_positional=include_var_positional,
@@ -302,8 +336,7 @@ class Toolkit(StateModule):
             # normal function
             func_name = tool_func.__name__
             original_func = tool_func
-            self._validate_tool_function(func_name)
-            json_schema = json_schema or self._parse_tool_function(
+            json_schema = json_schema or _parse_tool_function(
                 tool_func,
                 include_long_description=include_long_description,
                 include_var_positional=include_var_positional,
@@ -347,20 +380,85 @@ class Toolkit(StateModule):
             postprocess_func=postprocess_func,
         )
 
-        self.tools[func_name] = func_obj
+        if func_name in self.tools:
+            if namesake_strategy == "raise":
+                raise ValueError(
+                    f"A function with name '{func_name}' is already "
+                    f"registered in the toolkit.",
+                )
 
-    def remove_tool_function(self, tool_name: str) -> None:
+            if namesake_strategy == "skip":
+                logger.warning(
+                    "A function with name '%s' is already "
+                    "registered in the toolkit. Skipping registration.",
+                    func_name,
+                )
+
+            elif namesake_strategy == "override":
+                logger.warning(
+                    "A function with name '%s' is already registered "
+                    "in the toolkit. Overriding with the new function.",
+                    func_name,
+                )
+                self.tools[func_name] = func_obj
+
+            elif namesake_strategy == "rename":
+                new_func_name = func_name
+                for _ in range(100):
+                    suffix = shortuuid.uuid()[:5]
+                    new_func_name = f"{func_name}_{suffix}"
+                    if new_func_name not in self.tools:
+                        break
+
+                # Raise error if failed to find a unique name
+                if new_func_name in self.tools:
+                    raise RuntimeError(
+                        f"Failed to register tool function '{func_name}' with "
+                        "a unique name after 100 attempts.",
+                    )
+                logger.warning(
+                    "A function with name '%s' is already "
+                    "registered in the toolkit. Renaming the new function to "
+                    "'%s'.",
+                    func_name,
+                    new_func_name,
+                )
+
+                # Replace the function name with the new one
+                func_obj.original_name = func_name
+                func_obj.name = new_func_name
+                func_obj.json_schema["function"]["name"] = new_func_name
+
+                self.tools[new_func_name] = func_obj
+
+            else:
+                raise ValueError(
+                    f"Invalid namesake_strategy: {namesake_strategy}. "
+                    "Supported strategies are 'raise', 'override', 'skip', "
+                    "and 'rename'.",
+                )
+
+        else:
+            self.tools[func_name] = func_obj
+
+    def remove_tool_function(
+        self,
+        tool_name: str,
+        allow_not_exist: bool = True,
+    ) -> None:
         """Remove tool function from the toolkit by its name.
 
         Args:
             tool_name (`str`):
                 The name of the tool function to be removed.
+            allow_not_exist (`bool`):
+                Allow the tool function to not exist when removing.
         """
 
-        if tool_name not in self.tools:
-            logger.warning(
-                "Skipping removing tool function '%s' as it does not exist.",
-                tool_name,
+        if tool_name not in self.tools and not allow_not_exist:
+            raise ValueError(
+                f"Tool function '{tool_name}' does not exist in the "
+                "toolkit.",
             )
 
         self.tools.pop(tool_name, None)
@@ -527,8 +625,31 @@ class Toolkit(StateModule):
                 None,
             )
 
-        # Prepare function and keyword arguments
+        # Obtain the tool function
         tool_func = self.tools[tool_call["name"]]
+
+        # Check if the tool function is in an inactive group
+        if (
+            tool_func.group != "basic"
+            and not self.groups[tool_func.group].active
+        ):
+            return _object_wrapper(
+                ToolResponse(
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text="FunctionInactiveError: The function "
+                            f"'{tool_call['name']}' is in the inactive "
+                            f"group '{tool_func.group}'. Activate the tool "
+                            "group by calling 'reset_equipped_tools' "
+                            "first to use this tool.",
+                        ),
+                    ],
+                ),
+                None,
+            )
+
+        # Prepare keyword arguments
         kwargs = {
             **tool_func.preset_kwargs,
             **(tool_call.get("input", {}) or {}),
@@ -536,7 +657,12 @@ class Toolkit(StateModule):
 
         # Prepare postprocess function
         if tool_func.postprocess_func:
-            partial_postprocess_func = partial(
+            # Type: partial wraps the postprocess_func with tool_call bound,
+            # reducing it from (ToolUseBlock, ToolResponse) to (ToolResponse)
+            partial_postprocess_func: (
+                Callable[[ToolResponse], ToolResponse | None]
+                | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
+            ) | None = partial(
                 tool_func.postprocess_func,
                 tool_call,
             )
@@ -605,14 +731,23 @@ class Toolkit(StateModule):
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
         preset_kwargs_mapping: dict[str, dict[str, Any]] | None = None,
-        postprocess_func: Callable[
-            [
-                ToolUseBlock,
-                ToolResponse,
-            ],
-            ToolResponse | None,
-        ]
+        postprocess_func: (
+            Callable[
+                [ToolUseBlock, ToolResponse],
+                ToolResponse | None,
+            ]
+            | Callable[
+                [ToolUseBlock, ToolResponse],
+                Awaitable[ToolResponse | None],
+            ]
+        )
         | None = None,
+        namesake_strategy: Literal[
+            "override",
+            "skip",
+            "raise",
+            "rename",
+        ] = "raise",
     ) -> None:
         """Register tool functions from an MCP client.
 
@@ -631,14 +766,24 @@ class Toolkit(StateModule):
             defaults to `None`):
                 The preset keyword arguments mapping, whose keys are the tool
                 function names and values are the preset keyword arguments.
-            postprocess_func (`Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | None`, optional):
+            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
-                response as arguments. If it returns `None`, the tool
-                result will be returned as is. If it returns a
-                `ToolResponse`, the returned block will be used as the
-                final tool result.
+                response as arguments. The function can be either sync or
+                async. If it returns `None`, the tool result will be
+                returned as is. If it returns a `ToolResponse`,
+                the returned block will be used as the final tool result.
+            namesake_strategy (`Literal['raise', 'override', 'skip', \
+            'rename']`, defaults to `'raise'`):
+                The strategy to handle the tool function name conflict:
+                - 'raise': raise a ValueError (default behavior).
+                - 'override': override the existing tool function with the new
+                  one.
+                - 'skip': skip the registration of the new tool function.
+                - 'rename': rename the new tool function by appending a random
+                  suffix to make it unique.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)
@@ -705,12 +850,12 @@ class Toolkit(StateModule):
             if preset_kwargs_mapping is not None:
                 preset_kwargs = preset_kwargs_mapping.get(mcp_tool.name, {})
 
-            # TODO: handle mcp_server_name
             self.register_tool_function(
                 tool_func=func_obj,
                 group_name=group_name,
                 preset_kwargs=preset_kwargs,
                 postprocess_func=postprocess_func,
+                namesake_strategy=namesake_strategy,
             )
 
         logger.info(
@@ -784,23 +929,28 @@ class Toolkit(StateModule):
             if group.active and group.notes:
                 collected_notes.append(
                     "\n".join(
-                        [f"## About {group_name} Tools", group.notes],
+                        [f"## About Tool Group '{group_name}'", group.notes],
                     ),
                 )
         return "\n".join(collected_notes)
 
     def reset_equipped_tools(self, **kwargs: Any) -> ToolResponse:
-        """Choose appropriate tools to equip yourself with, so that you can
-        finish your task. Each argument in this function represents a group
-        of related tools, and the value indicates whether to activate the
-        group or not. Besides, the tool response of this function will
-        contain the precaution notes for using them, which you
-        **MUST pay attention to and follow**. You can also reuse this function
-        to check the notes of the tool groups.
+        """This function allows you to activate or deactivate tool groups
+        dynamically based on your current task requirements.
+        **Important: Each call sets the absolute final state of ALL tool
+        groups, not incremental changes**. Any group not explicitly set to True
+        will be deactivated, regardless of its previous state.
 
-        Note this function will `reset` the tools, so that the original tools
-        will be removed first.
-        """
+        **Best practice**: Actively manage your tool groups——activate only
+        what you need for the current task, and promptly deactivate groups as
+        soon as they are no longer needed to conserve context space.
+
+        The function will return the usage instructions for the activated tool
+        groups, which you **MUST pay attention to and follow**. You can also
+        reuse this function to check the notes of the tool groups."""
+
+        # Deactivate all tool groups first
+        self.update_tool_groups(list(self.groups.keys()), active=False)
 
         to_activate = []
         for key, value in kwargs.items():
@@ -822,13 +972,28 @@ class Toolkit(StateModule):
 
         notes = self.get_activated_notes()
 
+        text_response = ""
+        if to_activate:
+            text_response += (
+                "Now tool groups "
+                + ", ".join([f"'{_}'" for _ in to_activate])
+                + " are activated."
+            )
+
+        if notes:
+            text_response += (
+                f" You MUST follow these notes to use these tools:\n"
+                f"<notes>{notes}</notes>"
+            )
+
+        if not text_response:
+            text_response = "All tool groups are now deactivated currently."
+
         return ToolResponse(
             content=[
                 TextBlock(
                     type="text",
-                    text=f"Active tool groups successfully: {to_activate}. "
-                    "You MUST follow these notes to use the tools:\n"
-                    f"<notes>{notes}</notes>",
+                    text=text_response,
                 ),
             ],
         )
@@ -843,111 +1008,119 @@ class Toolkit(StateModule):
         so, raise a ValueError."""
         if func_name in self.tools:
             raise ValueError(
-                f"A function with name '{func_name} is already registered "
+                f"A function with name '{func_name}' is already registered "
                 "in the toolkit.",
             )
 
-    @staticmethod
-    def _parse_tool_function(
-        tool_func: ToolFunction,
-        include_long_description: bool,
-        include_var_positional: bool,
-        include_var_keyword: bool,
-    ) -> dict:
-        """Extract JSON schema from the tool function's docstring"""
-        docstring = parse(tool_func.__doc__)
-        params_docstring = {
-            _.arg_name: _.description for _ in docstring.params
-        }
+    def register_agent_skill(
+        self,
+        skill_dir: str,
+    ) -> None:
+        """Register agent skills from a given directory. This function will
+        scan the directory, read metadata from the SKILL.md file, and add
+        it to the skill related prompt. Developers can obtain the
+        skills-related prompt by calling `toolkit.get_agent_skill_prompt()`.
 
-        # Function description
-        descriptions = []
-        if docstring.short_description is not None:
-            descriptions.append(docstring.short_description)
+        .. note:: This directory
+         - Must include a SKILL.md file at the top level
+         - The SKILL.md must have a YAML Front Matter including `name` and
+            `description` fields
+         - All files must specify a common root directory in their paths
 
-        if include_long_description and docstring.long_description is not None:
-            descriptions.append(docstring.long_description)
+        Args:
+            skill_dir (`str`):
+                The path to the skill directory.
+        """
+        import frontmatter
 
-        func_description = "\n\n".join(descriptions)
+        # Check the skill directory
+        if not os.path.isdir(skill_dir):
+            raise ValueError(
+                f"The skill directory '{skill_dir}' does not exist or is "
+                "not a directory.",
+            )
 
-        # Create a dynamic model with the function signature
-        fields = {}
-        for name, param in inspect.signature(tool_func).parameters.items():
-            # Skip the `self` and `cls` parameters
-            if name in ["self", "cls"]:
-                continue
+        # Check SKILL.md file
+        path_skill_md = os.path.join(skill_dir, "SKILL.md")
+        if not os.path.isfile(path_skill_md):
+            raise ValueError(
+                f"The skill directory '{skill_dir}' must include a "
+                "SKILL.md file at the top level.",
+            )
 
-            # Handle `**kwargs`
-            if param.kind == inspect.Parameter.VAR_KEYWORD:
-                if not include_var_keyword:
-                    continue
+        # Check YAML Front Matter
+        with open(path_skill_md, "r", encoding="utf-8") as f:
+            post = frontmatter.load(f)
 
-                fields[name] = (
-                    Dict[str, Any]
-                    if param.annotation == inspect.Parameter.empty
-                    else Dict[str, param.annotation],  # type: ignore
-                    Field(
-                        description=params_docstring.get(
-                            f"**{name}",
-                            params_docstring.get(name, None),
-                        ),
-                        default={}
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
+        name = post.get("name", None)
+        description = post.get("description", None)
 
-            elif param.kind == inspect.Parameter.VAR_POSITIONAL:
-                if not include_var_positional:
-                    continue
+        if not name or not description:
+            raise ValueError(
+                f"The SKILL.md file in '{skill_dir}' must have a YAML Front "
+                "Matter including `name` and `description` fields.",
+            )
 
-                fields[name] = (
-                    list[Any]
-                    if param.annotation == inspect.Parameter.empty
-                    else list[param.annotation],  # type: ignore
-                    Field(
-                        description=params_docstring.get(
-                            f"*{name}",
-                            params_docstring.get(name, None),
-                        ),
-                        default=[]
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
+        name, description = str(name), str(description)
+        if name in self.skills:
+            raise ValueError(
+                f"An agent skill with name '{name}' is already registered "
+                "in the toolkit.",
+            )
 
-            else:
-                fields[name] = (
-                    Any
-                    if param.annotation == inspect.Parameter.empty
-                    else param.annotation,
-                    Field(
-                        description=params_docstring.get(name, None),
-                        default=...
-                        if param.default is param.empty
-                        else param.default,
-                    ),
-                )
-
-        base_model = create_model(
-            "_StructuredOutputDynamicClass",
-            __config__=ConfigDict(arbitrary_types_allowed=True),
-            **fields,
+        self.skills[name] = AgentSkill(
+            name=name,
+            description=description,
+            dir=skill_dir,
         )
-        params_json_schema = base_model.model_json_schema()
 
-        # Remove the title from the json schema
-        _remove_title_field(params_json_schema)
+        logger.info(
+            "Registered agent skill '%s' from directory '%s'.",
+            name,
+            skill_dir,
+        )
 
-        func_json_schema: dict = {
-            "type": "function",
-            "function": {
-                "name": tool_func.__name__,
-                "parameters": params_json_schema,
-            },
-        }
+    def remove_agent_skill(self, name: str) -> None:
+        """Remove an agent skill by its name.
 
-        if func_description not in [None, ""]:
-            func_json_schema["function"]["description"] = func_description
+        Args:
+            name (`str`):
+                The name of the agent skill to be removed.
+        """
+        if name in self.skills:
+            self.skills.pop(name)
+        else:
+            logger.warning(
+                "Agent skill '%s' not found in the toolkit, skipping removal.",
+                name,
+            )
 
-        return func_json_schema
+    def get_agent_skill_prompt(self) -> str | None:
+        """Get the prompt for all registered agent skills, which can be
+        attached to the system prompt for the agent.
+
+        The prompt is consisted of an overall instruction and the detailed
+        descriptions of each skill, including its name, description, and
+        directory.
+
+        .. note:: If no skill is registered, None will be returned.
+
+        Returns:
+            `str | None`:
+                The combined prompt for all registered agent skills, or None
+                if no skill is registered.
+        """
+        if len(self.skills) == 0:
+            return None
+
+        skill_descriptions = [
+            self._agent_skill_instruction,
+        ] + [
+            self._agent_skill_template.format(
+                name=_["name"],
+                description=_["description"],
+                dir=_["dir"],
+            )
+            for _ in self.skills.values()
+        ]
+        return "\n".join(skill_descriptions)

@@ -4,7 +4,7 @@ import asyncio
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Tuple, Coroutine
 from ..agent import AgentBase
-from ..message import Msg
+from ..message import Msg, AudioBlock
 
 
 async def sequential_pipeline(
@@ -107,8 +107,13 @@ async def fanout_pipeline(
 async def stream_printing_messages(
     agents: list[AgentBase],
     coroutine_task: Coroutine,
+    queue: asyncio.Queue | None = None,
     end_signal: str = "[END]",
-) -> AsyncGenerator[Tuple[Msg, bool], None]:
+    yield_speech: bool = False,
+) -> AsyncGenerator[
+    Tuple[Msg, bool] | Tuple[Msg, bool, AudioBlock | list[AudioBlock] | None],
+    None,
+]:
     """This pipeline will gather the printing messages from agents when
     execute the given coroutine task, and yield them one by one.
     Only the messages that are printed by `await self.print(msg)` in the agent
@@ -130,20 +135,29 @@ async def stream_printing_messages(
             The coroutine task to be executed. This task should involve the
             execution of the provided agents, so that their printing messages
             can be captured and yielded.
+        queue (`asyncio.Queue | None`, optional):
+            Use this queue instead of creating a new one if provided.
         end_signal (`str`, defaults to `"[END]"`):
             A special signal to indicate the end of message streaming. When
             this signal is received from the message queue, the generator will
             stop yielding messages and exit the loop.
+        yield_speech (`bool`, defaults to `False`):
+            Whether to yield speech associated with the messages, if any.
+            If `True` and a speech is attached when calling `await
+            self.print()` in the agent, the yielded tuple will include the
+            speech as the third element. If `False`, only the message and
+            the boolean flag will be yielded.
 
-    Returns:
-        `AsyncGenerator[Tuple[Msg, bool], None]`:
-            An async generator that yields tuples of (message, is_last_chunk).
-            The `is_last_chunk` boolean indicates whether the message is the
-            last chunk in a streaming message.
+    Yields:
+        `Tuple[Msg, bool] | Tuple[Msg, bool, AudioBlock | list[AudioBlock] | \
+        None]`:
+            A tuple containing the message, a boolean indicating whether
+            it's the last chunk in a streaming message, and optionally
+            the associated speech (if `yield_speech` is `True`).
     """
 
     # Enable the message queue to get the intermediate messages
-    queue = asyncio.Queue()
+    queue = queue or asyncio.Queue()
     for agent in agents:
         # Use one queue to gather messages from all agents
         agent.set_msg_queue_enabled(True, queue)
@@ -162,8 +176,17 @@ async def stream_printing_messages(
         # in a streaming message
         printing_msg = await queue.get()
 
-        # End the loop when the message is None
+        # Check if this is the end signal
         if isinstance(printing_msg, str) and printing_msg == end_signal:
             break
 
-        yield printing_msg
+        if yield_speech:
+            yield printing_msg
+        else:
+            msg, last, _ = printing_msg
+            yield msg, last
+
+    # Check exception after processing all messages
+    exception = task.exception()
+    if exception is not None:
+        raise exception from None

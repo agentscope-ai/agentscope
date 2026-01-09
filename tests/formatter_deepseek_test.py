@@ -114,7 +114,7 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output=[
                             TextBlock(
@@ -321,7 +321,7 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
             },
             {
                 "role": "tool",
-                "tool_call_id": "1",
+                "tool_call_id": "2",
                 "content": "The capital of South Korea is Seoul.",
                 "name": "get_capital",
             },

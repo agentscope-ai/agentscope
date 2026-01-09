@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches, too-many-statements
 """The Anthropic API model classes."""
-
+import warnings
 from datetime import datetime
 from typing import (
     Any,
@@ -45,8 +45,9 @@ class AnthropicChatModel(ChatModelBase):
         max_tokens: int = 2048,
         stream: bool = True,
         thinking: dict | None = None,
-        client_args: dict | None = None,
+        client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -70,13 +71,39 @@ class AnthropicChatModel(ChatModelBase):
                         "budget_tokens": 1024
                     }
 
-            client_args (`dict | None`, optional):
+            client_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
                 The extra keyword arguments to initialize the Anthropic client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
-                The extra keyword arguments used in Gemini API generation,
+                The extra keyword arguments used in Anthropic API generation,
                 e.g. `temperature`, `seed`.
+            **kwargs (`Any`):
+                Additional keyword arguments.
         """
+
+        # Handle deprecated client_args parameter from kwargs
+        client_args = kwargs.pop("client_args", None)
+        if client_args is not None and client_kwargs is not None:
+            raise ValueError(
+                "Cannot specify both 'client_args' and 'client_kwargs'. "
+                "Please use only 'client_kwargs' (client_args is deprecated).",
+            )
+
+        if client_args is not None:
+            logger.warning(
+                "The parameter 'client_args' is deprecated and will be "
+                "removed in a future version. Please use 'client_kwargs' "
+                "instead. Automatically converting 'client_args' to "
+                "'client_kwargs'.",
+            )
+            client_kwargs = client_args
+
+        if kwargs:
+            logger.warning(
+                "Unknown keyword arguments: %s. These will be ignored.",
+                list(kwargs.keys()),
+            )
 
         try:
             import anthropic
@@ -90,7 +117,7 @@ class AnthropicChatModel(ChatModelBase):
 
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key,
-            **(client_args or {}),
+            **(client_kwargs or {}),
         )
         self.max_tokens = max_tokens
         self.thinking = thinking
@@ -101,9 +128,7 @@ class AnthropicChatModel(ChatModelBase):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -141,10 +166,10 @@ class AnthropicChatModel(ChatModelBase):
                         # More schemas here
                     ]
 
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
+                 Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
             structured_model (`Type[BaseModel] | None`, default `None`):
@@ -183,6 +208,14 @@ class AnthropicChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
+            # Handle deprecated "any" option with warning
+            if tool_choice == "any":
+                warnings.warn(
+                    '"any" is deprecated and will be removed in a future '
+                    "version.",
+                    DeprecationWarning,
+                )
+                tool_choice = "required"
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
@@ -271,7 +304,10 @@ class AnthropicChatModel(ChatModelBase):
                     thinking_block["signature"] = content_block.signature
                     content_blocks.append(thinking_block)
 
-                elif hasattr(content_block, "text"):
+                elif (
+                    hasattr(content_block, "type")
+                    and content_block.type == "text"
+                ):
                     content_blocks.append(
                         TextBlock(
                             type="text",
@@ -476,15 +512,15 @@ class AnthropicChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "any", "required"] | str | None,
+        tool_choice: Literal["auto", "none", "required"] | str | None,
     ) -> dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
                 | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
+                 Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
         Returns:
@@ -498,7 +534,6 @@ class AnthropicChatModel(ChatModelBase):
         type_mapping = {
             "auto": {"type": "auto"},
             "none": {"type": "none"},
-            "any": {"type": "any"},
             "required": {"type": "any"},
         }
         if tool_choice in type_mapping:

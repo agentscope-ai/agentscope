@@ -95,7 +95,11 @@ class TerminalUserInput(UserInputBase):
                 The user input data.
         """
 
-        text_input = input(self.input_hint)
+        text_input = (
+            input(self.input_hint)
+            .encode("utf-8", errors="ignore")
+            .decode("utf-8")
+        )
 
         structured_input = None
         if structured_model is not None:
@@ -198,7 +202,7 @@ class StudioUserInput(UserInputBase):
                 run_id,
             )
             logger.info(
-                "View the run at: %s/dashboard/projects/%s",
+                "View the run at: %s/projects/%s",
                 self.studio_url,
                 _config.project,
             )

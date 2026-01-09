@@ -2,7 +2,7 @@
 """The plan notebook class, used to manage the plan, providing hints and
 tool functions to the agent."""
 from collections import OrderedDict
-from typing import Callable, Literal, Coroutine, Any
+from typing import Callable, Literal, Coroutine, Any, Awaitable
 
 from ._in_memory_storage import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan
@@ -173,7 +173,11 @@ class PlanNotebook(StateModule):
     """The plan notebook to manage the plan, providing hints and plan related
     tool functions to the agent."""
 
-    _plan_change_hooks: dict[str, Callable[["PlanNotebook", Plan], None]]
+    _plan_change_hooks: dict[
+        str,
+        Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
+    ]
     """The hooks that will be triggered when the plan is changed. For example,
     used to display the plan on the frontend."""
 
@@ -324,42 +328,63 @@ class PlanNotebook(StateModule):
             `ToolResponse`:
                 The response of the tool call.
         """
+        # Validate the arguments first
+        response: list[str] = []
+        if isinstance(subtask_idx, str):
+            try:
+                subtask_idx = int(subtask_idx)
+            except ValueError:
+                pass
+
+        if not isinstance(subtask_idx, int):
+            response.append(
+                f"Invalid type for argument 'subtask_idx'. "
+                f"Expected 'int', but got '{type(subtask_idx)}'.",
+            )
+
         if action not in ["add", "revise", "delete"]:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Invalid action '{action}'. Must be one of "
-                        "'add', 'revise', 'delete'.",
-                    ),
-                ],
+            response.append(
+                f"Invalid action '{action}'. Must be one of 'add', 'revise', "
+                f"'delete'.",
             )
 
         if action in ["add", "revise"] and subtask is None:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"The subtask must be provided when action is "
-                        f"'{action}', but got None.",
-                    ),
-                ],
+            response.append(
+                f"The subtask must be provided when action is '{action}', "
+                "but got None.",
             )
 
         self._validate_current_plan()
 
         # validate subtask_idx
-        if subtask_idx >= len(self.current_plan.subtasks):
+        if action != "add" and subtask_idx >= len(self.current_plan.subtasks):
+            response.append(
+                f"Invalid subtask_idx '{subtask_idx}' for action '{action}'. "
+                f"Must be between 0 "
+                f"and {len(self.current_plan.subtasks) - 1}.",
+            )
+
+        if action == "add" and not (
+            0 <= subtask_idx <= len(self.current_plan.subtasks)
+        ):
+            response.append(
+                f"Invalid subtask_idx '{subtask_idx}' for action 'add'. "
+                f"Must be between 0 and {len(self.current_plan.subtasks)}.",
+            )
+
+        if response:
             return ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
-                        text=f"Invalid subtask_idx '{subtask_idx}'. Must "
-                        f"be between 0 and "
-                        f"{len(self.current_plan.subtasks) - 1}.",
+                        text="Error: " + response[0],
                     ),
                 ],
             )
+
+        if subtask is not None:
+            # Convert to SubTask model if it's a dict
+            subtask = SubTask.model_validate(subtask)
 
         if action == "delete":
             subtask = self.current_plan.subtasks.pop(subtask_idx)
@@ -387,6 +412,7 @@ class PlanNotebook(StateModule):
                 ],
             )
 
+        # revise
         self.current_plan.subtasks[subtask_idx] = subtask
         await self._trigger_plan_change_hooks()
         return ToolResponse(
@@ -402,7 +428,7 @@ class PlanNotebook(StateModule):
     async def update_subtask_state(
         self,
         subtask_idx: int,
-        state: Literal["todo", "in_progress", "deprecated"],
+        state: Literal["todo", "in_progress", "abandoned"],
     ) -> ToolResponse:
         """Update the state of a subtask by given index and state. Note if you
         want to mark a subtask as done, you SHOULD call `finish_subtask`
@@ -417,6 +443,23 @@ class PlanNotebook(StateModule):
                 specific outcome.
         """
         self._validate_current_plan()
+
+        if isinstance(subtask_idx, str):
+            try:
+                subtask_idx = int(subtask_idx)
+            except ValueError:
+                pass
+
+        if not isinstance(subtask_idx, int):
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Invalid type for argument 'subtask_idx'. "
+                        f"Expected 'int', but got '{type(subtask_idx)}'.",
+                    ),
+                ],
+            )
 
         if not 0 <= subtask_idx < len(self.current_plan.subtasks):
             return ToolResponse(
@@ -448,7 +491,7 @@ class PlanNotebook(StateModule):
                 # Check all previous subtasks are done or deprecated
                 if idx < subtask_idx and subtask.state not in [
                     "done",
-                    "deprecated",
+                    "abandoned",
                 ]:
                     return ToolResponse(
                         content=[
@@ -481,6 +524,10 @@ class PlanNotebook(StateModule):
                     )
 
         self.current_plan.subtasks[subtask_idx].state = state
+
+        # Update the plan state to in_progress if not already
+        suffix = self.current_plan.refresh_plan_state()
+
         await self._trigger_plan_change_hooks()
         return ToolResponse(
             content=[
@@ -488,7 +535,7 @@ class PlanNotebook(StateModule):
                     type="text",
                     text=f"Subtask at index {subtask_idx}, named "
                     f"'{self.current_plan.subtasks[subtask_idx].name}' "
-                    f"is marked as '{state}' successfully.",
+                    f"is marked as '{state}' successfully. " + suffix,
                 ),
             ],
         )
@@ -514,6 +561,23 @@ class PlanNotebook(StateModule):
         """
         self._validate_current_plan()
 
+        if isinstance(subtask_idx, str):
+            try:
+                subtask_idx = int(subtask_idx)
+            except ValueError:
+                pass
+
+        if not isinstance(subtask_idx, int):
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Invalid type for argument 'subtask_idx'. "
+                        f"Expected 'int', but got '{type(subtask_idx)}'.",
+                    ),
+                ],
+            )
+
         if not 0 <= subtask_idx < len(self.current_plan.subtasks):
             return ToolResponse(
                 content=[
@@ -529,7 +593,7 @@ class PlanNotebook(StateModule):
         for idx, subtask in enumerate(
             self.current_plan.subtasks[0:subtask_idx],
         ):
-            if subtask.state not in ["done", "deprecated"]:
+            if subtask.state not in ["done", "abandoned"]:
                 return ToolResponse(
                     content=[
                         TextBlock(
@@ -759,12 +823,15 @@ class PlanNotebook(StateModule):
                 the agent.
         """
         return [
+            # subtask related tools
             self.view_subtasks,
             self.update_subtask_state,
             self.finish_subtask,
+            # plan related tools
             self.create_plan,
             self.revise_current_plan,
             self.finish_plan,
+            # historical plan related tools
             self.view_historical_plans,
             self.recover_historical_plan,
         ]
@@ -793,7 +860,8 @@ class PlanNotebook(StateModule):
     def register_plan_change_hook(
         self,
         hook_name: str,
-        hook: Callable[["PlanNotebook", Plan], None],
+        hook: Callable[["PlanNotebook", Plan], None]
+        | Callable[["PlanNotebook", Plan], Awaitable[None]],
     ) -> None:
         """Register a plan hook that will be triggered when the plan is
         changed.
@@ -801,7 +869,8 @@ class PlanNotebook(StateModule):
         Args:
             hook_name (`str`):
                 The name of the hook, should be unique.
-            hook (`Callable[[Plan], None]`):
+            hook (`Callable[["PlanNotebook", Plan], None] | \
+            Callable[["PlanNotebook", Plan], Awaitable[None]]):
                 The hook function, which takes the current plan as input and
                 returns nothing.
         """

@@ -7,8 +7,10 @@ import numpy as np
 
 from prompt import EnglishPrompts as Prompts
 
-from agentscope.message import Msg
+from agentscope.message import Msg, AudioBlock
 from agentscope.agent import ReActAgent, AgentBase
+
+from agentscope.tts import TTSModelBase
 
 MAX_GAME_ROUND = 30
 MAX_DISCUSSION_ROUND = 3
@@ -46,18 +48,30 @@ def names_to_str(agents: list[str] | list[ReActAgent]) -> str:
 class EchoAgent(AgentBase):
     """Echo agent that repeats the input message."""
 
-    def __init__(self) -> None:
+    def __init__(self, tts_model: TTSModelBase | None = None) -> None:
+        """Initialize the echo agent."""
         super().__init__()
         self.name = "Moderator"
+        self.tts_model = tts_model
 
     async def reply(self, content: str) -> Msg:
         """Repeat the input content with its name and role."""
+
         msg = Msg(
             self.name,
             content,
             role="assistant",
         )
-        await self.print(msg)
+        speech: AudioBlock | list[AudioBlock] | None = None
+        if self.tts_model:
+            tts_res = await self.tts_model.synthesize(msg)
+            if self.tts_model.stream:
+                async for tts_chunk in tts_res:
+                    speech = tts_chunk.content
+                    await self.print(msg, False, speech=speech)
+            else:
+                speech = tts_res.content
+        await self.print(msg, True, speech=speech)
         return msg
 
     async def handle_interrupt(

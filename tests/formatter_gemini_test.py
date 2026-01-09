@@ -159,7 +159,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolUseBlock(
                         type="tool_use",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         input={"country": "South Korea"},
                     ),
@@ -171,7 +171,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output=[
                             TextBlock(
@@ -532,7 +532,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": "2",
                             "name": "get_capital",
                             "args": {
                                 "country": "South Korea",
@@ -546,7 +546,7 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_response": {
-                            "id": "1",
+                            "id": "2",
                             "name": "get_capital",
                             "response": {
                                 "output": "- The capital of South Korea is "
@@ -615,6 +615,151 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_chat[: -len(self.msgs_tools)],
         )
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_chat_formatter_with_extract_image_blocks(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the gemini chat formatter with
+        promote_tool_result_images=True."""
+        mock_save_base64_data.return_value = self.mock_audio_path
+
+        formatter = GeminiChatFormatter(promote_tool_result_images=True)
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
+        )
+
+        # Expected result: image blocks should be extracted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "You're a helpful assistant.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "What is the capital of France?",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBpbWFnZSBjb250ZW50",
+                            "mime_type": "image/png",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "The capital of France is Paris.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "What is the capital of Germany?",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBhdWRpbyBjb250ZW50",
+                            "mime_type": "audio/mp3",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "The capital of Germany is Berlin.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "What is the capital of Japan?",
+                    },
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "function_call": {
+                            "id": "1",
+                            "name": "get_capital",
+                            "args": {
+                                "country": "Japan",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "id": "1",
+                            "name": "get_capital",
+                            "response": {
+                                "output": "- The capital of Japan is Tokyo.\n"
+                                "- The returned image can be found"
+                                " at: ./image.png\n- The returned "
+                                "audio can be found at: "
+                                f"{self.mock_audio_path}",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "<system-info>The following are "
+                        "the image contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "text": "\n- The image from './image.png': ",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBpbWFnZSBjb250ZW50",
+                            "mime_type": "image/png",
+                        },
+                    },
+                    {
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "The capital of Japan is Tokyo.",
+                    },
+                ],
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
 
     @patch("agentscope.formatter._formatter_base._save_base64_data")
     async def test_multi_agent_formatter(
@@ -706,6 +851,138 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
             res,
             self.ground_truth_multiagent_without_first_conversation[1:],
         )
+
+    @patch("agentscope.formatter._formatter_base._save_base64_data")
+    async def test_multi_agent_formatter_with_promote_tool_result_images(
+        self,
+        mock_save_base64_data: MagicMock,
+    ) -> None:
+        """Test the gemini multi-agent formatter with
+        promote_tool_result_images=True."""
+        mock_save_base64_data.return_value = self.mock_audio_path
+
+        formatter = GeminiMultiAgentFormatter(
+            promote_tool_result_images=True,
+        )
+
+        # Test with tool result containing image blocks
+        res = await formatter.format(
+            [
+                *self.msgs_system,
+                *self.msgs_conversation,
+                *self.msgs_tools,
+            ],
+        )
+
+        # Expected result: image blocks should be promoted and inserted
+        # as a separate user message after the tool result message
+        expected_result = [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "You're a helpful assistant.",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "# Conversation History\nThe content between"
+                        " <history></history> tags contains your"
+                        " conversation history\n<history>user: What"
+                        " is the capital of France?",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBpbWFnZSBjb250ZW50",
+                            "mime_type": "image/png",
+                        },
+                    },
+                    {
+                        "text": "assistant: The capital of France is Paris."
+                        "\nuser: What is the capital of Germany?",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBhdWRpbyBjb250ZW50",
+                            "mime_type": "audio/mp3",
+                        },
+                    },
+                    {
+                        "text": "assistant: The capital of Germany is Berlin."
+                        "\nuser: What is the capital of Japan?"
+                        "\n</history>",
+                    },
+                ],
+            },
+            {
+                "role": "model",
+                "parts": [
+                    {
+                        "function_call": {
+                            "id": "1",
+                            "name": "get_capital",
+                            "args": {
+                                "country": "Japan",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "id": "1",
+                            "name": "get_capital",
+                            "response": {
+                                "output": "- The capital of Japan is Tokyo."
+                                "\n- The returned image can be found"
+                                " at: ./image.png\n- The returned"
+                                " audio can be found at: "
+                                f"{self.mock_audio_path}",
+                            },
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "<system-info>The following are "
+                        "the image contents from the tool "
+                        "result of 'get_capital':",
+                    },
+                    {
+                        "text": "\n- The image from './image.png': ",
+                    },
+                    {
+                        "inline_data": {
+                            "data": "ZmFrZSBpbWFnZSBjb250ZW50",
+                            "mime_type": "image/png",
+                        },
+                    },
+                    {
+                        "text": "</system-info>",
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "<history>assistant:"
+                        " The capital of Japan is Tokyo.\n</history>",
+                    },
+                ],
+            },
+        ]
+
+        self.assertListEqual(expected_result, res)
 
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""

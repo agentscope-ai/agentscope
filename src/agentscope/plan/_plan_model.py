@@ -33,13 +33,11 @@ class SubTask(BaseModel):
     )
     outcome: str | None = Field(
         description="The actual outcome of the subtask.",
-        exclude=True,
         default=None,
     )
     state: Literal["todo", "in_progress", "done", "abandoned"] = Field(
         description="The state of the subtask.",
         default="todo",
-        exclude=True,
     )
     created_at: str = Field(
         description="The time the subtask was created.",
@@ -49,7 +47,6 @@ class SubTask(BaseModel):
     finished_at: str | None = Field(
         description="The time the subtask was finished.",
         default=None,
-        exclude=True,
     )
 
     def finish(self, outcome: str) -> None:
@@ -107,7 +104,7 @@ class SubTask(BaseModel):
 class Plan(BaseModel):
     """The plan model used in the plan module, contains a list of subtasks."""
 
-    id: str = Field(exclude=True, default_factory=shortuuid.uuid)
+    id: str = Field(default_factory=shortuuid.uuid)
     name: str = Field(
         description=(
             "The plan name, should be concise, descriptive and not exceed 10 "
@@ -134,23 +131,40 @@ class Plan(BaseModel):
     created_at: str = Field(
         description="The time the plan was created.",
         default_factory=_get_timestamp,
-        exclude=True,
     )
     state: Literal["todo", "in_progress", "done", "abandoned"] = Field(
         description="The state of the plan.",
         default="todo",
-        exclude=True,
     )
     finished_at: str | None = Field(
         description="The time the plan was finished.",
         default=None,
-        exclude=True,
     )
     outcome: str | None = Field(
         description="The actual outcome of the plan.",
         default=None,
-        exclude=True,
     )
+
+    def refresh_plan_state(self) -> str:
+        """Refresh the plan state based on the states of its subtasks. This
+        function only switches the plan state between "todo" and "in_progress".
+
+        # TODO: Handle the plan state much more formally.
+        """
+        if self.state in ["done", "abandoned"]:
+            return ""
+
+        any_in_progress = any(_.state == "in_progress" for _ in self.subtasks)
+
+        if any_in_progress and self.state == "todo":
+            self.state = "in_progress"
+            return "The plan state has been updated to 'in_progress'."
+
+        elif not any_in_progress and self.state == "in_progress":
+            self.state = "todo"
+            return "The plan state has been updated to 'todo'."
+
+        return ""
 
     def finish(
         self,
