@@ -195,7 +195,7 @@ Now our examples are organized into subdirectories based on their type:
 - `examples/game/` for game-related examples
 - `examples/evaluation/` for evaluation scripts
 - `examples/workflows/` for workflow demonstrations
-- `examples/training/` for training-related examples
+- `examples/tuner/` for tuning-related examples
 
 An example structure could be:
 

@@ -1,0 +1,20 @@
+project: AgentScope
+name: Experiment
+checkpoint_root_dir: ./checkpoints
+algorithm:
+  algorithm_type: multi_step_grpo  # a GRPO-based algorithm for multi-step reasoning
+buffer:
+  total_epochs: 1  # run taskset for 1 epoch
+explorer:
+  runner_per_model: 16  # each model has 16 runners for parallel rollout
+  max_timeout: 3600  # max timeout for each rollout is 3600 seconds
+  max_repeat_times_per_runner: 1  # each runner repeats 1 time per sample
+synchronizer:
+  sync_style: dynamic_by_explorer
+  sync_method: 'nccl'
+  sync_interval: 1
+  sync_timeout: 7200  # wait for 2 hours
+trainer:
+  save_interval: 100  # save checkpoint every 100 steps
+monitor:
+  monitor_type: tensorboard  # here we use tensorboard, you can also use wandb, mlflow or swanlab

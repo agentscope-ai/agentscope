@@ -189,7 +189,7 @@ examples/
 - `examples/functionality/` 用于展示 AgentScope 的特定基础功能
 - `examples/evaluation/` 用于评估
 - `examples/workflows/` 用于工作流演示
-- `examples/training/` 用于训练相关示例
+- `examples/tuner/` 用于微调相关示例
 
 示例结构如下：
 

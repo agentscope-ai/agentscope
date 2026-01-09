@@ -9,6 +9,7 @@ from ._anthropic_model import AnthropicChatModel
 from ._ollama_model import OllamaChatModel
 from ._gemini_model import GeminiChatModel
 from ._trinity_model import TrinityChatModel
+from ._tuner_model import TunerChatModel
 
 __all__ = [
     "ChatModelBase",
@@ -19,4 +20,5 @@ __all__ = [
     "OllamaChatModel",
     "GeminiChatModel",
     "TrinityChatModel",
+    "TunerChatModel",
 ]
