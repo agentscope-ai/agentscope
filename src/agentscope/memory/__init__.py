@@ -4,6 +4,7 @@
 from ._in_memory_memory import InMemoryMemory
 from ._long_term_memory_base import LongTermMemoryBase
 from ._mem0_long_term_memory import Mem0LongTermMemory
+from ._powermem_long_term_memory import PowerMemLongTermMemory
 from ._memory_base import MemoryBase
 from ._reme import (
     ReMePersonalLongTermMemory,
@@ -16,6 +17,7 @@ __all__ = [
     "InMemoryMemory",
     "LongTermMemoryBase",
     "Mem0LongTermMemory",
+    "PowerMemLongTermMemory",
     "ReMePersonalLongTermMemory",
     "ReMeTaskLongTermMemory",
     "ReMeToolLongTermMemory",
