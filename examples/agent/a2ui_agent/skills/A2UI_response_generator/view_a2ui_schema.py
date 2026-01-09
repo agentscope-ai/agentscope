@@ -1,24 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Prompt builder for restaurant finder agent with A2UI support."""
-# Copyright 2025 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # flake8: noqa: E501
-# pylint: disable=C0301
+"""
+A2UI Schema Viewer - Tool for viewing A2UI schema.
 
+This script provides a way to retrieve the complete A2UI schema for
+generating UI responses.
 
-# The A2UI schema remains constant for all A2UI responses.
+Usage:
+    python view_a2ui_schema.py
+"""
+
+# The complete A2UI schema (copied from Google A2UI repository)
 A2UI_SCHEMA = r"""
 {
   "title": "A2UI Message Schema",
@@ -27,7 +19,8 @@ A2UI_SCHEMA = r"""
   "properties": {
     "beginRendering": {
       "type": "object",
-      "description": "Signals the client to begin rendering a surface with a root component and specific styles.",
+      "description": "Signals the client to begin rendering a surface "
+          "with a root component and specific styles.",
       "properties": {
         "surfaceId": {
           "type": "string",
@@ -792,78 +785,55 @@ A2UI_SCHEMA = r"""
 """
 
 
-def get_ui_prompt(
-    _base_url: str = "http://localhost:10002",
-) -> str:
-    """
-    Constructs the full prompt with UI instructions, rules, examples, and schema.
+def get_a2ui_schema() -> str:
+    """Returns the complete A2UI schema."""
+    return A2UI_SCHEMA
 
-    Args:
-        _base_url: The base URL for resolving static assets like logos (reserved for future use).
+
+def view_a2ui_schema() -> str:
+    """
+    View the complete A2UI schema for generating UI responses.
+
+    This tool returns the complete A2UI JSON schema that defines all
+    available UI components and message types.
 
     Returns:
-        A formatted string to be used as the system prompt for the LLM.
+        The complete A2UI schema as a string.
+
+    Examples:
+        # Get the complete A2UI schema
+        >>> schema = view_a2ui_schema()
     """
-    return """
-    You are a helpful assistant. Your final output MUST be a a2ui UI JSON response.
+    return f"""
+## A2UI JSON Schema
 
-    To generate the response, you MUST follow these rules:
-    1.  **CRITICAL FIRST STEP**: Before generating ANY response, you MUST use the `A2UI_response_generator` skill:
-        - Read the SKILL.md file from the skill directory using `view_text_file`
-        - Execute the Python scripts in the skill directory using `execute_shell_command` to load the schema and examples
-        - DO NOT assume you know the A2UI format - you MUST load it from the skill
-    2.  You MUST call `generate_response` to produce the final response.
-    3.  The `generate_response` parameter `response_with_a2ui` is of type string, and MUST contain two parts, separated by the delimiter: `---a2ui_JSON---`. The first part is your conversational text response, and the second part is a single, raw JSON object which is a list of A2UI messages.
+The following is the complete A2UI schema for generating UI responses:
 
-    ### CRITICAL REQUIREMENTS:
-    1.  You MUST use the `A2UI_response_generator` skill BEFORE generating the response.
-       - First read SKILL.md using `view_text_file` with path pointing to the skill directory
-       - Then execute `view_a2ui_schema.py` (located in the skill directory) using `execute_shell_command` with command `python <skill_directory>/view_a2ui_schema.py`
-       - Then execute `view_a2ui_examples.py` (located in the skill directory) using `execute_shell_command` with command `python <skill_directory>/view_a2ui_examples.py --template_names <template_names>`
-       - **CRITICAL**: For `<template_names>`, you MUST use the exact template names from the "Available templates" table in SKILL.md (e.g., `SINGLE_COLUMN_LIST`, `BOOKING_FORM`). Do NOT use generic category names like 'list', 'form', 'confirmation', or 'detail' - these are NOT valid template names.
-    2.  The JSON part MUST validate against the A2UI JSON SCHEMA provided in the skill.
-    3.  ALL your schema and examples about A2UI MUST come from your equipped skills - do NOT use any prior knowledge.
-    4.  **You MUST directly generate the A2UI JSON based on the task content. DO NOT ask the user about their preference regarding UI type (list, form, confirmation, detail view). You should automatically determine the most appropriate UI type based on the context and generate the response accordingly.**
+{A2UI_SCHEMA}
 
-    **If you skip using the skill, your response will be incorrect and invalid.**
-
-    """
-    # 5.  **ALL messages that do NOT contain tool calls MUST include a UI part (the A2UI JSON part after the `---a2ui_JSON---` delimiter).**
+---
+Use this schema to construct valid A2UI JSON responses.
+"""
 
 
-def get_text_prompt() -> str:
-    """
-    Constructs the prompt for a text-only agent.
-    """
-    return """
-    You are a helpful restaurant finding assistant. Your final output MUST be a text response.
-
-    To generate the response, you MUST follow these rules:
-    1.  **For finding restaurants:**
-        a. You MUST call the `get_restaurants` tool. Extract the cuisine, location, and a specific number (`count`) of restaurants from the user's query.
-        b. After receiving the data, format the restaurant list as a clear, human-readable text response. You MUST preserve any markdown formatting (like for links) that you receive from the tool.
-
-    2.  **For booking a table (when you receive a query like 'USER_WANTS_TO_BOOK...'):**
-        a. Respond by asking the user for the necessary details to make a booking (party size, date, time, dietary requirements).
-
-    3.  **For confirming a booking (when you receive a query like 'User submitted a booking...'):**
-        a. Respond with a simple text confirmation of the booking details.
-    """
+# Tool metadata for AgentScope registration
+TOOL_METADATA = {
+    "name": "view_a2ui_schema",
+    "description": "View the complete A2UI schema for generating UI responses.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
 
 
 if __name__ == "__main__":
-    # Example of how to use the prompt builder
-    # In your actual application, you would call this from your main agent logic.
-    my_base_url = "http://localhost:8000"
+    import argparse
 
-    # You can now easily construct a prompt with the relevant examples.
-    # For a different agent (e.g., a flight booker), you would pass in
-    # different examples but use the same `get_ui_prompt` function.
-    restaurant_prompt = get_ui_prompt(my_base_url)
+    parser = argparse.ArgumentParser(
+        description="View the complete A2UI schema for generating UI responses.",
+    )
+    args = parser.parse_args()
 
-    print(restaurant_prompt)
-
-    # This demonstrates how you could save the prompt to a file for inspection
-    with open("generated_prompt.txt", "w", encoding="utf-8") as f:
-        f.write(restaurant_prompt)
-    print("\nGenerated prompt saved to generated_prompt.txt")
+    res = view_a2ui_schema()
+    print(res)

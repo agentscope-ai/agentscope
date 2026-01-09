@@ -2,6 +2,8 @@
 """Utility functions for A2UI agent integration."""
 import json
 from typing import Any
+from pydantic import BaseModel
+from pydantic import Field
 
 from a2a.types import (
     DataPart,
@@ -9,32 +11,87 @@ from a2a.types import (
     Message,
     Part,
 )
-from a2ui.a2ui_extension import A2UI_MIME_TYPE, MIME_TYPE_KEY
+from a2ui.a2ui_extension import (
+    A2UI_MIME_TYPE,
+    MIME_TYPE_KEY,
+    A2UI_EXTENSION_URI,
+)
 
 from agentscope._logging import logger
 
 
-def check_a2ui_extension(request: Any = None) -> bool:
-    """Check if a2ui extension is requested in the request.
+class A2UIResponse(BaseModel):
+    """Response model for A2UI formatted output."""
+
+    response_with_a2ui: str = Field(
+        description="The response with A2UI JSON",
+    )
+
+
+A2UI_SKILL_INSTRUCTION = """<system-info>
+You are equipped with the A2UI_response_generator skill for generating rich,
+interactive UI responses.
+
+**CRITICAL: Before generating any A2UI response, you MUST:**
+1. First, read the SKILL.md file from the skill directory using
+   `view_text_file` to understand the skill
+2. Then, execute `view_a2ui_schema.py` using `execute_python_code` to load
+   the A2UI schema
+3. Then, execute `view_a2ui_examples.py` using `execute_python_code` to load
+   relevant UI templates based on your task type (list, form, confirmation,
+   detail view)
+4. Only after loading the schema and examples, generate your response
+   following the format rules
+
+**You MUST NOT skip these steps. All A2UI knowledge MUST come from the
+skill files.**
+For detailed instructions, refer to the SKILL.md file in the skill
+directory.
+</system-info>
+"""
+A2UI_SKILL_TEMPLATE_MINIMAL = "- {name}({dir}): {description}"
+
+
+def check_a2ui_extension(*args: Any) -> bool:
+    """Check if a2ui extension is requested in the request context.
 
     Args:
-        request: The agent request object.
+        *args: Variable arguments that may contain ServerCallContext as the
+            first element.
 
     Returns:
-        True if a2ui extension is requested, False otherwise.
+        True if a2ui extension is requested and activated, False otherwise.
     """
-    logger.info(request)
-    return True
-    # if not A2UI_AVAILABLE:
-    #     return False
+    # Extract context from args (ServerCallContext is typically the first
+    # element)
+    if not args or len(args) == 0:
+        logger.warning("check_a2ui_extension: No context provided in args")
+        return False
 
-    # # Check if request has extensions attribute
-    # if hasattr(request, "extensions") and request.extensions:
-    #     return A2UI_EXTENSION_URI in request.extensions
+    context = args[0]
 
-    # # Check kwargs for extensions
-    # # This is a fallback approach
-    # return False
+    # Check if context has requested_extensions attribute
+    if not hasattr(context, "requested_extensions"):
+        logger.warning(
+            "check_a2ui_extension: Context does not have "
+            "requested_extensions attribute",
+        )
+        return False
+
+    # Check if A2UI extension is requested
+    if A2UI_EXTENSION_URI in context.requested_extensions:
+        # Activate the extension if add_activated_extension method exists
+        if hasattr(context, "add_activated_extension"):
+            context.add_activated_extension(A2UI_EXTENSION_URI)
+            logger.info(f"A2UI extension activated: {A2UI_EXTENSION_URI}")
+        else:
+            logger.warning(
+                "check_a2ui_extension: Context does not have "
+                "add_activated_extension method",
+            )
+        return True
+
+    return False
 
 
 def transfer_ui_event_to_query(ui_event_part: dict) -> str:
@@ -50,7 +107,7 @@ def transfer_ui_event_to_query(ui_event_part: dict) -> str:
     action = ui_event_part.get("actionName")
     ctx = ui_event_part.get("context", {})
 
-    if action == "book_restaurant":
+    if action in ["book_restaurant", "select_item"]:
         restaurant_name = ctx.get("restaurantName", "Unknown Restaurant")
         address = ctx.get("address", "Address not provided")
         image_url = ctx.get("imageUrl", "")
@@ -163,7 +220,6 @@ def extract_ui_json_from_text(content_str: str) -> tuple[str, None]:
             # Find the end of JSON array/object by matching brackets/braces
             json_end = _find_json_end(json_string_cleaned)
             json_string_final = json_string_cleaned[:json_end].strip()
-            # logger.info(f"final json string: {json_string_final}")
             json_data = json.loads(json_string_final)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse UI JSON: {e}")
@@ -172,7 +228,53 @@ def extract_ui_json_from_text(content_str: str) -> tuple[str, None]:
     return text_content, json_data
 
 
-def post_process_a2a_message_for_ui(message: Message) -> Message:
+def check_a2ui_json_in_message(
+    part: Part,
+    is_final: bool,
+) -> tuple[bool, str | None]:
+    """Check if the message contains A2UI JSON.
+
+    Args:
+        message: The message to check.
+
+    Returns:
+        A tuple containing a boolean indicating if A2UI JSON is found and
+        the A2UI JSON string if found.
+    """
+    # for the case when ReActAgent max iters is reached, the message will be
+    # the last complete message, with text message.
+    if (
+        isinstance(part.root, TextPart)
+        and "---a2ui_JSON---" in part.root.text
+        and is_final
+    ):
+        logger.info(
+            f"--- Found A2UI JSON in the message: {part.root.text} ---",
+        )
+        return True, part.root.text
+
+    # for the case when ReActAgent max iters is not reached, if it contains
+    # tool use block with name "generate_response" and type "tool_use", and
+    # the response_with_a2ui contains "---a2ui_JSON---", then return True,
+    # response_with_a2ui.
+    if (
+        isinstance(part.root, DataPart)
+        and part.root.data.get("name") == "generate_response"
+        and part.root.data.get("type") == "tool_use"
+        and not is_final
+    ):
+        input_data = part.root.data.get("input")
+        if input_data and isinstance(input_data, dict):
+            response_with_a2ui = input_data.get("response_with_a2ui")
+            if response_with_a2ui and "---a2ui_JSON---" in response_with_a2ui:
+                return True, response_with_a2ui
+    return False, None
+
+
+def post_process_a2a_message_for_ui(
+    message: Message,
+    is_final: bool,
+) -> Message:
     """Post-process the transferred A2A message.
 
     Args:
@@ -183,41 +285,54 @@ def post_process_a2a_message_for_ui(message: Message) -> Message:
     """
     new_parts = []
     for part in message.parts:
-        if (
-            isinstance(part.root, TextPart)
-            and "---a2ui_JSON---" in part.root.text
-        ):
+        has_a2ui_json, a2ui_json_string = check_a2ui_json_in_message(
+            part,
+            is_final=is_final,
+        )
+        logger.info(
+            f"message: {message} --- has_a2ui_json: " f"{has_a2ui_json} ---",
+        )
+        if has_a2ui_json and a2ui_json_string is not None:
             text_content, json_data = extract_ui_json_from_text(
-                part.root.text,
+                a2ui_json_string,
             )
             if json_data:
                 # Replace the part with a TextPart and multiple DataParts
                 # with the same metadata for a2ui
-                logger.info(
-                    "found a2ui JSON in the message, with length: %s",
-                    len(json_data),
-                )
-                new_parts.append(
-                    Part(
-                        root=TextPart(
-                            text=text_content,
-                        ),
-                    ),
-                )
-                for item in json_data:
+                try:
                     new_parts.append(
                         Part(
-                            root=DataPart(
-                                data=item,
-                                metadata={MIME_TYPE_KEY: A2UI_MIME_TYPE},
+                            root=TextPart(
+                                text=text_content,
                             ),
                         ),
                     )
-            else:
-                # Keep the original part if json_data is None
-                new_parts.append(part)
+
+                    for item in json_data:
+                        new_parts.append(
+                            Part(
+                                root=DataPart(
+                                    data=item,
+                                    metadata={MIME_TYPE_KEY: A2UI_MIME_TYPE},
+                                ),
+                            ),
+                        )
+
+                except Exception as e:
+                    logger.error(
+                        "Error processing a2ui JSON parts: %s",
+                        e,
+                        exc_info=True,
+                    )
+                    raise
         else:
             # Keep the original part if it doesn't contain the marker
+            if isinstance(part.root, DataPart):
+                if (
+                    part.root.data.get("name") == "generate_response"
+                    and part.root.data.get("type") == "tool_result"
+                ):
+                    continue
             new_parts.append(part)
 
     message.parts = new_parts

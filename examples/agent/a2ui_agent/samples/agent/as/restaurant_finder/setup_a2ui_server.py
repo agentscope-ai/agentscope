@@ -2,6 +2,7 @@
 """Set up an A2A server with a ReAct agent to handle the input query"""
 import os
 import uuid
+import copy
 from typing import AsyncGenerator, Any
 
 from a2a.server.apps import A2AStarletteApplication
@@ -10,6 +11,7 @@ from a2a.types import (
     Task,
     TaskStatus,
     TaskState,
+    Message,
     MessageSendParams,
     TaskStatusUpdateEvent,
 )
@@ -22,6 +24,9 @@ from a2ui_utils import (
     check_a2ui_extension,
     pre_process_request_with_ui_event,
     post_process_a2a_message_for_ui,
+    A2UI_SKILL_INSTRUCTION,
+    A2UI_SKILL_TEMPLATE_MINIMAL,
+    A2UIResponse,
 )
 from agentscope._logging import logger
 from agentscope.agent import ReActAgent
@@ -29,12 +34,76 @@ from agentscope.formatter import DashScopeChatFormatter, A2AChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.pipeline import stream_printing_messages
 from agentscope.session import JSONSession
-from agentscope.tool import Toolkit, view_text_file
+from agentscope.tool import (
+    Toolkit,
+    view_text_file,
+    execute_python_code,
+    execute_shell_command,
+)
+from agentscope.message import Msg
+
+
+def get_final_structured_output(message: Msg) -> None | str:
+    """Get the final structured output from the message."""
+    if isinstance(message.content, list):
+        for block in message.content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("name") == "generate_response"
+            ):
+                input_data = block.get("input")
+                if input_data is not None and isinstance(input_data, dict):
+                    return input_data.get("response_with_a2ui")
+    return None
 
 
 class SimpleStreamHandler:
     """A simple request handler that handles the input query by an
     ReAct agent."""
+
+    async def _prepare_final_message(
+        self,
+        formatter: A2AChatFormatter,
+        final_msg_text: str | None,
+        last_complete_msg: Msg | None,
+    ) -> Message:
+        """Prepare the final message for response.
+
+        Args:
+            formatter: The A2AChatFormatter instance.
+            final_msg_text: The structured output text if available.
+            last_complete_msg: The last complete message if available.
+
+        Returns:
+            The prepared final message.
+        """
+        logger.info(
+            f"--- Processing final response, final_msg_text: "
+            f"{final_msg_text is not None} ---",
+        )
+
+        if final_msg_text is not None:
+            logger.info("--- Using structured output for final message ---")
+            final_a2a_message = await formatter.format(
+                [Msg(name="Friday", content=final_msg_text, role="assistant")],
+            )
+        else:
+            logger.info(
+                "--- Using last complete message for final message ---",
+            )
+            final_a2a_message = await formatter.format(
+                [copy.deepcopy(last_complete_msg)],
+            )
+
+        logger.info(
+            f"--- Post-processing message for UI: {final_a2a_message} ---",
+        )
+        final_a2a_message = post_process_a2a_message_for_ui(
+            final_a2a_message,
+            is_final=True,
+        )
+        return final_a2a_message
 
     async def on_message_send(
         self,  # pylint: disable=unused-argument
@@ -52,6 +121,9 @@ class SimpleStreamHandler:
         Returns:
             The final Task object.
         """
+        logger.info(f"--- params: {params} ---")
+        logger.info(f"args: {args} ---")
+        logger.info(f"kwargs: {kwargs} ---")
         # Collect all events from the stream
         final_event = None
         task_id = params.message.task_id or uuid.uuid4().hex
@@ -107,26 +179,42 @@ class SimpleStreamHandler:
                 An asynchronous generator that yields task status update
                 events.
         """
+
         task_id = params.message.task_id or uuid.uuid4().hex
         context_id = params.message.context_id or "default-context"
         # ============ Agent Logic ============
 
         # Register the tool functions
-        toolkit = Toolkit()
-        # toolkit.register_tool_function(execute_python_code)
-        # toolkit.register_tool_function(execute_shell_command)
+        toolkit = Toolkit(
+            agent_skill_instruction=A2UI_SKILL_INSTRUCTION,
+            agent_skill_template=A2UI_SKILL_TEMPLATE_MINIMAL,
+        )
+        toolkit.register_tool_function(execute_python_code)
+        toolkit.register_tool_function(execute_shell_command)
         toolkit.register_tool_function(view_text_file)
         toolkit.register_tool_function(get_restaurants)
         toolkit.register_tool_function(book_restaurants)
-
-        use_ui = check_a2ui_extension()
+        # Get the skill path relative to this file
+        # From restaurant_finder/ to a2ui_agent/skills/A2UI_response_generator
+        skill_path = os.path.abspath(
+            os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "..",
+                "..",
+                "..",
+                "skills",
+                "A2UI_response_generator",
+            ),
+        )
+        toolkit.register_agent_skill(skill_path)
+        logger.info(f"Agent skill prompt: {toolkit.get_agent_skill_prompt()}")
+        use_ui = check_a2ui_extension(*args)
 
         if use_ui:
             system_prompt = get_ui_prompt()
-            logger.info("--- Using UI prompt ---")
         else:
             system_prompt = get_text_prompt()
-            logger.info("--- Using text-only prompt ---")
 
         # Create the agent instance
         agent = ReActAgent(
@@ -134,12 +222,13 @@ class SimpleStreamHandler:
             sys_prompt=system_prompt,
             model=DashScopeChatModel(
                 model_name="qwen-max",
-                # model_name = "gemini-3-flash-preview",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
             ),
             formatter=DashScopeChatFormatter(),
             toolkit=toolkit,
+            max_iters=10,
         )
+        logger.info(f"Agent system prompt: {agent.sys_prompt}")
 
         session = JSONSession(save_dir="./sessions")
         session_id = params.message.task_id or "test-a2ui-agent"
@@ -148,14 +237,14 @@ class SimpleStreamHandler:
             agent=agent,
         )
 
-        # Convert the A2A message to AgentScope Msg objects
-        pre_processed_message = pre_process_request_with_ui_event(
-            params.message,
-        )
+        # pre-process the A2A message with UI event,
+        # and then convert to AgentScope Msg objects
         formatter = A2AChatFormatter()
         as_msg = await formatter.format_a2a_message(
             name="Friday",
-            message=pre_processed_message,
+            message=pre_process_request_with_ui_event(
+                params.message,
+            ),
         )
 
         yield TaskStatusUpdateEvent(
@@ -165,43 +254,63 @@ class SimpleStreamHandler:
             final=False,
         )
 
-        async for msg, last in stream_printing_messages(
-            agents=[agent],
-            coroutine_task=agent(as_msg),
-        ):
-            # The A2A streaming response is one complete Message object rather
-            # than accumulated or incremental text
-            if last:
-                a2a_message = await formatter.format([msg])
-                # post process the message to extract the a2ui JSON parts
-                # and add them to the message
-                a2a_message = post_process_a2a_message_for_ui(a2a_message)
+        # Collect all messages from the stream
+        # The 'last' flag indicates the last chunk of a streaming message,
+        # not the last message from the agent
+        final_msg_text = None
+        last_complete_msg = None  # Track the last complete message
+        message_count = 0
+        try:
+            async for msg, last in stream_printing_messages(
+                agents=[agent],
+                coroutine_task=agent(as_msg, structured_model=A2UIResponse),
+            ):
+                message_count += 1
+                if last:
+                    # Print message content preview (first 100 characters)
+                    log_text = f"----{msg}"
+                    logger.info(log_text[0 : min(len(log_text), 500)])
+                    # Track the last complete message
+                    # (only keep reference, no expensive ops)
+                    last_complete_msg = copy.deepcopy(msg)
+                    if isinstance(msg.content, list):
+                        structured_output = get_final_structured_output(msg)
+                        if structured_output:
+                            final_msg_text = structured_output
+                            break
+        except Exception as e:
+            logger.error(
+                f"--- Error in message stream: {e} ---",
+                exc_info=True,
+            )
+            raise
+        finally:
+            logger.info(
+                f"--- Message stream collection completed. "
+                f"Total messages: {message_count}, "
+                f"Last message: {last_complete_msg} ---",
+            )
 
-                yield TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=context_id,
-                    status=TaskStatus(
-                        state=TaskState.working,
-                        message=a2a_message,
-                    ),
-                    final=False,
-                )
-
-            # Save session state before yielding final event
-            # This ensures the state is saved even if the caller stops
-            # iterating after final=True
+        # Save session state (move before final message processing
+        # to avoid blocking yield)
         await session.save_session_state(
             session_id=session_id,
             agent=agent,
         )
 
-        # Finish the task
+        final_a2a_message = await self._prepare_final_message(
+            formatter,
+            final_msg_text,
+            last_complete_msg,
+        )
+
+        logger.info("--- Yielding final TaskStatusUpdateEvent ---")
         yield TaskStatusUpdateEvent(
             task_id=task_id,
             context_id=context_id,
             status=TaskStatus(
                 state=TaskState.input_required,
-                message=a2a_message,
+                message=final_a2a_message,
             ),
             final=True,
         )
