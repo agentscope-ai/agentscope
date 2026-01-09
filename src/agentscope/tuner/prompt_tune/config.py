@@ -25,3 +25,8 @@ class PromptTuneConfig(BaseModel):
         default=16,
         description="Number of threads for evaluation",
     )
+
+    compare_performance: bool = Field(
+        default=True,
+        description="Whether to compare performance before and after tuning",
+    )
