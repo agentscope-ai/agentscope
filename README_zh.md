@@ -54,6 +54,7 @@
 </p>
 
 ## 📢 新闻
+- **[2025-12]** AgentScope 已支持 [A2A(Agent-to-Agent) 通信协议](https://doc.agentscope.io/tutorial/task_a2a.html)！查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_a2a.html) 了解更多详情。
 - **[2025-12]** AgentScope 已支持 [TTS(Text-to-Speech) 模型](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) ！欢迎查看 [样例]() 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) 了解更多详情。
 - **[2025-11]** AgentScope 已支持 [Anthropic Agent Skill](https://claude.com/blog/skills) ！欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_agent_skill.html) 了解更多详情。
 - **[2025-11]** AgentScope 开源 [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) 用于处理多样化的真实任务，以及 [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) 用于自然语言驱动的数据处理。
@@ -88,39 +89,40 @@
 
 AgentScope v1.0 新功能概览:
 
-| 模块         | 功能                                     | 文档                                                                            |
-|------------|----------------------------------------|-------------------------------------------------------------------------------|
-| model      | 支持异步调用                                 | [Model](https://doc.agentscope.io/zh_CN/tutorial/task_model.html)             |
-|            | 支持推理模型                                 |                                                                               |
-|            | 支持流式/非流式返回                             |                                                                               |
-|            | 支持工具API                                |                                                                               |
-| tool       | 支持异步/同步工具函数                            | [Tool](https://doc.agentscope.io/zh_CN/tutorial/task_tool.html)               |
-|            | 支持工具函数流式/非流式返回                         |                                                                               |
-|            | 支持用户打断                                 |                                                                               |
-|            | 支持工具函数的后处理                             |                                                                               |
-|            | 支持分组工具管理                               |                                                                               |
-|            | 支持智能体通过 Meta Tool 自主管理工具               |                                                                               |
-| MCP        | 支持 Streamable HTTP/SSE/StdIO 传输        | [MCP](https://doc.agentscope.io/zh_CN/tutorial/task_mcp.html)                 |
-|            | 支持**有状态**和**无状态**两种模式的MCP客户端           |                                                                               |
-|            | 支持客户端和函数级别的精细控制                        |                                                                               |
-| agent      | 支持异步执行                                 |                                                                               |
-|            | 支持并行工具调用                               |                                                                               |
-|            | 支持用户实时介入和自定义的中断处理                      |                                                                               |
-|            | 支持自动状态管理                               |                                                                               |
-|            | 允许智能体自主控制长期记忆                          |                                                                               |
-|            | 支持智能体钩子函数                              |                                                                               |
-| tracing    | 支持基于 OpenTelemetry 的 LLM、工具、智能体和格式化器追踪 | [Tracing](https://doc.agentscope.io/zh_CN/tutorial/task_tracing.html)         |
-|            | 支持连接到第三方追踪平台（如阿里云云监控、Arize-Phoenix、Langfuse）  |                                                                               |
-| memory     | 支持长期记忆                                 | [Memory](https://doc.agentscope.io/zh_CN/tutorial/task_long_term_memory.html) |
-| session    | 提供会话/应用级状态管理                           | [Session](https://doc.agentscope.io/zh_CN/tutorial/task_state.html)           |
-| evaluation | 提供分布式和并行评估                             | [Evaluation](https://doc.agentscope.io/zh_CN/tutorial/task_eval.html)         |
-| formatter  | 支持多Agent提示格式化与工具API                    | [Prompt Formatter](https://doc.agentscope.io/zh_CN/tutorial/task_prompt.html) |
-|            | 支持基于截断的格式化策略                           |                                                                               |
-| plan       | 支持任务分解和计划制定                            | [Plan](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)               |
-|            | 支持开发者手动设定计划                            |                                                                               |
-| RAG        | 支持 agentic RAG                         | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                       |
-|            | 支持多模态 RAG                              |                                                                               |
-| ...        |                                        |                                                                               |
+| 模块         | 功能                                           | 文档                                                                            |
+|------------|----------------------------------------------|-------------------------------------------------------------------------------|
+| model      | 支持异步调用                                       | [Model](https://doc.agentscope.io/zh_CN/tutorial/task_model.html)             |
+|            | 支持推理模型                                       |                                                                               |
+|            | 支持流式/非流式返回                                   |                                                                               |
+|            | 支持工具API                                      |                                                                               |
+| tool       | 支持异步/同步工具函数                                  | [Tool](https://doc.agentscope.io/zh_CN/tutorial/task_tool.html)               |
+|            | 支持工具函数流式/非流式返回                               |                                                                               |
+|            | 支持用户打断                                       |                                                                               |
+|            | 支持工具函数的后处理                                   |                                                                               |
+|            | 支持分组工具管理                                     |                                                                               |
+|            | 支持智能体通过 Meta Tool 自主管理工具                     |                                                                               |
+| MCP        | 支持 Streamable HTTP/SSE/StdIO 传输              | [MCP](https://doc.agentscope.io/zh_CN/tutorial/task_mcp.html)                 |
+|            | 支持**有状态**和**无状态**两种模式的MCP客户端                 |                                                                               |
+|            | 支持客户端和函数级别的精细控制                              |                                                                               |
+| agent      | 支持异步执行                                       |                                                                               |
+|            | 支持并行工具调用                                     |                                                                               |
+|            | 支持用户实时介入和自定义的中断处理                            |                                                                               |
+|            | 支持自动状态管理                                     |                                                                               |
+|            | 允许智能体自主控制长期记忆                                |                                                                               |
+|            | 支持智能体钩子函数                                    |                                                                               |
+| tracing    | 支持基于 OpenTelemetry 的 LLM、工具、智能体和格式化器追踪       | [Tracing](https://doc.agentscope.io/zh_CN/tutorial/task_tracing.html)         |
+|            | 支持连接到第三方追踪平台（如阿里云云监控、Arize-Phoenix、Langfuse） |                                                                               |
+| memory     | 支持长期记忆                                       | [Memory](https://doc.agentscope.io/zh_CN/tutorial/task_long_term_memory.html) |
+| session    | 提供会话/应用级状态管理                                 | [Session](https://doc.agentscope.io/zh_CN/tutorial/task_state.html)           |
+| evaluation | 提供分布式和并行评估                                   | [Evaluation](https://doc.agentscope.io/zh_CN/tutorial/task_eval.html)         |
+| formatter  | 支持多Agent提示格式化与工具API                          | [Prompt Formatter](https://doc.agentscope.io/zh_CN/tutorial/task_prompt.html) |
+|            | 支持基于截断的格式化策略                                 |                                                                               |
+| plan       | 支持任务分解和计划制定                                  | [Plan](https://doc.agentscope.io/zh_CN/tutorial/task_plan.html)               |
+|            | 支持开发者手动设定计划                                  |                                                                               |
+| RAG        | 支持 agentic RAG                               | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                       |
+|            | 支持多模态 RAG                                    |                                                                               |
+| A2A        | 支持 A2A 智能体                                   | [A2A](https://doc.agentscope.io/tutorial/task_a2a.html)                       |
+| ...        |                                                                                    |                                                                         |
 
 ## 💬 联系我们
 
@@ -399,6 +401,7 @@ as_studio
     - [Deep Research 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/deep_research_agent)
     - [Browser-use 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/browser_agent)
     - [Meta Planner 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/meta_planner_agent)
+    - [A2A 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent)
   - 游戏
     - [九人制狼人杀](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - 工作流

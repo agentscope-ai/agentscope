@@ -54,7 +54,8 @@
 </p>
 
 ## 📢 News
-- **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example]() and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
+- **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
+- **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
 - **[2025-11]** AgentScope supports [Anthropic Agent Skill](https://claude.com/blog/skills) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) and [tutorial](https://doc.agentscope.io/tutorial/task_agent_skill.html) for more details.
 - **[2025-11]** AgentScope open-sources [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
 - **[2025-11]** AgentScope supports [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) via integrating [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) library.
@@ -88,38 +89,39 @@ Easy for beginners, powerful for experts.
 
 Quick overview of important features in **AgentScope 1.0**:
 
-| Module     | Feature                                                                            | Tutorial                                                                |
-|------------|------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
-| model      | Support async invocation                                                           | [Model](https://doc.agentscope.io/tutorial/task_model.html)             |
-|            | Support reasoning model                                                            |                                                                         |
-|            | Support streaming/non-streaming returns                                            |                                                                         |
-| tool       | Support async/sync tool functions                                                  | [Tool](https://doc.agentscope.io/tutorial/task_tool.html)               |
-|            | Support streaming/non-streaming returns                                            |                                                                         |
-|            | Support user interruption                                                          |                                                                         |
-|            | Support post-processing                                                            |                                                                         |
-|            | Support group-wise tools management                                                |                                                                         |
-|            | Support agentic tools management by meta tool                                      |                                                                         |
-| MCP        | Support streamable HTTP/SSE/StdIO transport                                        | [MCP](https://doc.agentscope.io/tutorial/task_mcp.html)                 |
-|            | Support both **stateful** and **stateless** mode MCP Client                        |                                                                         |
-|            | Support client- & function-level fine-grained control                              |                                                                         |
-| agent      | Support async execution                                                            |                                                                         |
-|            | Support parallel tool calls                                                        |                                                                         |
-|            | Support realtime steering interruption and customized handling                     |                                                                         |
-|            | Support automatic state management                                                 |                                                                         |
-|            | Support agent-controlled long-term memory                                          |                                                                         |
-|            | Support agent hooks                                                                |                                                                         |
-| tracing    | Support OpenTelemetry-based tracing in LLM, tools, agent and formatter             | [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)         |
+| Module     | Feature                                                                                                        | Tutorial                                                                |
+|------------|----------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------|
+| model      | Support async invocation                                                                                       | [Model](https://doc.agentscope.io/tutorial/task_model.html)             |
+|            | Support reasoning model                                                                                        |                                                                         |
+|            | Support streaming/non-streaming returns                                                                        |                                                                         |
+| tool       | Support async/sync tool functions                                                                              | [Tool](https://doc.agentscope.io/tutorial/task_tool.html)               |
+|            | Support streaming/non-streaming returns                                                                        |                                                                         |
+|            | Support user interruption                                                                                      |                                                                         |
+|            | Support post-processing                                                                                        |                                                                         |
+|            | Support group-wise tools management                                                                            |                                                                         |
+|            | Support agentic tools management by meta tool                                                                  |                                                                         |
+| MCP        | Support streamable HTTP/SSE/StdIO transport                                                                    | [MCP](https://doc.agentscope.io/tutorial/task_mcp.html)                 |
+|            | Support both **stateful** and **stateless** mode MCP Client                                                    |                                                                         |
+|            | Support client- & function-level fine-grained control                                                          |                                                                         |
+| agent      | Support async execution                                                                                        |                                                                         |
+|            | Support parallel tool calls                                                                                    |                                                                         |
+|            | Support realtime steering interruption and customized handling                                                 |                                                                         |
+|            | Support automatic state management                                                                             |                                                                         |
+|            | Support agent-controlled long-term memory                                                                      |                                                                         |
+|            | Support agent hooks                                                                                            |                                                                         |
+| tracing    | Support OpenTelemetry-based tracing in LLM, tools, agent and formatter                                         | [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)         |
 |            | Support connecting to third-party tracing platforms (e.g. Alibaba Cloud CloudMonitor, Arize-Phoenix, Langfuse) |                                                                         |
-| memory     | Support long-term memory                                                           | [Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html) |
-| session    | Provide session/application-level automatic state management                       | [Session](https://doc.agentscope.io/tutorial/task_state.html)           |
-| evaluation | Provide distributed and parallel evaluation                                        | [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)         |
-| formatter  | Support multi-agent prompt formatting with tools API                               | [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html) |
-|            | Support truncation-based formatter strategy                                        |                                                                         |
-| plan       | Support ReAct-based long-term planning                                             | [Plan](https://doc.agentscope.io/tutorial/task_plan.html)               |
-|            | Support manual plan specification                                                  |                                                                         |
-| RAG        | Support agentic RAG                                                                | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                 |
-|            | Support multimodal RAG                                                             |                                                                         |
-| ...        |                                                                                    |                                                                         |
+| memory     | Support long-term memory                                                                                       | [Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html) |
+| session    | Provide session/application-level automatic state management                                                   | [Session](https://doc.agentscope.io/tutorial/task_state.html)           |
+| evaluation | Provide distributed and parallel evaluation                                                                    | [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)         |
+| formatter  | Support multi-agent prompt formatting with tools API                                                           | [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html) |
+|            | Support truncation-based formatter strategy                                                                    |                                                                         |
+| plan       | Support ReAct-based long-term planning                                                                         | [Plan](https://doc.agentscope.io/tutorial/task_plan.html)               |
+|            | Support manual plan specification                                                                              |                                                                         |
+| RAG        | Support agentic RAG                                                                                            | [RAG](https://doc.agentscope.io/tutorial/task_rag.html)                 |
+|            | Support multimodal RAG                                                                                         |                                                                         |
+| A2A        | Support A2A agent                                                                                              | [A2A](https://doc.agentscope.io/tutorial/task_a2a.html)                       |
+| ...        |                                                                                                                |                                                                         |
 
 
 ## 💬 Contact
@@ -398,6 +400,7 @@ as_studio
     - [Deep Research Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/deep_research_agent)
     - [Browser-use Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/browser_agent)
     - [Meta Planner Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/meta_planner_agent)
+    - [A2A Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent)
   - Game
     - [Nine-player Werewolves](https://github.com/agentscope-ai/agentscope/tree/main/examples/game/werewolves)
   - Workflow

@@ -32,8 +32,20 @@ from agentscope.pipeline import (
     fanout_pipeline,
 )
 
+# from agentscope.tts import DashScopeTTSModel
+# import os
+# import random
 
-moderator = EchoAgent()
+moderator = EchoAgent(
+    # If you want to use TTS, uncomment the following lines and the
+    # TTS-related import statement at the beginning of this file.
+    # tts_model=DashScopeTTSModel(
+    #     api_key=os.environ.get("DASHSCOPE_API_KEY"),
+    #     model_name="qwen3-tts-flash",
+    #     voice=random.choice(["Cherry", "Serena", "Ethan", "Chelsie"]),
+    #     stream=True,
+    # ),
+)
 
 
 async def hunter_stage(
@@ -261,7 +273,9 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
             # Check winning
             res = players.check_winning()
             if res:
-                await moderator(res)
+                async with MsgHub(players.all_players) as all_players_hub:
+                    res_msg = await moderator(res)
+                    await all_players_hub.broadcast(res_msg)
                 break
 
             # Discussion
