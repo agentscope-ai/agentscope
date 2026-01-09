@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """Standalone form filling skill for the browser agent."""
 # flake8: noqa: E501
-# pylint: disable=W0212
-# pylint: disable=too-many-lines
-# pylint: disable=C0301
-from __future__ import annotations
+# pylint: disable=W0212,W0107,too-many-lines,C0301
 
+from __future__ import annotations
+import os
 import copy
 from typing import Any
-import os
+from pydantic import BaseModel
 
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg, TextBlock
@@ -28,6 +27,12 @@ with open(
     encoding="utf-8",
 ) as f:
     _FORM_FILL_AGENT_SYS_PROMPT = f.read()
+
+
+class EmptyModel(BaseModel):
+    """Empty structured model for default structured output requirement."""
+
+    pass
 
 
 class FormFillingAgent(ReActAgent):
@@ -176,12 +181,6 @@ async def form_filling(
     )
 
     try:
-        # Use EmptyModel to require structured output
-        from pydantic import BaseModel
-
-        class EmptyModel(BaseModel):
-            pass
-
         sub_agent_response_msg = await sub_agent.reply(
             init_msg,
             structured_model=EmptyModel,

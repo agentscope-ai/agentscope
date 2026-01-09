@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """Standalone file download skill for the browser agent."""
 # flake8: noqa: E501
-# pylint: disable=W0212
-# pylint: disable=too-many-lines
-# pylint: disable=C0301
-from __future__ import annotations
+# pylint: disable=W0212,W0107,too-many-lines,C0301
 
+from __future__ import annotations
+import os
 import copy
 from typing import Any
-import os
+from pydantic import BaseModel
+
 
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg, TextBlock
 from agentscope.tool import ToolResponse
 from agentscope.agent import ReActAgent
+
 
 _CURRENT_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir),
@@ -28,6 +29,12 @@ with open(
     encoding="utf-8",
 ) as f:
     _FILE_DOWNLOAD_AGENT_SYS_PROMPT = f.read()
+
+
+class EmptyModel(BaseModel):
+    """Empty structured model for default structured output requirement."""
+
+    pass
 
 
 class FileDownloadAgent(ReActAgent):
@@ -191,12 +198,6 @@ async def file_download(
     )
 
     try:
-        # Use EmptyModel to require structured output
-        from pydantic import BaseModel
-
-        class EmptyModel(BaseModel):
-            pass
-
         sub_agent_response_msg = await sub_agent.reply(
             init_msg,
             structured_model=EmptyModel,
