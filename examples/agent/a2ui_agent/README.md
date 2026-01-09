@@ -20,13 +20,19 @@ Specifically, we have:
    `A2UI_response_generator` skill, enabling it to understand component definitions and learn from
    example UI structures.
 
-3. **Standard catalog support**: The current implementation supports the standard A2UI catalog,
-   which includes common UI components like Text, Button, TextField, Row, Column, etc. This allows
-   agents to generate rich, interactive UIs using well-defined standard components.
+## Note on External Dependencies
 
-4. **Inline catalog (under development)**: Support for accepting inline catalogs from clients is
-   currently under development. This feature will enable agents to handle dynamically provided
-   custom component definitions at runtime.
+The following directories in this example contain content sourced from the [Google A2UI repository](https://github.com/google/A2UI):
+
+- **`specification/`**: A2UI protocol specification files
+- **`renderers/`**: A2UI renderer implementations (Lit and Angular)
+- **`samples/client/`**: A2UI client sample applications
+
+**NPM Package Status**: As of now, the A2UI client libraries (`@a2ui/lit` and `@a2ui/angular`) are **not yet published to NPM**. According to the [official A2UI client setup guide](https://a2ui.org/guides/client-setup/#renderers): "The Lit client library is not yet published to NPM. Check back in the coming days."
+
+Therefore, these dependencies are currently included in this example repository using local file paths (e.g., `"@a2ui/lit": "file:../../../../renderers/lit"` in `package.json` files). This mirrors the approach used in the [official A2UI repository](https://github.com/google/A2UI), where the renderers and samples also use local file paths to reference each other. Additionally, the `copy-spec` task in `renderers/lit/package.json` copies files from the local `specification/` directory during the build process.
+
+**Future Plans**: Once those libraries are published to NPM, we plan to gradually migrate to using the official NPM packages and remove these locally included directories.
 
 ## Quick Start
 
