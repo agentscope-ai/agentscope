@@ -1,1 +1,0 @@
-{"version":3,"file":"unsafe-mathml.d.ts","sourceRoot":"","sources":["../../src/directives/unsafe-mathml.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,EAAC,mBAAmB,EAAC,MAAM,kBAAkB,CAAC;AAIrD,cAAM,qBAAsB,SAAQ,mBAAmB;IACrD,OAAgB,aAAa,SAAgB;IAC7C,OAAgB,UAAU,SAAiB;CAC5C;AAED;;;;;;;;;GASG;AACH,eAAO,MAAM,YAAY,oMAAmC,CAAC;AAE7D;;;GAGG;AACH,YAAY,EAAC,qBAAqB,IAAI,mBAAmB,EAAC,CAAC"}
