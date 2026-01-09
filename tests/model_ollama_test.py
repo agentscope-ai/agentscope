@@ -281,7 +281,7 @@ class TestOllamaChatModel(IsolatedAsyncioTestCase):
             async for response in result:
                 responses.append(response)
 
-            self.assertGreaterEqual(len(responses), 1)
+            self.assertEqual(len(responses), 2)
             final_response = responses[-1]
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)

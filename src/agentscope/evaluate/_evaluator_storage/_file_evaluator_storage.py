@@ -22,8 +22,8 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
     - save_dir/
         - evaluation_result.json
         - evaluation_meta.json
-        - {task_id}/
-            - {repeat_id}/
+        - {repeat_id}/
+            - {task_id}/
                 - solution.json
                 - evaluation/
                     - {metric_name}.json

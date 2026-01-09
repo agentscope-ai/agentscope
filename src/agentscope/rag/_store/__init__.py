@@ -7,10 +7,12 @@ from ._store_base import (
 from ._qdrant_store import QdrantStore
 from ._milvuslite_store import MilvusLiteStore
 from ._oceanbase_store import OceanBaseStore
+from ._alibabacloud_mysql_store import AlibabaCloudMySQLStore
 
 __all__ = [
     "VDBStoreBase",
     "QdrantStore",
     "MilvusLiteStore",
     "OceanBaseStore",
+    "AlibabaCloudMySQLStore",
 ]

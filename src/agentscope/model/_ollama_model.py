@@ -261,7 +261,7 @@ class OllamaChatModel(ChatModelBase):
                     print(f"Error parsing tool call input: {e}")
 
             # Generate response when there's new content or at final chunk
-            if chunk.done and contents:
+            if chunk.done or contents:
                 res = ChatResponse(
                     content=contents,
                     usage=usage,

@@ -35,6 +35,7 @@ class SimpleStreamHandler:
     async def on_message_send_stream(
         self,  # pylint: disable=unused-argument
         params: MessageSendParams,
+        *args: Any,
         **kwargs: Any,
     ) -> AsyncGenerator[Event, None]:
         """Handles the message_send method by the agent

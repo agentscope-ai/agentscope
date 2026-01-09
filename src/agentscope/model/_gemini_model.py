@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # mypy: disable-error-code="dict-item"
 """The Google Gemini model in agentscope."""
+import copy
 import warnings
 from datetime import datetime
 from typing import (
@@ -28,6 +29,85 @@ if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
 else:
     GenerateContentResponse = "google.genai.types.GenerateContentResponse"
+
+
+def _flatten_json_schema(schema: dict) -> dict:
+    """Flatten a JSON schema by resolving all $ref references.
+
+    .. note::
+        Gemini API does not support `$defs` and `$ref` in JSON schemas.
+        This function resolves all `$ref` references by inlining the
+        referenced definitions, producing a self-contained schema without
+        any references.
+
+    Args:
+        schema (`dict`):
+            The JSON schema that may contain `$defs` and `$ref` references.
+
+    Returns:
+        `dict`:
+            A flattened JSON schema with all references resolved inline.
+    """
+    # Deep copy to avoid modifying the original schema
+    schema = copy.deepcopy(schema)
+
+    # Extract $defs if present
+    defs = schema.pop("$defs", {})
+
+    def _resolve_ref(obj: Any, visited: set | None = None) -> Any:
+        """Recursively resolve $ref references in the schema."""
+        if visited is None:
+            visited = set()
+
+        if not isinstance(obj, dict):
+            if isinstance(obj, list):
+                return [_resolve_ref(item, visited.copy()) for item in obj]
+            return obj
+
+        # Handle $ref
+        if "$ref" in obj:
+            ref_path = obj["$ref"]
+            # Extract definition name from "#/$defs/DefinitionName"
+            if ref_path.startswith("#/$defs/"):
+                def_name = ref_path[len("#/$defs/") :]
+
+                # Prevent infinite recursion for circular references
+                if def_name in visited:
+                    logger.warning(
+                        "Circular reference detected for '%s' in tool schema",
+                        def_name,
+                    )
+                    return {
+                        "type": "object",
+                        "description": f"(circular: {def_name})",
+                    }
+
+                visited.add(def_name)
+
+                if def_name in defs:
+                    # Recursively resolve any nested refs in the definition
+                    resolved = _resolve_ref(
+                        defs[def_name],
+                        visited.copy(),
+                    )
+                    # Merge any additional properties from the original object
+                    # (excluding $ref itself)
+                    for key, value in obj.items():
+                        if key != "$ref":
+                            resolved[key] = _resolve_ref(value, visited.copy())
+                    return resolved
+
+            # If we can't resolve the ref, return as-is (shouldn't happen)
+            return obj
+
+        # Recursively process all nested objects
+        result = {}
+        for key, value in obj.items():
+            result[key] = _resolve_ref(value, visited.copy())
+
+        return result
+
+    return _resolve_ref(schema)
 
 
 class GeminiChatModel(ChatModelBase):
@@ -310,11 +390,7 @@ class GeminiChatModel(ChatModelBase):
                     ),
                 )
 
-            content_block.extend(
-                [
-                    *tool_calls,
-                ],
-            )
+            content_block.extend(tool_calls)
 
             parsed_chunk = ChatResponse(
                 content=content_block,
@@ -335,8 +411,8 @@ class GeminiChatModel(ChatModelBase):
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (`ChatCompletion`):
-                The OpenAI chat completion response object to parse.
+            response (`GenerateContentResponse`):
+                The Gemini generation response object to parse.
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
@@ -410,6 +486,11 @@ class GeminiChatModel(ChatModelBase):
     ) -> list[dict[str, Any]]:
         """Format the tools JSON schema into required format for Gemini API.
 
+        .. note:: Gemini API does not support `$defs` and `$ref` in JSON
+         schemas. This function resolves all `$ref` references by inlining the
+         referenced definitions, producing a self-contained schema without
+         any references.
+
         Args:
             schemas (`dict[str, Any]`):
                 The tools JSON schemas.
@@ -474,14 +555,19 @@ class GeminiChatModel(ChatModelBase):
                         ]
                     }
                 ]
+
         """
-        return [
-            {
-                "function_declarations": [
-                    _["function"] for _ in schemas if "function" in _
-                ],
-            },
-        ]
+        function_declarations = []
+        for schema in schemas:
+            if "function" not in schema:
+                continue
+            func = schema["function"].copy()
+            # Flatten the parameters schema to resolve $ref references
+            if "parameters" in func:
+                func["parameters"] = _flatten_json_schema(func["parameters"])
+            function_declarations.append(func)
+
+        return [{"function_declarations": function_declarations}]
 
     def _format_tool_choice(
         self,
@@ -496,6 +582,7 @@ class GeminiChatModel(ChatModelBase):
                  Can be "auto", "none", "required", or specific tool name.
                  For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
+
         Returns:
             `dict | None`:
                 The formatted tool choice configuration dict, or None if

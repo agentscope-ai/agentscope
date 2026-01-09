@@ -41,7 +41,7 @@ The built-in formatters are listed below
     * - Ollama
       - ``OllamaChatFormatter``
       - ``OllamaMultiAgentFormatter``
-    * - DeedSeek
+    * - DeepSeek
       - ``DeepSeekChatFormatter``
       - ``DeepSeekMultiAgentFormatter``
     * - vLLM
