@@ -45,6 +45,7 @@ class AnthropicChatModel(ChatModelBase):
         max_tokens: int = 2048,
         stream: bool = True,
         thinking: dict | None = None,
+        intermediate_tool_parsing: bool = True,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
@@ -71,6 +72,8 @@ class AnthropicChatModel(ChatModelBase):
                         "budget_tokens": 1024
                     }
 
+            intermediate_tool_parsing (`bool`, default to `True`):
+                Whether to allow parsing intermediate results of tool calls.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the Anthropic client.
@@ -121,6 +124,7 @@ class AnthropicChatModel(ChatModelBase):
         )
         self.max_tokens = max_tokens
         self.thinking = thinking
+        self.intermediate_tool_parsing = intermediate_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
@@ -455,26 +459,33 @@ class AnthropicChatModel(ChatModelBase):
                             text=text_buffer,
                         ),
                     )
-                for block_index, tool_call in tool_calls.items():
-                    input_str = tool_call["input"]
-                    try:
-                        input_obj = _json_loads_with_repair(input_str or "{}")
-                        if not isinstance(input_obj, dict):
+
+                # Only add intermediate tool use blocks if
+                # intermediate_tool_parsing is True
+                if self.intermediate_tool_parsing:
+                    for block_index, tool_call in tool_calls.items():
+                        input_str = tool_call["input"]
+                        try:
+                            input_obj = _json_loads_with_repair(
+                                input_str or "{}",
+                            )
+                            if not isinstance(input_obj, dict):
+                                input_obj = {}
+
+                        except Exception:
                             input_obj = {}
 
-                    except Exception:
-                        input_obj = {}
+                        contents.append(
+                            ToolUseBlock(
+                                type=tool_call["type"],
+                                id=tool_call["id"],
+                                name=tool_call["name"],
+                                input=input_obj,
+                            ),
+                        )
+                        if structured_model:
+                            metadata = input_obj
 
-                    contents.append(
-                        ToolUseBlock(
-                            type=tool_call["type"],
-                            id=tool_call["id"],
-                            name=tool_call["name"],
-                            input=input_obj,
-                        ),
-                    )
-                    if structured_model:
-                        metadata = input_obj
                 if contents:
                     res = ChatResponse(
                         content=contents,
@@ -482,6 +493,38 @@ class AnthropicChatModel(ChatModelBase):
                         metadata=metadata,
                     )
                     yield res
+
+        # If intermediate_tool_parsing is False, yield final tool use blocks
+        if not self.intermediate_tool_parsing and tool_calls:
+            contents = []
+            for block_index, tool_call in tool_calls.items():
+                input_str = tool_call["input"]
+                try:
+                    input_obj = _json_loads_with_repair(input_str or "{}")
+                    if not isinstance(input_obj, dict):
+                        input_obj = {}
+
+                except Exception:
+                    input_obj = {}
+
+                contents.append(
+                    ToolUseBlock(
+                        type=tool_call["type"],
+                        id=tool_call["id"],
+                        name=tool_call["name"],
+                        input=input_obj,
+                    ),
+                )
+                if structured_model:
+                    metadata = input_obj
+
+            if contents:
+                res = ChatResponse(
+                    content=contents,
+                    usage=usage,
+                    metadata=metadata,
+                )
+                yield res
 
     def _format_tools_json_schemas(
         self,

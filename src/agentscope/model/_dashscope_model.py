@@ -56,6 +56,7 @@ class DashScopeChatModel(ChatModelBase):
         enable_thinking: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
+        intermediate_tool_parsing: bool = True,
         **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
@@ -79,6 +80,8 @@ class DashScopeChatModel(ChatModelBase):
             base_http_api_url (`str | None`, optional):
                 The base URL for DashScope API requests. If not provided,
                 the default base URL from the DashScope SDK will be used.
+            intermediate_tool_parsing (`bool`, default to `True`):
+                Whether to allow parsing intermediate results of tool calls.
             **_kwargs (`Any`):
                 Additional keyword arguments.
         """
@@ -94,6 +97,7 @@ class DashScopeChatModel(ChatModelBase):
         self.api_key = api_key
         self.enable_thinking = enable_thinking
         self.generate_kwargs = generate_kwargs or {}
+        self.intermediate_tool_parsing = intermediate_tool_parsing
 
         if base_http_api_url is not None:
             import dashscope
@@ -239,7 +243,7 @@ class DashScopeChatModel(ChatModelBase):
 
         return parsed_response
 
-    # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches, too-many-statements
     async def _parse_dashscope_stream_response(
         self,
         start_datetime: datetime,
@@ -278,6 +282,7 @@ class DashScopeChatModel(ChatModelBase):
         acc_content, acc_thinking_content = "", ""
         acc_tool_calls = collections.defaultdict(dict)
         metadata = None
+        last_chunk_usage = None
 
         async for chunk in giter(response):
             if chunk.status_code != HTTPStatus.OK:
@@ -324,8 +329,13 @@ class DashScopeChatModel(ChatModelBase):
                             + func["arguments"]
                         )
 
-            # to content blocks
+            # Store the last chunk usage for later use
+            if chunk.usage:
+                last_chunk_usage = chunk.usage
+
+            # Build content blocks (always include thinking and text)
             content_blocks: list[TextBlock | ToolUseBlock | ThinkingBlock] = []
+
             if acc_thinking_content:
                 content_blocks.append(
                     ThinkingBlock(
@@ -342,6 +352,50 @@ class DashScopeChatModel(ChatModelBase):
                     ),
                 )
 
+            # Only add intermediate tool use blocks if
+            # intermediate_tool_parsing is True
+            if self.intermediate_tool_parsing:
+                for tool_call in acc_tool_calls.values():
+                    repaired_input = _json_loads_with_repair(
+                        tool_call.get("arguments", "{}") or "{}",
+                    )
+
+                    if not isinstance(repaired_input, dict):
+                        repaired_input = {}
+
+                    content_blocks.append(
+                        ToolUseBlock(
+                            type="tool_use",
+                            id=tool_call.get("id", ""),
+                            name=tool_call.get("name", ""),
+                            input=repaired_input,
+                        ),
+                    )
+
+                    if structured_model:
+                        metadata = repaired_input
+
+            usage = None
+            if chunk.usage:
+                usage = ChatUsage(
+                    input_tokens=chunk.usage.input_tokens,
+                    output_tokens=chunk.usage.output_tokens,
+                    time=(datetime.now() - start_datetime).total_seconds(),
+                )
+
+            if content_blocks:
+                parsed_chunk = ChatResponse(
+                    content=content_blocks,
+                    usage=usage,
+                    metadata=metadata,
+                )
+                yield parsed_chunk
+
+        # If intermediate_tool_parsing is False, yield final tool use blocks
+        if not self.intermediate_tool_parsing and acc_tool_calls:
+            content_blocks = []
+
+            # Add complete tool use blocks
             for tool_call in acc_tool_calls.values():
                 repaired_input = _json_loads_with_repair(
                     tool_call.get("arguments", "{}") or "{}",
@@ -363,10 +417,10 @@ class DashScopeChatModel(ChatModelBase):
                     metadata = repaired_input
 
             usage = None
-            if chunk.usage:
+            if last_chunk_usage:
                 usage = ChatUsage(
-                    input_tokens=chunk.usage.input_tokens,
-                    output_tokens=chunk.usage.output_tokens,
+                    input_tokens=last_chunk_usage.input_tokens,
+                    output_tokens=last_chunk_usage.output_tokens,
                     time=(datetime.now() - start_datetime).total_seconds(),
                 )
 
