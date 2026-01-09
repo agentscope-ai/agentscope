@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
+import json
 import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,7 @@ from agentscope.rag import (
     MilvusLiteStore,
     LindormStore,
 )
+from agentscope._utils._common import _map_text_to_uuid
 
 
 class RAGStoreTest(IsolatedAsyncioTestCase):
@@ -147,9 +149,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         mock_client.indices.exists.return_value = False
         mock_client.indices.create.return_value = {"acknowledged": True}
         mock_client.index.return_value = {"result": "created"}
-        mock_client.indices.refresh.return_value = {
-            "_shards": {"successful": 1}
-        }
+        mock_client.indices.refresh.return_value = {"_shards": {"successful": 1}}
         mock_client.search.return_value = {
             "hits": {
                 "hits": [
@@ -159,7 +159,10 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                             "vector": [0.1, 0.2, 0.3],
                             "doc_id": "doc1",
                             "chunk_id": 0,
-                            "content": "This is a test document.",
+                            "content": {
+                                "type": "text",
+                                "text": "This is a test document.",
+                            },
                             "total_chunks": 2,
                         },
                     },
@@ -206,7 +209,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0].score, 0.95)
         self.assertEqual(
-            res[0].metadata.content,
+            res[0].metadata.content["text"],
             "This is a test document.",
         )
 
@@ -214,3 +217,27 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         query_body = call_args[1]["body"]
         self.assertEqual(query_body["size"], 3)
         self.assertIn("knn", query_body["query"])
+
+        # Test delete
+        mock_client.delete.return_value = {"result": "deleted"}
+        mock_client.indices.refresh.return_value = {"_shards": {"successful": 1}}
+
+        # Generate a doc_id similar to how add() does it
+        unique_string = json.dumps(
+            {"doc_id": "doc1", "chunk_id": 0},
+            ensure_ascii=False,
+        )
+        doc_id_to_delete = _map_text_to_uuid(unique_string)
+
+        await store.delete(doc_ids=[doc_id_to_delete], routing="user123")
+
+        self.assertTrue(mock_client.delete.called)
+        delete_call_args = mock_client.delete.call_args
+        self.assertEqual(
+            delete_call_args[1]["id"],
+            doc_id_to_delete,
+        )
+        self.assertEqual(
+            delete_call_args[1]["routing"],
+            "user123",
+        )

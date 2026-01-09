@@ -29,9 +29,11 @@ class LindormStore(VDBStoreBase):
         hosts: list[str],
         index_name: str,
         dimensions: int,
-        http_auth: tuple[str, str] | None = None,
+        http_auth: tuple[str, str],
         distance_metric: Literal["l2", "cosine", "inner_product"] = "cosine",
         enable_routing: bool = False,
+        use_ssl: bool = False,
+        verify_certs: bool = False,
     ) -> None:
         """Initialize the Lindorm vector store.
 
@@ -42,13 +44,18 @@ class LindormStore(VDBStoreBase):
                 The name of the index to store embeddings.
             dimensions (`int`):
                 The dimension of the embeddings.
-            http_auth (`tuple[str, str] | None`, optional):
-                HTTP authentication (username, password) tuple.
+            http_auth (`tuple[str, str]`):
+                HTTP authentication (username, password) tuple. Required
+                for Aliyun Lindorm cloud service.
             distance_metric (`Literal["l2", "cosine", "inner_product"]`, \
             defaults to "cosine"):
                 The distance metric for vector similarity.
             enable_routing (`bool`, defaults to False):
                 Whether to enable custom routing for data isolation.
+            use_ssl (`bool`, defaults to False):
+                Whether to use SSL/TLS for the connection.
+            verify_certs (`bool`, defaults to False):
+                Whether to verify SSL certificates.
         """
 
         try:
@@ -62,8 +69,9 @@ class LindormStore(VDBStoreBase):
         self._client = OpenSearch(
             hosts=hosts,
             http_auth=http_auth,
-            use_ssl=False,
-            verify_certs=False,
+            use_ssl=use_ssl,
+            verify_certs=verify_certs,
+            ssl_show_warn=False,
         )
 
         self.index_name = index_name
@@ -72,7 +80,13 @@ class LindormStore(VDBStoreBase):
         self.enable_routing = enable_routing
 
     def _create_index_body(self) -> dict[str, Any]:
-        """Create the index body configuration for Lindorm."""
+        """Create the index body configuration for Lindorm.
+
+        Returns:
+            `dict[str, Any]`:
+                The index configuration body including settings and mappings
+                for vector storage with Lindorm's lvector engine.
+        """
         knn_settings: dict[str, Any] = {}
         if self.enable_routing:
             knn_settings["knn_routing"] = True
@@ -120,7 +134,16 @@ class LindormStore(VDBStoreBase):
         return index_body
 
     async def _validate_index(self) -> None:
-        """Validate the index exists, if not, create it."""
+        """Validate the index exists, and create it if not.
+
+        This method checks if the index exists in Lindorm. If the index
+        does not exist, it will be created with the appropriate vector
+        configuration.
+
+        Raises:
+            Exception: If index creation fails due to connection issues
+                or invalid configuration.
+        """
         if not self._client.indices.exists(index=self.index_name):
             index_body = self._create_index_body()
             self._client.indices.create(
@@ -247,17 +270,27 @@ class LindormStore(VDBStoreBase):
 
         return collected_res
 
-    async def delete(self, *args: Any, **kwargs: Any) -> None:
+    async def delete(
+        self,
+        doc_ids: list[str],
+        routing: str | None = None,
+    ) -> None:
         """Delete documents from the Lindorm vector store.
 
         Args:
-            **kwargs (`Any`):
-                - doc_ids (`list[str]`): List of document IDs to delete.
-                - routing (`str`): Custom routing key.
-        """
-        doc_ids = kwargs.get("doc_ids", [])
-        routing = kwargs.get("routing", None)
+            doc_ids (`list[str]`):
+                List of internal document UUIDs to delete. These values must
+                match the index document IDs generated during :meth:`add` by
+                combining ``doc.metadata.doc_id`` and
+                ``doc.metadata.chunk_id``, and are not the original
+                ``doc.metadata.doc_id`` values.
+            routing (`str | None`, optional):
+                Custom routing key for targeted deletion when routing is
+                enabled. Defaults to None.
 
+        Raises:
+            ValueError: If ``doc_ids`` is empty.
+        """
         if not doc_ids:
             raise ValueError("doc_ids must be provided for deletion.")
 
