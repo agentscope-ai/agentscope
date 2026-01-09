@@ -1,1 +1,0 @@
-{"version":3,"file":"base.d.ts","sourceRoot":"","sources":["../../src/decorators/base.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAEH;;;;GAIG;AACH,MAAM,MAAM,SAAS,CAAC,CAAC,IAAI;KACxB,CAAC,IAAI,MAAM,CAAC,GAAG,CAAC,CAAC,CAAC,CAAC;CACrB,CAAC;AAEF,MAAM,MAAM,WAAW,CAAC,CAAC,IAAI;IAE3B,KAAK,GAAG,IAAI,EAAE,GAAG,EAAE,GAAG,CAAC,CAAC;CACzB,CAAC"}
