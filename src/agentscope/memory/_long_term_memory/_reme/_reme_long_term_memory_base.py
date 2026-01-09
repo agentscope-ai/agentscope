@@ -70,14 +70,8 @@ from abc import ABCMeta
 from typing import Any
 
 from .._long_term_memory_base import LongTermMemoryBase
-from ...embedding import (
-    DashScopeTextEmbedding,
-    OpenAITextEmbedding,
-)
-from ...model import (
-    DashScopeChatModel,
-    OpenAIChatModel,
-)
+from ....embedding import DashScopeTextEmbedding, OpenAITextEmbedding
+from ....model import DashScopeChatModel, OpenAIChatModel
 
 
 class ReMeLongTermMemoryBase(LongTermMemoryBase, metaclass=ABCMeta):

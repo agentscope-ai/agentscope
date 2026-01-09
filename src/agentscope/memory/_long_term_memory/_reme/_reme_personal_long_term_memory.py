@@ -9,9 +9,9 @@ retrieval capabilities for AgentScope agents.
 from typing import Any
 
 from ._reme_long_term_memory_base import ReMeLongTermMemoryBase
-from ..._logging import logger
-from ...message import Msg, TextBlock
-from ...tool import ToolResponse
+from ...._logging import logger
+from ....message import Msg, TextBlock
+from ....tool import ToolResponse
 
 
 class ReMePersonalLongTermMemory(ReMeLongTermMemoryBase):
