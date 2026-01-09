@@ -118,9 +118,28 @@ def tune_prompt(
             num_threads=config.eval_num_threads,
         )
 
-        logger.info("evaluating results...")
+        baseline_score = None
+        if config.compare_performance:
+            logger.info("evaluating baseline performance...")
+            baseline_res = evaluate(module)
+            baseline_score = baseline_res.score
+            logger.info(f"baseline score: {baseline_score}")
+
+        logger.info("evaluating optimized results...")
         eval_res = evaluate(result)
         score = eval_res.score
-        logger.info(f"evaluation score: {score}")
+        logger.info(f"optimized score: {score}")
+
+        if baseline_score is not None:
+            improvement = (
+                (score - baseline_score) / baseline_score * 100
+                if baseline_score != 0
+                else 0
+            )
+            logger.info(f"improvement: {improvement:.2f}%")
+
+    logger.info("---------- Optimized Prompt ----------")
+    logger.info(result.predictor.signature.instructions)
+    logger.info("--------------------------------------")
 
     return result._agent
