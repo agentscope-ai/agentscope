@@ -51,6 +51,10 @@ This command will:
 > Note:
 > - The example is built with DashScope chat model. Make sure to set your `DASHSCOPE_API_KEY`
 >   environment variable before running the demo.
+> - If you are using Qwen series models, we recommend using `qwen-max` for better performance in
+>   generating A2UI-compliant JSON responses.
+> - Generating UI JSON responses may take some time, typically 1-2 minutes, as the agent needs to
+>   process the schema, examples, and generate complex UI structures.
 > - The demo uses the standard A2UI catalog. Custom catalog and inline catalog support are under
 >   development.
 
@@ -68,6 +72,7 @@ Our optimization efforts will focus on:
 - **Agent Logic**: Improving how agents process inputs and orchestrate the generation of A2UI JSON
   messages
 
+
 - **Handle user interactions from the client**: Enabling agents to properly process and respond to
   user interactions from the client (such as button clicks, form submissions), treating them as new
   user input to create a continuous interactive loop
@@ -77,11 +82,20 @@ towards this goal. By using AgentScope's skill system to progressively expose th
 templates, agents can learn to generate compliant UI structures. Future improvements will focus on
 streamlining this process and making it more intuitive for developers to build A2UI-capable agents.
 
-**Next steps for skills improvements**:
-1. Support flexible schema addition: Enable developers to easily add and customize schemas without
-   modifying core skill code
-2. Separate schema and examples into dedicated folders: Organize schema definitions and example
-   templates into distinct directories for better maintainability and clearer structure
+**Next steps for Agent Logic improvement**
 
+- **Agent skills improvements**:
+  - Support flexible schema addition: Enable developers to easily add and customize schemas without
+    modifying core skill code
+  - Separate schema and examples into dedicated folders: Organize schema definitions and example
+    templates into distinct directories for better maintainability and clearer structure
 
-fix with image
+- **Context management in Memory for A2UI long context**:
+  - Currently, A2UI messages are extremely long, which makes multi-turn interactions inefficient
+    and degrades the quality of agent responses. We plan to implement better context management
+    strategies to handle these long-form messages and improve the quality of multi-turn conversations.
+
+- **Keep up with A2UI protocol updates**:
+  - We will follow A2UI protocol updates and make corresponding adjustments. For example, we plan to
+    support streaming UI JSON introduced in A2UI v0.9.
+
