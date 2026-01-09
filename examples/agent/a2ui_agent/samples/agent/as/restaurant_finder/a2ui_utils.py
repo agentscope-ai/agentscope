@@ -83,7 +83,7 @@ def check_a2ui_extension(*args: Any) -> bool:
         # Activate the extension if add_activated_extension method exists
         if hasattr(context, "add_activated_extension"):
             context.add_activated_extension(A2UI_EXTENSION_URI)
-            logger.info(f"A2UI extension activated: {A2UI_EXTENSION_URI}")
+            logger.info("A2UI extension activated: %s", A2UI_EXTENSION_URI)
         else:
             logger.warning(
                 "check_a2ui_extension: Context does not have "
@@ -222,7 +222,7 @@ def extract_ui_json_from_text(content_str: str) -> tuple[str, None]:
             json_string_final = json_string_cleaned[:json_end].strip()
             json_data = json.loads(json_string_final)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse UI JSON: {e}")
+            logger.error("Failed to parse UI JSON: %s", e)
             # On error, keep the JSON as text content
             return content_str, None
     return text_content, json_data
@@ -249,7 +249,8 @@ def check_a2ui_json_in_message(
         and is_final
     ):
         logger.info(
-            f"--- Found A2UI JSON in the message: {part.root.text} ---",
+            "--- Found A2UI JSON in the message: %s ---",
+            part.root.text,
         )
         return True, part.root.text
 
@@ -290,7 +291,9 @@ def post_process_a2a_message_for_ui(
             is_final=is_final,
         )
         logger.info(
-            f"message: {message} --- has_a2ui_json: " f"{has_a2ui_json} ---",
+            "message: %s --- has_a2ui_json: %s ---",
+            message,
+            has_a2ui_json,
         )
         if has_a2ui_json and a2ui_json_string is not None:
             text_content, json_data = extract_ui_json_from_text(

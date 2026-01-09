@@ -79,8 +79,8 @@ class SimpleStreamHandler:
             The prepared final message.
         """
         logger.info(
-            f"--- Processing final response, final_msg_text: "
-            f"{final_msg_text is not None} ---",
+            "--- Processing final response, final_msg_text: %s ---",
+            final_msg_text is not None,
         )
 
         if final_msg_text is not None:
@@ -97,7 +97,8 @@ class SimpleStreamHandler:
             )
 
         logger.info(
-            f"--- Post-processing message for UI: {final_a2a_message} ---",
+            "--- Post-processing message for UI: %s ---",
+            final_a2a_message,
         )
         final_a2a_message = post_process_a2a_message_for_ui(
             final_a2a_message,
@@ -121,9 +122,9 @@ class SimpleStreamHandler:
         Returns:
             The final Task object.
         """
-        logger.info(f"--- params: {params} ---")
-        logger.info(f"args: {args} ---")
-        logger.info(f"kwargs: {kwargs} ---")
+        logger.info("--- params: %s ---", params)
+        logger.info("args: %s ---", args)
+        logger.info("kwargs: %s ---", kwargs)
         # Collect all events from the stream
         final_event = None
         task_id = params.message.task_id or uuid.uuid4().hex
@@ -208,7 +209,7 @@ class SimpleStreamHandler:
             ),
         )
         toolkit.register_agent_skill(skill_path)
-        logger.info(f"Agent skill prompt: {toolkit.get_agent_skill_prompt()}")
+        logger.info("Agent skill prompt: %s", toolkit.get_agent_skill_prompt())
         use_ui = check_a2ui_extension(*args)
 
         if use_ui:
@@ -228,7 +229,7 @@ class SimpleStreamHandler:
             toolkit=toolkit,
             max_iters=10,
         )
-        logger.info(f"Agent system prompt: {agent.sys_prompt}")
+        logger.info("Agent system prompt: %s", agent.sys_prompt)
 
         session = JSONSession(save_dir="./sessions")
         session_id = params.message.task_id or "test-a2ui-agent"
@@ -280,15 +281,18 @@ class SimpleStreamHandler:
                             break
         except Exception as e:
             logger.error(
-                f"--- Error in message stream: {e} ---",
+                "--- Error in message stream: %s ---",
+                e,
                 exc_info=True,
             )
             raise
         finally:
             logger.info(
-                f"--- Message stream collection completed. "
-                f"Total messages: {message_count}, "
-                f"Last message: {last_complete_msg} ---",
+                "--- Message stream collection completed. "
+                "Total messages: %s, "
+                "Last message: %s ---",
+                message_count,
+                last_complete_msg,
             )
 
         # Save session state (move before final message processing
