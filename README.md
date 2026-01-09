@@ -54,7 +54,7 @@
 </p>
 
 ## 📢 News
-- **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a_protocol.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a_protocol.html) for more details.
+- **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
 - **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
 - **[2025-11]** AgentScope supports [Anthropic Agent Skill](https://claude.com/blog/skills) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) and [tutorial](https://doc.agentscope.io/tutorial/task_agent_skill.html) for more details.
 - **[2025-11]** AgentScope open-sources [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
