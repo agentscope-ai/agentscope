@@ -1054,8 +1054,13 @@ class ReActAgent(ReActAgentBase):
                 self.name,
             )
 
+            # The formatter used for compression
+            compression_formatter = (
+                self.compression_config.compression_formatter or self.formatter
+            )
+
             # Prepare the prompt used to compress the memories
-            compression_prompt = await self.formatter.format(
+            compression_prompt = await compression_formatter.format(
                 [
                     Msg("system", self.sys_prompt, "system"),
                     *to_compressed_msgs,
