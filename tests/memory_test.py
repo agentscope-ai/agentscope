@@ -19,6 +19,12 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
     memory: MemoryBase
     """The test memory instance."""
 
+    memory_session: MemoryBase
+    """The test memory instance for different session."""
+
+    memory_user: MemoryBase
+    """The test memory instance for different user."""
+
     async def asyncSetUp(self) -> None:
         """Set up the memory instance for testing."""
         self.msgs = [
@@ -230,8 +236,194 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
             [str(_) for _ in [3, 4, 5, 7, 10, 11]],
         )
 
+        await self.memory.clear()
+        msgs = await self.memory.get_memory()
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
+
     async def _multi_tenant_tests(self) -> None:
         """Test the multi-tenant functionalities of the short-term memory."""
+        await self.memory.add(self.msgs[:8])
+        msgs = await self.memory.get_memory()
+        self.assertEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(8)],
+        )
+
+        # Add some msgs with overlapping ids to different users' memory
+        await self.memory_user.add(self.msgs[3:])
+        self.assertEqual(
+            [_.id for _ in await self.memory_user.get_memory()],
+            [str(_) for _ in [3, 4, 5, 6, 7, 8, 9]],
+        )
+
+        # Mark messages
+        await self.memory.update_messages_mark(
+            new_mark="shared",
+            msg_ids=["5", "6", "7"],
+        )
+
+        # mark messages with same ids with different mark for different users
+        await self.memory_user.update_messages_mark(
+            new_mark="shared_user",
+            msg_ids=["6", "7", "8", "9"],
+        )
+
+        # Test if the marks are isolated between different users
+        msgs = await self.memory.get_memory(
+            mark="shared",
+        )
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in [5, 6, 7]],
+        )
+        msgs = await self.memory.get_memory(
+            mark="shared_user",
+        )
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
+
+        msgs = await self.memory_user.get_memory(
+            mark="shared_user",
+        )
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in [6, 7, 8, 9]],
+        )
+        msgs = await self.memory_user.get_memory(
+            mark="shared",
+        )
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
+
+        # Test delete operation is isolated between different sessions
+        await self.memory.delete(
+            msg_ids=["6", "7"],
+        )
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(6)],
+        )
+        msgs = await self.memory_user.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(3, 10)],
+        )
+
+        # Test delete operation by mark is isolated between different sessions
+        await self.memory_user.delete_by_mark("shared")
+        msgs = await self.memory_user.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(3, 10)],
+        )
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(6)],
+        )
+
+        # Clean up
+        await self.memory.clear()
+        await self.memory_user.clear()
+
+    async def _multi_session_tests(self) -> None:
+        """Test the multi-session functionalities of the short-term memory."""
+        await self.memory.add(self.msgs[:8])
+        msgs = await self.memory.get_memory()
+        self.assertEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(8)],
+        )
+
+        # Add some msgs with overlapping ids to different session's memory
+        await self.memory_session.add(self.msgs[3:])
+        self.assertEqual(
+            [_.id for _ in await self.memory_session.get_memory()],
+            [str(_) for _ in [3, 4, 5, 6, 7, 8, 9]],
+        )
+
+        # Mark messages in first session
+        await self.memory.update_messages_mark(
+            new_mark="session1_mark",
+            msg_ids=["5", "6", "7"],
+        )
+
+        # mark messages with same ids with different mark for different session
+        await self.memory_session.update_messages_mark(
+            new_mark="session2_mark",
+            msg_ids=["6", "7", "8", "9"],
+        )
+
+        # Test if the marks are isolated between different sessions
+        msgs = await self.memory.get_memory(
+            mark="session1_mark",
+        )
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in [5, 6, 7]],
+        )
+        msgs = await self.memory.get_memory(
+            mark="session2_mark",
+        )
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
+
+        msgs = await self.memory_session.get_memory(
+            mark="session2_mark",
+        )
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in [6, 7, 8, 9]],
+        )
+        msgs = await self.memory_session.get_memory(
+            mark="session1_mark",
+        )
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
+
+        # Test delete operation is isolated between different sessions
+        await self.memory.delete(
+            msg_ids=["6", "7"],
+        )
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(6)],
+        )
+        msgs = await self.memory_session.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(3, 10)],
+        )
+
+        # Test delete operation by mark is isolated between different sessions
+        await self.memory_session.delete_by_mark("session1_mark")
+        msgs = await self.memory_session.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(3, 10)],
+        )
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(6)],
+        )
+
+        # Clean up
+        await self.memory.clear()
+        await self.memory_session.clear()
 
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""
@@ -263,6 +455,20 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
             url="sqlite+aiosqlite:///:memory:",
         )
         self.memory = AsyncSQLAlchemyMemory(
+            session_id="session_1",
+            user_id="user_1",
+            engine=self.engine,
+        )
+
+        self.memory_session = AsyncSQLAlchemyMemory(
+            session_id="session_2",
+            user_id="user_1",
+            engine=self.engine,
+        )
+
+        self.memory_user = AsyncSQLAlchemyMemory(
+            session_id="session_2",
+            user_id="user_2",
             engine=self.engine,
         )
 
@@ -270,6 +476,8 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
         """Test the SQLAlchemy memory functionalities."""
         await self._basic_tests()
         await self._mark_tests()
+        await self._multi_tenant_tests()
+        await self._multi_session_tests()
 
     async def asyncTearDown(self) -> None:
         """Clean up the SQLAlchemy memory instance after testing."""
@@ -280,6 +488,15 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
 
 class RedisMemoryTest(ShortTermMemoryTest):
     """The Redis short-term memory tests."""
+
+    memory: RedisMemory
+    """The Redis memory instance."""
+
+    memory_session: RedisMemory
+    """The Redis memory instance for different session."""
+
+    memory_user: RedisMemory
+    """The Redis memory instance for different user."""
 
     async def asyncSetUp(self) -> None:
         """Set up the Redis memory instance for testing."""
@@ -295,6 +512,20 @@ class RedisMemoryTest(ShortTermMemoryTest):
         # Use fakeredis for in-memory testing without a real Redis server
         fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.memory = RedisMemory(
+            user_id="user_1",
+            session_id="session_1",
+            connection_pool=fake_redis.connection_pool,
+        )
+
+        self.memory_session = RedisMemory(
+            user_id="user_1",
+            session_id="session_2",
+            connection_pool=fake_redis.connection_pool,
+        )
+
+        self.memory_user = RedisMemory(
+            user_id="user_2",
+            session_id="session_2",
             connection_pool=fake_redis.connection_pool,
         )
 
@@ -302,6 +533,8 @@ class RedisMemoryTest(ShortTermMemoryTest):
         """Test the Redis memory functionalities."""
         await self._basic_tests()
         await self._mark_tests()
+        await self._multi_tenant_tests()
+        await self._multi_session_tests()
 
     async def asyncTearDown(self) -> None:
         """Clean up the Redis memory instance after testing."""

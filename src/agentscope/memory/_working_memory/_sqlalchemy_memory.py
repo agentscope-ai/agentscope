@@ -46,7 +46,8 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         """The table name"""
 
         id = Column(String(255), primary_key=True)
-        """The id column"""
+        """The id column, we use the f"{user_id}-{session_id}-{message_id}"
+        as the primary key to ensure uniqueness across users and sessions."""
 
         msg = Column(JSON, nullable=False)
         """The message JSON content column"""
@@ -155,6 +156,20 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             expire_on_commit=False,
         )
         self._db_session: AsyncSession | None = None
+
+    def _make_message_id(self, msg_id: str) -> str:
+        """Generate a composite primary key for a message.
+
+        Args:
+            msg_id (`str`):
+                The original message ID.
+
+        Returns:
+            `str`:
+                The composite primary key in the format
+                "{user_id}-{session_id}-{message_id}".
+        """
+        return f"{self.user_id}-{self.session_id}-{msg_id}"
 
     @property
     def session(self) -> AsyncSession:
@@ -353,7 +368,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         for m in memories:
             index = await self._get_next_index()
             message_record = self.MessageTable(
-                id=m.id,
+                id=self._make_message_id(m.id),
                 msg=m.to_dict(),
                 session_id=self.session_id,
                 index=index,
@@ -365,7 +380,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             for msg in memories:
                 for mark in marks:
                     mark_record = self.MessageMarkTable(
-                        msg_id=msg.id,
+                        msg_id=self._make_message_id(msg.id),
                         mark=mark,
                     )
 
@@ -498,10 +513,13 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             `int`:
                 The number of messages removed.
         """
+        # Convert to composite keys
+        composite_ids = [self._make_message_id(msg_id) for msg_id in msg_ids]
+
         # Delete related marks first (explicit cleanup for reliability)
         await self.session.execute(
             delete(self.MessageMarkTable).filter(
-                self.MessageMarkTable.msg_id.in_(msg_ids),
+                self.MessageMarkTable.msg_id.in_(composite_ids),
             ),
         )
 
@@ -510,7 +528,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             delete(self.MessageTable)
             .filter(
                 self.MessageTable.session_id == self.session_id,
-                self.MessageTable.id.in_(msg_ids),
+                self.MessageTable.id.in_(composite_ids),
             )
             .returning(self.MessageTable.id),
         )
@@ -579,7 +597,11 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
         # Filter by msg_ids if provided
         if msg_ids is not None:
-            query = query.filter(self.MessageTable.id.in_(msg_ids))
+            # Convert to composite keys
+            composite_ids = [
+                self._make_message_id(msg_id) for msg_id in msg_ids
+            ]
+            query = query.filter(self.MessageTable.id.in_(composite_ids))
 
         # Filter by old_mark if provided
         if old_mark is not None:
