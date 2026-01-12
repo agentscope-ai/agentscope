@@ -2,7 +2,7 @@
 """The short-term memory tests."""
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentscope.memory import (
     MemoryBase,
@@ -425,9 +425,37 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
         await self.memory.clear()
         await self.memory_session.clear()
 
+    async def _test_add_duplicated_msgs(self) -> None:
+        """Test adding duplicated messages to the memory."""
+        await self.memory.add(self.msgs[:8])
+        await self.memory.add(self.msgs[5:])
+
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(10)],
+        )
+
+        await self.memory.clear()
+
+    async def _test_delete_nonexistent_msg(self) -> None:
+        """Test deleting nonexistent messages from the memory."""
+        await self.memory.add(self.msgs[:5])
+        await self.memory.delete(msg_ids=["nonexistent_id"])
+        msgs = await self.memory.get_memory()
+        self.assertListEqual(
+            [_.id for _ in msgs],
+            [str(_) for _ in range(5)],
+        )
+
+        await self.memory.clear()
+
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""
         await self.memory.clear()
+        # Close the session or connection if applicable
+        if hasattr(self.memory, "close"):
+            await self.memory.close()
 
 
 class InMemoryMemoryTest(ShortTermMemoryTest):
@@ -442,6 +470,8 @@ class InMemoryMemoryTest(ShortTermMemoryTest):
         """Test the in-memory memory functionalities."""
         await self._basic_tests()
         await self._mark_tests()
+        await self._test_add_duplicated_msgs()
+        await self._test_delete_nonexistent_msg()
 
 
 class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
@@ -457,33 +487,34 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
         self.memory = AsyncSQLAlchemyMemory(
             session_id="session_1",
             user_id="user_1",
-            engine=self.engine,
+            engine_or_session=self.engine,
         )
 
         self.memory_session = AsyncSQLAlchemyMemory(
             session_id="session_2",
             user_id="user_1",
-            engine=self.engine,
+            engine_or_session=self.engine,
         )
 
         self.memory_user = AsyncSQLAlchemyMemory(
             session_id="session_2",
             user_id="user_2",
-            engine=self.engine,
+            engine_or_session=self.engine,
         )
 
     async def test_memory(self) -> None:
         """Test the SQLAlchemy memory functionalities."""
         await self._basic_tests()
+        await self._test_add_duplicated_msgs()
+        await self._test_delete_nonexistent_msg()
         await self._mark_tests()
         await self._multi_tenant_tests()
         await self._multi_session_tests()
 
     async def asyncTearDown(self) -> None:
-        """Clean up the SQLAlchemy memory instance after testing."""
+        """Clean up after unittests"""
         await super().asyncTearDown()
-        if isinstance(self.engine, AsyncEngine):
-            await self.engine.dispose()
+        await self.engine.dispose()
 
 
 class RedisMemoryTest(ShortTermMemoryTest):
@@ -533,12 +564,7 @@ class RedisMemoryTest(ShortTermMemoryTest):
         """Test the Redis memory functionalities."""
         await self._basic_tests()
         await self._mark_tests()
+        await self._test_add_duplicated_msgs()
+        await self._test_delete_nonexistent_msg()
         await self._multi_tenant_tests()
         await self._multi_session_tests()
-
-    async def asyncTearDown(self) -> None:
-        """Clean up the Redis memory instance after testing."""
-        await super().asyncTearDown()
-        # Close the client connection by get_client method from the memory
-        client = await self.memory.get_client()
-        await client.close()

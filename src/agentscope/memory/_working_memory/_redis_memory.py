@@ -220,12 +220,16 @@ class RedisMemory(MemoryBase):
             )
             msg_ids = [_ for _ in msg_ids if _ not in exclude_msg_ids]
 
+        # Use mget for batch retrieval to avoid N+1 queries
         messages: list[Msg] = []
-        for msg_id in msg_ids:
-            msg_data = await self._client.get(self._get_message_key(msg_id))
-            if msg_data is not None:
-                msg_dict = json.loads(msg_data)
-                messages.append(Msg.from_dict(msg_dict))
+        if msg_ids:
+            msg_keys = [self._get_message_key(msg_id) for msg_id in msg_ids]
+            msg_data_list = await self._client.mget(msg_keys)
+
+            for msg_data in msg_data_list:
+                if msg_data is not None:
+                    msg_dict = json.loads(msg_data)
+                    messages.append(Msg.from_dict(msg_dict))
 
         if prepend_summary and self._compressed_summary:
             return [
@@ -243,6 +247,7 @@ class RedisMemory(MemoryBase):
         self,
         memories: Msg | list[Msg] | None,
         marks: str | list[str] | None = None,
+        skip_duplicated: bool = True,
         **kwargs: Any,
     ) -> None:
         """Add message into the storge with the given mark (if provided).
@@ -253,6 +258,11 @@ class RedisMemory(MemoryBase):
             marks (`str | list[str] | None`, optional):
                 The mark(s) to associate with the message(s). If `None`, no
                 mark is associated.
+            skip_duplicated (`bool`, defaults to `True`):
+                If `True`, skip messages with duplicate IDs that already exist
+                in the storage. If `False`, allow duplicate message IDs to be
+                added to the session list (though the message data will be
+                overwritten).
         """
         if memories is None:
             return
@@ -268,23 +278,49 @@ class RedisMemory(MemoryBase):
         else:
             mark_list = marks
 
+        # Filter out existing messages if skip_duplicated is True
+        messages_to_add = memories
+        if skip_duplicated:
+            # Get all existing message IDs in the current session
+            existing_msg_ids = await self._client.lrange(
+                self._get_session_key(),
+                0,
+                -1,
+            )
+            existing_msg_ids_set = set(existing_msg_ids)
+
+            # Filter out messages that already exist
+            messages_to_add = [
+                m for m in memories if m.id not in existing_msg_ids_set
+            ]
+
+            # If all messages are duplicates, return early
+            if not messages_to_add:
+                return
+
+        # Use pipeline for atomic operations
+        pipe = self._client.pipeline()
+
         # Push message ids into the session list
-        await self._client.rpush(
-            self._get_session_key(),
-            *[m.id for m in memories],
-        )
+        if messages_to_add:
+            await pipe.rpush(
+                self._get_session_key(),
+                *[m.id for m in messages_to_add],
+            )
 
         # Store message data and marks
-        for m in memories:
+        for m in messages_to_add:
             # Record the message data
-            await self._client.set(
+            await pipe.set(
                 self._get_message_key(m.id),
                 json.dumps(m.to_dict(), ensure_ascii=False),
             )
 
             # Record the marks if provided
             for mark in mark_list:
-                await self._client.rpush(self._get_mark_key(mark), m.id)
+                await pipe.rpush(self._get_mark_key(mark), m.id)
+
+        await pipe.execute()
 
     async def delete(
         self,
@@ -304,7 +340,18 @@ class RedisMemory(MemoryBase):
         if not msg_ids:
             return 0
 
-        removed_count = 0
+        # Get all mark keys once before the pipeline
+        mark_keys = []
+        cursor = 0
+        while True:
+            cursor, keys = await self._client.scan(
+                cursor,
+                match=self._get_mark_pattern(),
+                count=50,
+            )
+            mark_keys.extend(keys)
+            if cursor == 0:
+                break
 
         pipe = self._client.pipeline()
         for msg_id in msg_ids:
@@ -315,13 +362,23 @@ class RedisMemory(MemoryBase):
             await pipe.delete(self._get_message_key(msg_id))
 
             # Remove from all marks
-            mark_keys = await self._client.keys(self._get_mark_pattern())
             for mark_key in mark_keys:
                 await pipe.lrem(mark_key, 0, msg_id)
 
-            removed_count += 1
+        results = await pipe.execute()
 
-        await pipe.execute()
+        # Count actual deletions from lrem results (every 3rd result
+        # starting from 0)
+        removed_count = sum(
+            1
+            for i in range(
+                0,
+                len(msg_ids) * (2 + len(mark_keys)),
+                2 + len(mark_keys),
+            )
+            if results[i] > 0
+        )
+
         return removed_count
 
     async def delete_by_mark(
@@ -366,7 +423,21 @@ class RedisMemory(MemoryBase):
         """Clear all messages belong to this section from the storage."""
         msg_ids = await self._client.lrange(self._get_session_key(), 0, -1)
 
+        # Get all mark keys using SCAN
+        mark_keys = []
+        cursor = 0
+        while True:
+            cursor, keys = await self._client.scan(
+                cursor,
+                match=self._get_mark_pattern(),
+                count=50,
+            )
+            mark_keys.extend(keys)
+            if cursor == 0:
+                break
+
         pipe = self._client.pipeline()
+
         for msg_id in msg_ids:
             # Remove the message data
             await pipe.delete(self._get_message_key(msg_id))
@@ -375,7 +446,6 @@ class RedisMemory(MemoryBase):
         await pipe.delete(self._get_session_key())
 
         # Delete all mark lists
-        mark_keys = await self._client.keys(self._get_mark_pattern())
         for mark_key in mark_keys:
             await pipe.delete(mark_key)
 
@@ -422,8 +492,6 @@ class RedisMemory(MemoryBase):
             `int`:
                 The number of messages updated.
         """
-        updated_count = 0
-
         # Determine which message IDs to update
         if old_mark is not None:
             # Get message IDs from the old mark list
@@ -442,14 +510,29 @@ class RedisMemory(MemoryBase):
 
         # Filter by msg_ids if provided
         if msg_ids is not None:
-            mark_msg_ids = [mid for mid in mark_msg_ids if mid in msg_ids]
+            msg_ids_set = set(msg_ids)
+            mark_msg_ids = [mid for mid in mark_msg_ids if mid in msg_ids_set]
 
-        # Update marks for each message
+        if not mark_msg_ids:
+            return 0
+
+        # Get existing IDs in new_mark list once (if needed)
+        existing_ids_set = set()
+        new_mark_key = None
+        if new_mark is not None:
+            new_mark_key = self._get_mark_key(new_mark)
+            existing_ids = await self._client.lrange(new_mark_key, 0, -1)
+            existing_ids_set = set(existing_ids)
+
+        # Use pipeline for batch operations
+        pipe = self._client.pipeline()
+        updated_count = 0
+
         for msg_id in mark_msg_ids:
             # If new_mark is None, remove the old_mark
             if new_mark is None:
                 if old_mark is not None:
-                    await self._client.lrem(
+                    await pipe.lrem(
                         self._get_mark_key(old_mark),
                         0,
                         msg_id,
@@ -458,19 +541,49 @@ class RedisMemory(MemoryBase):
             else:
                 # Remove from old_mark list if applicable
                 if old_mark is not None:
-                    await self._client.lrem(
+                    await pipe.lrem(
                         self._get_mark_key(old_mark),
                         0,
                         msg_id,
                     )
 
-                # Add to new_mark list
-                new_mark_key = self._get_mark_key(new_mark)
-                # Check if msg_id is already in the new mark list to avoid
-                # duplicates
-                existing_ids = await self._client.lrange(new_mark_key, 0, -1)
-                if msg_id not in existing_ids:
-                    await self._client.rpush(new_mark_key, msg_id)
+                # Add to new_mark list only if not already present
+                if msg_id not in existing_ids_set and new_mark_key is not None:
+                    await pipe.rpush(new_mark_key, msg_id)
+                    existing_ids_set.add(msg_id)
+
                 updated_count += 1
 
+        await pipe.execute()
         return updated_count
+
+    async def close(self) -> None:
+        """Close the Redis client connection."""
+        await self._client.close()
+
+    async def __aenter__(self) -> "RedisMemory":
+        """Enter the async context manager.
+
+        Returns:
+            `RedisMemory`:
+                The memory instance itself.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        """Exit the async context manager and close the session.
+
+        Args:
+            exc_type (`type[BaseException] | None`):
+                The exception type if an exception was raised.
+            exc_value (`BaseException | None`):
+                The exception instance if an exception was raised.
+            traceback (`Any`):
+                The traceback object if an exception was raised.
+        """
+        await self.close()

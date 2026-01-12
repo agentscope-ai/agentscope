@@ -94,6 +94,7 @@ class InMemoryMemory(MemoryBase):
         self,
         memories: Msg | list[Msg] | None,
         marks: str | list[str] | None = None,
+        allow_duplicates: bool = False,
         **kwargs: Any,
     ) -> None:
         """Add message(s) into the memory storage with the given mark
@@ -105,6 +106,8 @@ class InMemoryMemory(MemoryBase):
             marks (`str | list[str] | None`, optional):
                 The mark(s) to associate with the message(s). If `None`, no
                 mark is associated.
+            allow_duplicates (`bool`, defaults to `False`):
+                Whether to allow duplicate messages in the storage.
         """
         if memories is None:
             return
@@ -123,6 +126,10 @@ class InMemoryMemory(MemoryBase):
                 f"The mark should be a string, a list of strings, or None, "
                 f"but got {type(marks)}.",
             )
+
+        if not allow_duplicates:
+            existing_ids = {msg.id for msg, _ in self.content}
+            memories = [msg for msg in memories if msg.id not in existing_ids]
 
         for msg in memories:
             self.content.append((deepcopy(msg), deepcopy(marks)))
