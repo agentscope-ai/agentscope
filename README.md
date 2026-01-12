@@ -8,8 +8,6 @@
   />
 </p>
 
-<h2 align="center">AgentScope: Agent-Oriented Programming for Building LLM Applications</h2>
-
 <p align="center">
     <a href="https://arxiv.org/abs/2402.14034">
         <img
