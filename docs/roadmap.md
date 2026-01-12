@@ -4,7 +4,75 @@
 
 Offering **agent-oriented programming (AOP)** as a new programming paradigm to organize the design and implementation of next-generation LLM-empowered applications.
 
-## Short-term Goals
+## Current Focus (January 2026 - )
+
+### 🎙️ Voice Agent
+
+**Voice agents** are a domain we are highly focused on, and AgentScope will continue to invest in this direction.
+
+AgentScope aims to build **production-ready** voice agents rather than demonstration prototypes. This means our voice agents will:
+
+- Support **production-grade** deployment, including seamless frontend integration
+- Support **tool invocation**, not just voice conversations
+- Support **multi-agent** voice interactions
+
+#### Development Roadmap
+
+Our development strategy for voice agents consists of **three progressive milestones**:
+
+1. **TTS Models** → 2. **Multimodal Models** → 3. **Real-time Multimodal Models**
+
+---
+
+#### Phase 1: TTS (Text-to-Speech) Models
+
+- **Build TTS model base class infrastructure**
+  - Design and implement a unified TTS model base class
+  - Establish standardized interfaces for TTS model integration
+
+- **Horizontal API expansion**
+  - Support mainstream TTS APIs (e.g., OpenAI TTS, Google TTS, Azure TTS, ElevenLabs, etc.)
+  - Ensure consistent behavior across different TTS providers
+
+---
+
+#### Phase 2: Multimodal Models (Non-Realtime)
+
+- **Enable ReAct agents with multimodal support**
+  - Integrate multimodal models (e.g., qwen3-omni, gpt-audio) into existing ReAct agent framework
+  - Support audio input/output in non-realtime mode
+
+- **Advanced multimodal agent capabilities**
+  - Enable tool invocation within multimodal conversations
+  - Support multi-agent workflows with multimodal communication
+
+---
+
+#### Phase 3: Real-time Multimodal Models
+
+
+- **Beyond request-response**: Explore streaming, interrupt handling, and concurrent multimodal processing
+- **New programming paradigms**: Design agent programming models specifically tailored for real-time interactions
+- **Production readiness**: Ensure low-latency performance, stability, and scalability for production deployment
+
+### 🛠️ Agent Skill
+
+Provide **production-ready** agent skill integration solutions.
+
+### 🌐 Ecosystem Expansion
+
+- **A2UI (Agent-to-UI)**: Enable seamless agent-to-user interface interactions
+- **A2A (Agent-to-Agent)**: Enhance agent-to-agent communication capabilities
+
+### 📈 Code Quality
+
+Continuous refinement and improvement of code quality and maintainability.
+
+### 🚀 Agentic RL
+
+
+
+# Completed Milestones
 
 ### AgentScope V1.0.0 Roadmap
 

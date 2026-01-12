@@ -1,0 +1,33 @@
+name: Update NEWS in README
+on:
+  push:
+    paths:
+      - 'docs/NEWS.md'
+    branches-ignore:
+      - 'main'
+
+jobs:
+  updateNews:
+    name: NEWS Updater
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Update NEWS in README files
+        run: python .github/scripts/update_news.py
+
+      - name: Commit changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md README_zh.md
+          git diff --staged --quiet || git commit -m "docs: auto-update NEWS section from docs/NEWS.md"
+          git push
+
