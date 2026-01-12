@@ -230,31 +230,31 @@ Then we change its state by generating a reply message:
 
  .. code-block:: none
 
-    Friday: Hello! I'm Friday, your virtual assistant. How can I assist you today?
+    Friday: Hello! I'm Friday, your AI assistant. How can I assist you today?
     State of the agent after generating a reply:
     {
         "memory": {
             "content": [
                 {
-                    "id": "f8FU6kSrqa7Tk9g5CD9BKt",
+                    "id": "F9h32tLr92vp8idRdTE93G",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:28.528"
+                    "timestamp": "2026-01-12 02:57:47.889"
                 },
                 {
-                    "id": "AXXVAz9hMsYJaemLN6qqxC",
+                    "id": "eC8us4LdQaCeVmzy3ED6ZR",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
                         {
                             "type": "text",
-                            "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
+                            "text": "Hello! I'm Friday, your AI assistant. How can I assist you today?"
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:28.529"
+                    "timestamp": "2026-01-12 02:57:47.889"
                 }
             ]
         },
@@ -357,15 +357,15 @@ Saving Session State
         "memory": {
             "content": [
                 {
-                    "id": "4Dq39cdrgG7ffvdMFKg6Uf",
+                    "id": "3Tdm5oWued6BrYgdQhN6Hs",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.510"
                 },
                 {
-                    "id": "2tcsqUctUMVQUwAMP5DSRJ",
+                    "id": "SQYLmU2oJWfrVFDhMqunCM",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -375,7 +375,7 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.511"
                 }
             ]
         },
@@ -394,15 +394,15 @@ Saving Session State
         "memory": {
             "content": [
                 {
-                    "id": "4Dq39cdrgG7ffvdMFKg6Uf",
+                    "id": "3Tdm5oWued6BrYgdQhN6Hs",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.510"
                 },
                 {
-                    "id": "2tcsqUctUMVQUwAMP5DSRJ",
+                    "id": "SQYLmU2oJWfrVFDhMqunCM",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -412,7 +412,7 @@ Saving Session State
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.511"
                 }
             ]
         },
@@ -472,15 +472,15 @@ Then we save it to a session file:
             "memory": {
                 "content": [
                     {
-                        "id": "4Dq39cdrgG7ffvdMFKg6Uf",
+                        "id": "3Tdm5oWued6BrYgdQhN6Hs",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2026-01-09 07:30:30.824"
+                        "timestamp": "2026-01-12 02:57:50.510"
                     },
                     {
-                        "id": "2tcsqUctUMVQUwAMP5DSRJ",
+                        "id": "SQYLmU2oJWfrVFDhMqunCM",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -490,7 +490,7 @@ Then we save it to a session file:
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2026-01-09 07:30:30.824"
+                        "timestamp": "2026-01-12 02:57:50.511"
                     }
                 ]
             },
@@ -568,15 +568,15 @@ Now we load the session state from the saved file:
         "memory": {
             "content": [
                 {
-                    "id": "4Dq39cdrgG7ffvdMFKg6Uf",
+                    "id": "3Tdm5oWued6BrYgdQhN6Hs",
                     "name": "user",
                     "role": "user",
                     "content": "Hello, agent!",
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.510"
                 },
                 {
-                    "id": "2tcsqUctUMVQUwAMP5DSRJ",
+                    "id": "SQYLmU2oJWfrVFDhMqunCM",
                     "name": "Friday",
                     "role": "assistant",
                     "content": [
@@ -586,7 +586,7 @@ Now we load the session state from the saved file:
                         }
                     ],
                     "metadata": null,
-                    "timestamp": "2026-01-09 07:30:30.824"
+                    "timestamp": "2026-01-12 02:57:50.511"
                 }
             ]
         },
@@ -611,7 +611,7 @@ Now we can see the agent state is restored to the saved state.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.921 seconds)
+   **Total running time of the script:** (0 minutes 5.445 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_state.py:
