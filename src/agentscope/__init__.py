@@ -4,13 +4,17 @@
 """The agentscope serialization module"""
 import os
 import warnings
+import sys
+import importlib
 from contextvars import ContextVar
 from datetime import datetime
+from typing import Any, TYPE_CHECKING
 
 import requests
 import shortuuid
 
 from ._run_config import _ConfigCls
+from ._extensions_map import _get_extension_map
 
 
 def _generate_random_suffix(length: int) -> str:
@@ -154,6 +158,51 @@ def init(
 
         setup_tracing(endpoint=endpoint)
         _config.trace_enabled = True
+
+
+def _lazy_import_ext(import_name: str, pip_name: str, name: str) -> Any:
+    """Lazy import extension module or raise a clear error if missing."""
+    try:
+        _module = importlib.import_module(import_name)
+        sys.modules[f"{__name__}.{name}"] = _module
+        return _module
+    except ImportError as e:
+        raise ImportError(
+            f"Missing extension! To use 'agentscope.{name}', please install '{pip_name}'.",
+        ) from e
+
+
+_extension_map = _get_extension_map()
+
+for ext_name, mapping in _extension_map.items():
+    if isinstance(mapping, str):
+        _import_name = _pip_name = mapping
+    else:
+        _import_name = mapping["import_name"]
+        _pip_name = mapping.get("pip_name", _import_name)
+
+    sys.modules[f"{__name__}.{ext_name}"] = _lazy_import_ext(
+        _import_name,
+        _pip_name,
+        ext_name,
+    )
+
+
+def __getattr__(name: str) -> Any:
+    if name in _extension_map:
+        _mapping = _extension_map[name]
+        if isinstance(_mapping, str):
+            import_name = pip_name = _mapping
+        else:
+            import_name = _mapping["import_name"]
+            pip_name = _mapping.get("pip_name", import_name)
+
+        return _lazy_import_ext(import_name, pip_name, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+if TYPE_CHECKING:
+    from . import runtime  # pylint: disable=import-self
 
 
 __all__ = [
