@@ -304,7 +304,10 @@ class AnthropicChatModel(ChatModelBase):
                     thinking_block["signature"] = content_block.signature
                     content_blocks.append(thinking_block)
 
-                elif hasattr(content_block, "text"):
+                elif (
+                    hasattr(content_block, "type")
+                    and content_block.type == "text"
+                ):
                     content_blocks.append(
                         TextBlock(
                             type="text",

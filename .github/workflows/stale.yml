@@ -21,15 +21,15 @@ jobs:
     - uses: actions/stale@v5
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
-        stale-issue-message: 'This issue is marked as stale because there has been no activity for 21 days. Remove stale label or add new comments or this issue will be closed in 3 day.'
+        stale-issue-message: 'This issue is marked as stale because there has been no activity for 60 days. Remove stale label or add new comments or this issue will be closed in 90 day.'
         close-issue-message: 'Close this stale issue.'
         stale-issue-label: 'stale-issue'
         exempt-issue-labels: 'RoadMap,Roadmap'
-        days-before-stale: 21
-        days-before-close: 3
+        days-before-stale: 60
+        days-before-close: 30
 
-        stale-pr-message: 'This PR is marked as stale because there has been no activity for 30 days. Remove stale label or add new comments or this PR will be closed in 5 day.'
+        stale-pr-message: 'This PR is marked as stale because there has been no activity for 60 days. Remove stale label or add new comments or this PR will be closed in 30 days.'
         close-pr-message: 'Close this stale PR.'
         stale-pr-label: 'stale-pr'
-        days-before-pr-stale: 40
-        days-before-pr-close: 5
+        days-before-pr-stale: 60
+        days-before-pr-close: 30

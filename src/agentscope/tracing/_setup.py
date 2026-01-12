@@ -23,11 +23,19 @@ def setup_tracing(endpoint: str) -> None:
         OTLPSpanExporter,
     )
 
-    tracer_provider = TracerProvider()
+    # Prepare a span_processor
     exporter = OTLPSpanExporter(endpoint=endpoint)
     span_processor = BatchSpanProcessor(exporter)
-    tracer_provider.add_span_processor(span_processor)
-    trace.set_tracer_provider(tracer_provider)
+
+    tracer_provider: TracerProvider = trace.get_tracer_provider()
+    if isinstance(tracer_provider, TracerProvider):
+        # The provider is set outside, just add the span processor
+        tracer_provider.add_span_processor(span_processor)
+
+    else:
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(span_processor)
+        trace.set_tracer_provider(tracer_provider)
 
 
 def _get_tracer() -> Tracer:

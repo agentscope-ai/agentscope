@@ -10,6 +10,7 @@ from .._solution import SolutionOutput
 from .._metric_base import MetricResult
 from ...agent import AgentBase
 from ...message import Msg
+from ...types import JSONSerializableObject
 
 
 class FileEvaluatorStorage(EvaluatorStorageBase):
@@ -21,26 +22,52 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
     - save_dir/
         - evaluation_result.json
         - evaluation_meta.json
-        - {task_id}/
-            - {repeat_id}/
+        - {repeat_id}/
+            - {task_id}/
                 - solution.json
                 - evaluation/
                     - {metric_name}.json
     """
 
     SOLUTION_FILE_NAME = "solution.json"
+    SOLUTION_STATS_FILE_NAME = "stats.json"
     EVALUATION_DIR_NAME = "evaluation"
     EVALUATION_RESULT_FILE = "evaluation_result.json"
     EVALUATION_META_FILE = "evaluation_meta.json"
+    TASK_META_FILE = "task_meta.json"
     AGENT_PRINTING_LOG = "logging.txt"
 
     def __init__(self, save_dir: str) -> None:
         """Initialize the file evaluator storage."""
-        self.save_dir = save_dir
+        self.save_dir = os.path.abspath(save_dir)
 
-    def _get_save_path(self, task_id: str, repeat_id: str, *args: str) -> str:
-        """Get the save path for a given task and repeat ID."""
-        return os.path.join(self.save_dir, repeat_id, task_id, *args)
+    def _get_save_path(
+        self,
+        task_id: str,
+        repeat_id: str | None,
+        *args: str,
+    ) -> str:
+        """Get the save path for a given task, repeat ID, and additional path
+        components.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str | None`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation. If None, it will be ignored in the path.
+            *args (`str`):
+                Additional path components to be appended.
+        """
+        path_components = [
+            task_id,
+            repeat_id,
+            *args,
+        ]
+
+        path = os.path.join(self.save_dir, *[_ for _ in path_components if _])
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
 
     def save_solution_result(
         self,
@@ -65,7 +92,6 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
             repeat_id,
             self.SOLUTION_FILE_NAME,
         )
-        os.makedirs(os.path.dirname(path_file), exist_ok=True)
         with open(path_file, "w", encoding="utf-8") as f:
             json.dump(output, f, ensure_ascii=False, indent=4)
 
@@ -93,7 +119,6 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
             self.EVALUATION_DIR_NAME,
             f"{evaluation.name}.json",
         )
-        os.makedirs(os.path.dirname(path_file), exist_ok=True)
         with open(path_file, "w", encoding="utf-8") as f:
             json.dump(evaluation, f, ensure_ascii=False, indent=4)
 
@@ -280,6 +305,97 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
         with open(path_file, "w", encoding="utf-8") as f:
             json.dump(meta_info, f, ensure_ascii=False, indent=4)
 
+    def save_task_meta(
+        self,
+        task_id: str,
+        meta_info: dict[str, JSONSerializableObject],
+    ) -> None:
+        """Save the task meta information.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            meta_info (`dict[str, JSONSerializableObject]`):
+                The task meta information to be saved, which should be JSON
+                serializable.
+        """
+        path_file = self._get_save_path(
+            task_id,
+            None,
+            self.TASK_META_FILE,
+        )
+        with open(path_file, "w", encoding="utf-8") as f:
+            json.dump(meta_info, f, ensure_ascii=False, indent=4)
+
+    def save_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+        stats: dict,
+    ) -> None:
+        """Save the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+            stats (`dict`):
+                A dictionary containing the solution statistics to be saved.
+        """
+        path_file = self._get_save_path(
+            task_id,
+            repeat_id,
+            self.SOLUTION_STATS_FILE_NAME,
+        )
+        if not os.path.exists(path_file):
+            with open(path_file, "w", encoding="utf-8") as f:
+                json.dump(stats, f, ensure_ascii=False, indent=4)
+
+    def get_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+    ) -> dict:
+        """Get the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+
+        Returns:
+            `dict`:
+                A dictionary containing the solution statistics for the given
+                task and repeat ID.
+        """
+        path_file = self._get_save_path(
+            task_id,
+            repeat_id,
+            self.SOLUTION_STATS_FILE_NAME,
+        )
+
+        if not os.path.exists(path_file):
+            raise FileNotFoundError(
+                f"Solution statistics for task {task_id} and repeat "
+                f"{repeat_id} not found.",
+            )
+
+        try:
+            with open(path_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except JSONDecodeError as e:
+            raise JSONDecodeError(
+                f"Failed to load JSON from {path_file}: {e.msg}",
+                e.doc,
+                e.pos,
+            ) from e
+
     def get_agent_pre_print_hook(
         self,
         task_id: str,
@@ -338,7 +454,6 @@ class FileEvaluatorStorage(EvaluatorStorageBase):
                 repeat_id,
                 self.AGENT_PRINTING_LOG,
             )
-            os.makedirs(os.path.dirname(path_file), exist_ok=True)
             with open(path_file, "a", encoding="utf-8") as f:
                 f.write("\n".join(printing_str) + "\n")
 

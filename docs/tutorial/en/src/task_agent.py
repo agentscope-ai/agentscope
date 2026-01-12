@@ -289,6 +289,12 @@ asyncio.run(example_structured_output())
 #       -
 #       -
 #       - A special agent that represents the user, used to interact with the agent
+#     * - ``A2aAgent``
+#       - \-
+#       - | pre\_/post_reply
+#         | pre\_/post_observe
+#         | pre\_/post_print
+#       - Agent for communicating with remote A2A agents, see :ref:`a2a`
 #
 #
 #
@@ -296,4 +302,5 @@ asyncio.run(example_structured_output())
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # - :ref:`tool`
 # - :ref:`hook`
+# - :ref:`a2a`
 #

@@ -11,6 +11,9 @@ from agentscope.formatter import DashScopeMultiAgentFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.session import JSONSession
 
+# import random
+# from agentscope.tts import DashScopeTTSModel
+
 
 def get_official_agents(name: str) -> ReActAgent:
     """Get the official werewolves game agents."""
@@ -73,6 +76,14 @@ Your target is to win the game with your teammates as much as possible.
             model_name="qwen3-max",
         ),
         formatter=DashScopeMultiAgentFormatter(),
+        # If you want to use TTS, uncomment the following lines and the
+        # TTS-related import statement at the beginning of this file.
+        # tts_model=DashScopeTTSModel(
+        #     api_key=os.environ.get("DASHSCOPE_API_KEY"),
+        #     model_name="qwen3-tts-flash",
+        #     voice=random.choice(["Cherry", "Serena", "Ethan", "Chelsie"]),
+        #     stream=True,
+        # ),
     )
     return agent
 

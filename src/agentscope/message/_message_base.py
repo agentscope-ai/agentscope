@@ -5,7 +5,6 @@ from typing import Literal, List, overload, Sequence
 
 import shortuuid
 
-from . import ToolResultBlock
 from ._message_block import (
     TextBlock,
     ToolUseBlock,
@@ -13,7 +12,8 @@ from ._message_block import (
     AudioBlock,
     ContentBlock,
     VideoBlock,
-    ThinkingBlock,
+    ToolResultBlock,
+    ContentBlockTypes,
 )
 from ..types import JSONSerializableObject
 
@@ -150,79 +150,61 @@ class Msg:
     def get_content_blocks(
         self,
         block_type: Literal["text"],
-    ) -> List[TextBlock]:
+    ) -> Sequence[TextBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: Literal["tool_use"],
-    ) -> List[ToolUseBlock]:
+    ) -> Sequence[ToolUseBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: Literal["tool_result"],
-    ) -> List[ToolResultBlock]:
+    ) -> Sequence[ToolResultBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: Literal["image"],
-    ) -> List[ImageBlock]:
+    ) -> Sequence[ImageBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: Literal["audio"],
-    ) -> List[AudioBlock]:
+    ) -> Sequence[AudioBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: Literal["video"],
-    ) -> List[VideoBlock]:
+    ) -> Sequence[VideoBlock]:
         ...
 
     @overload
     def get_content_blocks(
         self,
         block_type: None = None,
-    ) -> List[ContentBlock]:
+    ) -> Sequence[ContentBlock]:
         ...
 
     def get_content_blocks(
         self,
-        block_type: Literal[
-            "text",
-            "thinking",
-            "tool_use",
-            "tool_result",
-            "image",
-            "audio",
-            "video",
-        ]
-        | None = None,
-    ) -> (
-        List[ContentBlock]
-        | List[TextBlock]
-        | List[ThinkingBlock]
-        | List[ToolUseBlock]
-        | List[ToolResultBlock]
-        | List[ImageBlock]
-        | List[AudioBlock]
-        | List[VideoBlock]
-    ):
+        block_type: ContentBlockTypes | List[ContentBlockTypes] | None = None,
+    ) -> Sequence[ContentBlock]:
         """Get the content in block format. If the content is a string,
         it will be converted to a text block.
 
         Args:
-            block_type (`Literal["text", "thinking", "tool_use", \
-            "tool_result", "image", "audio", "video"] | None`, optional):
+            block_type (`ContentBlockTypes | List[ContentBlockTypes] | None`, \
+            optional):
                 The type of the block to be extracted. If `None`, all blocks
                 will be returned.
 
@@ -238,8 +220,11 @@ class Msg:
         else:
             blocks = self.content or []
 
-        if block_type is not None:
+        if isinstance(block_type, str):
             blocks = [_ for _ in blocks if _["type"] == block_type]
+
+        elif isinstance(block_type, list):
+            blocks = [_ for _ in blocks if _["type"] in block_type]
 
         return blocks
 

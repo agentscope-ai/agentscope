@@ -43,6 +43,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ------------ A2A protocol ------------
+a2a = [
+    "a2a-sdk",
+    "httpx",
+    # TODO: split the card resolvers from the a2a dependency
+    "nacos-sdk-python>=3.0.0",
+]
+
 
 # ------------ Model APIs ------------
 gemini = ["google-genai"]
@@ -62,7 +70,10 @@ tokens = [
 # ------------ Memory ------------
 redis_memory = ["redis"]
 
-mem0ai = ["mem0ai", "packaging"]
+mem0ai = [
+    "mem0ai<=0.1.116",
+    "packaging"
+]
 reme = ["reme-ai>=0.2.0.3"]
 memory = [
     "agentscope[redis_memory]",
@@ -92,7 +103,9 @@ readers = [
 # the version to 1.15.1 here.
 qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
+ali_mysql = ["mysql-connector-python"]
 vdbs = [
+    "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
 ]
@@ -108,6 +121,7 @@ evaluate = ["ray"]
 
 # ------------ Full ------------
 full = [
+    "agentscope[a2a]",
     "agentscope[models]",
     "agentscope[tokens]",
     "agentscope[memory]",
