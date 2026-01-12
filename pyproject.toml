@@ -38,31 +38,84 @@ dependencies = [
     "shortuuid",
     "tiktoken",
     "sounddevice",
+    "sqlalchemy",
     "python-frontmatter",
 ]
 
 [project.optional-dependencies]
-full = [
-    # Model
-    "ollama>=0.5.4",
-    "google-genai",
+
+# ------------ Model APIs ------------
+gemini = ["google-genai"]
+ollama = ["ollama>=0.5.4"]
+models = [
+    "agentscope[ollama]",
+    "agentscope[gemini]",
+]
+
+# ------------ Tokenizers ------------
+tokens = [
     "Pillow",
     "transformers",
     "jinja2",
-    # Evaluator
-    "ray",
-    # Long-term memory
-    "mem0ai",
-    "packaging",
-    "reme-ai>=0.2.0.3",
-    # RAG
-    "pypdf",
-    "python-docx",
-    "nltk",
-    # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
-    # the version to 1.15.1 here.
-    "qdrant-client==1.15.1",
 ]
+
+# ------------ Memory ------------
+redis_memory = ["redis"]
+
+mem0ai = ["mem0ai", "packaging"]
+reme = ["reme-ai>=0.2.0.3"]
+memory = [
+    "agentscope[redis_memory]",
+    "agentscope[mem0ai]",
+    "agentscope[reme]",
+]
+
+# ------------ RAG ------------
+# readers
+text-reader = ["nltk"]
+pdf-reader = [
+    "agentscope[text-reader]",
+    "pypdf"
+]
+docx-reader = [
+    "agentscope[text-reader]",
+    "python-docx"
+]
+readers = [
+    "agentscope[text-reader]",
+    "agentscope[pdf-reader]",
+    "agentscope[docx-reader]",
+]
+
+# vdb
+# The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
+# the version to 1.15.1 here.
+qdrant = ["qdrant-client==1.15.1"]
+milvus = ["pymilvus[milvus_lite]"]
+vdbs = [
+    "agentscope[qdrant]",
+    "agentscope[milvus]",
+]
+
+
+rag = [
+    "agentscope[readers]",
+    "agentscope[vdbs]",
+]
+
+# ------------ Evaluation ------------
+evaluate = ["ray"]
+
+# ------------ Full ------------
+full = [
+    "agentscope[models]",
+    "agentscope[tokens]",
+    "agentscope[memory]",
+    "agentscope[rag]",
+    "agentscope[evaluate]",
+]
+
+# ------------ Development ------------
 dev = [
     # Include full dependencies from local package
     "agentscope[full]",
@@ -74,9 +127,11 @@ dev = [
     "furo",
     "myst_parser",
     "matplotlib",
-    "pymilvus[milvus_lite]",
     # For unittests
-    "fakeredis"
+    # For mocking redis in unittests
+    "fakeredis",
+    "aiosqlite",
+    "greenlet",
 ]
 
 [project.urls]
