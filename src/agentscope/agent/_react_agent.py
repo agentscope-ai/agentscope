@@ -356,8 +356,6 @@ class ReActAgent(ReActAgentBase):
         # If required structured output model is provided
         self._required_structured_model: Type[BaseModel] | None = None
 
-        self._required_structured_model = None
-
         # -------------- State registration and hooks --------------
         # Register the status variables
         self.register_state("name")

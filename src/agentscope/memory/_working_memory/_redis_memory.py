@@ -228,6 +228,8 @@ class RedisMemory(MemoryBase):
 
             for msg_data in msg_data_list:
                 if msg_data is not None:
+                    if isinstance(msg_data, (bytes, bytearray)):
+                        msg_data = msg_data.decode("utf-8")
                     msg_dict = json.loads(msg_data)
                     messages.append(Msg.from_dict(msg_dict))
 
@@ -250,7 +252,7 @@ class RedisMemory(MemoryBase):
         skip_duplicated: bool = True,
         **kwargs: Any,
     ) -> None:
-        """Add message into the storge with the given mark (if provided).
+        """Add message into the storage with the given mark (if provided).
 
         Args:
             memories (`Msg | list[Msg]`):
@@ -313,7 +315,7 @@ class RedisMemory(MemoryBase):
             # Record the message data
             await pipe.set(
                 self._get_message_key(m.id),
-                json.dumps(m.to_dict(), ensure_ascii=False),
+                json.dumps(m.to_dict(), ensure_ascii=False, encodings="utf-8"),
             )
 
             # Record the marks if provided

@@ -106,6 +106,7 @@ class MemoryBase(StateModule):
         self,
         mark: str | None = None,
         exclude_mark: str | None = None,
+        prepend_summary: bool = True,
         **kwargs: Any,
     ) -> list[Msg]:
         """Get the messages from the memory by mark (if provided). Otherwise,
@@ -122,6 +123,8 @@ class MemoryBase(StateModule):
             exclude_mark (`str | None`, optional):
                 The mark to exclude messages. If provided, messages with
                 this mark will be excluded from the results.
+            prepend_summary (`bool`, defaults to True):
+                Whether to prepend the compressed summary as a message
 
         Returns:
             `list[Msg]`:

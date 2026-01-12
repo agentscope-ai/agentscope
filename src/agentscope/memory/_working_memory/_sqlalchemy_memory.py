@@ -368,7 +368,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         skip_duplicated: bool = True,
         **kwargs: Any,
     ) -> None:
-        """Add message into the storge with the given mark (if provided).
+        """Add message into the storage with the given mark (if provided).
 
         Args:
             memories (`Msg | list[Msg] | None`):
