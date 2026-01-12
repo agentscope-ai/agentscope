@@ -230,6 +230,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "raise",
             "rename",
         ] = "raise",
+        return_direct: bool = False,
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -281,6 +282,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
+            return_direct (`bool`, defaults to `False`):
+                Whether to return the tool's output directly to the user
+                without further LLM processing. When set to True, the agent
+                will stop the reasoning-acting loop and return the tool result
+                as the final response. Similar to LangChain's return_direct.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -378,6 +384,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
+            return_direct=return_direct,
         )
 
         if func_name in self.tools:
@@ -748,6 +755,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "raise",
             "rename",
         ] = "raise",
+        return_direct: bool | dict[str, bool] = False,
     ) -> None:
         """Register tool functions from an MCP client.
 
@@ -784,6 +792,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
+            return_direct (`bool | dict[str, bool]`, defaults to `False`):
+                Whether to return the tool's output directly to the user
+                without further LLM processing. Can be a single bool value
+                applied to all tools, or a dict mapping tool names to their
+                individual return_direct settings.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)
@@ -850,12 +863,20 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             if preset_kwargs_mapping is not None:
                 preset_kwargs = preset_kwargs_mapping.get(mcp_tool.name, {})
 
+            # Determine return_direct for this tool
+            tool_return_direct = False
+            if isinstance(return_direct, bool):
+                tool_return_direct = return_direct
+            elif isinstance(return_direct, dict):
+                tool_return_direct = return_direct.get(mcp_tool.name, False)
+
             self.register_tool_function(
                 tool_func=func_obj,
                 group_name=group_name,
                 preset_kwargs=preset_kwargs,
                 postprocess_func=postprocess_func,
                 namesake_strategy=namesake_strategy,
+                return_direct=tool_return_direct,
             )
 
         logger.info(

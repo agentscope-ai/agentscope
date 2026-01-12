@@ -54,6 +54,11 @@ class RegisteredToolFunction:
     returns `None`, the tool result will be returned as is. If it returns a
     `ToolResponse`, the returned block will be used as the final tool
     response."""
+    return_direct: bool = False
+    """Whether to return the tool's output directly to the user without
+    further LLM processing. When set to True, the agent will stop the
+    reasoning-acting loop and return the tool result as the final response.
+    Similar to LangChain's return_direct parameter."""
 
     @property
     def extended_json_schema(self) -> dict:
