@@ -261,6 +261,10 @@ class RedisMemory(MemoryBase):
         Args:
             msg_ids (`list[str]`):
                 The list of message IDs to be removed.
+
+        Returns:
+            `int`:
+                The number of messages removed.
         """
         if not msg_ids:
             return 0

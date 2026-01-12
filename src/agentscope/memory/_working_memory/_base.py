@@ -35,7 +35,16 @@ class MemoryBase(StateModule):
         marks: str | list[str] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Add items to the memory."""
+        """Add message(s) into the memory storage with the given mark
+        (if provided).
+
+        Args:
+            memories (`Msg | list[Msg] | None`):
+                The message(s) to be added.
+            marks (`str | list[str] | None`, optional):
+                The mark(s) to associate with the message(s). If `None`, no
+                mark is associated.
+        """
 
     @abstractmethod
     async def delete(
@@ -43,7 +52,16 @@ class MemoryBase(StateModule):
         msg_ids: list[str],
         **kwargs: Any,
     ) -> int:
-        """Delete items from the memory."""
+        """Remove message(s) from the storage by their IDs.
+
+        Args:
+            msg_ids (`list[str]`):
+                The list of message IDs to be removed.
+
+        Returns:
+            `int`:
+                The number of messages removed.
+        """
 
     async def delete_by_mark(
         self,
@@ -51,7 +69,20 @@ class MemoryBase(StateModule):
         *args: Any,
         **kwargs: Any,
     ) -> int:
-        """Delete items from the memory by mark."""
+        """Remove messages from the memory by their marks.
+
+        Args:
+            mark (`str | list[str]`):
+                The mark(s) of the messages to be removed.
+
+        Raises:
+            `TypeError`:
+                If the provided mark is not a string or a list of strings.
+
+        Returns:
+            `int`:
+                The number of messages removed.
+        """
         raise NotImplementedError(
             "The delete_by_mark method is not implemented in "
             f"{self.__class__.__name__} class.",
@@ -59,7 +90,12 @@ class MemoryBase(StateModule):
 
     @abstractmethod
     async def size(self) -> int:
-        """Get the size of the memory."""
+        """Get the number of messages in the storage.
+
+        Returns:
+            `int`:
+                The number of messages in the storage.
+        """
 
     @abstractmethod
     async def clear(self) -> None:

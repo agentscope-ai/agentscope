@@ -481,7 +481,7 @@ class ReActAgent(ReActAgentBase):
                     )
                     await self.memory.add(
                         msg_hint,
-                        MemoryMark.HINT,
+                        marks=MemoryMark.HINT,
                     )
 
                     # Just generate text response in the next reasoning step
@@ -500,7 +500,7 @@ class ReActAgent(ReActAgentBase):
                         f"required structured output.</system-hint>",
                         "user",
                     )
-                    await self.memory.add(msg_hint, MemoryMark.HINT)
+                    await self.memory.add(msg_hint, marks=MemoryMark.HINT)
                     # Require tool call in the next reasoning step
                     tool_choice = "required"
 
@@ -544,7 +544,7 @@ class ReActAgent(ReActAgentBase):
             hint_msg = await self.plan_notebook.get_current_hint()
             if self.print_hint_msg and hint_msg:
                 await self.print(hint_msg)
-            await self.memory.add(hint_msg, MemoryMark.HINT)
+            await self.memory.add(hint_msg, marks=MemoryMark.HINT)
 
         # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(
@@ -554,7 +554,7 @@ class ReActAgent(ReActAgentBase):
             ],
         )
         # Clear the hint messages after use
-        await self.memory.delete_by_mark(MemoryMark.HINT)
+        await self.memory.delete_by_mark(mark=MemoryMark.HINT)
 
         res = await self.model(
             prompt,

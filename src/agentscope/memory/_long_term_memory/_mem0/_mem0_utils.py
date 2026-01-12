@@ -12,9 +12,8 @@ from mem0.configs.llms.base import BaseLlmConfig
 from mem0.embeddings.base import EmbeddingBase
 from mem0.llms.base import LLMBase
 
-
-from agentscope.embedding import EmbeddingModelBase
-from agentscope.model import ChatModelBase, ChatResponse
+from ....embedding import EmbeddingModelBase
+from ....model import ChatModelBase, ChatResponse
 
 
 class AgentScopeLLM(LLMBase):

@@ -262,3 +262,34 @@ class InMemoryMemory(MemoryBase):
             self.content[idx] = (msg, marks)
 
         return updated_count
+
+    def state_dict(self) -> dict:
+        """Get the state dictionary for serialization."""
+        return {
+            "content": [[msg.to_dict(), marks] for msg, marks in self.content],
+        }
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """Load the state dictionary for deserialization."""
+        if strict and "content" not in state_dict:
+            raise KeyError(
+                "The state_dict does not contain 'content' key required for "
+                "InMemoryMemory.",
+            )
+
+        self.content = []
+        for item in state_dict.get("content", []):
+            if isinstance(item, (tuple, list)) and len(item) == 2:
+                msg_dict, marks = item
+                msg = Msg.from_dict(msg_dict)
+                self.content.append((msg, marks))
+
+            elif isinstance(item, dict):
+                # For compatibility with older versions
+                msg = Msg.from_dict(item)
+                self.content.append((msg, []))
+
+            else:
+                raise ValueError(
+                    "Invalid item format in state_dict for InMemoryMemory.",
+                )
