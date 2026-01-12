@@ -17,6 +17,7 @@ from ._store import (
     QdrantStore,
     MilvusLiteStore,
     AlibabaCloudMySQLStore,
+    LindormStore,
 )
 from ._knowledge_base import KnowledgeBase
 from ._simple_knowledge import SimpleKnowledge
@@ -34,6 +35,7 @@ __all__ = [
     "QdrantStore",
     "MilvusLiteStore",
     "AlibabaCloudMySQLStore",
+    "LindormStore",
     "KnowledgeBase",
     "SimpleKnowledge",
 ]
