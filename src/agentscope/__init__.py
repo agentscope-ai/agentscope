@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: E402
-# pylint: disable=wrong-import-position
+# pylint: disable=wrong-import-position, unused-argument
 """The agentscope serialization module"""
 import os
-import warnings
 import sys
+import warnings
 import importlib
+from importlib.abc import MetaPathFinder
+from importlib.machinery import ModuleSpec
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from types import ModuleType
+from typing import Optional, Any, Sequence
 
 import requests
 import shortuuid
@@ -160,8 +163,10 @@ def init(
         _config.trace_enabled = True
 
 
+_extension_map = _get_extension_map()
+
+
 def _lazy_import_ext(import_name: str, pip_name: str, name: str) -> Any:
-    """Lazy import extension module or raise a clear error if missing."""
     try:
         _module = importlib.import_module(import_name)
         sys.modules[f"{__name__}.{name}"] = _module
@@ -172,38 +177,55 @@ def _lazy_import_ext(import_name: str, pip_name: str, name: str) -> Any:
         ) from e
 
 
-_extension_map = _get_extension_map()
-
-for ext_name, mapping in _extension_map.items():
-    if isinstance(mapping, str):
-        _import_name = _pip_name = mapping
-    else:
-        _import_name = mapping["import_name"]
-        _pip_name = mapping.get("pip_name", _import_name)
-
-    sys.modules[f"{__name__}.{ext_name}"] = _lazy_import_ext(
-        _import_name,
-        _pip_name,
-        ext_name,
-    )
-
-
 def __getattr__(name: str) -> Any:
     if name in _extension_map:
-        _mapping = _extension_map[name]
-        if isinstance(_mapping, str):
-            import_name = pip_name = _mapping
-        else:
-            import_name = _mapping["import_name"]
-            pip_name = _mapping.get("pip_name", import_name)
-
+        mapping = _extension_map[name]
+        import_name = mapping["import_name"]
+        pip_name = mapping["pip_name"]
         return _lazy_import_ext(import_name, pip_name, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    raise AttributeError(f"module {__name__} has no attribute {name}")
 
 
-if TYPE_CHECKING:
-    from . import runtime  # pylint: disable=import-self
+class _ExtensionFinder(MetaPathFinder):
+    def find_spec(
+        self,
+        fullname: str,
+        path: Optional[Sequence[str]],
+        target: Optional[ModuleType] = None,
+    ) -> Optional[ModuleSpec]:
+        """
+        Locate and return the import specification for an agentscope extension.
 
+        This MetaPathFinder intercepts imports of the form `agentscope.<ext>`
+        and maps them to the corresponding real extension package defined in
+        `_extension_map`. For example:
+
+            agentscope.runtime.sandbox -> agentscope_runtime.sandbox
+
+        Args:
+            fullname: Fully-qualified module name being imported.
+            path: Package search path for submodules (or None for top-level).
+            target: Target module object if this is a reload, else None.
+
+        Returns:
+            The ModuleSpec for the located module, or None if not handled.
+        """
+        if fullname.startswith("agentscope."):
+            parts = fullname.split(".")
+            if len(parts) >= 2:
+                ext_name = parts[1]
+                if ext_name in _extension_map:
+                    real_pkg = _extension_map[ext_name]["import_name"]
+                    real_fullname = ".".join(
+                        [real_pkg] + parts[2:],
+                    )
+                    _module = importlib.import_module(real_fullname)
+                    sys.modules[fullname] = _module
+                    return _module.__spec__
+        return None
+
+
+sys.meta_path.insert(0, _ExtensionFinder())
 
 __all__ = [
     # modules
