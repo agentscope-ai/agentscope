@@ -315,38 +315,9 @@ as_studio
 
 ## 📖 Documentation
 
-- Tutorial
-  - [Installation](https://doc.agentscope.io/tutorial/quickstart_installation.html)
-  - [Key Concepts](https://doc.agentscope.io/tutorial/quickstart_key_concept.html)
-  - [Create Message](https://doc.agentscope.io/tutorial/quickstart_message.html)
-  - [ReAct Agent](https://doc.agentscope.io/tutorial/quickstart_agent.html)
-- Workflow
-  - [Conversation](https://doc.agentscope.io/tutorial/workflow_conversation.html)
-  - [Multi-Agent Debate](https://doc.agentscope.io/tutorial/workflow_multiagent_debate.html)
-  - [Concurrent Agents](https://doc.agentscope.io/tutorial/workflow_concurrent_agents.html)
-  - [Routing](https://doc.agentscope.io/tutorial/workflow_routing.html)
-  - [Handoffs](https://doc.agentscope.io/tutorial/workflow_handoffs.html)
-- FAQ
-  - [FAQ](https://doc.agentscope.io/tutorial/faq.html)
-- Task Guides
-  - [Model](https://doc.agentscope.io/tutorial/task_model.html)
-  - [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html)
-  - [Tool](https://doc.agentscope.io/tutorial/task_tool.html)
-  - [Memory](https://doc.agentscope.io/tutorial/task_memory.html)
-  - [Long-Term Memory](https://doc.agentscope.io/tutorial/task_long_term_memory.html)
-  - [Agent](https://doc.agentscope.io/tutorial/task_agent.html)
-  - [Pipeline](https://doc.agentscope.io/tutorial/task_pipeline.html)
-  - [Plan](https://doc.agentscope.io/tutorial/task_plan.html)
-  - [State/Session Management](https://doc.agentscope.io/tutorial/task_state.html)
-  - [Agent Hooks](https://doc.agentscope.io/tutorial/task_hook.html)
-  - [MCP](https://doc.agentscope.io/tutorial/task_mcp.html)
-  - [AgentScope Studio](https://doc.agentscope.io/tutorial/task_studio.html)
-  - [Tracing](https://doc.agentscope.io/tutorial/task_tracing.html)
-  - [Evaluation](https://doc.agentscope.io/tutorial/task_eval.html)
-  - [Embedding](https://doc.agentscope.io/tutorial/task_embedding.html)
-  - [Token](https://doc.agentscope.io/tutorial/task_token.html)
-- API
-  - [API Docs](https://doc.agentscope.io/api/agentscope.html)
+- [Tutorial](https://doc.agentscope.io/tutorial/)
+- [FAQ](https://doc.agentscope.io/tutorial/faq.html)
+- [API Docs](https://doc.agentscope.io/api/agentscope.html)
 
 ## 🎨 More Examples & Samples
 
@@ -387,7 +358,7 @@ as_studio
 - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
 
 ### Training
--
+
 - [Reinforcement learning (RL) with Trinity-RFT](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent)
 
 
