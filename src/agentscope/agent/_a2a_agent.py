@@ -7,6 +7,7 @@ A2A standard protocol.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Type
+import uuid
 
 import httpx
 from pydantic import BaseModel
@@ -108,8 +109,10 @@ class A2AAgent(AgentBase):
         # The variables to store observed messages
         self._observed_msgs: list[Msg] = []
 
+        self._context_id = str(uuid.uuid4())
+
         # The formatter used for message conversion
-        self.formatter = A2AChatFormatter()
+        self.formatter = A2AChatFormatter(context_id=self._context_id)
 
     def state_dict(self) -> dict:
         """Get the state dictionary of the A2A agent.
@@ -232,6 +235,7 @@ class A2AAgent(AgentBase):
         response_msg = None
         async for item in client.send_message(a2a_message):
             if isinstance(item, A2AMessage):
+                # format_a2a_message returns single Msg
                 response_msg = await self.formatter.format_a2a_message(
                     self.name,
                     item,
@@ -242,12 +246,12 @@ class A2AAgent(AgentBase):
                 task, _ = item
 
                 if task is not None:
-                    for _ in await self.formatter.format_a2a_task(
+                    for msg in await self.formatter.format_a2a_task(
                         self.name,
                         task,
                     ):
-                        await self.print(_)
-                        response_msg = _
+                        await self.print(msg)
+                        response_msg = msg
 
         # Clear the observed messages after processing
         self._observed_msgs.clear()
