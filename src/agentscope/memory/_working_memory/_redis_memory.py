@@ -315,7 +315,7 @@ class RedisMemory(MemoryBase):
             # Record the message data
             await pipe.set(
                 self._get_message_key(m.id),
-                json.dumps(m.to_dict(), ensure_ascii=False, encodings="utf-8"),
+                json.dumps(m.to_dict(), ensure_ascii=False),
             )
 
             # Record the marks if provided
@@ -422,7 +422,7 @@ class RedisMemory(MemoryBase):
         return total_removed
 
     async def clear(self) -> None:
-        """Clear all messages belong to this section from the storage."""
+        """Clear all messages belong to this session from the storage."""
         msg_ids = await self._client.lrange(self._get_session_key(), 0, -1)
 
         # Get all mark keys using SCAN

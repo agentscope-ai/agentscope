@@ -119,7 +119,7 @@ class InMemoryMemory(MemoryBase):
             marks = []
         elif isinstance(marks, str):
             marks = [marks]
-        elif not isinstance(marks, list) and not all(
+        elif not isinstance(marks, list) or not all(
             isinstance(m, str) for m in marks
         ):
             raise TypeError(

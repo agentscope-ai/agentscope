@@ -138,7 +138,8 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         Raises:
             `ValueError`:
                 If the `engine` parameter is not an instance of
-                `sqlalchemy.ext.asyncio.AsyncEngine`.
+                `sqlalchemy.ext.asyncio.AsyncEngine` or `sqlalchemy.
+                ext.asyncio.AsyncSession`.
         """
         super().__init__()
 
