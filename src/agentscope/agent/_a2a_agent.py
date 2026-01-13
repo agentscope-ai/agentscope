@@ -246,12 +246,12 @@ class A2AAgent(AgentBase):
                 task, _ = item
 
                 if task is not None:
-                    for msg in await self.formatter.format_a2a_task(
+                    for task_msg in await self.formatter.format_a2a_task(
                         self.name,
                         task,
                     ):
-                        await self.print(msg)
-                        response_msg = msg
+                        await self.print(task_msg)
+                        response_msg = task_msg
 
         # Clear the observed messages after processing
         self._observed_msgs.clear()

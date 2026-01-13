@@ -384,7 +384,7 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
     async def test_context_id_included_when_set(self) -> None:
         """Test that context_id is included in A2A Message when set."""
         formatter_with_context = A2AChatFormatter(
-            context_id="test-context-123"
+            context_id="test-context-123",
         )
         a2a_msg = await formatter_with_context.format(self.as_msgs)
 
