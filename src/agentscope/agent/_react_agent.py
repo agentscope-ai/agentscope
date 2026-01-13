@@ -401,9 +401,6 @@ class ReActAgent(ReActAgentBase):
         # Retrieve relevant documents from the knowledge base(s) if any
         await self._retrieve_from_knowledge(msg)
 
-        # -------------- Memory compression --------------
-        await self._compress_memory_if_needed()
-
         # Control if LLM generates tool calls in each reasoning step
         tool_choice: Literal["auto", "none", "required"] | None = None
 
@@ -433,6 +430,9 @@ class ReActAgent(ReActAgentBase):
         structured_output = None
         reply_msg = None
         for _ in range(self.max_iters):
+            # -------------- Memory compression --------------
+            await self._compress_memory_if_needed()
+
             # -------------- The reasoning process --------------
             msg_reasoning = await self._reasoning(tool_choice)
 
