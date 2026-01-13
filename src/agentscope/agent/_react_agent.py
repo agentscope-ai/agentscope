@@ -85,12 +85,14 @@ class SummarySchema(BaseModel):
     )
 
 
-class MemoryMark(str, Enum):
+class _MemoryMark(str, Enum):
     """The memory marks used in the ReAct agent."""
 
     HINT = "hint"
+    """Used to mark the hint messages that will be cleared after use."""
 
     COMPRESSED = "compressed"
+    """Used to mark the compressed messages in the memory."""
 
 
 class ReActAgent(ReActAgentBase):
@@ -482,7 +484,7 @@ class ReActAgent(ReActAgentBase):
                     )
                     await self.memory.add(
                         msg_hint,
-                        marks=MemoryMark.HINT,
+                        marks=_MemoryMark.HINT,
                     )
 
                     # Just generate text response in the next reasoning step
@@ -501,7 +503,7 @@ class ReActAgent(ReActAgentBase):
                         f"required structured output.</system-hint>",
                         "user",
                     )
-                    await self.memory.add(msg_hint, marks=MemoryMark.HINT)
+                    await self.memory.add(msg_hint, marks=_MemoryMark.HINT)
                     # Require tool call in the next reasoning step
                     tool_choice = "required"
 
@@ -528,7 +530,7 @@ class ReActAgent(ReActAgentBase):
                 [
                     *([*msg] if isinstance(msg, list) else [msg]),
                     *await self.memory.get_memory(
-                        exclude_mark=MemoryMark.COMPRESSED,
+                        exclude_mark=_MemoryMark.COMPRESSED,
                     ),
                     reply_msg,
                 ],
@@ -548,7 +550,7 @@ class ReActAgent(ReActAgentBase):
             hint_msg = await self.plan_notebook.get_current_hint()
             if self.print_hint_msg and hint_msg:
                 await self.print(hint_msg)
-            await self.memory.add(hint_msg, marks=MemoryMark.HINT)
+            await self.memory.add(hint_msg, marks=_MemoryMark.HINT)
 
         # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(
@@ -558,7 +560,7 @@ class ReActAgent(ReActAgentBase):
             ],
         )
         # Clear the hint messages after use
-        await self.memory.delete_by_mark(mark=MemoryMark.HINT)
+        await self.memory.delete_by_mark(mark=_MemoryMark.HINT)
 
         res = await self.model(
             prompt,
@@ -1002,7 +1004,7 @@ class ReActAgent(ReActAgentBase):
 
         # Obtain the messages that have not been compressed yet
         to_compressed_msgs = await self.memory.get_memory(
-            exclude_mark=MemoryMark.COMPRESSED,
+            exclude_mark=_MemoryMark.COMPRESSED,
         )
 
         # keep the recent n messages uncompressed, note messages with tool
@@ -1070,6 +1072,7 @@ class ReActAgent(ReActAgentBase):
                 ],
             )
 
+            # TODO: What if the compressed messages include multimodal blocks?
             # Use the specified compression model if provided
             compression_model = (
                 self.compression_config.compression_model or self.model
@@ -1099,7 +1102,7 @@ class ReActAgent(ReActAgentBase):
                 # Mark the compressed messages in the memory storage
                 await self.memory.update_messages_mark(
                     msg_ids=[_.id for _ in to_compressed_msgs],
-                    new_mark=MemoryMark.COMPRESSED,
+                    new_mark=_MemoryMark.COMPRESSED,
                 )
 
                 logger.info(

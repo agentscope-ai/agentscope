@@ -54,6 +54,7 @@
 </p>
 
 ## 📢 新闻
+- **[2026-01]** AgentScope 已集成[数据库支持](https://doc.agentscope.io/zh_CN/tutorial/task_memory.html) 到记忆模块中，并新增[记忆压缩](https://doc.agentscope.io/zh_CN/tutorial/task_agent.html)功能。欢迎查看我们的[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression)和[文档](https://doc.agentscope.io/tutorial/task_memory.html)。
 - **[2025-12]** AgentScope 已支持 [A2A(Agent-to-Agent) 通信协议](https://doc.agentscope.io/tutorial/task_a2a.html)！查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_a2a.html) 了解更多详情。
 - **[2025-12]** AgentScope 已支持 [TTS(Text-to-Speech) 模型](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) ！欢迎查看 [样例]() 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) 了解更多详情。
 - **[2025-11]** AgentScope 已支持 [Anthropic Agent Skill](https://claude.com/blog/skills) ！欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_agent_skill.html) 了解更多详情。
@@ -395,6 +396,7 @@ as_studio
     - [流式获取打印消息](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
     - [TTS](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts)
     - [高代码部署](https://github.com/agentscope-ai/agentscope/tree/main/examples/deployment/planning_agent)
+    - [记忆压缩](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression)
   - 智能体
     - [ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/react_agent)
     - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)

@@ -54,6 +54,7 @@
 </p>
 
 ## 📢 News
+- **[2026-01]** AgentScope integrates [database support](https://doc.agentscope.io/tutorial/task_memory.html) in the memory module now, as well as the [memory compression](https://doc.agentscope.io/tutorial/task_agent.html) feature. Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) and [tutorial](https://doc.agentscope.io/tutorial/task_memory.html) for more details.
 - **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
 - **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
 - **[2025-11]** AgentScope supports [Anthropic Agent Skill](https://claude.com/blog/skills) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) and [tutorial](https://doc.agentscope.io/tutorial/task_agent_skill.html) for more details.
@@ -394,6 +395,7 @@ as_studio
     - [Stream Printing Messages](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
     - [TTS](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts)
     - [High-code Deployment](https://github.com/agentscope-ai/agentscope/tree/main/examples/deployment/planning_agent)
+    - [Memory Compression](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression)
   - Agent
     - [ReAct Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/react_agent)
     - [Voice Agent](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)

@@ -7,7 +7,12 @@ from ._token_base import TokenCounterBase
 
 class CharTokenCounter(TokenCounterBase):
     """A very simple implementation that counts tokens based on character
-    length."""
+    length.
+
+    .. note:: This counter does not handle multi-modal data well, as base64
+     encoding can significantly increase character count.
+
+    """
 
     async def count(
         self,
