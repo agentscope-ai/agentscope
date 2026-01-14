@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The model usage class in agentscope."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Any
 
 from .._utils._mixin import DictMixin
