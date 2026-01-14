@@ -368,7 +368,11 @@ class DashScopeChatModel(ChatModelBase):
                     input_tokens=chunk.usage.input_tokens,
                     output_tokens=chunk.usage.output_tokens,
                     time=(datetime.now() - start_datetime).total_seconds(),
-                    **{k: v for k, v in dict(chunk.usage).items() if k not in ["input_tokens", "output_tokens"]},
+                    **{
+                        k: v
+                        for k, v in dict(chunk.usage).items()
+                        if k not in ["input_tokens", "output_tokens"]
+                    },
                 )
 
             parsed_chunk = ChatResponse(
@@ -470,7 +474,11 @@ class DashScopeChatModel(ChatModelBase):
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
-                **{k: v for k, v in dict(chunk.usage).items() if k not in ["input_tokens", "output_tokens"]},
+                **{
+                    k: v
+                    for k, v in dict(response.usage).items()
+                    if k not in ["input_tokens", "output_tokens"]
+                },
             )
 
         parsed_response = ChatResponse(
