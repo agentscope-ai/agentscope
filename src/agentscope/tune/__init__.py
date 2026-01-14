@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
-"""The learning module of AgentScope, including RL and SFT."""
+"""This module has been deprecated and renamed to 'agentscope.tuner'."""
 
-from ._tune import tune
-from ._workflow import WorkflowType
-
-__all__ = [
-    "tune",
-    "WorkflowType",
-]
+raise ImportError(
+    "The 'agentscope.tune' module has been renamed to 'agentscope.tuner'. "
+    "Please update your imports: 'from agentscope.tuner import ...'",
+)

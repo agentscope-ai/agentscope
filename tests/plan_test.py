@@ -352,7 +352,6 @@ Subtask at index 2:
                         "outcome": None,
                     },
                 },
-                "_reasoning_hint_msgs": {"content": []},
                 "name": "Friday",
                 "_sys_prompt": "You are a helpful assistant named Friday. ",
             },

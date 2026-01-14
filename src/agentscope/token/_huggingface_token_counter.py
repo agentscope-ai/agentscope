@@ -71,6 +71,7 @@ class HuggingFaceTokenCounter(TokenCounterBase):
                 The additional keyword arguments that will be passed to the
                 tokenizer, e.g. `chat_template`, `padding`, etc.
         """
+
         tokenized_msgs = self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=False,
