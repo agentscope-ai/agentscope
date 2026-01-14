@@ -65,9 +65,51 @@ You can replace one of the agents with a `UserAgent` to play with AI agents.
 
 Just modify the `model` parameter in `main.py` to try different models. Note you need to change the formatter at the same time to match the model's output format.
 
+## Enable Text-to-Speech (TTS)
+
+The game supports Text-to-Speech functionality. To enable TTS:
+
+1. **In `main.py`**:
+   - Uncomment the import statement:
+     ```python
+     import random
+     from agentscope.tts import DashScopeTTSModel
+     ```
+   - Uncomment the `tts_model` parameter in the `get_official_agents` function:
+     ```python
+     tts_model=DashScopeTTSModel(
+         api_key=os.environ.get("DASHSCOPE_API_KEY"),
+         model_name="qwen3-tts-flash",
+         voice=random.choice(["Cherry", "Serena", "Ethan", "Chelsie"]),
+         stream=True,
+     ),
+     ```
+
+2. **In `game.py`** (optional, for moderator TTS):
+   - Uncomment the import statement:
+     ```python
+     import random
+     from agentscope.tts import DashScopeTTSModel
+     ```
+   - Uncomment the `tts_model` parameter in the `moderator` initialization:
+     ```python
+     tts_model=DashScopeTTSModel(
+         api_key=os.environ.get("DASHSCOPE_API_KEY"),
+         model_name="qwen3-tts-flash",
+         voice=random.choice(["Cherry", "Serena", "Ethan", "Chelsie"]),
+         stream=True,
+     ),
+     ```
+
+3. **Set up your API key**:
+   - Make sure you have set the `DASHSCOPE_API_KEY` environment variable.
+
+After enabling TTS, the game will synthesize speech for player messages and moderator announcements, providing a more immersive audio experience.
+
 ## Further Reading
 
 - [Structured Output](https://doc.agentscope.io/tutorial/task_agent.html#structured-output)
 - [MsgHub and Pipelines](https://doc.agentscope.io/tutorial/task_pipeline.html)
 - [Prompt Formatter](https://doc.agentscope.io/tutorial/task_prompt.html)
 - [AgentScope Studio](https://doc.agentscope.io/tutorial/task_studio.html)
+- [TTS](https://doc.agentscope.io/tutorial/task_tts.html)

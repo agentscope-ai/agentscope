@@ -54,11 +54,12 @@
 </p>
 
 ## 📢 新闻
-- **[2025-12]** AgentScope 已支持 [A2A(Agent-to-Agent) 通信协议](https://doc.agentscope.io/tutorial/task_a2a_protocol.html)！查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_a2a_protocol.html) 了解更多详情。
+- **[2026-01]** AgentScope 已集成[数据库支持](https://doc.agentscope.io/zh_CN/tutorial/task_memory.html) 到记忆模块中，并新增[记忆压缩](https://doc.agentscope.io/zh_CN/tutorial/task_agent.html)功能。欢迎查看我们的[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression)和[文档](https://doc.agentscope.io/tutorial/task_memory.html)。
+- **[2025-12]** AgentScope 已支持 [A2A(Agent-to-Agent) 通信协议](https://doc.agentscope.io/tutorial/task_a2a.html)！查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_a2a.html) 了解更多详情。
 - **[2025-12]** AgentScope 已支持 [TTS(Text-to-Speech) 模型](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) ！欢迎查看 [样例]() 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html) 了解更多详情。
 - **[2025-11]** AgentScope 已支持 [Anthropic Agent Skill](https://claude.com/blog/skills) ！欢迎查看 [样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) 和 [教程](https://doc.agentscope.io/zh_CN/tutorial/task_agent_skill.html) 了解更多详情。
 - **[2025-11]** AgentScope 开源 [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) 用于处理多样化的真实任务，以及 [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) 用于自然语言驱动的数据处理。
-- **[2025-11]** AgentScope 通过集成 [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) 实现对 [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) 的支持。
+- **[2025-11]** AgentScope 通过集成 [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) 实现对 [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent) 的支持。
 - **[2025-11]** AgentScope 集成 [ReMe](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) 增强长期记忆能力。
 - **[2025-11]** AgentScope 推出 [agentscope-samples](https://github.com/agentscope-ai/agentscope-samples) 样例库，并升级 [agentscope-runtime](https://github.com/agentscope-ai/agentscope-runtime) 支持 Docker/K8s 部署和 VNC 驱动的图形化沙盒。
 - **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) 已更新，欢迎贡献到 AgentScope！
@@ -395,6 +396,7 @@ as_studio
     - [流式获取打印消息](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
     - [TTS](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts)
     - [高代码部署](https://github.com/agentscope-ai/agentscope/tree/main/examples/deployment/planning_agent)
+    - [记忆压缩](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression)
   - 智能体
     - [ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/react_agent)
     - [语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent)
@@ -410,8 +412,8 @@ as_studio
     - [多智能体并发](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
   - 评测
     - [ACEBench](https://github.com/agentscope-ai/agentscope/tree/main/examples/evaluation/ace_bench)
-  - 训练
-    - [使用 Trinity-RFT 进行强化学习训练](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent)
+  - 微调
+    - [微调 ReAct 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent)
 
 
 ## 🤝 贡献

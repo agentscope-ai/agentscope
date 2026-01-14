@@ -71,6 +71,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_eval
    tutorial/task_embedding
    tutorial/task_tts
+   tutorial/task_tuner
 
 .. toctree::
    :maxdepth: 1
