@@ -3,7 +3,7 @@
 
 from ._long_term_memory_base import LongTermMemoryBase
 from ._mem0 import Mem0LongTermMemory
-from .._powermem_long_term_memory import PowerMemLongTermMemory
+from ._powermem import PowerMemLongTermMemory
 from ._reme import (
     ReMePersonalLongTermMemory,
     ReMeTaskLongTermMemory,

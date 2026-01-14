@@ -6,9 +6,9 @@ import asyncio
 import inspect
 from typing import Any, TYPE_CHECKING
 
-from ._long_term_memory import LongTermMemoryBase
-from ..message import Msg, TextBlock
-from ..tool import ToolResponse
+from .._long_term_memory_base import LongTermMemoryBase
+from ....message import Msg, TextBlock
+from ....tool import ToolResponse
 
 
 if TYPE_CHECKING:
@@ -73,6 +73,7 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 "Please install powermem by `pip install powermem`.",
             ) from e
 
+        # Resolve legacy aliases for backward compatibility
         resolved_agent_id = self._resolve_identifier(
             "agent",
             agent_name,

@@ -10,11 +10,11 @@ from ._working_memory import (
 from ._long_term_memory import (
     LongTermMemoryBase,
     Mem0LongTermMemory,
+    PowerMemLongTermMemory,
     ReMePersonalLongTermMemory,
     ReMeTaskLongTermMemory,
     ReMeToolLongTermMemory,
 )
-from ._powermem_long_term_memory import PowerMemLongTermMemory
 
 
 __all__ = [
