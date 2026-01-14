@@ -379,7 +379,6 @@ def _get_llm_response_attributes(
             SpanAttributes.GEN_AI_USAGE_OUTPUT_TOKENS
         ] = chat_response.usage.output_tokens
         if hasattr(chat_response.usage, "prompt_tokens_details") and chat_response.usage.prompt_tokens_details:
-            print(f"[from as]chat_response.usage.prompt_tokens_details={chat_response.usage.prompt_tokens_details}")
             attributes[
                 SpanAttributes.GEN_AI_USAGE_CACHED_TOKENS
             ] = chat_response.usage.prompt_tokens_details.get("cached_tokens")
