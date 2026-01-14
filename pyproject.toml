@@ -7,7 +7,7 @@ readme = "README.md"
 authors = [
     { name = "SysML team of Alibaba Tongyi Lab", email = "gaodawei.gdw@alibaba-inc.com" }
 ]
-license = "Apache-2.0"
+license = {text = "Apache-2.0"}
 keywords = ["deep-learning", "multi agents", "agents"]
 classifiers = [
     "Development Status :: 4 - Beta",
