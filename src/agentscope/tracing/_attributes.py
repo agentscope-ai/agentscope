@@ -68,6 +68,9 @@ class SpanAttributes:
     GEN_AI_USAGE_OUTPUT_TOKENS = GenAIAttributes.GEN_AI_USAGE_OUTPUT_TOKENS
     """The gen ai usage output tokens."""
 
+    GEN_AI_USAGE_CACHED_TOKENS = "gen_ai.dash.usage.cached_tokens"
+    """The gen ai usage cached tokens."""
+
     # GenAI Message Attributes
     GEN_AI_INPUT_MESSAGES = GenAIAttributes.GEN_AI_INPUT_MESSAGES
     """The gen ai input messages."""
