@@ -54,6 +54,7 @@
 </p>
 
 ## 📢 News
+- **[2026-01]** Hi community, we are launching AgentScope Biweekly Meetings to share ecosystem updates and development plans - join us! [Details & Schedule](https://github.com/agentscope-ai/agentscope/discussions/1126)
 - **[2026-01]** AgentScope integrates [database support](https://doc.agentscope.io/tutorial/task_memory.html) in the memory module now, as well as the [memory compression](https://doc.agentscope.io/tutorial/task_agent.html) feature. Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) and [tutorial](https://doc.agentscope.io/tutorial/task_memory.html) for more details.
 - **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
 - **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
