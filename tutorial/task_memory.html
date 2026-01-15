@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -354,10 +355,442 @@ to download the full example code.</p>
 </div>
 <section class="sphx-glr-example-title" id="memory">
 <span id="sphx-glr-tutorial-task-memory-py"></span><span id="id1"></span><h1>Memory<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h1>
-<p>In AgentScope, the memory is used to store the context of the agent, and retrieve it when needed.
-Specifically, AgentScope provides a memory base class <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> and an in-memory implementation <code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code> under <code class="docutils literal notranslate"><span class="pre">agentscope.memory</span></code> that can be used directly.</p>
-<section id="customize-memory">
-<h2>Customize Memory<a class="headerlink" href="#customize-memory" title="Link to this heading">¶</a></h2>
+<p>The memory module in AgentScope is responsible for</p>
+<ul class="simple">
+<li><p>storing the messages and</p></li>
+<li><p>managing them with specific marks</p></li>
+</ul>
+<p>in different storage implementations.</p>
+<p>The <strong>mark</strong> is a string label associated with each message in the memory,
+which can be used to categorize, filter, and retrieve messages based on their
+context or purpose.</p>
+<p>It’s powerful for high-level memory management in agents. For example,
+In <cite>ReActAgent</cite> class, the hint messages are stored with the
+mark “hint”, and the memory compression functionality is also implemented
+based on marks.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The memory module only provides storage and management
+functionalities. The algorithm logic such as compression is implemented in
+the agent level.</p>
+</div>
+<p>Currently, AgentScope provides the following memory storage implementations:</p>
+<div class="table-wrapper docutils container" id="id10">
+<table class="docutils align-default" id="id10">
+<caption><span class="caption-text">The built-in memory storage implementations in AgentScope</span><a class="headerlink" href="#id10" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>Memory Class</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code></p></td>
+<td><p>A simple in-memory implementation of memory storage.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code></p></td>
+<td><p>An asynchronous SQLAlchemy-based implementation of memory storage, which supports various databases such as SQLite, PostgreSQL, MySQL, etc.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></p></td>
+<td><p>A Redis-based implementation of memory storage.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>If you’re interested in contributing new memory storage implementations, please refer to the
+<a class="reference external" href="https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions">Contribution Guide</a>.</p>
+</div>
+<p>All the above memory classes inherit from the base class <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code>, and
+provide the following methods to manage the messages in the memory:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">fakeredis</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">InMemoryMemory</span><span class="p">,</span>
+    <span class="n">AsyncSQLAlchemyMemory</span><span class="p">,</span>
+    <span class="n">RedisMemory</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+</pre></div>
+</div>
+<section id="in-memory-memory">
+<h2>In-Memory Memory<a class="headerlink" href="#in-memory-memory" title="Link to this heading">¶</a></h2>
+<p>The in-memory memory provides a simple way to store messages in memory.
+Together with the <a class="reference internal" href="task_state.html#state"><span class="std std-ref">State/Session Management</span></a> module, it can persist the memory content across
+different users and sessions.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">in_memory_example</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;An example of using InMemoryMemory to store messages in memory.&quot;&quot;&quot;</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">InMemoryMemory</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Add a hint message with the mark &quot;hint&quot;</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;Create a plan first to collect information and &quot;</span>
+                <span class="s2">&quot;generate the report step by step.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The messages with mark &#39;hint&#39;:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># All the stored messages can be exported and loaded via ``state_dict`` and ``load_state_dict`` methods.</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The state dict of the memory:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="c1"># delete messages by mark</span>
+    <span class="n">deleted_count</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">delete_by_mark</span><span class="p">(</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Deleted </span><span class="si">{</span><span class="n">deleted_count</span><span class="si">}</span><span class="s2"> messages with mark &#39;hint&#39;.&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The state dict of the memory after deletion:&quot;</span><span class="p">)</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">in_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
+- Msg(id=&#39;ALhpnC6tufCnY93Nun6AWH&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.245&#39;, invocation_id=&#39;None&#39;)
+The state dict of the memory:
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;dEpFsoKUePisaYuMC2aiLF&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;Generate a report about AgentScope&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 05:56:52.245&quot;
+      },
+      []
+    ],
+    [
+      {
+        &quot;id&quot;: &quot;ALhpnC6tufCnY93Nun6AWH&quot;,
+        &quot;name&quot;: &quot;system&quot;,
+        &quot;role&quot;: &quot;system&quot;,
+        &quot;content&quot;: &quot;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 05:56:52.245&quot;
+      },
+      [
+        &quot;hint&quot;
+      ]
+    ]
+  ]
+}
+Deleted 1 messages with mark &#39;hint&#39;.
+The state dict of the memory after deletion:
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;dEpFsoKUePisaYuMC2aiLF&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;Generate a report about AgentScope&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 05:56:52.245&quot;
+      },
+      []
+    ]
+  ]
+}
+</pre></div>
+</div>
+</section>
+<section id="relational-database-memory">
+<h2>Relational Database Memory<a class="headerlink" href="#relational-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope provides a unified interface to work with relational databases via SQLAlchemy, supporting</p>
+<ul class="simple">
+<li><p>various databases such as SQLite, PostgreSQL, MySQL, etc.</p></li>
+<li><p>user and session management, and</p></li>
+<li><p>connection pooling in the production environment</p></li>
+</ul>
+<p>Specifically, here we use a memory backed by SQLite as an example.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;An example of using AsyncSQLAlchemyMemory to store messages in a SQLite database.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Create an async SQLAlchemy engine first</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Then create the memory with the engine</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="c1"># Optionally specify user_id and session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;Create a plan first to collect information and &quot;</span>
+                <span class="s2">&quot;generate the report step by step.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The messages with mark &#39;hint&#39;:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Close the engine when done</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
+- Msg(id=&#39;jxm5dYoBWiTST8KsjsyX73&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.285&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>Optionally, you can also use the <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> as an async context manager, and the session will be closed automatically when exiting the context.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_context_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Example of using AsyncSQLAlchemyMemory as an async context manager.&quot;&quot;&quot;</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="k">as</span> <span class="n">memory</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+            <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;All messages in the memory:&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_context_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>All messages in the memory:
+- Msg(id=&#39;ZRvhqzgrjRCnbcrwnSrsfc&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.255&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;jxm5dYoBWiTST8KsjsyX73&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.285&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;P4d9cLdSaSpGAn2jRfL75e&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.293&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>In production environment e.g. with FastAPI, the connection pooling can be enabled as follows:</p>
+<div class="literal-block-wrapper docutils container" id="id11">
+<div class="code-block-caption"><span class="caption-text">SQLAlchemy Memory with Connection Pooling in FastAPI</span><a class="headerlink" href="#id11" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncGenerator</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">Depends</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span><span class="p">,</span> <span class="n">async_sessionmaker</span><span class="p">,</span> <span class="n">AsyncSession</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgent</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">stream_printing_messages</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+ <span class="c1"># Create an async SQLAlchemy engine with connection pooling</span>
+ <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span>
+     <span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">,</span>
+     <span class="n">pool_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+     <span class="n">max_overflow</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+     <span class="n">pool_timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+     <span class="c1"># ...  The other pool settings</span>
+ <span class="p">)</span>
+
+ <span class="c1"># Create a session maker</span>
+ <span class="n">async_session_marker</span> <span class="o">=</span> <span class="n">async_sessionmaker</span><span class="p">(</span>
+     <span class="n">engine</span><span class="p">,</span>
+     <span class="n">expire_on_commit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autocommit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autoflush</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+ <span class="p">)</span>
+
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_db</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">AsyncSession</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+     <span class="k">async</span> <span class="k">with</span> <span class="n">async_session_marker</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+         <span class="k">try</span><span class="p">:</span>
+             <span class="k">yield</span> <span class="n">session</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+         <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+             <span class="k">raise</span>
+         <span class="k">finally</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">db_session</span><span class="p">:</span> <span class="n">AsyncSession</span> <span class="o">=</span> <span class="n">Depends</span><span class="p">(</span><span class="n">get_db</span><span class="p">),</span>
+ <span class="p">):</span>
+     <span class="c1"># Some setup for the agent</span>
+     <span class="o">...</span>
+
+     <span class="c1"># Create the agent with the SQLAlchemy memory</span>
+     <span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+         <span class="c1"># ...</span>
+         <span class="n">memory</span><span class="o">=</span><span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+             <span class="n">engine_or_session</span><span class="o">=</span><span class="n">db_session</span><span class="p">,</span>
+             <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+             <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+         <span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="c1"># Handle the chat with the agent</span>
+     <span class="k">async</span> <span class="k">for</span> <span class="n">msg</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">stream_printing_messages</span><span class="p">(</span>
+         <span class="n">agents</span><span class="o">=</span><span class="p">[</span><span class="n">agent</span><span class="p">],</span>
+         <span class="n">coroutine_task</span><span class="o">=</span><span class="n">agent</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)),</span>
+     <span class="p">):</span>
+         <span class="c1"># yield msg to the client</span>
+         <span class="o">...</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="nosql-database-memory">
+<h2>NoSQL Database Memory<a class="headerlink" href="#nosql-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope also provides memory implementations based on NoSQL databases such as Redis.
+It also supports user and session management, and connection pooling in the production environment.</p>
+<p>First, we can initialize the Redis memory as follows:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">redis_memory_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;An example of using RedisMemory to store messages in Redis.&quot;&quot;&quot;</span>
+    <span class="c1"># Use fakeredis for in-memory testing without a real Redis server</span>
+    <span class="n">fake_redis</span> <span class="o">=</span> <span class="n">fakeredis</span><span class="o">.</span><span class="n">aioredis</span><span class="o">.</span><span class="n">FakeRedis</span><span class="p">(</span><span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># Create the Redis memory</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+        <span class="c1"># Using fake redis for demonstration</span>
+        <span class="n">connection_pool</span><span class="o">=</span><span class="n">fake_redis</span><span class="o">.</span><span class="n">connection_pool</span><span class="p">,</span>
+        <span class="c1"># You can also connect to a real Redis server by specifying host and port</span>
+        <span class="c1"># host=&quot;localhost&quot;,</span>
+        <span class="c1"># port=6379,</span>
+        <span class="c1"># Optionally specify user_id and session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Add a message to the memory</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;Alice&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Add a hint message with the mark &quot;hint&quot;</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&lt;system-hint&gt;Create a plan first to collect information and &quot;</span>
+            <span class="s2">&quot;generate the report step by step.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Retrieve messages with the mark &quot;hint&quot;</span>
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The messages with mark &#39;hint&#39;:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">redis_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
+- Msg(id=&#39;Du5f7owFWoR5ztLHtLBaQN&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 05:56:52.309&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>Similarly, the <cite>RedisMemory</cite> can also be used with connection pooling in the production environment, e.g., with FastAPI.</p>
+<div class="literal-block-wrapper docutils container" id="id12">
+<div class="code-block-caption"><span class="caption-text">Redis Memory with Connection Pooling in FastAPI</span><a class="headerlink" href="#id12" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">HTTPException</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">redis.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConnectionPool</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">asynccontextmanager</span>
+
+ <span class="c1"># Global Redis connection pool</span>
+ <span class="n">redis_pool</span><span class="p">:</span> <span class="n">ConnectionPool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+ <span class="c1"># Use the lifespan event to manage the Redis connection pool</span>
+ <span class="nd">@asynccontextmanager</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="n">redis_pool</span> <span class="o">=</span> <span class="n">ConnectionPool</span><span class="p">(</span>
+         <span class="n">host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span>
+         <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">,</span>
+         <span class="n">db</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+         <span class="n">password</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+         <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+         <span class="n">max_connections</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+         <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis connection established&quot;</span><span class="p">)</span>
+
+     <span class="k">yield</span>
+
+     <span class="k">await</span> <span class="n">redis_pool</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis connection closed&quot;</span><span class="p">)</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat_endpoint&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span>
+ <span class="p">):</span>  <span class="c1"># ✅ 直接使用BaseModel</span>
+<span class="w">     </span><span class="sd">&quot;&quot;&quot;A chat endpoint&quot;&quot;&quot;</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="k">if</span> <span class="n">redis_pool</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+         <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span>
+             <span class="n">status_code</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+             <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;Redis connection pool is not initialized.&quot;</span><span class="p">,</span>
+         <span class="p">)</span>
+
+     <span class="c1"># Create the Redis memory</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+         <span class="n">connection_pool</span><span class="o">=</span><span class="n">redis_pool</span><span class="p">,</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="o">...</span>
+
+     <span class="c1"># Close the Redis client connection when done</span>
+     <span class="n">client</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_client</span><span class="p">()</span>
+     <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="customizing-memory">
+<h2>Customizing Memory<a class="headerlink" href="#customizing-memory" title="Link to this heading">¶</a></h2>
 <p>To customize your own memory, just inherit from <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> and implement the following methods:</p>
 <div class="table-wrapper docutils container">
 <table class="docutils align-default">
@@ -371,16 +804,22 @@ Specifically, AgentScope provides a memory base class <code class="docutils lite
 <td><p>Add <code class="docutils literal notranslate"><span class="pre">Msg</span></code> objects to the memory</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">delete</span></code></p></td>
-<td><p>Delete items from the memory</p></td>
+<td><p>Delete <code class="docutils literal notranslate"><span class="pre">Msg</span></code> objects from the memory</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">size</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">delete_by_mark</span></code></p></td>
+<td><p>Delete <code class="docutils literal notranslate"><span class="pre">Msg</span></code> objects from the memory by their marks</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">size</span></code></p></td>
 <td><p>The size of the memory</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">clear</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clear</span></code></p></td>
 <td><p>Clear the memory content</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">get_memory</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">get_memory</span></code></p></td>
 <td><p>Get the memory content as a list of <code class="docutils literal notranslate"><span class="pre">Msg</span></code> objects</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update_messages_mark</span></code></p></td>
+<td><p>Update marks of messages in the memory</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state_dict</span></code></p></td>
 <td><p>Get the state dictionary of the memory</p></td>
@@ -395,9 +834,10 @@ Specifically, AgentScope provides a memory base class <code class="docutils lite
 <section id="further-reading">
 <h2>Further Reading<a class="headerlink" href="#further-reading" title="Link to this heading">¶</a></h2>
 <ul class="simple">
+<li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">Agent</span></a></p></li>
 <li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">Long-Term Memory</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.000 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.088 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>
@@ -486,7 +926,10 @@ Specifically, AgentScope provides a memory base class <code class="docutils lite
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Memory</a><ul>
-<li><a class="reference internal" href="#customize-memory">Customize Memory</a></li>
+<li><a class="reference internal" href="#in-memory-memory">In-Memory Memory</a></li>
+<li><a class="reference internal" href="#relational-database-memory">Relational Database Memory</a></li>
+<li><a class="reference internal" href="#nosql-database-memory">NoSQL Database Memory</a></li>
+<li><a class="reference internal" href="#customizing-memory">Customizing Memory</a></li>
 <li><a class="reference internal" href="#further-reading">Further Reading</a></li>
 </ul>
 </li>

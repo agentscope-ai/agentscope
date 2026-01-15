@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -550,7 +551,7 @@ openai_audio_to_text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Tool Response:
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Searching for &#39;AgentScope&#39; with API key &#39;xxx&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-01-12 03:00:39.235_8bc71c&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Searching for &#39;AgentScope&#39; with API key &#39;xxx&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-01-15 05:57:20.618_4a30d2&#39;)
 </pre></div>
 </div>
 </section>
@@ -681,7 +682,7 @@ Besides, a flag <code class="docutils literal notranslate"><span class="pre">is_
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Tool Response:
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-01-12 03:00:40.240_89b423&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-01-15 05:57:21.623_32c473&#39;)
 The interrupted flag:
 True
 </pre></div>
@@ -742,11 +743,11 @@ By this way, the agent can observe what the tool has returned before the interru
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Chunk 0:
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2026-01-12 03:00:40.242_58d797&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2026-01-15 05:57:21.625_b745f8&#39;)
 The interrupted flag:  False
 
 Chunk 1:
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-01-12 03:00:40.242_58d797&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-01-15 05:57:21.625_b745f8&#39;)
 The interrupted flag:  True
 </pre></div>
 </div>
@@ -980,7 +981,7 @@ contain the notes of the activated tool groups.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Text content in tool Response:
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Now tool groups &#39;browser_user&#39; are activated.&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-01-12 03:00:40.251_f3fb7e&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Now tool groups &#39;browser_user&#39; are activated.&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-01-15 05:57:21.633_67af05&#39;)
 </pre></div>
 </div>
 <p>The toolkit also provides a method to gather the notes of the activated tool groups, and you can assemble it into your agent’s system prompt.</p>
@@ -1015,7 +1016,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Now
 <li><p><a class="reference internal" href="task_state.html#state"><span class="std std-ref">State/Session Management</span></a></p></li>
 <li><p><a class="reference internal" href="task_mcp.html#mcp"><span class="std std-ref">MCP</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.022 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.021 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tool-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/c814d0f0885573dcc616fd38c752cf4e/task_tool.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tool.ipynb</span></code></a></p>

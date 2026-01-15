@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">Embedding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -371,22 +372,25 @@ then we briefly introduce how to customize your own agent from scratch.</p>
 <tr class="row-even"><td><p>Support realtime steering</p></td>
 <td></td>
 </tr>
-<tr class="row-odd"><td><p>Support parallel tool calls</p></td>
+<tr class="row-odd"><td><p>Support memory compression</p></td>
 <td></td>
 </tr>
-<tr class="row-even"><td><p>Support structured output</p></td>
+<tr class="row-even"><td><p>Support parallel tool calls</p></td>
 <td></td>
 </tr>
-<tr class="row-odd"><td><p>Support fine-grained MCP control</p></td>
+<tr class="row-odd"><td><p>Support structured output</p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>Support fine-grained MCP control</p></td>
 <td><p><a class="reference internal" href="task_mcp.html#mcp"><span class="std std-ref">MCP</span></a></p></td>
 </tr>
-<tr class="row-even"><td><p>Support agent-controlled tools management (Meta tool)</p></td>
+<tr class="row-odd"><td><p>Support agent-controlled tools management (Meta tool)</p></td>
 <td><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">Tool</span></a></p></td>
 </tr>
-<tr class="row-odd"><td><p>Support self-controlled long-term memory</p></td>
+<tr class="row-even"><td><p>Support self-controlled long-term memory</p></td>
 <td><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">Long-Term Memory</span></a></p></td>
 </tr>
-<tr class="row-even"><td><p>Support automatic state management</p></td>
+<tr class="row-odd"><td><p>Support automatic state management</p></td>
 <td><p><a class="reference internal" href="task_state.html#state"><span class="std std-ref">State/Session Management</span></a></p></td>
 </tr>
 </tbody>
@@ -461,6 +465,121 @@ interrupted me. What can I do for you?” as follows:</p>
 <p>You can override it with your own implementation, for example, calling the LLM
 to generate a simple response to the interruption.</p>
 </section>
+<section id="memory-compression">
+<h3>Memory Compression<a class="headerlink" href="#memory-compression" title="Link to this heading">¶</a></h3>
+<p>As conversations grow longer, the token count in memory can exceed model context
+limits or slow down inference. <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> provides an automatic memory compression
+feature to address this issue.</p>
+<p><strong>Basic Usage</strong></p>
+<p>To enable memory compression, provide a <code class="docutils literal notranslate"><span class="pre">CompressionConfig</span></code> instance when initializing
+the <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgent</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.token</span><span class="w"> </span><span class="kn">import</span> <span class="n">CharTokenCounter</span>
+
+<span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Assistant&quot;</span><span class="p">,</span>
+    <span class="n">sys_prompt</span><span class="o">=</span><span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">formatter</span><span class="o">=</span><span class="n">formatter</span><span class="p">,</span>
+    <span class="n">compression_config</span><span class="o">=</span><span class="n">ReActAgent</span><span class="o">.</span><span class="n">CompressionConfig</span><span class="p">(</span>
+        <span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">agent_token_counter</span><span class="o">=</span><span class="n">CharTokenCounter</span><span class="p">(),</span>  <span class="c1"># The token counter for the agent</span>
+        <span class="n">trigger_threshold</span><span class="o">=</span><span class="mi">10000</span><span class="p">,</span>  <span class="c1"># Trigger compression when exceeding 10000 tokens</span>
+        <span class="n">keep_recent</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>            <span class="c1"># Keep the most recent 3 messages uncompressed</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>When memory compression is enabled, the agent monitors the token count in its memory.
+Once it exceeds the <code class="docutils literal notranslate"><span class="pre">trigger_threshold</span></code>, the agent automatically:</p>
+<ol class="arabic simple">
+<li><p>Identifies messages that haven’t been compressed yet (via <code class="docutils literal notranslate"><span class="pre">exclude_mark</span></code>)</p></li>
+<li><p>Keeps the most recent <code class="docutils literal notranslate"><span class="pre">keep_recent</span></code> messages uncompressed (to preserve recent context)</p></li>
+<li><p>Sends older messages to an LLM to generate a structured summary</p></li>
+<li><p>Marks the compressed messages with <code class="docutils literal notranslate"><span class="pre">MemoryMark.COMPRESSED</span></code> (via <code class="docutils literal notranslate"><span class="pre">update_messages_mark</span></code>)</p></li>
+<li><p>Stores the summary in memory (via <code class="docutils literal notranslate"><span class="pre">update_compressed_summary</span></code>)</p></li>
+</ol>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>The compression uses a <strong>marking mechanism</strong> rather than replacing messages. Old messages are marked as compressed and excluded from future retrievals via <code class="docutils literal notranslate"><span class="pre">exclude_mark=MemoryMark.COMPRESSED</span></code>, while the generated summary is stored separately and retrieved when needed. This approach preserves the original messages and allows flexible memory management. For more details about the mark functionality, please refer to <a class="reference internal" href="task_memory.html#memory"><span class="std std-ref">Memory</span></a>.</p>
+</div>
+<p>By default, the compressed summary is structured into five key fields:</p>
+<ul class="simple">
+<li><p><strong>task_overview</strong>: The user’s core request and success criteria</p></li>
+<li><p><strong>current_state</strong>: What has been completed so far, including files and outputs</p></li>
+<li><p><strong>important_discoveries</strong>: Technical constraints, decisions, errors, and failed approaches</p></li>
+<li><p><strong>next_steps</strong>: Specific actions needed to complete the task</p></li>
+<li><p><strong>context_to_preserve</strong>: User preferences, domain details, and promises made</p></li>
+</ul>
+<p><strong>Customizing Compression</strong></p>
+<p>You can customize how compression works by specifying <code class="docutils literal notranslate"><span class="pre">summary_schema</span></code>,
+<code class="docutils literal notranslate"><span class="pre">summary_template</span></code>, and <code class="docutils literal notranslate"><span class="pre">compression_prompt</span></code> parameters.</p>
+<ul class="simple">
+<li><p><strong>compression_prompt</strong>: Guides the LLM on how to generate the summary</p></li>
+<li><p><strong>summary_schema</strong>: Defines the structure of the compressed summary using a Pydantic model</p></li>
+<li><p><strong>summary_template</strong>: Formats how the compressed summary is presented back to the agent</p></li>
+</ul>
+<p>Here’s an example of customizing the compression:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+
+<span class="c1"># Define a custom summary structure</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CustomSummary</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">main_topic</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;The main topic of the conversation&quot;</span>
+    <span class="p">)</span>
+    <span class="n">key_points</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">400</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Important points discussed&quot;</span>
+    <span class="p">)</span>
+    <span class="n">pending_tasks</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Tasks that remain to be done&quot;</span>
+    <span class="p">)</span>
+
+<span class="c1"># Create agent with custom compression configuration</span>
+<span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Assistant&quot;</span><span class="p">,</span>
+    <span class="n">sys_prompt</span><span class="o">=</span><span class="s2">&quot;You are a helpful assistant.&quot;</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+    <span class="n">formatter</span><span class="o">=</span><span class="n">formatter</span><span class="p">,</span>
+    <span class="n">compression_config</span><span class="o">=</span><span class="n">ReActAgent</span><span class="o">.</span><span class="n">CompressionConfig</span><span class="p">(</span>
+        <span class="n">enable</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">agent_token_counter</span><span class="o">=</span><span class="n">CharTokenCounter</span><span class="p">(),</span>
+        <span class="n">trigger_threshold</span><span class="o">=</span><span class="mi">10000</span><span class="p">,</span>
+        <span class="n">keep_recent</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+        <span class="c1"># Custom schema for structured summary</span>
+        <span class="n">summary_schema</span><span class="o">=</span><span class="n">CustomSummary</span><span class="p">,</span>
+        <span class="c1"># Custom prompt to guide compression</span>
+        <span class="n">compression_prompt</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;&lt;system-hint&gt;Please summarize the above conversation &quot;</span>
+            <span class="s2">&quot;focusing on the main topic, key discussion points, &quot;</span>
+            <span class="s2">&quot;and any pending tasks.&lt;/system-hint&gt;&quot;</span>
+        <span class="p">),</span>
+        <span class="c1"># Custom template to format the summary</span>
+        <span class="n">summary_template</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;&lt;system-info&gt;Conversation Summary:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Main Topic: </span><span class="si">{main_topic}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Key Points:</span><span class="se">\n</span><span class="si">{key_points}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Pending Tasks:</span><span class="se">\n</span><span class="si">{pending_tasks}</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;&lt;/system-info&gt;&quot;</span>
+        <span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">summary_template</span></code> uses the fields defined in <code class="docutils literal notranslate"><span class="pre">summary_schema</span></code> as placeholders
+(e.g., <code class="docutils literal notranslate"><span class="pre">{main_topic}</span></code>, <code class="docutils literal notranslate"><span class="pre">{key_points}</span></code>). After the LLM generates the structured summary,
+these placeholders will be replaced with the actual values.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The agent ensures that tool use and tool result pairs are kept together during compression to maintain the integrity of the conversation flow.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>You can use a smaller, faster model for compression by specifying a different <code class="docutils literal notranslate"><span class="pre">compression_model</span></code> and <code class="docutils literal notranslate"><span class="pre">compression_formatter</span></code> to reduce costs and latency.</p>
+</div>
+</section>
 <section id="parallel-tool-calls">
 <h3>Parallel Tool Calls<a class="headerlink" href="#parallel-tool-calls" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> supports parallel tool calls by providing a <code class="docutils literal notranslate"><span class="pre">parallel_tool_calls</span></code>
@@ -533,7 +652,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_6421a890119f43bfaad410&quot;,
+    &quot;id&quot;: &quot;call_19261bd27210475189daa4&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -541,7 +660,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_1cc5feb6689f4d24829a52&quot;,
+    &quot;id&quot;: &quot;call_ba44b14243ba478f998e43&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -549,30 +668,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_6421a890119f43bfaad410&quot;,
+    &quot;id&quot;: &quot;call_19261bd27210475189daa4&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag1 started at 02:57:56.109111 and ended at 02:57:59.112358. &quot;
+            &quot;text&quot;: &quot;Tag tag1 started at 05:55:35.177376 and ended at 05:55:38.180620. &quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_1cc5feb6689f4d24829a52&quot;,
+    &quot;id&quot;: &quot;call_ba44b14243ba478f998e43&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag2 started at 02:57:56.109204 and ended at 02:57:59.113040. &quot;
+            &quot;text&quot;: &quot;Tag tag2 started at 05:55:35.177467 and ended at 05:55:38.181337. &quot;
         }
     ]
 }
-Jarvis: The `example_tool_function` has been called with two different tags, &#39;tag1&#39; and &#39;tag2&#39;, and both have executed in parallel. Here are the results:
+Jarvis: The &#39;example_tool_function&#39; has been called with both tags &#39;tag1&#39; and &#39;tag2&#39; and they have executed in parallel. Here are the details:
 
-- For &#39;tag1&#39;: It started at 02:57:56.109111 and ended at 02:57:59.112358.
-- For &#39;tag2&#39;: It started at 02:57:56.109204 and ended at 02:57:59.113040.
+- For &#39;tag1&#39;, the function started at 05:55:35.177376 and ended at 05:55:38.180620.
+- For &#39;tag2&#39;, the function started at 05:55:35.177467 and ended at 05:55:38.181337.
+
+Both function calls completed successfully.
 </pre></div>
 </div>
 </section>
@@ -632,11 +753,11 @@ Then we can get the structured output from the <code class="docutils literal not
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_d7727781ed154008885eba&quot;,
+    &quot;id&quot;: &quot;call_bbae1181a2bc4e48bcda4b&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;name&quot;: &quot;Albert Einstein&quot;,
-        &quot;description&quot;: &quot;A renowned theoretical physicist, best known for developing the theory of relativity.&quot;,
+        &quot;description&quot;: &quot;A renowned theoretical physicist, best known for his theory of relativity and mass-energy equivalence formula E=mc^2.&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
             &quot;Nobel Prize in Physics (1921)&quot;,
@@ -647,7 +768,7 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_d7727781ed154008885eba&quot;,
+    &quot;id&quot;: &quot;call_bbae1181a2bc4e48bcda4b&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -656,12 +777,12 @@ system: {
         }
     ]
 }
-Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein&#39;s contributions to science have left an indelible mark on both the academic community and popular culture. He was awarded the Nobel Prize in Physics in 1921, primarily for his explanation of the photoelectric effect, but it is his work on relativity that he is most famous for. Throughout his career, Einstein received numerous honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. He passed away at the age of 76, leaving behind a legacy as one of the most influential scientists of the 20th century.
+Jarvis: Albert Einstein was a renowned theoretical physicist, celebrated for developing the theory of relativity and formulating the famous mass-energy equivalence formula E=mc^2. Born in 1879, he lived to be 76 years old, during which time he made significant contributions to the field of physics. His work not only revolutionized our understanding of space, time, and gravity but also had profound implications across various scientific disciplines. Among his many accolades, Einstein was awarded the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929, solidifying his legacy as one of the most influential scientists of the 20th century.
 
 The structured output:
 {
     &quot;name&quot;: &quot;Albert Einstein&quot;,
-    &quot;description&quot;: &quot;A renowned theoretical physicist, best known for developing the theory of relativity.&quot;,
+    &quot;description&quot;: &quot;A renowned theoretical physicist, best known for his theory of relativity and mass-energy equivalence formula E=mc^2.&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
         &quot;Nobel Prize in Physics (1921)&quot;,
@@ -766,7 +887,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">Agent Hooks</span></a></p></li>
 <li><p><a class="reference internal" href="task_a2a.html#a2a"><span class="std std-ref">A2A Agent</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 23.308 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 23.959 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>
@@ -857,6 +978,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><a class="reference internal" href="#">Agent</a><ul>
 <li><a class="reference internal" href="#react-agent">ReAct Agent</a><ul>
 <li><a class="reference internal" href="#realtime-steering">Realtime Steering</a></li>
+<li><a class="reference internal" href="#memory-compression">Memory Compression</a></li>
 <li><a class="reference internal" href="#parallel-tool-calls">Parallel Tool Calls</a></li>
 <li><a class="reference internal" href="#structured-output">Structured Output</a></li>
 </ul>

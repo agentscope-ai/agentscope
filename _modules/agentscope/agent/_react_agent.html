@@ -279,6 +279,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_eval.html">Evaluation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_embedding.html">Embedding</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -342,10 +343,12 @@
         <article role="main" id="furo-main-content">
           <h1>Source code for agentscope.agent._react_agent</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
-<span class="c1"># pylint: disable=not-an-iterable</span>
+<span class="c1"># TODO: simplify the ReActAgent class</span>
+<span class="c1"># pylint: disable=not-an-iterable, too-many-lines</span>
 <span class="c1"># mypy: disable-error-code=&quot;list-item&quot;</span>
 <span class="sd">&quot;&quot;&quot;ReAct agent class in agentscope.&quot;&quot;&quot;</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Type</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">AsyncGenerator</span><span class="p">,</span> <span class="n">Literal</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">ValidationError</span><span class="p">,</span> <span class="n">Field</span>
@@ -365,6 +368,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">..model</span><span class="w"> </span><span class="kn">import</span> <span class="n">ChatModelBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..rag</span><span class="w"> </span><span class="kn">import</span> <span class="n">KnowledgeBase</span><span class="p">,</span> <span class="n">Document</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..plan</span><span class="w"> </span><span class="kn">import</span> <span class="n">PlanNotebook</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..token</span><span class="w"> </span><span class="kn">import</span> <span class="n">TokenCounterBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tool</span><span class="w"> </span><span class="kn">import</span> <span class="n">Toolkit</span><span class="p">,</span> <span class="n">ToolResponse</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tracing</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace_reply</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..tts</span><span class="w"> </span><span class="kn">import</span> <span class="n">TTSModelBase</span>
@@ -380,6 +384,61 @@
     <span class="p">)</span>
 
 
+<span class="k">class</span><span class="w"> </span><span class="nc">SummarySchema</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The compressed memory model, used to generate summary of old memories&quot;&quot;&quot;</span>
+
+    <span class="n">task_overview</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;The user&#39;s core request and success criteria.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Any clarifications or constraints they specified&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">current_state</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;What has been completed so far.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;File created, modified, or analyzed (with paths if relevant).</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Key outputs or artifacts produced.&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">important_discoveries</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Technical constraints or requirements uncovered.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Decisions made and their rationale.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Errors encountered and how they were resolved.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;What approaches were tried that didn&#39;t work (and why)&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">next_steps</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;Specific actions needed to complete the task.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Any blockers or open questions to resolve.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Priority order if multiple steps remain&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">context_to_preserve</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">max_length</span><span class="o">=</span><span class="mi">300</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="p">(</span>
+            <span class="s2">&quot;User preferences or style requirements.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Domain-specific details that aren&#39;t obvious.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;Any promises made to the user&quot;</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_MemoryMark</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Enum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The memory marks used in the ReAct agent.&quot;&quot;&quot;</span>
+
+    <span class="n">HINT</span> <span class="o">=</span> <span class="s2">&quot;hint&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Used to mark the hint messages that will be cleared after use.&quot;&quot;&quot;</span>
+
+    <span class="n">COMPRESSED</span> <span class="o">=</span> <span class="s2">&quot;compressed&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Used to mark the compressed messages in the memory.&quot;&quot;&quot;</span>
+
+
 <div class="viewcode-block" id="ReActAgent">
 <a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">ReActAgent</span><span class="p">(</span><span class="n">ReActAgentBase</span><span class="p">):</span>
@@ -390,6 +449,75 @@
 <span class="sd">    - Hooks around reasoning, acting, reply, observe and print functions</span>
 <span class="sd">    - Structured output generation</span>
 <span class="sd">    &quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="ReActAgent.CompressionConfig">
+<a class="viewcode-back" href="../../../api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig">[docs]</a>
+    <span class="k">class</span><span class="w"> </span><span class="nc">CompressionConfig</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The compression related configuration in AgentScope&quot;&quot;&quot;</span>
+
+        <span class="n">model_config</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;arbitrary_types_allowed&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Allow arbitrary types in the pydantic model.&quot;&quot;&quot;</span>
+
+        <span class="n">enable</span><span class="p">:</span> <span class="nb">bool</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Whether to enable the auto compression feature.&quot;&quot;&quot;</span>
+
+        <span class="n">agent_token_counter</span><span class="p">:</span> <span class="n">TokenCounterBase</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The token counter for the agent&#39;s model, which must be consistent</span>
+<span class="sd">        with the model used in the agent.&quot;&quot;&quot;</span>
+
+        <span class="n">trigger_threshold</span><span class="p">:</span> <span class="nb">int</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The token threshold to trigger the compression process. When the</span>
+<span class="sd">        total token count in the memory exceeds this threshold, the</span>
+<span class="sd">        compression will be activated.&quot;&quot;&quot;</span>
+
+        <span class="n">keep_recent</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The number of most recent messages to keep uncompressed in the</span>
+<span class="sd">        memory to preserve the recent context.&quot;&quot;&quot;</span>
+
+        <span class="n">compression_prompt</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="s2">&quot;&lt;system-hint&gt;You have been working on the task described above &quot;</span>
+            <span class="s2">&quot;but have not yet completed it. &quot;</span>
+            <span class="s2">&quot;Now write a continuation summary that will allow you to resume &quot;</span>
+            <span class="s2">&quot;work efficiently in a future context window where the &quot;</span>
+            <span class="s2">&quot;conversation history will be replaced with this summary. &quot;</span>
+            <span class="s2">&quot;Your summary should be structured, concise, and actionable.&quot;</span>
+            <span class="s2">&quot;&lt;/system-hint&gt;&quot;</span>
+        <span class="p">)</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The prompt used to guide the compression model to generate the</span>
+<span class="sd">        compressed summary, which will be wrapped into a user message and</span>
+<span class="sd">        attach to the end of the current memory.&quot;&quot;&quot;</span>
+
+        <span class="n">summary_template</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="s2">&quot;&lt;system-info&gt;Here is a summary of your previous work</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;# Task Overview</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;</span><span class="si">{task_overview}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;# Current State</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;</span><span class="si">{current_state}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;# Important Discoveries</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;</span><span class="si">{important_discoveries}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;# Next Steps</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;</span><span class="si">{next_steps}</span><span class="se">\n\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;# Context to Preserve</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;</span><span class="si">{context_to_preserve}</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;&lt;/system-info&gt;&quot;</span>
+        <span class="p">)</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The string template to present the compressed summary to the agent,</span>
+<span class="sd">        which will be formatted with the fields from the</span>
+<span class="sd">        `compression_summary_model`.&quot;&quot;&quot;</span>
+
+        <span class="n">summary_schema</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">BaseModel</span><span class="p">]</span> <span class="o">=</span> <span class="n">SummarySchema</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The structured model used to guide the agent to generate the</span>
+<span class="sd">        structured compressed summary.&quot;&quot;&quot;</span>
+
+        <span class="n">compression_model</span><span class="p">:</span> <span class="n">ChatModelBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The compression model used to generate the compressed summary. If</span>
+<span class="sd">        not provided, the agent&#39;s model will be used.&quot;&quot;&quot;</span>
+
+        <span class="n">compression_formatter</span><span class="p">:</span> <span class="n">FormatterBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;The corresponding formatter form the compression model, when the</span>
+<span class="sd">        `compression_model` is provided, the `compression_formatter` must also</span>
+<span class="sd">        be provided.&quot;&quot;&quot;</span></div>
+
 
     <span class="n">finish_function_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;generate_response&quot;</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The name of the function used to generate structured output. Only</span>
@@ -419,6 +547,7 @@
         <span class="n">print_hint_msg</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
         <span class="n">max_iters</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
         <span class="n">tts_model</span><span class="p">:</span> <span class="n">TTSModelBase</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">compression_config</span><span class="p">:</span> <span class="n">CompressionConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the ReAct agent</span>
 
@@ -478,6 +607,9 @@
 <span class="sd">                The maximum number of iterations of the reasoning-acting loops.</span>
 <span class="sd">            tts_model (`TTSModelBase | None` optional):</span>
 <span class="sd">                The TTS model used by the agent.</span>
+<span class="sd">            compression_config (`CompressionConfig | None`, optional):</span>
+<span class="sd">                The compression configuration. If provided, the auto</span>
+<span class="sd">                compression will be activated.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
 
@@ -494,6 +626,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">model</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span> <span class="o">=</span> <span class="n">formatter</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">tts_model</span> <span class="o">=</span> <span class="n">tts_model</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span> <span class="o">=</span> <span class="n">compression_config</span>
 
         <span class="c1"># -------------- Memory management --------------</span>
         <span class="c1"># Record the dialogue history in the memory</span>
@@ -570,12 +703,6 @@
 
         <span class="c1"># The maximum number of iterations of the reasoning-acting loops</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">max_iters</span> <span class="o">=</span> <span class="n">max_iters</span>
-
-        <span class="c1"># The hint messages that will be attached to the prompt to guide the</span>
-        <span class="c1"># agent&#39;s behavior before each reasoning step, and cleared after</span>
-        <span class="c1"># each reasoning step, meaning the hint messages is one-time use only.</span>
-        <span class="c1"># We use an InMemoryMemory instance to store the hint messages</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span> <span class="o">=</span> <span class="n">InMemoryMemory</span><span class="p">()</span>
 
         <span class="c1"># Variables to record the intermediate state</span>
 
@@ -657,6 +784,9 @@
         <span class="n">structured_output</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="n">reply_msg</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_iters</span><span class="p">):</span>
+            <span class="c1"># -------------- Memory compression --------------</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compress_memory_if_needed</span><span class="p">()</span>
+
             <span class="c1"># -------------- The reasoning process --------------</span>
             <span class="n">msg_reasoning</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning</span><span class="p">(</span><span class="n">tool_choice</span><span class="p">)</span>
 
@@ -706,7 +836,10 @@
                         <span class="s2">&quot;&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
                         <span class="s2">&quot;user&quot;</span><span class="p">,</span>
                     <span class="p">)</span>
-                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">)</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+                        <span class="n">msg_hint</span><span class="p">,</span>
+                        <span class="n">marks</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">HINT</span><span class="p">,</span>
+                    <span class="p">)</span>
 
                     <span class="c1"># Just generate text response in the next reasoning step</span>
                     <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;none&quot;</span>
@@ -724,7 +857,7 @@
                         <span class="sa">f</span><span class="s2">&quot;required structured output.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
                         <span class="s2">&quot;user&quot;</span><span class="p">,</span>
                     <span class="p">)</span>
-                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">)</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">msg_hint</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">HINT</span><span class="p">)</span>
                     <span class="c1"># Require tool call in the next reasoning step</span>
                     <span class="n">tool_choice</span> <span class="o">=</span> <span class="s2">&quot;required&quot;</span>
 
@@ -750,7 +883,9 @@
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">long_term_memory</span><span class="o">.</span><span class="n">record</span><span class="p">(</span>
                 <span class="p">[</span>
                     <span class="o">*</span><span class="p">([</span><span class="o">*</span><span class="n">msg</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">msg</span><span class="p">]),</span>
-                    <span class="o">*</span><span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(),</span>
+                    <span class="o">*</span><span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span>
+                        <span class="n">exclude_mark</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">COMPRESSED</span><span class="p">,</span>
+                    <span class="p">),</span>
                     <span class="n">reply_msg</span><span class="p">,</span>
                 <span class="p">],</span>
             <span class="p">)</span>
@@ -770,19 +905,17 @@
             <span class="n">hint_msg</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">plan_notebook</span><span class="o">.</span><span class="n">get_current_hint</span><span class="p">()</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">print_hint_msg</span> <span class="ow">and</span> <span class="n">hint_msg</span><span class="p">:</span>
                 <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">hint_msg</span><span class="p">)</span>
-            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">hint_msg</span><span class="p">)</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">hint_msg</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">HINT</span><span class="p">)</span>
 
         <span class="c1"># Convert Msg objects into the required format of the model API</span>
         <span class="n">prompt</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
             <span class="n">msgs</span><span class="o">=</span><span class="p">[</span>
                 <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sys_prompt</span><span class="p">,</span> <span class="s2">&quot;system&quot;</span><span class="p">),</span>
                 <span class="o">*</span><span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(),</span>
-                <span class="c1"># The hint messages to guide the agent&#39;s behavior, maybe empty</span>
-                <span class="o">*</span><span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(),</span>
             <span class="p">],</span>
         <span class="p">)</span>
         <span class="c1"># Clear the hint messages after use</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reasoning_hint_msgs</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">delete_by_mark</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">HINT</span><span class="p">)</span>
 
         <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span>
             <span class="n">prompt</span><span class="p">,</span>
@@ -1223,7 +1356,131 @@
                 <span class="p">)</span>
                 <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">print_hint_msg</span><span class="p">:</span>
                     <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="n">retrieved_msg</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
-                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">retrieved_msg</span><span class="p">)</span></div>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">retrieved_msg</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_compress_memory_if_needed</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Compress the memory content if needed.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">enable</span>
+        <span class="p">):</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Obtain the messages that have not been compressed yet</span>
+        <span class="n">to_compressed_msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span>
+            <span class="n">exclude_mark</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">COMPRESSED</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># keep the recent n messages uncompressed, note messages with tool</span>
+        <span class="c1">#  use and result pairs should be kept together</span>
+        <span class="n">n_keep</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">accumulated_tool_call_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">to_compressed_msgs</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">to_compressed_msgs</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;tool_result&quot;</span><span class="p">):</span>
+                <span class="n">accumulated_tool_call_ids</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
+
+            <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_blocks</span><span class="p">(</span><span class="s2">&quot;tool_use&quot;</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">]</span> <span class="ow">in</span> <span class="n">accumulated_tool_call_ids</span><span class="p">:</span>
+                    <span class="n">accumulated_tool_call_ids</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
+
+            <span class="c1"># Handle the tool use/result pairs</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">accumulated_tool_call_ids</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">n_keep</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="c1"># Break if reach the number of messages to keep</span>
+            <span class="k">if</span> <span class="n">n_keep</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">keep_recent</span><span class="p">:</span>
+                <span class="c1"># Remove the messages that should be kept uncompressed</span>
+                <span class="n">to_compressed_msgs</span> <span class="o">=</span> <span class="n">to_compressed_msgs</span><span class="p">[:</span><span class="n">i</span><span class="p">]</span>
+                <span class="k">break</span>
+
+        <span class="c1"># Skip compression if no messages to compress</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">to_compressed_msgs</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Calculate the token</span>
+        <span class="n">prompt</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sys_prompt</span><span class="p">,</span> <span class="s2">&quot;system&quot;</span><span class="p">),</span>
+                <span class="o">*</span><span class="n">to_compressed_msgs</span><span class="p">,</span>
+            <span class="p">],</span>
+        <span class="p">)</span>
+        <span class="n">n_tokens</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">agent_token_counter</span><span class="o">.</span><span class="n">count</span><span class="p">(</span>
+            <span class="n">prompt</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">n_tokens</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">trigger_threshold</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="s2">&quot;Memory compression is triggered (</span><span class="si">%d</span><span class="s2"> &gt; &quot;</span>
+                <span class="s2">&quot;threshold </span><span class="si">%d</span><span class="s2">) for agent </span><span class="si">%s</span><span class="s2">.&quot;</span><span class="p">,</span>
+                <span class="n">n_tokens</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">trigger_threshold</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="c1"># The formatter used for compression</span>
+            <span class="n">compression_formatter</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">compression_formatter</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Prepare the prompt used to compress the memories</span>
+            <span class="n">compression_prompt</span> <span class="o">=</span> <span class="k">await</span> <span class="n">compression_formatter</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sys_prompt</span><span class="p">,</span> <span class="s2">&quot;system&quot;</span><span class="p">),</span>
+                    <span class="o">*</span><span class="n">to_compressed_msgs</span><span class="p">,</span>
+                    <span class="n">Msg</span><span class="p">(</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">compression_prompt</span><span class="p">,</span>
+                        <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+                    <span class="p">),</span>
+                <span class="p">],</span>
+            <span class="p">)</span>
+
+            <span class="c1"># TODO: What if the compressed messages include multimodal blocks?</span>
+            <span class="c1"># Use the specified compression model if provided</span>
+            <span class="n">compression_model</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">compression_model</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span>
+            <span class="p">)</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">compression_model</span><span class="p">(</span>
+                <span class="n">compression_prompt</span><span class="p">,</span>
+                <span class="n">structured_model</span><span class="o">=</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">summary_schema</span><span class="p">),</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Obtain the structured output from the model response</span>
+            <span class="n">last_chunk</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">if</span> <span class="n">compression_model</span><span class="o">.</span><span class="n">stream</span><span class="p">:</span>
+                <span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+                    <span class="n">last_chunk</span> <span class="o">=</span> <span class="n">chunk</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">last_chunk</span> <span class="o">=</span> <span class="n">res</span>
+
+            <span class="c1"># Format the compressed memory summary</span>
+            <span class="k">if</span> <span class="n">last_chunk</span><span class="o">.</span><span class="n">metadata</span><span class="p">:</span>
+                <span class="c1"># Update the compressed summary in the memory storage</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">update_compressed_summary</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">compression_config</span><span class="o">.</span><span class="n">summary_template</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                        <span class="o">**</span><span class="n">last_chunk</span><span class="o">.</span><span class="n">metadata</span><span class="p">,</span>
+                    <span class="p">),</span>
+                <span class="p">)</span>
+
+                <span class="c1"># Mark the compressed messages in the memory storage</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">update_messages_mark</span><span class="p">(</span>
+                    <span class="n">msg_ids</span><span class="o">=</span><span class="p">[</span><span class="n">_</span><span class="o">.</span><span class="n">id</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">to_compressed_msgs</span><span class="p">],</span>
+                    <span class="n">new_mark</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">COMPRESSED</span><span class="p">,</span>
+                <span class="p">)</span>
+
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">&quot;Finished compressing </span><span class="si">%d</span><span class="s2"> messages in agent </span><span class="si">%s</span><span class="s2">.&quot;</span><span class="p">,</span>
+                    <span class="nb">len</span><span class="p">(</span><span class="n">to_compressed_msgs</span><span class="p">),</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;Failed to obtain compression summary from the model &quot;</span>
+                    <span class="s2">&quot;structured output in agent </span><span class="si">%s</span><span class="s2">.&quot;</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="p">)</span></div>
 
 </pre></div>
         </article>

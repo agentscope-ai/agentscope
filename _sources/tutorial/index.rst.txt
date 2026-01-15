@@ -62,23 +62,6 @@
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="In AgentScope, the memory is used to store the context of the agent, and retrieve it when needed. Specifically, AgentScope provides a memory base class MemoryBase and an in-memory implementation InMemoryMemory under agentscope.memory that can be used directly.">
-
-.. only:: html
-
-  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
-    :alt:
-
-  :doc:`/tutorial/task_memory`
-
-.. raw:: html
-
-      <div class="sphx-glr-thumbnail-title">Memory</div>
-    </div>
-
-
-.. raw:: html
-
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope Studio is a local-deployed web application that">
 
 .. only:: html
@@ -244,6 +227,23 @@
 .. raw:: html
 
       <div class="sphx-glr-thumbnail-title">Create Message</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides the tuner module for training agent applications using reinforcement learning (RL). This tutorial will guide you through how to leverage the tuner module to improve agent performance on specific tasks, including:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tuner_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tuner`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tuner</div>
     </div>
 
 
@@ -487,6 +487,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="The memory module in AgentScope is responsible for">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_memory`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Memory</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides built-in support for Retrieval-Augmented Generation (RAG) tasks. This tutorial demonstrates">
 
 .. only:: html
@@ -532,7 +549,6 @@
    /tutorial/faq
    /tutorial/task_tracing
    /tutorial/quickstart_key_concept
-   /tutorial/task_memory
    /tutorial/task_studio
    /tutorial/quickstart_installation
    /tutorial/task_token
@@ -543,6 +559,7 @@
    /tutorial/task_pipeline
    /tutorial/task_long_term_memory
    /tutorial/quickstart_message
+   /tutorial/task_tuner
    /tutorial/task_mcp
    /tutorial/task_embedding
    /tutorial/workflow_conversation
@@ -557,6 +574,7 @@
    /tutorial/workflow_multiagent_debate
    /tutorial/task_plan
    /tutorial/task_eval
+   /tutorial/task_memory
    /tutorial/task_rag
    /tutorial/task_tool
 
