@@ -1287,6 +1287,7 @@
 
             <span class="c1"># Rewrite the query by the LLM if enabled</span>
             <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">enable_rewrite_query</span><span class="p">:</span>
+                <span class="n">stream_tmp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span>
                 <span class="k">try</span><span class="p">:</span>
                     <span class="n">rewrite_prompt</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">formatter</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
                         <span class="n">msgs</span><span class="o">=</span><span class="p">[</span>
@@ -1305,13 +1306,11 @@
                             <span class="p">),</span>
                         <span class="p">],</span>
                     <span class="p">)</span>
-                    <span class="n">stream_tmp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span>
                     <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span> <span class="o">=</span> <span class="kc">False</span>
                     <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span>
                         <span class="n">rewrite_prompt</span><span class="p">,</span>
                         <span class="n">structured_model</span><span class="o">=</span><span class="n">_QueryRewriteModel</span><span class="p">,</span>
                     <span class="p">)</span>
-                    <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span> <span class="o">=</span> <span class="n">stream_tmp</span>
                     <span class="k">if</span> <span class="n">res</span><span class="o">.</span><span class="n">metadata</span> <span class="ow">and</span> <span class="n">res</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;rewritten_query&quot;</span><span class="p">):</span>
                         <span class="n">query</span> <span class="o">=</span> <span class="n">res</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;rewritten_query&quot;</span><span class="p">]</span>
 
@@ -1320,6 +1319,8 @@
                         <span class="s2">&quot;Skipping the query rewriting due to error: </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span>
                         <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">),</span>
                     <span class="p">)</span>
+                <span class="k">finally</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">stream</span> <span class="o">=</span> <span class="n">stream_tmp</span>
 
             <span class="n">docs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Document</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
             <span class="k">for</span> <span class="n">kb</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">knowledge</span><span class="p">:</span>
