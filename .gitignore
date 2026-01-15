@@ -144,3 +144,8 @@ docs/tutorial/**/.doctrees/
 *.pickle
 
 node_modules/
+package-lock.json
+*.tsbuildinfo
+.wireit/
+.angular/
+*.ts
