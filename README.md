@@ -210,8 +210,9 @@ asyncio.run(main())
 
 Create a voice-enabled ReAct agent that can understand and respond with speech, even playing a multi-agent werewolf game with voice interactions.
 
-<video src="https://cloud.video.taobao.com/vod/w06NmCJhJYwlW8iN4v2fJhnSVm-vdRbwUdA0yT_qESo.mp4" controls="controls" width="60%">
-</video>
+
+https://github.com/user-attachments/assets/c5f05254-aff6-4375-90df-85e8da95d5da
+
 
 ### Realtime Interruption
 
