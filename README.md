@@ -55,7 +55,7 @@
 <img src="https://trendshift.io/api/badge/repositories/10079" alt="modelscope%2Fagentscope | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/>
 </p>
 
-## 🚀 What is AgentScope?
+## What is AgentScope?
 
 AgentScope is a production-ready, open-source framework for building, orchestrating, training and deploying LLM-powered multi-agent applications at scale.
 
@@ -63,13 +63,13 @@ AgentScope is a production-ready, open-source framework for building, orchestrat
 TODO: a picture here
 
 
-## ✨ Why AgentScope?
+## Why AgentScope?
 
 - **High Transparence**: Everything is visible and controllable——no additional abstraction, deep encapsulation or implicit magic.
 - **Agentic-Oriented**: Designed from the ground up for agentic programming paradigms.
 - **Production-Ready**: Built-in support for robust deployment, monitoring, and management.
 
-## 📢 News
+## News
 <!-- BEGIN NEWS -->
 - **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
 - **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
@@ -82,7 +82,7 @@ TODO: a picture here
 - **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
 <!-- END NEWS -->
 
-## 💬 Contact
+## Contact
 
 Welcome to join our community on
 
@@ -120,13 +120,13 @@ Welcome to join our community on
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## 🚀 Quickstart
+## Quickstart
 
-### 💻 Installation
+### Installation
 
 > AgentScope requires **Python 3.10** or higher.
 
-#### 🛠️ From source
+####️ From source
 
 ```bash
 # Pull the source code from GitHub
@@ -137,7 +137,7 @@ cd agentscope
 pip install -e .
 ```
 
-#### 🔄 Using uv (recommended for faster installs)
+#### Using uv (recommended for faster installs)
 
 [uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver, written in Rust.
 
@@ -150,7 +150,7 @@ cd agentscope
 uv pip install -e .
 ```
 
-#### 📦 From PyPi
+#### From PyPi
 
 ```bash
 pip install agentscope
@@ -162,9 +162,9 @@ Or with uv:
 uv pip install agentscope
 ```
 
-## 📝 Example
+## Example
 
-### 👋 Hello AgentScope!
+### Hello AgentScope!
 
 Start with a conversation between user and a ReAct agent 🤖 named "Friday"!
 
@@ -207,16 +207,20 @@ async def main():
 asyncio.run(main())
 ```
 
-### 🎯 Realtime Steering
+### Voice Agent
+
+Create a voice-enabled ReAct agent that can understand and respond with speech, even playing a multi-agent werewolf game with voice interactions.
+
+<video src="https://cloud.video.taobao.com/vod/w06NmCJhJYwlW8iN4v2fJhnSVm-vdRbwUdA0yT_qESo.mp4" controls="controls" width="60%">
+</video>
+
+### Realtime Interruption
 
 Natively support **realtime interruption** in ``ReActAgent`` with robust memory preservation, and convert interruption into an **observable event** for agent to seamlessly resume conversations.
 
-<p align="center">
-  <img src="./assets/images/realtime_steering_zh.gif" alt="Realtime Steering" width="49%"/>
-  <img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="49%"/>
-</p>
+<img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="60%"/>
 
-### 🛠️ Fine-Grained MCP Control
+### Fine-Grained MCP Control
 
 Developers can obtain the MCP tool as a **local callable function**, and use it anywhere (e.g. call directly, pass to agent, wrap into a more complex tool, etc.)
 
@@ -248,7 +252,7 @@ async def fine_grained_mcp_control():
     # ...
 ```
 
-### 🧑‍🤝‍🧑 Multi-Agent Conversation
+### Multi-Agent Conversation
 
 AgentScope provides ``MsgHub`` and pipelines to streamline multi-agent conversations, offering efficient message routing and seamless information sharing
 
@@ -279,47 +283,14 @@ async def multi_agent_conversation():
 asyncio.run(multi_agent_conversation())
 ```
 
-### 💻 AgentScope Studio
 
-Use the following command to install and start AgentScope Studio, to trace and visualize your agent application.
-
-```bash
-npm install -g @agentscope/studio
-
-as_studio
-```
-
-<p align="center">
-    <img
-        src="https://img.alicdn.com/imgextra/i1/O1CN01PG2MdF1Zc44A1QM6N_!!6000000003214-1-tps-1971-1080.gif"
-        width="49%"
-        alt="home"
-    />
-    <img
-        src="https://img.alicdn.com/imgextra/i2/O1CN01pGHedL1L4ibmyPeiq_!!6000000001246-1-tps-1971-1080.gif"
-        width="49%"
-        alt="runtime"
-    />
-    <img
-        src="https://img.alicdn.com/imgextra/i1/O1CN01HfFhy928SSJAcWQ8c_!!6000000007931-1-tps-1971-1080.gif"
-        width="49%"
-        alt="traces"
-    />
-    <img
-        src="https://img.alicdn.com/imgextra/i1/O1CN01vovov821Arms9tEJ1_!!6000000006945-1-tps-1971-1080.gif"
-        width="49%"
-        alt="friday"
-    />
-</p>
-
-
-## 📖 Documentation
+## Documentation
 
 - [Tutorial](https://doc.agentscope.io/tutorial/)
 - [FAQ](https://doc.agentscope.io/tutorial/faq.html)
 - [API Docs](https://doc.agentscope.io/api/agentscope.html)
 
-## 🎨 More Examples & Samples
+## More Examples & Samples
 
 ### Functionality
 
@@ -362,16 +333,16 @@ as_studio
 - [Reinforcement learning (RL) with Trinity-RFT](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent)
 
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions from the community! Please refer to our [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines
 on how to contribute.
 
-## ⚖️ License
+## License
 
 AgentScope is released under Apache License 2.0.
 
-## 📚 Publications
+## Publications
 
 If you find our work helpful for your research or application, please cite our papers.
 
@@ -381,30 +352,7 @@ If you find our work helpful for your research or application, please cite our p
 
 ```
 @article{agentscope_v1,
-    author  = {
-        Dawei Gao,
-        Zitao Li,
-        Yuexiang Xie,
-        Weirui Kuang,
-        Liuyi Yao,
-        Bingchen Qian,
-        Zhijian Ma,
-        Yue Cui,
-        Haohao Luo,
-        Shen Li,
-        Lu Yi,
-        Yi Yu,
-        Shiqi He,
-        Zhiling Luo,
-        Wenmeng Zhou,
-        Zhicheng Zhang,
-        Xuguang He,
-        Ziqian Chen,
-        Weikai Liao,
-        Farruh Isakulovich Kushnazarov,
-        Yaliang Li,
-        Bolin Ding,
-        Jingren Zhou}
+    author  = {Dawei Gao, Zitao Li, Yuexiang Xie, Weirui Kuang, Liuyi Yao, Bingchen Qian, Zhijian Ma, Yue Cui, Haohao Luo, Shen Li, Lu Yi, Yi Yu, Shiqi He, Zhiling Luo, Wenmeng Zhou, Zhicheng Zhang, Xuguang He, Ziqian Chen, Weikai Liao, Farruh Isakulovich Kushnazarov, Yaliang Li, Bolin Ding, Jingren Zhou}
     title   = {AgentScope 1.0: A Developer-Centric Framework for Building Agentic Applications},
     journal = {CoRR},
     volume  = {abs/2508.16279},
@@ -412,26 +360,7 @@ If you find our work helpful for your research or application, please cite our p
 }
 
 @article{agentscope,
-    author  = {
-        Dawei Gao,
-        Zitao Li,
-        Xuchen Pan,
-        Weirui Kuang,
-        Zhijian Ma,
-        Bingchen Qian,
-        Fei Wei,
-        Wenhao Zhang,
-        Yuexiang Xie,
-        Daoyuan Chen,
-        Liuyi Yao,
-        Hongyi Peng,
-        Zeyu Zhang,
-        Lin Zhu,
-        Chen Cheng,
-        Hongzhu Shi,
-        Yaliang Li,
-        Bolin Ding,
-        Jingren Zhou}
+    author  = {Dawei Gao, Zitao Li, Xuchen Pan, Weirui Kuang, Zhijian Ma, Bingchen Qian, Fei Wei, Wenhao Zhang, Yuexiang Xie, Daoyuan Chen, Liuyi Yao, Hongyi Peng, Zeyu Zhang, Lin Zhu, Chen Cheng, Hongzhu Shi, Yaliang Li, Bolin Ding, Jingren Zhou}
     title   = {AgentScope: A Flexible yet Robust Multi-Agent Platform},
     journal = {CoRR},
     volume  = {abs/2402.14034},
@@ -439,7 +368,7 @@ If you find our work helpful for your research or application, please cite our p
 }
 ```
 
-## ✨ Contributors
+## Contributors
 
 All thanks to our contributors:
 

@@ -244,13 +244,12 @@ async def main():
 asyncio.run(main())
 ```
 
-### 🎯 实时介入
+### 🎯 实时打断
 
-在 ``ReActAgent`` 中原生支持**实时介入**功能，提供面向打断的记忆处理机制，将中断转换为智能体的**可观察事件**，让智能体能够无缝恢复对话。
+在 ``ReActAgent`` 中原生支持**实时打断**功能，提供面向打断的记忆处理机制，将中断转换为智能体的**可观察事件**，让智能体能够无缝恢复对话。
 
 <p align="center">
-  <img src="./assets/images/realtime_steering_zh.gif" alt="Realtime Steering" width="49%"/>
-  <img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="49%"/>
+  <img src="./assets/images/realtime_steering_zh.gif" alt="Realtime Steering" width="60%"/>
 </p>
 
 ### 🛠️ 细粒度 MCP 控制
