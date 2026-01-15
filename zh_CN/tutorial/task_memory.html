@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -354,11 +355,430 @@ to download the full example code.</p>
 </div>
 <section class="sphx-glr-example-title" id="memory">
 <span id="sphx-glr-tutorial-task-memory-py"></span><span id="id1"></span><h1>记忆<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h1>
-<p>在 AgentScope 中，记忆（memory）用于存储智能体的上下文，并在需要时检索它。
-具体而言，AgentScope 在 <code class="docutils literal notranslate"><span class="pre">agentscope.memory</span></code> 模块下提供了记忆基类 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> 和一个可直接使用的基于内存实现 <code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code>。</p>
-<section id="id2">
-<h2>自定义记忆<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
-<p>要自定义您自己的记忆，只需继承 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> 并实现以下方法：</p>
+<p>AgentScope 中的记忆模块负责：</p>
+<ul class="simple">
+<li><p>存储消息对象（<code class="docutils literal notranslate"><span class="pre">Msg</span></code>）</p></li>
+<li><p>利用标记（mark）管理消息</p></li>
+</ul>
+<p><strong>标记</strong> 是与记忆中每条消息关联的字符串标签，可用于根据消息的上下文或目的对消息进行分类、过滤和检索。
+可用于实现进阶的记忆管理功能，例如在 <cite>ReActAgent</cite> 类中，使用``&quot;hint&quot;<a href="#id2"><span class="problematic" id="id3">``</span></a>标签标记一次性的提示消息，
+以便在使用完成后将其从记忆中删除。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>AgentScope 中的记忆模块仅提供消息存储和管理的原子功能，记忆压缩等算法逻辑在 <a class="reference external" href="agent">智能体</a> 中实现。</p>
+</div>
+<p>目前，AgentScope 提供以下记忆存储实现：</p>
+<div class="table-wrapper docutils container" id="id16">
+<table class="docutils align-default" id="id16">
+<caption><span class="caption-text">AgentScope 中的内置记忆类</span><a class="headerlink" href="#id16" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>类</p></th>
+<th class="head"><p>描述</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code></p></td>
+<td><p>简单的内存记忆存储实现。</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code></p></td>
+<td><p>基于异步 SQLAlchemy 的记忆存储实现，支持如 SQLite、PostgreSQL、MySQL 等多种关系数据库。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></p></td>
+<td><p>基于 Redis 的记忆存储实现。</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>如果您有兴趣贡献新的记忆存储实现，请参考 <a class="reference external" href="https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions">贡献指南</a>。</p>
+</div>
+<p>以上所有记忆类均继承自基类 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code>，并提供以下方法来管理记忆中的消息：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">fakeredis</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">InMemoryMemory</span><span class="p">,</span>
+    <span class="n">AsyncSQLAlchemyMemory</span><span class="p">,</span>
+    <span class="n">RedisMemory</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+</pre></div>
+</div>
+<section id="id14">
+<h2>内存记忆<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h2>
+<p>内存记忆提供了一种在内存中存储消息的简单方式。
+结合 <a class="reference internal" href="task_state.html#state"><span class="std std-ref">状态/会话管理</span></a> 模块，它可以在不同用户和会话之间持久化记忆内容。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">in_memory_example</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用InMemoryMemory在内存中存储消息的示例。&quot;&quot;&quot;</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">InMemoryMemory</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 添加一条带有标记&quot;hint&quot;的提示消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 所有存储的消息都可以通过 ``state_dict`` 和 ``load_state_dict`` 方法导出和加载。</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;记忆的状态字典：&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+
+    <span class="c1"># 通过标记删除消息</span>
+    <span class="n">deleted_count</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">delete_by_mark</span><span class="p">(</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;删除了 </span><span class="si">{</span><span class="n">deleted_count</span><span class="si">}</span><span class="s2"> 条带有标记&#39;hint&#39;的消息。&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;删除后的记忆状态字典：&quot;</span><span class="p">)</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">in_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;3KUszvCSB5gifdWFrJPGdt&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.131&#39;, invocation_id=&#39;None&#39;)
+记忆的状态字典：
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;KGtio8rBxkjRVNnR9fTPMy&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 06:03:08.131&quot;
+      },
+      []
+    ],
+    [
+      {
+        &quot;id&quot;: &quot;3KUszvCSB5gifdWFrJPGdt&quot;,
+        &quot;name&quot;: &quot;system&quot;,
+        &quot;role&quot;: &quot;system&quot;,
+        &quot;content&quot;: &quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 06:03:08.131&quot;
+      },
+      [
+        &quot;hint&quot;
+      ]
+    ]
+  ]
+}
+删除了 1 条带有标记&#39;hint&#39;的消息。
+删除后的记忆状态字典：
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;KGtio8rBxkjRVNnR9fTPMy&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-01-15 06:03:08.131&quot;
+      },
+      []
+    ]
+  ]
+}
+</pre></div>
+</div>
+</section>
+<section id="relational-database-memory">
+<h2>关系数据库记忆（Relational Database Memory）<a class="headerlink" href="#relational-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支持：</p>
+<ul class="simple">
+<li><p>多种数据库，如 SQLite、PostgreSQL、MySQL 等</p></li>
+<li><p>用户和会话管理</p></li>
+<li><p>生产环境中的连接池</p></li>
+</ul>
+<p>具体来说，这里我们以SQLite支持的记忆为例。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 AsyncSQLAlchemyMemory 在 SQLite 数据库中存储消息的示例。&quot;&quot;&quot;</span>
+
+    <span class="c1"># 首先创建一个异步 SQLAlchemy 引擎</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 然后使用该引擎创建记忆</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="c1"># 可选传入指定user_id和session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 完成后关闭引擎</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;5w6HAXnQLCGEUf95r28pMz&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.171&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>可选地，您也可以将 <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> 用作���步上下文管理器，退出上下文时会话将自动关闭。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_context_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 AsyncSQLAlchemyMemory 作为异步上下文管理器的示例。&quot;&quot;&quot;</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="k">as</span> <span class="n">memory</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+            <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于 AgentScope 的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;记忆中的所有消息：&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_context_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>记忆中的所有消息：
+- Msg(id=&#39;nZ2dQ67MNQbQaL3QxDcWrU&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.141&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;5w6HAXnQLCGEUf95r28pMz&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.171&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;PAfUHPEBcsz7KFu7YH3oEN&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.178&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>在生产环境中，例如使用FastAPI时，可以按如下方式启用连接池：</p>
+<div class="literal-block-wrapper docutils container" id="id17">
+<div class="code-block-caption"><span class="caption-text">FastAPI中使用连接池的SQLAlchemy记忆</span><a class="headerlink" href="#id17" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncGenerator</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">Depends</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span><span class="p">,</span> <span class="n">async_sessionmaker</span><span class="p">,</span> <span class="n">AsyncSession</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgent</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">stream_printing_messages</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+ <span class="c1"># 创建带连接池的异步SQLAlchemy引擎</span>
+ <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span>
+     <span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">,</span>
+     <span class="n">pool_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+     <span class="n">max_overflow</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+     <span class="n">pool_timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+     <span class="c1"># ...  其他连接池设置</span>
+ <span class="p">)</span>
+
+ <span class="c1"># 创建会话制造器</span>
+ <span class="n">async_session_marker</span> <span class="o">=</span> <span class="n">async_sessionmaker</span><span class="p">(</span>
+     <span class="n">engine</span><span class="p">,</span>
+     <span class="n">expire_on_commit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autocommit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autoflush</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+ <span class="p">)</span>
+
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_db</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">AsyncSession</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+     <span class="k">async</span> <span class="k">with</span> <span class="n">async_session_marker</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+         <span class="k">try</span><span class="p">:</span>
+             <span class="k">yield</span> <span class="n">session</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+         <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+             <span class="k">raise</span>
+         <span class="k">finally</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">db_session</span><span class="p">:</span> <span class="n">AsyncSession</span> <span class="o">=</span> <span class="n">Depends</span><span class="p">(</span><span class="n">get_db</span><span class="p">),</span>
+ <span class="p">):</span>
+     <span class="c1"># 智能体的一些设置</span>
+     <span class="o">...</span>
+
+     <span class="c1"># 使用SQLAlchemy记忆创建智能体</span>
+     <span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+         <span class="c1"># ...</span>
+         <span class="n">memory</span><span class="o">=</span><span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+             <span class="n">engine_or_session</span><span class="o">=</span><span class="n">db_session</span><span class="p">,</span>
+             <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+             <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+         <span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 处理与智能体的对话</span>
+     <span class="k">async</span> <span class="k">for</span> <span class="n">msg</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">stream_printing_messages</span><span class="p">(</span>
+         <span class="n">agents</span><span class="o">=</span><span class="p">[</span><span class="n">agent</span><span class="p">],</span>
+         <span class="n">coroutine_task</span><span class="o">=</span><span class="n">agent</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)),</span>
+     <span class="p">):</span>
+         <span class="c1"># 将消息返回给客户端</span>
+         <span class="o">...</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="nosql-nosql-database-memory">
+<h2>NoSQL数据库记忆（NoSQL Database Memory）<a class="headerlink" href="#nosql-nosql-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
+它也支持用户和会话管理，以及生产环境中的连接池。</p>
+<p>首先，我们可以按如下方式初始化Redis记忆：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">redis_memory_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 RedisMemory 在 Redis 中存储消息的示例。&quot;&quot;&quot;</span>
+    <span class="c1"># 使用fakeredis进行内存测试，无需真实的 Redis 服务器</span>
+    <span class="n">fake_redis</span> <span class="o">=</span> <span class="n">fakeredis</span><span class="o">.</span><span class="n">aioredis</span><span class="o">.</span><span class="n">FakeRedis</span><span class="p">(</span><span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># 创建 Redis 记忆</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+        <span class="c1"># 使用fake redis进行演示</span>
+        <span class="n">connection_pool</span><span class="o">=</span><span class="n">fake_redis</span><span class="o">.</span><span class="n">connection_pool</span><span class="p">,</span>
+        <span class="c1"># 也可以通过指定主机和端口连接到真实的Redis服务器</span>
+        <span class="c1"># host=&quot;localhost&quot;,</span>
+        <span class="c1"># port=6379,</span>
+        <span class="c1"># 可选地指定 user_id 和 session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 向记忆中添加消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;Alice&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 添加一条带有标记&quot;hint&quot;的提示消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 检索带有标记&quot;hint&quot;的消息</span>
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">redis_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;JGCRi2xWq87mUoLAufLfAp&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-01-15 06:03:08.195&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>同样，<cite>RedisMemory</cite> 也可以在生产环境中使用连接池，例如与FastAPI一起使用。</p>
+<div class="literal-block-wrapper docutils container" id="id18">
+<div class="code-block-caption"><span class="caption-text">FastAPI中使用连接池的Redis记忆</span><a class="headerlink" href="#id18" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">HTTPException</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">redis.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConnectionPool</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">asynccontextmanager</span>
+
+ <span class="c1"># 全局Redis连接池</span>
+ <span class="n">redis_pool</span><span class="p">:</span> <span class="n">ConnectionPool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+ <span class="c1"># 使用lifespan事件管理Redis连接池</span>
+ <span class="nd">@asynccontextmanager</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="n">redis_pool</span> <span class="o">=</span> <span class="n">ConnectionPool</span><span class="p">(</span>
+         <span class="n">host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span>
+         <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">,</span>
+         <span class="n">db</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+         <span class="n">password</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+         <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+         <span class="n">max_connections</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+         <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis连接已建立&quot;</span><span class="p">)</span>
+
+     <span class="k">yield</span>
+
+     <span class="k">await</span> <span class="n">redis_pool</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis连接已关闭&quot;</span><span class="p">)</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat_endpoint&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span>
+ <span class="p">):</span>
+<span class="w">     </span><span class="sd">&quot;&quot;&quot;聊天端点&quot;&quot;&quot;</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="k">if</span> <span class="n">redis_pool</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+         <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span>
+             <span class="n">status_code</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+             <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;Redis连接池未初始化。&quot;</span><span class="p">,</span>
+         <span class="p">)</span>
+
+     <span class="c1"># 创建Redis记忆</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+         <span class="n">connection_pool</span><span class="o">=</span><span class="n">redis_pool</span><span class="p">,</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="o">...</span>
+
+     <span class="c1"># 完成后关闭Redis客户端连接</span>
+     <span class="n">client</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_client</span><span class="p">()</span>
+     <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="customizing-memory">
+<h2>自定义记忆（Customizing Memory）<a class="headerlink" href="#customizing-memory" title="Link to this heading">¶</a></h2>
+<p>要自定义您自己的记忆实现，只需从 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> 继承并实现以下方法：</p>
 <div class="table-wrapper docutils container">
 <table class="docutils align-default">
 <thead>
@@ -371,16 +791,22 @@ to download the full example code.</p>
 <td><p>向记忆中添加 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">delete</span></code></p></td>
-<td><p>从记忆中删除项目</p></td>
+<td><p>从记忆中删除 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">size</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">delete_by_mark</span></code></p></td>
+<td><p>通过标记从记忆中删除 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">size</span></code></p></td>
 <td><p>记忆的大小</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">clear</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clear</span></code></p></td>
 <td><p>清空记忆内容</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">get_memory</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">get_memory</span></code></p></td>
 <td><p>以 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象列表的形式获取记忆内容</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update_messages_mark</span></code></p></td>
+<td><p>更新记忆中消息的标记</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state_dict</span></code></p></td>
 <td><p>获取记忆的状态字典</p></td>
@@ -392,12 +818,13 @@ to download the full example code.</p>
 </table>
 </div>
 </section>
-<section id="id3">
-<h2>进一步阅读<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<section id="id15">
+<h2>延伸阅读<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h2>
 <ul class="simple">
+<li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a></p></li>
 <li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">长期记忆</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.000 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.089 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>
@@ -486,8 +913,11 @@ to download the full example code.</p>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">记忆</a><ul>
-<li><a class="reference internal" href="#id2">自定义记忆</a></li>
-<li><a class="reference internal" href="#id3">进一步阅读</a></li>
+<li><a class="reference internal" href="#id14">内存记忆</a></li>
+<li><a class="reference internal" href="#relational-database-memory">关系数据库记忆（Relational Database Memory）</a></li>
+<li><a class="reference internal" href="#nosql-nosql-database-memory">NoSQL数据库记忆（NoSQL Database Memory）</a></li>
+<li><a class="reference internal" href="#customizing-memory">自定义记忆（Customizing Memory）</a></li>
+<li><a class="reference internal" href="#id15">延伸阅读</a></li>
 </ul>
 </li>
 </ul>

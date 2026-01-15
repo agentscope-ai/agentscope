@@ -221,8 +221,8 @@ input_msgs = [
     ),
     # 对话历史继续
     Msg("Friday", "最近的图书馆是...", "assistant"),
-    Msg("Bob", "谢谢，Friday！", "user"),
-    Msg("Alice", "我们一起去吧。", "user"),
+    Msg("Bob", "谢谢，Friday！", "assistant"),
+    Msg("Alice", "我们一起去吧。", "assistant"),
 ]
 
 

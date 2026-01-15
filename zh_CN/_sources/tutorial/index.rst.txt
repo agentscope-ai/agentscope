@@ -62,23 +62,6 @@
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="在 AgentScope 中，记忆（memory）用于存储智能体的上下文，并在需要时检索它。 具体而言，AgentScope 在 agentscope.memory 模块下提供了记忆基类 MemoryBase 和一个可直接使用的基于内存实现 InMemoryMemory。">
-
-.. only:: html
-
-  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
-    :alt:
-
-  :doc:`/tutorial/task_memory`
-
-.. raw:: html
-
-      <div class="sphx-glr-thumbnail-title">记忆</div>
-    </div>
-
-
-.. raw:: html
-
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope Studio 是一个本地部署的 Web 应用程序，它">
 
 .. only:: html
@@ -261,6 +244,23 @@
 .. raw:: html
 
       <div class="sphx-glr-thumbnail-title">MCP</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 提供了 tuner 模块，用于通过强化学习（RL）训练智能体应用。 本教程将带你系统了解如何利用 tuner 提升智能体在特定任务上的表现，包括：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tuner_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tuner`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tuner</div>
     </div>
 
 
@@ -470,6 +470,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 中的记忆模块负责：">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_memory`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">记忆</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 提供了一个内置的评测框架，用于评测智能体在不同任务和基准测试中的性能，主要特性包括：">
 
 .. only:: html
@@ -532,7 +549,6 @@
    /tutorial/faq
    /tutorial/task_tracing
    /tutorial/quickstart_key_concept
-   /tutorial/task_memory
    /tutorial/task_studio
    /tutorial/quickstart_installation
    /tutorial/task_token
@@ -544,6 +560,7 @@
    /tutorial/task_long_term_memory
    /tutorial/task_embedding
    /tutorial/task_mcp
+   /tutorial/task_tuner
    /tutorial/quickstart_message
    /tutorial/task_tts
    /tutorial/task_agent
@@ -556,6 +573,7 @@
    /tutorial/task_state
    /tutorial/workflow_routing
    /tutorial/task_prompt
+   /tutorial/task_memory
    /tutorial/task_eval
    /tutorial/task_rag
    /tutorial/task_tool

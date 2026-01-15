@@ -37,6 +37,8 @@ ReAct 智能体
       - 参考文档
     * - 支持实时介入（Realtime Steering）
       -
+    * - 支持记忆压缩
+      -
     * - 支持并行工具调用
       -
     * - 支持结构化输出
@@ -53,7 +55,7 @@ ReAct 智能体
 
 由于篇幅限制，本章我们仅演示 ``ReActAgent`` 类的前三个功能特性，其它功能我们在对应的章节进行介绍。
 
-.. GENERATED FROM PYTHON SOURCE LINES 39-56
+.. GENERATED FROM PYTHON SOURCE LINES 41-58
 
 .. code-block:: Python
 
@@ -81,7 +83,7 @@ ReAct 智能体
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 57-117
+.. GENERATED FROM PYTHON SOURCE LINES 59-233
 
 实时控制
 ---------------------------------------
@@ -134,6 +136,120 @@ ReAct 智能体
 开发者可以通过覆盖 ``handle_interrupt`` 函数实现自定义的中断后处理逻辑，例如，调用 LLM 生成对中断的简单响应。
 
 
+记忆压缩
+----------------------------------------
+随着对话的不断增长，记忆中的 token 数量可能会超过模型的上下文限制或导致推理速度变慢。
+``ReActAgent`` 提供了自动记忆压缩功能来解决这个问题。
+
+**基础用法**
+
+要启用记忆压缩，在初始化 ``ReActAgent`` 时提供一个 ``CompressionConfig`` 实例：
+
+.. code-block:: python
+
+    from agentscope.agent import ReActAgent
+    from agentscope.token import CharTokenCounter
+
+    agent = ReActAgent(
+        name="助手",
+        sys_prompt="你是一个有用的助手。",
+        model=model,
+        formatter=formatter,
+        compression_config=ReActAgent.CompressionConfig(
+            enable=True,
+            agent_token_counter=CharTokenCounter(),  # 智能体的 token 计数器
+            trigger_threshold=10000,  # 超过 10000 个 token 时触发压缩
+            keep_recent=3,            # 保持最近 3 条消息不被压缩
+        ),
+    )
+
+启用记忆压缩后，智能体会监控其记忆中的 token 数量。
+一旦超过 ``trigger_threshold``，智能体会自动：
+
+1. 识别尚未被压缩的消息（通过 ``exclude_mark``）
+2. 保持最近 ``keep_recent`` 条消息不被压缩（以保留最近的上下文）
+3. 将较早的消息发送给 LLM 生成结构化摘要
+4. 使用 ``MemoryMark.COMPRESSED`` 标记已压缩的消息（通过 ``update_messages_mark``）
+5. 将摘要存储在记忆中（通过 ``update_compressed_summary``）
+
+.. important:: 压缩采用**标记机制**而非替换消息。旧消息被标记为已压缩，并通过 ``exclude_mark=MemoryMark.COMPRESSED`` 在后续检索中被排除，而生成的摘要则单独存储，在需要时检索。这种方式保留了原始消息，允许灵活的记忆管理。关于标记功能的更多详情，请参考 :ref:`memory`。
+
+默认情况下，压缩摘要被结构化为五个关键字段：
+
+- **task_overview**：用户的核心请求和成功标准
+- **current_state**：到目前为止已完成的工作，包括文件和输出
+- **important_discoveries**：技术约束、决策、错误和失败的尝试
+- **next_steps**：完成任务所需的具体操作
+- **context_to_preserve**：用户偏好、领域细节和做出的承诺
+
+**自定义压缩**
+
+可以通过指定 ``summary_schema``、``summary_template`` 和 ``compression_prompt`` 参数来自定义压缩的工作方式。
+
+- **summary_schema**：使用 Pydantic 模型定义压缩摘要的结构
+- **compression_prompt**：指导 LLM 如何生成摘要
+- **summary_template**：格式化压缩摘要如何呈现给智能体
+
+下面是一个自定义压缩的示例：
+
+.. code-block:: python
+
+    from pydantic import BaseModel, Field
+
+    # 定义自定义摘要结构
+    class CustomSummary(BaseModel):
+        main_topic: str = Field(
+            max_length=200,
+            description="对话的主题"
+        )
+        key_points: str = Field(
+            max_length=400,
+            description="讨论的重要观点"
+        )
+        pending_tasks: str = Field(
+            max_length=200,
+            description="待完成的任务"
+        )
+
+    # 使用自定义压缩配置创建智能体
+    agent = ReActAgent(
+        name="助手",
+        sys_prompt="你是一个有用的助手。",
+        model=model,
+        formatter=formatter,
+        compression_config=ReActAgent.CompressionConfig(
+            enable=True,
+            agent_token_counter=CharTokenCounter(),
+            trigger_threshold=10000,
+            keep_recent=3,
+            # 结构化摘要的自定义 schema
+            summary_schema=CustomSummary,
+            # 指导压缩的自定义提示
+            compression_prompt=(
+                "<system-hint>请总结上述对话，"
+                "重点关注主题、关键讨论点和待完成任务。</system-hint>"
+            ),
+            # 格式化摘要的自定义模板
+            summary_template=(
+                "<system-info>对话摘要：\n"
+                "主题：{main_topic}\n\n"
+                "关键观点：\n{key_points}\n\n"
+                "待完成任务：\n{pending_tasks}"
+                "</system-info>"
+            ),
+        ),
+    )
+
+``summary_template`` 使用 ``summary_schema`` 中定义的字段作为占位符
+（例如 ``{main_topic}``、``{key_points}``）。在 LLM 生成结构化摘要后，
+这些占位符将被实际值替换。
+
+.. note:: 智能体确保工具使用和工具结果对在压缩过程中保持在一起，以维护对话流程的完整性。
+
+.. tip:: 可以通过指定不同的 ``compression_model`` 和 ``compression_formatter`` 来使用更小、更快的模型进行压缩，以降低成本和延迟。
+
+
+
 并行工具调用
 ----------------------------------------
 ``ReActAgent`` 通过在其构造函数中提供 ``parallel_tool_calls`` 参数来支持并行工具调用。
@@ -144,7 +260,7 @@ ReAct 智能体
 
 .. note:: 运行时请确保模型层面支持工具并行调用，并且相应参数设置正确（可以通过 ``generate_kwargs`` 传入），例如对于DashScope API，需要设置 ``parallel_tool_calls`` 为 ``True``，否则将无法进行并行工具调用。
 
-.. GENERATED FROM PYTHON SOURCE LINES 117-174
+.. GENERATED FROM PYTHON SOURCE LINES 233-290
 
 .. code-block:: Python
 
@@ -215,7 +331,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_411ecb20db8b478daa79f1",
+        "id": "call_3597fd20179447bbbdea73",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -223,7 +339,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_c05e5c20902449a0a198de",
+        "id": "call_580be688ee0c4c15a6b672",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -231,37 +347,37 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_411ecb20db8b478daa79f1",
+        "id": "call_3597fd20179447bbbdea73",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 03:05:03.717145，结束于 03:05:06.720447。"
+                "text": "标签 tag1 开始于 06:01:11.402530，结束于 06:01:14.405799。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_c05e5c20902449a0a198de",
+        "id": "call_580be688ee0c4c15a6b672",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 03:05:03.717240，结束于 03:05:06.721128。"
+                "text": "标签 tag2 开始于 06:01:11.402623，结束于 06:01:14.406561。"
             }
         ]
     }
-    Jarvis: 两个函数 `example_tool_function` 已经并行执行完毕。下面是它们各自的执行时间：
+    Jarvis: 两个 `example_tool_function` 函数已经并行执行完成。下面是它们的执行时间：
 
-    - 标签为 'tag1' 的函数开始于 03:05:03.717145，结束于 03:05:06.720447。
-    - 标签为 'tag2' 的函数开始于 03:05:03.717240，结束于 03:05:06.721128。
+    - 标签为 'tag1' 的函数从 06:01:11.402530 开始，在 06:01:14.405799 结束。
+    - 标签为 'tag2' 的函数从 06:01:11.402623 开始，在 06:01:14.406561 结束。
 
-    这两个函数几乎是同时启动和完成的。
-
-
+    看起来这两个任务几乎是同时开始和结束的，这表明它们被成功地并行执行了。
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 175-183
+
+
+.. GENERATED FROM PYTHON SOURCE LINES 291-299
 
 结构化输出
 ----------------------------------------
@@ -272,7 +388,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
 以介绍爱因斯坦为例：
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 183-220
+.. GENERATED FROM PYTHON SOURCE LINES 299-336
 
 .. code-block:: Python
 
@@ -325,7 +441,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_a5f4fb846efa4f47bba654",
+        "id": "call_778526a999024d5ba085f1",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
@@ -341,7 +457,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
     }
     system: {
         "type": "tool_result",
-        "id": "call_a5f4fb846efa4f47bba654",
+        "id": "call_778526a999024d5ba085f1",
         "name": "generate_response",
         "output": [
             {
@@ -350,7 +466,9 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。爱因斯坦出生于1879年，在其充满智慧与探索的一生中对物理学做出了巨大贡献，并在1955年逝世时享年76岁。他的成就得到了国际社会的高度认可，其中包括荣获1921年的诺贝尔物理学奖、普朗克奖章、科普利奖章以及富兰克林奖章等重要荣誉。通过这些奖项，我们可以看出爱因斯坦不仅对科学领域产生了深远影响，而且在全球范围内也受到了极高的赞誉。
+    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。爱因斯坦出生于1879年，在其76年的生命中对物理学做出了革命性的贡献。他最著名的成就包括提出了特殊相对论和广义相对论，这些理论彻底改变了我们对于时间、空间以及引力的理解。
+
+    爱因斯坦因其在光电效应方面的研究工作被授予了1921年的诺贝尔物理学奖。除此之外，他还荣获了许多其他重要奖项，如普朗克奖章、科普利奖章及富兰克林奖章等。这些荣誉不仅证明了他在科学领域内的卓越成就，也彰显了他对人类知识进步所做出的巨大贡献。
 
     结构化输出：
     {
@@ -368,7 +486,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 221-285
+.. GENERATED FROM PYTHON SOURCE LINES 337-401
 
 自定义智能体
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -438,7 +556,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 26.165 seconds)
+   **Total running time of the script:** (0 minutes 18.590 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

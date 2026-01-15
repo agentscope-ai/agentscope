@@ -195,7 +195,7 @@
           <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
         </button>
       </div>
-      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
         <div class="visually-hidden">Toggle table of contents sidebar</div>
         <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
       </label>
@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -341,33 +342,14 @@
               <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
             </button>
           </div>
-          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
             <div class="visually-hidden">Toggle table of contents sidebar</div>
             <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="module-agentscope.tune">
-<span id="agentscope-tune"></span><h1>agentscope.tune<a class="headerlink" href="#module-agentscope.tune" title="Link to this heading">¶</a></h1>
-<p>The learning module of AgentScope, including RL and SFT.</p>
-<dl class="py function">
-<dt class="sig sig-object py" id="agentscope.tune.tune">
-<span class="sig-name descname"><span class="pre">tune</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">workflow_func</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/tune/_tune.html#tune"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.tune.tune" title="Link to this definition">¶</a></dt>
-<dd><p>Train the agent workflow with the specific configuration.</p>
-<dl class="field-list simple">
-<dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>workflow_func</strong> (<em>WorkflowType</em>) -- The learning workflow function
-to execute.</p></li>
-<li><p><strong>config_path</strong> (<em>str</em>) -- The configuration for the learning process.</p></li>
-</ul>
-</dd>
-<dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>None</p>
-</dd>
-</dl>
-</dd></dl>
-
+          <section id="agentscope-tune">
+<h1>agentscope.tune<a class="headerlink" href="#agentscope-tune" title="Link to this heading">¶</a></h1>
 </section>
 
         </article>
@@ -412,27 +394,8 @@ to execute.</p></li>
         
       </footer>
     </div>
-    <aside class="toc-drawer">
+    <aside class="toc-drawer no-toc">
       
-      
-      <div class="toc-sticky toc-scroll">
-        <div class="toc-title-container">
-          <span class="toc-title">
-            On this page
-          </span>
-        </div>
-        <div class="toc-tree-container">
-          <div class="toc-tree">
-            <ul>
-<li><a class="reference internal" href="#">agentscope.tune</a><ul>
-<li><a class="reference internal" href="#agentscope.tune.tune"><code class="docutils literal notranslate"><span class="pre">tune()</span></code></a></li>
-</ul>
-</li>
-</ul>
-
-          </div>
-        </div>
-      </div>
       
       
     </aside>

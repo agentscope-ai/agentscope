@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul class="current">
@@ -708,6 +709,85 @@ pre-acting, and post-acting by the <cite>_ReActAgentMeta</cite> metaclass.</p>
 <li><p>Hooks around reasoning, acting, reply, observe and print functions</p></li>
 <li><p>Structured output generation</p></li>
 </ul>
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">CompressionConfig</span></span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.CompressionConfig"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">BaseModel</span></code></p>
+<p>The compression related configuration in AgentScope</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.model_config">
+<span class="sig-name descname"><span class="pre">model_config</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">ClassVar</span><span class="p"><span class="pre">[</span></span><span class="pre">ConfigDict</span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">{'arbitrary_types_allowed':</span> <span class="pre">True}</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.model_config" title="Link to this definition">¶</a></dt>
+<dd><p>Allow arbitrary types in the pydantic model.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.enable">
+<span class="sig-name descname"><span class="pre">enable</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.enable" title="Link to this definition">¶</a></dt>
+<dd><p>Whether to enable the auto compression feature.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.agent_token_counter">
+<span class="sig-name descname"><span class="pre">agent_token_counter</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="agentscope.token.html#agentscope.token.TokenCounterBase" title="agentscope.token._token_base.TokenCounterBase"><span class="pre">TokenCounterBase</span></a></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.agent_token_counter" title="Link to this definition">¶</a></dt>
+<dd><p>The token counter for the agent's model, which must be consistent
+with the model used in the agent.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.trigger_threshold">
+<span class="sig-name descname"><span class="pre">trigger_threshold</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.trigger_threshold" title="Link to this definition">¶</a></dt>
+<dd><p>The token threshold to trigger the compression process. When the
+total token count in the memory exceeds this threshold, the
+compression will be activated.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.keep_recent">
+<span class="sig-name descname"><span class="pre">keep_recent</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.keep_recent" title="Link to this definition">¶</a></dt>
+<dd><p>The number of most recent messages to keep uncompressed in the
+memory to preserve the recent context.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.compression_prompt">
+<span class="sig-name descname"><span class="pre">compression_prompt</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_prompt" title="Link to this definition">¶</a></dt>
+<dd><p>The prompt used to guide the compression model to generate the
+compressed summary, which will be wrapped into a user message and
+attach to the end of the current memory.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.summary_template">
+<span class="sig-name descname"><span class="pre">summary_template</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.summary_template" title="Link to this definition">¶</a></dt>
+<dd><p>The string template to present the compressed summary to the agent,
+which will be formatted with the fields from the
+<cite>compression_summary_model</cite>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.summary_schema">
+<span class="sig-name descname"><span class="pre">summary_schema</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Type</span><span class="p"><span class="pre">[</span></span><span class="pre">BaseModel</span><span class="p"><span class="pre">]</span></span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.summary_schema" title="Link to this definition">¶</a></dt>
+<dd><p>The structured model used to guide the agent to generate the
+structured compressed summary.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.compression_model">
+<span class="sig-name descname"><span class="pre">compression_model</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="agentscope.model.html#agentscope.model.ChatModelBase" title="agentscope.model._model_base.ChatModelBase"><span class="pre">ChatModelBase</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_model" title="Link to this definition">¶</a></dt>
+<dd><p>The compression model used to generate the compressed summary. If
+not provided, the agent's model will be used.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.agent.ReActAgent.CompressionConfig.compression_formatter">
+<span class="sig-name descname"><span class="pre">compression_formatter</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="agentscope.formatter.html#agentscope.formatter.FormatterBase" title="agentscope.formatter._formatter_base.FormatterBase"><span class="pre">FormatterBase</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_formatter" title="Link to this definition">¶</a></dt>
+<dd><p>The corresponding formatter form the compression model, when the
+<cite>compression_model</cite> is provided, the <cite>compression_formatter</cite> must also
+be provided.</p>
+</dd></dl>
+
+</dd></dl>
+
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.finish_function_name">
 <span class="sig-name descname"><span class="pre">finish_function_name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'generate_response'</span></em><a class="headerlink" href="#agentscope.agent.ReActAgent.finish_function_name" title="Link to this definition">¶</a></dt>
@@ -717,7 +797,7 @@ registered when structured output model is provided in the reply call.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.agent.ReActAgent.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sys_prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">formatter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">toolkit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory_mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'both'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_meta_tool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel_tool_calls</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">knowledge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_rewrite_query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plan_notebook</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">print_hint_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tts_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sys_prompt</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">formatter</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">toolkit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">long_term_memory_mode</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'both'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_meta_tool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parallel_tool_calls</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">knowledge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">enable_rewrite_query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">plan_notebook</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">print_hint_msg</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_iters</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tts_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compression_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/agent/_react_agent.html#ReActAgent.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.agent.ReActAgent.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the ReAct agent</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -760,6 +840,8 @@ hint from the plan notebook, the retrieved information from
 the long-term memory and knowledge base(s).</p></li>
 <li><p><strong>max_iters</strong> (<cite>int</cite>, defaults to <cite>10</cite>) -- The maximum number of iterations of the reasoning-acting loops.</p></li>
 <li><p><strong>tts_model</strong> (<cite>TTSModelBase | None</cite> optional) -- The TTS model used by the agent.</p></li>
+<li><p><strong>compression_config</strong> (<cite>CompressionConfig | None</cite>, optional) -- The compression configuration. If provided, the auto
+compression will be activated.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -1387,6 +1469,19 @@ user or something else.</p>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.agent.ReActAgent"><code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.model_config"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.model_config</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.enable"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.enable</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.agent_token_counter"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.agent_token_counter</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.trigger_threshold"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.trigger_threshold</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.keep_recent"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.keep_recent</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_prompt"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.compression_prompt</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.summary_template"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.summary_template</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.summary_schema"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.summary_schema</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_model"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.compression_model</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.agent.ReActAgent.CompressionConfig.compression_formatter"><code class="docutils literal notranslate"><span class="pre">ReActAgent.CompressionConfig.compression_formatter</span></code></a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#agentscope.agent.ReActAgent.finish_function_name"><code class="docutils literal notranslate"><span class="pre">ReActAgent.finish_function_name</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.agent.ReActAgent.__init__"><code class="docutils literal notranslate"><span class="pre">ReActAgent.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.agent.ReActAgent.sys_prompt"><code class="docutils literal notranslate"><span class="pre">ReActAgent.sys_prompt</span></code></a></li>

@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul class="current">
@@ -368,6 +369,40 @@
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
 <dd class="field-even"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.token.CharTokenCounter">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">CharTokenCounter</span></span><a class="reference internal" href="../_modules/agentscope/token/_char_token_counter.html#CharTokenCounter"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.token.CharTokenCounter" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.token.TokenCounterBase" title="agentscope.token._token_base.TokenCounterBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">TokenCounterBase</span></code></a></p>
+<p>A very simple implementation that counts tokens based on character
+length.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>This counter does not handle multi-modal data well, as base64
+encoding can significantly increase character count.</p>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.token.CharTokenCounter.count">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">count</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">messages</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tools</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/token/_char_token_counter.html#CharTokenCounter.count"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.token.CharTokenCounter.count" title="Link to this definition">¶</a></dt>
+<dd><p>Count the number of tokens in the messages based on the characters</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>messages</strong> (<cite>list[dict]</cite>) -- The list of messages to be counted.</p></li>
+<li><p><strong>tools</strong> (<cite>list[dict] | None</cite>, <em>optional</em>) -- The list of tools, not used in this counter.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The total number of tokens counted.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
 </dd>
 </dl>
 </dd></dl>
@@ -641,6 +676,10 @@ tokenizer, e.g. <cite>chat_template</cite>, <cite>padding</cite>, etc.</p></li>
 <li><a class="reference internal" href="#">agentscope.token</a><ul>
 <li><a class="reference internal" href="#agentscope.token.TokenCounterBase"><code class="docutils literal notranslate"><span class="pre">TokenCounterBase</span></code></a><ul>
 <li><a class="reference internal" href="#agentscope.token.TokenCounterBase.count"><code class="docutils literal notranslate"><span class="pre">TokenCounterBase.count()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.token.CharTokenCounter"><code class="docutils literal notranslate"><span class="pre">CharTokenCounter</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.token.CharTokenCounter.count"><code class="docutils literal notranslate"><span class="pre">CharTokenCounter.count()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.token.GeminiTokenCounter"><code class="docutils literal notranslate"><span class="pre">GeminiTokenCounter</span></code></a><ul>

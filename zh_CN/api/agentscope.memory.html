@@ -280,6 +280,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul class="current">
@@ -352,17 +353,45 @@
 <p>The memory module.</p>
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">MemoryBase</span></span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">MemoryBase</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="agentscope.module.html#agentscope.module.StateModule" title="agentscope.module._state_module.StateModule"><code class="xref py py-class docutils literal notranslate"><span class="pre">StateModule</span></code></a></p>
 <p>The base class for memory in agentscope.</p>
 <dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the memory base.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.update_compressed_summary">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">update_compressed_summary</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">summary</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.update_compressed_summary"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.update_compressed_summary" title="Link to this definition">¶</a></dt>
+<dd><p>Update the compressed summary of the memory.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>summary</strong> (<cite>str</cite>) -- The new compressed summary.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase.add">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.add" title="Link to this definition">¶</a></dt>
-<dd><p>Add items to the memory.</p>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">memories</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">marks</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add message(s) into the memory storage with the given mark
+(if provided).</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>memories</strong> (<cite>Msg | list[Msg] | None</cite>) -- The message(s) to be added.</p></li>
+<li><p><strong>marks</strong> (<cite>str | list[str] | None</cite>, optional) -- The mark(s) to associate with the message(s). If <cite>None</cite>, no
+mark is associated.</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
@@ -374,52 +403,65 @@
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase.delete">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.delete" title="Link to this definition">¶</a></dt>
-<dd><p>Delete items from the memory.</p>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Remove message(s) from the storage by their IDs.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str]</cite>) -- The list of message IDs to be removed.</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
-<dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>None</p>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.retrieve">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.retrieve" title="Link to this definition">¶</a></dt>
-<dd><p>Retrieve items from the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.delete_by_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_by_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.delete_by_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.delete_by_mark" title="Link to this definition">¶</a></dt>
+<dd><p>Remove messages from the memory by their marks.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | list[str]</cite>) -- The mark(s) of the messages to be removed.</p></li>
 <li><p><strong>args</strong> (<em>Any</em>)</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>TypeError</strong> -- If the provided mark is not a string or a list of strings.</p>
+</dd>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of messages removed.</p>
+</dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>None</p>
+<dd class="field-even"><p><cite>int</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase.size">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.size" title="Link to this definition">¶</a></dt>
-<dd><p>Get the size of the memory.</p>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.size" title="Link to this definition">¶</a></dt>
+<dd><p>Get the number of messages in the storage.</p>
 <dl class="field-list simple">
-<dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>int</p>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of messages in the storage.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>int</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase.clear">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.clear" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.clear" title="Link to this definition">¶</a></dt>
 <dd><p>Clear the memory content.</p>
 <dl class="field-list simple">
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
@@ -430,25 +472,266 @@
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.MemoryBase.get_memory">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.get_memory" title="Link to this definition">¶</a></dt>
-<dd><p>Get the memory content.</p>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prepend_summary</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.get_memory" title="Link to this definition">¶</a></dt>
+<dd><p>Get the messages from the memory by mark (if provided). Otherwise,
+get all messages.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>If <cite>mark</cite> and <cite>exclude_mark</cite> are both provided, the messages
+will be filtered by both arguments.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>mark</cite> and <cite>exclude_mark</cite> should not overlap.</p>
+</div>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>mark</strong> (<cite>str | None</cite>, optional) -- The mark to filter messages. If <cite>None</cite>, return all messages.</p></li>
+<li><p><strong>exclude_mark</strong> (<cite>str | None</cite>, optional) -- The mark to exclude messages. If provided, messages with
+this mark will be excluded from the results.</p></li>
+<li><p><strong>prepend_summary</strong> (<cite>bool</cite>, defaults to True) -- Whether to prepend the compressed summary as a message</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
-<dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>list[<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a>]</p>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The list of messages retrieved from the storage.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Msg]</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.state_dict">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">state_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.state_dict" title="Link to this definition">¶</a></dt>
-<dd><p>Get the state dictionary of the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.update_messages_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">update_messages_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">new_mark</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">old_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_base.html#MemoryBase.update_messages_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.update_messages_mark" title="Link to this definition">¶</a></dt>
+<dd><p>A unified method to update marks of messages in the storage (add,
+remove, or change marks).</p>
+<ul class="simple">
+<li><p>If <cite>msg_ids</cite> is provided, the update will be applied to the messages</p></li>
+</ul>
+<blockquote>
+<div><p>with the specified IDs.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>old_mark</cite> is provided, the update will be applied to the</p></li>
+</ul>
+<blockquote>
+<div><p>messages with the specified old mark. Otherwise, the <cite>new_mark</cite> will
+be added to all messages (or those filtered by <cite>msg_ids</cite>).</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>new_mark</cite> is <cite>None</cite>, the mark will be removed from the messages.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>new_mark</strong> (<cite>str | None</cite>, optional) -- The new mark to set for the messages. If <cite>None</cite>, the mark
+will be removed.</p></li>
+<li><p><strong>old_mark</strong> (<cite>str | None</cite>, optional) -- The old mark to filter messages. If <cite>None</cite>, this constraint
+is ignored.</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str] | None</cite>, optional) -- The list of message IDs to be updated. If <cite>None</cite>, this
+constraint is ignored.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages updated.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">InMemoryMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.memory.MemoryBase" title="agentscope.memory._working_memory._base.MemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">MemoryBase</span></code></a></p>
+<p>The in-memory implementation of memory storage.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the in-memory storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.get_memory">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prepend_summary</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.get_memory" title="Link to this definition">¶</a></dt>
+<dd><p>Get the messages from the memory by mark (if provided). Otherwise,
+get all messages.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>If <cite>mark</cite> and <cite>exclude_mark</cite> are both provided, the messages
+will be filtered by both arguments.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>mark</cite> and <cite>exclude_mark</cite> should not overlap.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | None</cite>, optional) -- The mark to filter messages. If <cite>None</cite>, return all messages.</p></li>
+<li><p><strong>exclude_mark</strong> (<cite>str | None</cite>, optional) -- The mark to exclude messages. If provided, messages with
+this mark will be excluded from the results.</p></li>
+<li><p><strong>prepend_summary</strong> (<cite>bool</cite>, defaults to True) -- Whether to prepend the compressed summary as a message</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>TypeError</strong> -- If the provided mark is not a string or None.</p>
+</dd>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The list of messages retrieved from the storage.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>list[Msg]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.add">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">memories</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">marks</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_duplicates</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add message(s) into the memory storage with the given mark
+(if provided).</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>memories</strong> (<cite>Msg | list[Msg] | None</cite>) -- The message(s) to be added.</p></li>
+<li><p><strong>marks</strong> (<cite>str | list[str] | None</cite>, optional) -- The mark(s) to associate with the message(s). If <cite>None</cite>, no
+mark is associated.</p></li>
+<li><p><strong>allow_duplicates</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- Whether to allow duplicate messages in the storage.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.delete">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Remove message(s) from the storage by their IDs.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msg_ids</strong> (<cite>list[str]</cite>) -- The list of message IDs to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.delete_by_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_by_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.delete_by_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.delete_by_mark" title="Link to this definition">¶</a></dt>
+<dd><p>Remove messages from the memory by their marks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | list[str]</cite>) -- The mark(s) of the messages to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>TypeError</strong> -- If the provided mark is not a string or a list of strings.</p>
+</dd>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.clear">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.clear" title="Link to this definition">¶</a></dt>
+<dd><p>Clear all messages from the storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.size">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.size" title="Link to this definition">¶</a></dt>
+<dd><p>Get the number of messages in the storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of messages in the storage.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.update_messages_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">update_messages_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">new_mark</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">old_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.update_messages_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.update_messages_mark" title="Link to this definition">¶</a></dt>
+<dd><p>A unified method to update marks of messages in the storage (add,
+remove, or change marks).</p>
+<ul class="simple">
+<li><p>If <cite>msg_ids</cite> is provided, the update will be applied to the messages</p></li>
+</ul>
+<blockquote>
+<div><p>with the specified IDs.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>old_mark</cite> is provided, the update will be applied to the</p></li>
+</ul>
+<blockquote>
+<div><p>messages with the specified old mark. Otherwise, the <cite>new_mark</cite> will
+be added to all messages (or those filtered by <cite>msg_ids</cite>).</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>new_mark</cite> is <cite>None</cite>, the mark will be removed from the messages.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>new_mark</strong> (<cite>str | None</cite>, optional) -- The new mark to set for the messages. If <cite>None</cite>, the mark
+will be removed.</p></li>
+<li><p><strong>old_mark</strong> (<cite>str | None</cite>, optional) -- The old mark to filter messages. If <cite>None</cite>, this constraint
+is ignored.</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str] | None</cite>, optional) -- The list of message IDs to be updated. If <cite>None</cite>, this
+constraint is ignored.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages updated.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.state_dict">
+<span class="sig-name descname"><span class="pre">state_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.state_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Get the state dictionary for serialization.</p>
 <dl class="field-list simple">
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
 <dd class="field-odd"><p>dict</p>
@@ -457,9 +740,9 @@
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.MemoryBase.load_state_dict">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_state_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state_dict</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_memory_base.html#MemoryBase.load_state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.MemoryBase.load_state_dict" title="Link to this definition">¶</a></dt>
-<dd><p>Load the state dictionary of the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.load_state_dict">
+<span class="sig-name descname"><span class="pre">load_state_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state_dict</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_in_memory_memory.html#InMemoryMemory.load_state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.load_state_dict" title="Link to this definition">¶</a></dt>
+<dd><p>Load the state dictionary for deserialization.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
@@ -476,43 +759,56 @@
 </dd></dl>
 
 <dl class="py class">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">InMemoryMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory" title="Link to this definition">¶</a></dt>
-<dd><p>基类：<a class="reference internal" href="#agentscope.memory.MemoryBase" title="agentscope.memory._memory_base.MemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">MemoryBase</span></code></a></p>
-<p>The in-memory memory class for storing messages.</p>
-<dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.__init__" title="Link to this definition">¶</a></dt>
-<dd><p>Initialize the in-memory memory object.</p>
-<dl class="field-list simple">
-<dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>None</p>
-</dd>
-</dl>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">RedisMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.memory.MemoryBase" title="agentscope.memory._working_memory._base.MemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">MemoryBase</span></code></a></p>
+<p>Redis memory storage implementation, which supports session and user
+context.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>All the operations in this class are within a specific session
+and user context, identified by <cite>session_id</cite> and <cite>user_id</cite>. Cross-session
+or cross-user operations are not supported. For example, the
+<cite>remove_messages</cite> method will only remove messages that belong to the
+specified <cite>session_id</cite> and <cite>user_id</cite>.</p>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.SESSION_KEY">
+<span class="sig-name descname"><span class="pre">SESSION_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:messages'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.SESSION_KEY" title="Link to this definition">¶</a></dt>
+<dd><p>The Redis key pattern to store messages for a specific session.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.MARK_KEY">
+<span class="sig-name descname"><span class="pre">MARK_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:mark:{mark}'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.MARK_KEY" title="Link to this definition">¶</a></dt>
+<dd><p>The Redis key pattern to store message ids that belong to a specific
+mark.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.MESSAGE_KEY">
+<span class="sig-name descname"><span class="pre">MESSAGE_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:msg:{msg_id}'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.MESSAGE_KEY" title="Link to this definition">¶</a></dt>
+<dd><p>The Redis key pattern for storing message data.</p>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.state_dict">
-<span class="sig-name descname"><span class="pre">state_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.state_dict" title="Link to this definition">¶</a></dt>
-<dd><p>Convert the current memory into JSON data format.</p>
-<dl class="field-list simple">
-<dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>dict</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.load_state_dict">
-<span class="sig-name descname"><span class="pre">load_state_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state_dict</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.load_state_dict"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.load_state_dict" title="Link to this definition">¶</a></dt>
-<dd><p>Load the memory from JSON data.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_session'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_user'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">6379</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">password</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">connection_pool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Redis based storage by connecting to the Redis
+server. You can provide either the connection parameters or an
+existing connection pool.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>state_dict</strong> (<cite>dict</cite>) -- The state dictionary to load, which should have a &quot;content&quot;
-field.</p></li>
-<li><p><strong>strict</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- If <cite>True</cite>, raises an error if any key in the module is not
-found in the state_dict. If <cite>False</cite>, skips missing keys.</p></li>
+<li><p><strong>session_id</strong> (<cite>str</cite>, default to <cite>&quot;default_session&quot;</cite>) -- The session ID for the storage.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>&quot;default_user&quot;</cite>) -- The user ID for the storage.</p></li>
+<li><p><strong>host</strong> (<cite>str</cite>, default to <cite>&quot;localhost&quot;</cite>) -- The Redis server host.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, default to <cite>6379</cite>) -- The Redis server port.</p></li>
+<li><p><strong>db</strong> (<cite>int</cite>, default to <cite>0</cite>) -- The Redis database index.</p></li>
+<li><p><strong>password</strong> (<cite>str | None</cite>, optional) -- The password for the Redis server, if required.</p></li>
+<li><p><strong>connection_pool</strong> (<cite>ConnectionPool | None</cite>, optional) -- An optional Redis connection pool. If provided, it will be used
+instead of creating a new connection.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- Additional keyword arguments to pass to the Redis client.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -522,24 +818,66 @@ found in the state_dict. If <cite>False</cite>, skips missing keys.</p></li>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.size">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.size" title="Link to this definition">¶</a></dt>
-<dd><p>The size of the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.get_client">
+<span class="sig-name descname"><span class="pre">get_client</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.get_client"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.get_client" title="Link to this definition">¶</a></dt>
+<dd><p>Get the underlying Redis client.</p>
 <dl class="field-list simple">
-<dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>int</p>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The Redis client instance.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>Redis</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.retrieve" title="Link to this definition">¶</a></dt>
-<dd><p>Retrieve items from the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.get_memory">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prepend_summary</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.get_memory" title="Link to this definition">¶</a></dt>
+<dd><p>Get the messages from the memory by mark (if provided). Otherwise,
+get all messages.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>If <cite>mark</cite> and <cite>exclude_mark</cite> are both provided, the messages
+will be filtered by both arguments.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>mark</cite> and <cite>exclude_mark</cite> should not overlap.</p>
+</div>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>args</strong> (<em>Any</em>)</p></li>
+<li><p><strong>mark</strong> (<cite>str | None</cite>, optional) -- The mark to filter messages. If <cite>None</cite>, return all messages.</p></li>
+<li><p><strong>exclude_mark</strong> (<cite>str | None</cite>, optional) -- The mark to exclude messages. If provided, messages with
+this mark will be excluded from the results.</p></li>
+<li><p><strong>prepend_summary</strong> (<cite>bool</cite>, defaults to True) -- Whether to prepend the compressed summary as a message</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The list of messages retrieved from the storage.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Msg]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.add">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">memories</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">marks</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">skip_duplicated</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add message into the storage with the given mark (if provided).</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>memories</strong> (<cite>Msg | list[Msg]</cite>) -- The message(s) to be added.</p></li>
+<li><p><strong>marks</strong> (<cite>str | list[str] | None</cite>, optional) -- The mark(s) to associate with the message(s). If <cite>None</cite>, no
+mark is associated.</p></li>
+<li><p><strong>skip_duplicated</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- If <cite>True</cite>, skip messages with duplicate IDs that already exist
+in the storage. If <cite>False</cite>, allow duplicate message IDs to be
+added to the session list (though the message data will be
+overwritten).</p></li>
 <li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
@@ -550,52 +888,517 @@ found in the state_dict. If <cite>False</cite>, skips missing keys.</p></li>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.delete">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">index</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.delete" title="Link to this definition">¶</a></dt>
-<dd><p>Delete the specified item by index(es).</p>
-<dl class="field-list simple">
-<dt class="field-odd">参数<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>index</strong> (<cite>Union[Iterable, int]</cite>) -- The index to delete.</p>
-</dd>
-<dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>None</p>
-</dd>
-</dl>
-</dd></dl>
-
-<dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.add">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">memories</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_duplicates</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.add" title="Link to this definition">¶</a></dt>
-<dd><p>Add message into the memory.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.delete">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Remove message(s) from the storage by their IDs.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>memories</strong> (<cite>Union[list[Msg], Msg, None]</cite>) -- The message to add.</p></li>
-<li><p><strong>allow_duplicates</strong> (<cite>bool</cite>, defaults to <cite>False</cite>) -- If allow adding duplicate messages (with the same id) into
-the memory.</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str]</cite>) -- The list of message IDs to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
 </ul>
 </dd>
-<dt class="field-even">返回类型<span class="colon">:</span></dt>
-<dd class="field-even"><p>None</p>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.get_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.get_memory" title="Link to this definition">¶</a></dt>
-<dd><p>Get the memory content.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.delete_by_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_by_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.delete_by_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.delete_by_mark" title="Link to this definition">¶</a></dt>
+<dd><p>Remove messages from the storage by their marks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | list[str]</cite>) -- The mark(s) of the messages to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.clear">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.clear" title="Link to this definition">¶</a></dt>
+<dd><p>Clear all messages belong to this session from the storage.</p>
 <dl class="field-list simple">
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
-<dd class="field-odd"><p>list[<a class="reference internal" href="agentscope.message.html#agentscope.message.Msg" title="agentscope.message._message_base.Msg"><em>Msg</em></a>]</p>
+<dd class="field-odd"><p>None</p>
 </dd>
 </dl>
 </dd></dl>
 
 <dl class="py method">
-<dt class="sig sig-object py" id="agentscope.memory.InMemoryMemory.clear">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_in_memory_memory.html#InMemoryMemory.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.InMemoryMemory.clear" title="Link to this definition">¶</a></dt>
-<dd><p>Clear the memory content.</p>
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.size">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.size" title="Link to this definition">¶</a></dt>
+<dd><p>Get the number of messages in the storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The number of messages in the storage.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.update_messages_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">update_messages_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">new_mark</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">old_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.update_messages_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.update_messages_mark" title="Link to this definition">¶</a></dt>
+<dd><p>A unified method to update marks of messages in the storage (add,
+remove, or change marks).</p>
+<ul class="simple">
+<li><p>If <cite>msg_ids</cite> is provided, the update will be applied to the messages</p></li>
+</ul>
+<blockquote>
+<div><p>with the specified IDs.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>old_mark</cite> is provided, the update will be applied to the</p></li>
+</ul>
+<blockquote>
+<div><p>messages with the specified old mark. Otherwise, the <cite>new_mark</cite> will
+be added to all messages (or those filtered by <cite>msg_ids</cite>).</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>new_mark</cite> is <cite>None</cite>, the mark will be removed from the messages.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>new_mark</strong> (<cite>str | None</cite>, optional) -- The new mark to set for the messages. If <cite>None</cite>, the mark
+will be removed.</p></li>
+<li><p><strong>old_mark</strong> (<cite>str | None</cite>, optional) -- The old mark to filter messages. If <cite>None</cite>, this constraint
+is ignored.</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str] | None</cite>, optional) -- The list of message IDs to be updated. If <cite>None</cite>, this
+constraint is ignored.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages updated.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.close">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.close"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.close" title="Link to this definition">¶</a></dt>
+<dd><p>Close the Redis client connection.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AsyncSQLAlchemyMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.memory.MemoryBase" title="agentscope.memory._working_memory._base.MemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">MemoryBase</span></code></a></p>
+<p>The SQLAlchemy memory storage class for storing messages in a SQL
+database using SQLAlchemy ORM, such as SQLite, PostgreSQL, MySQL, etc.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>All the operations in this class are within a specific session
+and user context, identified by <cite>session_id</cite> and <cite>user_id</cite>. Cross-session
+or cross-user operations are not supported. For example, the
+<cite>remove_messages</cite> method will only remove messages that belong to the
+specified <cite>session_id</cite> and <cite>user_id</cite>.</p>
+</div>
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">MessageTable</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.MessageTable"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">Base</span></code></p>
+<p>The default message table definition.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.id">
+<span class="sig-name descname"><span class="pre">id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.id" title="Link to this definition">¶</a></dt>
+<dd><p>The id column, we use the f&quot;{user_id}-{session_id}-{message_id}&quot;
+as the primary key to ensure uniqueness across users and sessions.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.msg">
+<span class="sig-name descname"><span class="pre">msg</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.msg" title="Link to this definition">¶</a></dt>
+<dd><p>The message JSON content column</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session">
+<span class="sig-name descname"><span class="pre">session</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session" title="Link to this definition">¶</a></dt>
+<dd><p>The foreign key to the session id relationship</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session_id">
+<span class="sig-name descname"><span class="pre">session_id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session_id" title="Link to this definition">¶</a></dt>
+<dd><p>The foreign key to the session id</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.index">
+<span class="sig-name descname"><span class="pre">index</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.index" title="Link to this definition">¶</a></dt>
+<dd><p>The index column for ordering messages, so that we can retrieve
+messages in the order they were added.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>A simple constructor that allows initialization from kwargs.</p>
+<p>Sets attributes on the constructed instance using the names and
+values in <code class="docutils literal notranslate"><span class="pre">kwargs</span></code>.</p>
+<p>Only keys that are present as
+attributes of the instance's class are allowed. These could be,
+for example, any mapped columns or relationships.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">MessageMarkTable</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.MessageMarkTable"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">Base</span></code></p>
+<p>The default message mark table definition.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.msg_id">
+<span class="sig-name descname"><span class="pre">msg_id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.msg_id" title="Link to this definition">¶</a></dt>
+<dd><p>The message id column</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.mark">
+<span class="sig-name descname"><span class="pre">mark</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.mark" title="Link to this definition">¶</a></dt>
+<dd><p>The mark column</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>A simple constructor that allows initialization from kwargs.</p>
+<p>Sets attributes on the constructed instance using the names and
+values in <code class="docutils literal notranslate"><span class="pre">kwargs</span></code>.</p>
+<p>Only keys that are present as
+attributes of the instance's class are allowed. These could be,
+for example, any mapped columns or relationships.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">SessionTable</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.SessionTable"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">Base</span></code></p>
+<p>The default session table definition.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.id">
+<span class="sig-name descname"><span class="pre">id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.id" title="Link to this definition">¶</a></dt>
+<dd><p>The session id column</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user">
+<span class="sig-name descname"><span class="pre">user</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user" title="Link to this definition">¶</a></dt>
+<dd><p>The foreign key to the user id relationship</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user_id">
+<span class="sig-name descname"><span class="pre">user_id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user_id" title="Link to this definition">¶</a></dt>
+<dd><p>The foreign key to the user id</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.messages">
+<span class="sig-name descname"><span class="pre">messages</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.messages" title="Link to this definition">¶</a></dt>
+<dd><p>The relationship to messages</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>A simple constructor that allows initialization from kwargs.</p>
+<p>Sets attributes on the constructed instance using the names and
+values in <code class="docutils literal notranslate"><span class="pre">kwargs</span></code>.</p>
+<p>Only keys that are present as
+attributes of the instance's class are allowed. These could be,
+for example, any mapped columns or relationships.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.UserTable">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">UserTable</span></span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.UserTable"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">Base</span></code></p>
+<p>The default user table definition.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.UserTable.id">
+<span class="sig-name descname"><span class="pre">id</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.id" title="Link to this definition">¶</a></dt>
+<dd><p>The user id column</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.UserTable.sessions">
+<span class="sig-name descname"><span class="pre">sessions</span></span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.sessions" title="Link to this definition">¶</a></dt>
+<dd><p>The relationship to sessions</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.UserTable.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>A simple constructor that allows initialization from kwargs.</p>
+<p>Sets attributes on the constructed instance using the names and
+values in <code class="docutils literal notranslate"><span class="pre">kwargs</span></code>.</p>
+<p>Only keys that are present as
+attributes of the instance's class are allowed. These could be,
+for example, any mapped columns or relationships.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">engine_or_session</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the SqlAlchemyDBStorage with a SQLAlchemy session.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>engine_or_session</strong> (<cite>AsyncEngine | AsyncSession</cite>) -- The SQLAlchemy asynchronous engine or session to use for
+database operations. If you're using a connection pool, maybe
+you want to pass in an <cite>AsyncSession</cite> instance.</p></li>
+<li><p><strong>session_id</strong> (<cite>str | None</cite>, optional) -- The session ID for the messages. If <cite>None</cite>, a default session
+ID will be used.</p></li>
+<li><p><strong>user_id</strong> (<cite>str | None</cite>, optional) -- The user ID for the messages. If <cite>None</cite>, a default user ID
+will be used.</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ValueError</strong> -- If the <cite>engine</cite> parameter is not an instance of
+    <cite>sqlalchemy.ext.asyncio.AsyncEngine</cite> or <cite>sqlalchemy.
+    ext.asyncio.AsyncSession</cite>.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.session">
+<em class="property"><span class="pre">property</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">session</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">AsyncSession</span></em><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.session" title="Link to this definition">¶</a></dt>
+<dd><p>Get the current database session, creating one if it doesn't exist.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The current database session.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>AsyncSession</cite></p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<ul class="simple">
+<li><p>If an external session was provided, it will be returned as-is</p></li>
+<li><p>If using internal session factory, a new session will be created
+if the current one is None or inactive, and _initialized flag
+will be reset to ensure proper re-initialization</p></li>
+</ul>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.get_memory">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prepend_summary</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.get_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.get_memory" title="Link to this definition">¶</a></dt>
+<dd><p>Get the messages from the memory by mark (if provided). Otherwise,
+get all messages.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>If <cite>mark</cite> and <cite>exclude_mark</cite> are both provided, the messages
+will be filtered by both arguments.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><cite>mark</cite> and <cite>exclude_mark</cite> should not overlap.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | None</cite>, optional) -- The mark to filter messages. If <cite>None</cite>, return all messages.</p></li>
+<li><p><strong>exclude_mark</strong> (<cite>str | None</cite>, optional) -- The mark to exclude messages. If provided, messages with
+this mark will be excluded from the results.</p></li>
+<li><p><strong>prepend_summary</strong> (<cite>bool</cite>, defaults to True) -- Whether to prepend the compressed summary as a message</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>TypeError</strong> -- If the provided mark is not a string or None.</p>
+</dd>
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The list of messages retrieved from the storage.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>list[Msg]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.add">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">memories</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">marks</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">skip_duplicated</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.add" title="Link to this definition">¶</a></dt>
+<dd><p>Add message into the storage with the given mark (if provided).</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>memories</strong> (<cite>Msg | list[Msg] | None</cite>) -- The message(s) to be added.</p></li>
+<li><p><strong>marks</strong> (<cite>str | list[str] | None</cite>, optional) -- The mark(s) to associate with the message(s). If <cite>None</cite>, no
+mark is associated.</p></li>
+<li><p><strong>skip_duplicated</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- If <cite>True</cite>, skip messages with duplicate IDs that already exist
+in the storage. If <cite>False</cite>, raise an <cite>IntegrityError</cite> when
+attempting to add a message with an existing ID.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>IntegrityError</strong> -- If a message with the same ID already exists in the storage
+    and <cite>skip_duplicated</cite> is set to <cite>False</cite>.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.size">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.size"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.size" title="Link to this definition">¶</a></dt>
+<dd><p>Get the size of the messages in the storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.clear">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">clear</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.clear"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.clear" title="Link to this definition">¶</a></dt>
+<dd><p>Clear all messages from the storage.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.delete_by_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_by_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mark</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.delete_by_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.delete_by_mark" title="Link to this definition">¶</a></dt>
+<dd><p>Remove messages from the storage by their marks.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mark</strong> (<cite>str | list[str]</cite>) -- The mark(s) of the messages to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.delete">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Remove message(s) from the storage by their IDs.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>Although MessageMarkTable has CASCADE delete on foreign key,
+we explicitly delete marks first for reliability across all database
+engines and configurations. SQLAlchemy's bulk delete bypasses
+ORM-level cascades, and SQLite requires foreign keys to be
+explicitly enabled.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>msg_ids</strong> (<cite>list[str]</cite>) -- The list of message IDs to be removed.</p></li>
+<li><p><strong>kwargs</strong> (<em>Any</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages removed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.update_messages_mark">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">update_messages_mark</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">new_mark</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">old_mark</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">msg_ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.update_messages_mark"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.update_messages_mark" title="Link to this definition">¶</a></dt>
+<dd><p>A unified method to update marks of messages in the storage (add,
+remove, or change marks).</p>
+<ul class="simple">
+<li><p>If <cite>msg_ids</cite> is provided, the update will be applied to the messages</p></li>
+</ul>
+<blockquote>
+<div><p>with the specified IDs.</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>old_mark</cite> is provided, the update will be applied to the</p></li>
+</ul>
+<blockquote>
+<div><p>messages with the specified old mark. Otherwise, the <cite>new_mark</cite> will
+be added to all messages (or those filtered by <cite>msg_ids</cite>).</p>
+</div></blockquote>
+<ul class="simple">
+<li><p>If <cite>new_mark</cite> is <cite>None</cite>, the mark will be removed from the messages.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>new_mark</strong> (<cite>str | None</cite>, optional) -- The new mark to set for the messages. If <cite>None</cite>, the mark
+will be removed.</p></li>
+<li><p><strong>old_mark</strong> (<cite>str | None</cite>, optional) -- The old mark to filter messages. If <cite>None</cite>, this constraint
+is ignored.</p></li>
+<li><p><strong>msg_ids</strong> (<cite>list[str] | None</cite>, optional) -- The list of message IDs to be updated. If <cite>None</cite>, this
+constraint is ignored.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>The number of messages updated.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>int</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.memory.AsyncSQLAlchemyMemory.close">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_sqlalchemy_memory.html#AsyncSQLAlchemyMemory.close"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.AsyncSQLAlchemyMemory.close" title="Link to this definition">¶</a></dt>
+<dd><p>Close the database session.</p>
 <dl class="field-list simple">
 <dt class="field-odd">返回类型<span class="colon">:</span></dt>
 <dd class="field-odd"><p>None</p>
@@ -607,7 +1410,7 @@ the memory.</p></li>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">LongTermMemoryBase</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">LongTermMemoryBase</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_long_term_memory_base.html#LongTermMemoryBase"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="agentscope.module.html#agentscope.module.StateModule" title="agentscope.module._state_module.StateModule"><code class="xref py py-class docutils literal notranslate"><span class="pre">StateModule</span></code></a></p>
 <p>The long-term memory base class, which should be a time-series
 memory management system.</p>
@@ -619,7 +1422,7 @@ retrieving/recording memory at the beginning of each reply, and adding
 the retrieved memory to the system prompt.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.record">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.record" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_long_term_memory_base.html#LongTermMemoryBase.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.record" title="Link to this definition">¶</a></dt>
 <dd><p>A developer-designed method to record information from the given
 input message(s) to the long-term memory.</p>
 <dl class="field-list simple">
@@ -637,7 +1440,7 @@ input message(s) to the long-term memory.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>A developer-designed method to retrieve information from the
 long-term memory based on the given input message(s). The retrieved
 information will be added to the system prompt of the agent.</p>
@@ -657,7 +1460,7 @@ information will be added to the system prompt of the agent.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.record_to_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.record_to_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_long_term_memory_base.html#LongTermMemoryBase.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.record_to_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Use this function to record important information that you may
 need later. The target content should be specific and concise, e.g.
 who, when, where, do what, why, how, etc.</p>
@@ -677,7 +1480,7 @@ who, when, where, do what, why, how, etc.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.LongTermMemoryBase.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_long_term_memory_base.html#LongTermMemoryBase.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.LongTermMemoryBase.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the memory based on the given keywords.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -704,12 +1507,12 @@ to 5.</p></li>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Mem0LongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory" title="Link to this definition">¶</a></dt>
-<dd><p>基类：<a class="reference internal" href="#agentscope.memory.LongTermMemoryBase" title="agentscope.memory._long_term_memory_base.LongTermMemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">LongTermMemoryBase</span></code></a></p>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">Mem0LongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.memory.LongTermMemoryBase" title="agentscope.memory._long_term_memory._long_term_memory_base.LongTermMemoryBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">LongTermMemoryBase</span></code></a></p>
 <p>A class that implements the LongTermMemoryBase interface using mem0.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agent_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">run_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">embedding_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vector_store_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mem0_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_memory_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">agent_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">run_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">embedding_model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">vector_store_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mem0_config</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">default_memory_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the Mem0LongTermMemory instance</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -795,7 +1598,7 @@ semantic memory.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory.record_to_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Use this function to record important information that you may
 need later. The target content should be specific and concise, e.g.
 who, when, where, do what, why, how, etc.</p>
@@ -815,7 +1618,7 @@ who, when, where, do what, why, how, etc.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the memory based on the given keywords.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -842,7 +1645,7 @@ each keyword.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory.record">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">infer</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.record" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">memory_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">infer</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.record" title="Link to this definition">¶</a></dt>
 <dd><p>Record the content to the long-term memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -863,7 +1666,7 @@ procedural memories.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.Mem0LongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_mem0_long_term_memory.html#Mem0LongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_mem0/_mem0_long_term_memory.html#Mem0LongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.Mem0LongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the content from the long-term memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -893,12 +1696,12 @@ message. Defaults to 5.</p></li>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMePersonalLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMePersonalLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">ReMeLongTermMemoryBase</span></code></p>
 <p>Personal memory implementation using ReMe library.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.record_to_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Record important user information to long-term memory.</p>
 <p>Record important user information to long-term memory for future
 reference.</p>
@@ -941,7 +1744,7 @@ recording.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Search and retrieve relevant information from long-term memory.</p>
 <div class="admonition note">
 <p class="admonition-title">备注</p>
@@ -985,7 +1788,7 @@ found, you'll receive a message indicating that.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.record">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.record" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.record" title="Link to this definition">¶</a></dt>
 <dd><p>Record the content to the long-term memory.</p>
 <p>This method converts AgentScope messages to ReMe's format and
 records them using the personal memory flow.</p>
@@ -1004,7 +1807,7 @@ records them using the personal memory flow.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMePersonalLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_personal_long_term_memory.html#ReMePersonalLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMePersonalLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve the content from the long-term memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -1034,14 +1837,14 @@ to 5.</p></li>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMeTaskLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMeTaskLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">ReMeLongTermMemoryBase</span></code></p>
 <p>Task memory implementation using ReMe library.</p>
 <p>Task memory learns from execution trajectories and provides
 retrieval of relevant task experiences.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.record_to_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Record task execution experiences and learnings.</p>
 <p>Record task execution experiences and learnings to long-term
 memory.</p>
@@ -1090,7 +1893,7 @@ recording.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Search and retrieve relevant task experiences.</p>
 <p>Search and retrieve relevant task experiences from long-term
 memory.</p>
@@ -1142,7 +1945,7 @@ that.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.record">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.record" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.record" title="Link to this definition">¶</a></dt>
 <dd><p>Record the content to the task memory.</p>
 <p>This method converts AgentScope messages to ReMe's format and
 records them as a task execution trajectory.</p>
@@ -1163,7 +1966,7 @@ Can include 'score' (float) for trajectory scoring
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeTaskLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_task_long_term_memory.html#ReMeTaskLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeTaskLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve relevant task experiences from memory.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -1191,14 +1994,14 @@ to 3.</p></li>
 
 <dl class="py class">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMeToolLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ReMeToolLongTermMemory</span></span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<code class="xref py py-class docutils literal notranslate"><span class="pre">ReMeLongTermMemoryBase</span></code></p>
 <p>Tool memory implementation using ReMe library.</p>
 <p>Tool memory records tool execution results and generates usage
 guidelines from the execution history.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.record_to_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record_to_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">thinking</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">content</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.record_to_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.record_to_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Record tool execution results to build tool usage patterns.</p>
 <p>Record tool execution results to build a knowledge base of tool
 usage patterns.</p>
@@ -1250,7 +2053,7 @@ and guidelines generated.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve_from_memory</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">keywords</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve_from_memory"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve_from_memory" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve usage guidelines and best practices for tools.</p>
 <p>Retrieve usage guidelines and best practices for specific tools.</p>
 <div class="admonition note">
@@ -1303,7 +2106,7 @@ receive a message indicating that.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.record">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.record" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">record</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msgs</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.record"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.record" title="Link to this definition">¶</a></dt>
 <dd><p>Record the content to the tool memory.</p>
 <p>This method extracts content from messages and treats them as
 JSON strings representing tool_call_results, similar to
@@ -1325,7 +2128,7 @@ representing tool_call_results.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.ReMeToolLongTermMemory.retrieve">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">retrieve</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">msg</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_long_term_memory/_reme/_reme_tool_long_term_memory.html#ReMeToolLongTermMemory.retrieve"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.ReMeToolLongTermMemory.retrieve" title="Link to this definition">¶</a></dt>
 <dd><p>Retrieve tool guidelines from memory.</p>
 <p>Retrieve tool guidelines from memory based on message content.</p>
 <dl class="field-list simple">
@@ -1429,26 +2232,86 @@ to 5.</p></li>
             <ul>
 <li><a class="reference internal" href="#">agentscope.memory</a><ul>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase"><code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.MemoryBase.__init__"><code class="docutils literal notranslate"><span class="pre">MemoryBase.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.MemoryBase.update_compressed_summary"><code class="docutils literal notranslate"><span class="pre">MemoryBase.update_compressed_summary()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase.add"><code class="docutils literal notranslate"><span class="pre">MemoryBase.add()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase.delete"><code class="docutils literal notranslate"><span class="pre">MemoryBase.delete()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.MemoryBase.retrieve"><code class="docutils literal notranslate"><span class="pre">MemoryBase.retrieve()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.MemoryBase.delete_by_mark"><code class="docutils literal notranslate"><span class="pre">MemoryBase.delete_by_mark()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase.size"><code class="docutils literal notranslate"><span class="pre">MemoryBase.size()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase.clear"><code class="docutils literal notranslate"><span class="pre">MemoryBase.clear()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.MemoryBase.get_memory"><code class="docutils literal notranslate"><span class="pre">MemoryBase.get_memory()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.MemoryBase.state_dict"><code class="docutils literal notranslate"><span class="pre">MemoryBase.state_dict()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.MemoryBase.load_state_dict"><code class="docutils literal notranslate"><span class="pre">MemoryBase.load_state_dict()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.MemoryBase.update_messages_mark"><code class="docutils literal notranslate"><span class="pre">MemoryBase.update_messages_mark()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.memory.InMemoryMemory"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code></a><ul>
 <li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.__init__"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.get_memory"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.get_memory()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.add"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.add()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.delete"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.delete()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.delete_by_mark"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.delete_by_mark()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.clear"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.clear()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.size"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.size()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.update_messages_mark"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.update_messages_mark()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.state_dict"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.state_dict()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.load_state_dict"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.load_state_dict()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.size"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.size()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.retrieve"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.retrieve()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.delete"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.delete()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.add"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.add()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.get_memory"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.get_memory()</span></code></a></li>
-<li><a class="reference internal" href="#agentscope.memory.InMemoryMemory.clear"><code class="docutils literal notranslate"><span class="pre">InMemoryMemory.clear()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory"><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.SESSION_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.SESSION_KEY</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.MARK_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.MARK_KEY</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.MESSAGE_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.MESSAGE_KEY</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.__init__"><code class="docutils literal notranslate"><span class="pre">RedisMemory.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.get_client"><code class="docutils literal notranslate"><span class="pre">RedisMemory.get_client()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.get_memory"><code class="docutils literal notranslate"><span class="pre">RedisMemory.get_memory()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.add"><code class="docutils literal notranslate"><span class="pre">RedisMemory.add()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.delete"><code class="docutils literal notranslate"><span class="pre">RedisMemory.delete()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.delete_by_mark"><code class="docutils literal notranslate"><span class="pre">RedisMemory.delete_by_mark()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.clear"><code class="docutils literal notranslate"><span class="pre">RedisMemory.clear()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.size"><code class="docutils literal notranslate"><span class="pre">RedisMemory.size()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.update_messages_mark"><code class="docutils literal notranslate"><span class="pre">RedisMemory.update_messages_mark()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.close"><code class="docutils literal notranslate"><span class="pre">RedisMemory.close()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.msg"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.msg</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.session</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session_id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.session_id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.index"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.index</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.__init__"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageTable.__init__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageMarkTable</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.msg_id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageMarkTable.msg_id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.mark"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageMarkTable.mark</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.__init__"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.MessageMarkTable.__init__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable.id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable.user</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.user_id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable.user_id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.messages"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable.messages</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.SessionTable.__init__"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.SessionTable.__init__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.UserTable</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.id"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.UserTable.id</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.sessions"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.UserTable.sessions</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.UserTable.__init__"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.UserTable.__init__()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.__init__"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.session"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.session</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.get_memory"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.get_memory()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.add"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.add()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.size"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.size()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.clear"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.clear()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.delete_by_mark"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.delete_by_mark()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.delete"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.delete()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.update_messages_mark"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.update_messages_mark()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.AsyncSQLAlchemyMemory.close"><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory.close()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.memory.LongTermMemoryBase"><code class="docutils literal notranslate"><span class="pre">LongTermMemoryBase</span></code></a><ul>

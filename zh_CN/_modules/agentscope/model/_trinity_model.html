@@ -279,6 +279,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_eval.html">智能体评测</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_embedding.html">嵌入(Embedding)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../tutorial/task_tuner.html">Tuner</a></li>
 </ul>
 <p class="caption" role="heading"><span class="caption-text">API Docs</span></p>
 <ul>
@@ -347,6 +348,7 @@
     <span class="n">Optional</span><span class="p">,</span>
     <span class="n">TYPE_CHECKING</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">deprecated</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._openai_model</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenAIChatModel</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..types</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONSerializableObject</span>
 
@@ -359,6 +361,9 @@
 
 <div class="viewcode-block" id="TrinityChatModel">
 <a class="viewcode-back" href="../../../api/agentscope.model.html#agentscope.model.TrinityChatModel">[文档]</a>
+<span class="nd">@deprecated</span><span class="p">(</span>
+    <span class="s2">&quot;TrinityChatModel is deprecated. Please use OpenAIChatModel directly.&quot;</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TrinityChatModel</span><span class="p">(</span><span class="n">OpenAIChatModel</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A model class for RL Training with Trinity-RFT.&quot;&quot;&quot;</span>
 
