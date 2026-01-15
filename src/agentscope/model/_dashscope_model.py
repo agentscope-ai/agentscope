@@ -373,7 +373,6 @@ class DashScopeChatModel(ChatModelBase):
                         None,
                     ),
                 )
-                print(f"(from agentscope) ChatUsage: {ChatUsage}")
 
             parsed_chunk = ChatResponse(
                 content=content_blocks,

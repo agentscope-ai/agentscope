@@ -19,7 +19,7 @@ class ChatUsage(DictMixin):
     time: float
     """The time used in seconds."""
 
-    prompt_tokens_details: dict = None
+    prompt_tokens_details: dict = field(default_factory=dict)
     """The details of tokens. """
 
     type: Literal["chat"] = field(default_factory=lambda: "chat")
