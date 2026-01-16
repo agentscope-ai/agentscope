@@ -15,6 +15,7 @@ class SimpleKnowledge(KnowledgeBase):
         query: str,
         limit: int = 5,
         score_threshold: float | None = None,
+        search_filter: dict | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve relevant documents by the given queries.
@@ -26,6 +27,8 @@ class SimpleKnowledge(KnowledgeBase):
                 The number of relevant documents to retrieve.
             score_threshold: float | None = None,
                 The threshold of the score to filter the results.
+            search_filter (`dict | None`, defaults to `None`):
+                The filter to apply when searching the vector database.
             **kwargs (`Any`):
                 Other keyword arguments for the vector database search API.
 
@@ -47,6 +50,7 @@ class SimpleKnowledge(KnowledgeBase):
             res_embedding.embeddings[0],
             limit=limit,
             score_threshold=score_threshold,
+            filter=search_filter,
             **kwargs,
         )
         return res
