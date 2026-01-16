@@ -7,8 +7,6 @@ so that `service` 不出现在 JSON-Schema（即不暴露给 LLM）。
 from __future__ import annotations
 
 
-
-
 # ------------------------------- read ops -----------------------------------
 async def read_text_file(
     service: object,
@@ -37,7 +35,10 @@ async def read_text_file(
     # Prepare numbered rendering
     if with_line_numbers:
         lines = raw_text.splitlines()
-        numbered = [f"line{i}: {line}" for i, line in enumerate(lines, start=1)]
+        numbered = [
+            f"line{i}: {line}"
+            for i, line in enumerate(lines, start=1)
+        ]
 
         if with_header:
             header = [
@@ -55,7 +56,10 @@ async def read_text_file(
                 f"line_count: {len(lines)}",
                 "format: raw",
             ]
-            text_out = "\n".join([*header, raw_text]) if raw_text else "\n".join(header)
+            if raw_text:
+                text_out = "\n".join([*header, raw_text])
+            else:
+                text_out = "\n".join(header)
         else:
             text_out = raw_text
 
@@ -87,7 +91,11 @@ async def read_multiple_files(
             if with_header:
                 header_parts = [
                     f"line_count: {len(lines)}",
-                    ("format: line{N}: <content>" if with_line_numbers else "format: raw"),
+                    (
+                        "format: line{N}: <content>"
+                        if with_line_numbers
+                        else "format: raw"
+                    ),
                 ]
 
             if with_line_numbers:
@@ -136,7 +144,10 @@ async def list_directory_with_sizes(
     """
     from ..tool._response import ToolResponse as _TR
     from ..message import TextBlock as _TB
-    lines, summary = service.list_directory_with_sizes(path, sort_by=(sortBy or "name"))
+    lines, summary = service.list_directory_with_sizes(
+        path,
+        sort_by=(sortBy or "name"),
+    )
     text = ("\n".join(lines) + ("\n" if lines else "")) + summary
     return _TR(content=[_TB(type="text", text=text)])
 
@@ -155,8 +166,13 @@ async def search_files(
     """
     from ..tool._response import ToolResponse as _TR
     from ..message import TextBlock as _TB
-    matches = service.search_files(path, pattern, exclude_patterns=excludePatterns)
-    return _TR(content=[_TB(type="text", text="\n".join(matches) or "<empty>")])
+    matches = service.search_files(
+        path,
+        pattern,
+        exclude_patterns=excludePatterns,
+    )
+    text = "\n".join(matches) or "<empty>"
+    return _TR(content=[_TB(type="text", text=text)])
 
 
 async def get_file_info(service: object, path: str):

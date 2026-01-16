@@ -29,7 +29,11 @@ def web_html_render_markdown(url: str) -> ToolResponse:
     try:
         norm_url = normalize_and_validate_url(url)
     except Exception as e:  # pylint: disable=broad-except
-        logger.warning("web_html_render_markdown: invalid url=%r; err=%s", url, e)
+        logger.warning(
+            "web_html_render_markdown: invalid url=%r; err=%s",
+            url,
+            e,
+        )
         return error_response(str(e))
 
     try:
@@ -43,7 +47,8 @@ def web_html_render_markdown(url: str) -> ToolResponse:
         # TODO: convert to Markdown via readability+markdownify (or similar)
         # md = html2md(cleaned)
         raise NotImplementedError(
-            "TODO: implement Playwright HTML capture and HTML→Markdown conversion",
+            "TODO: implement Playwright HTML capture and HTML→Markdown "
+            "conversion",
         )
 
     except Exception as e:  # pylint: disable=broad-except

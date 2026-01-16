@@ -30,17 +30,22 @@ class RAGReaderText(IsolatedAsyncioTestCase):
         for name in list(sys.modules):
             if name == "agentscope.rag" or name.startswith("agentscope.rag."):
                 saved[name] = sys.modules.pop(name)
-            elif any(name == p or name.startswith(p + ".") for p in forbidden_prefixes):
+            elif any(
+                name == p or name.startswith(p + ".")
+                for p in forbidden_prefixes
+            ):
                 saved[name] = sys.modules.pop(name)
 
         class _Blocker(importlib.abc.MetaPathFinder):
-            def find_spec(self, fullname, path, target=None):  # type: ignore[override]
+            # type: ignore[override]
+            def find_spec(self, fullname, path, target=None):
                 if any(
                     fullname == p or fullname.startswith(p + ".")
                     for p in forbidden_prefixes
                 ):
                     raise AssertionError(
-                        f"agentscope.rag import attempted forbidden module: {fullname}",
+                        "agentscope.rag import attempted forbidden module: "
+                        f"{fullname}",
                     )
                 return None
 

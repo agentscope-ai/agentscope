@@ -291,7 +291,10 @@ class ReActAgent(ReActAgentBase):
         )
 
         resolved_group = register_kwargs.pop("group_name", "subagents")
-        if resolved_group != "basic" and resolved_group not in self.toolkit.groups:
+        if (
+            resolved_group != "basic"
+            and resolved_group not in self.toolkit.groups
+        ):
             self.toolkit.create_tool_group(
                 resolved_group,
                 description=f"Delegated subagents for {self.name}",
@@ -310,7 +313,10 @@ class ReActAgent(ReActAgentBase):
             json_schema=json_schema,
         )
 
-        registered_name = json_schema["function"]["name"] if json_schema else tool_func.__name__
+        if json_schema:
+            registered_name = json_schema["function"]["name"]
+        else:
+            registered_name = tool_func.__name__
         self._subagent_registry[registered_name] = spec
         self._subagent_ephemeral[registered_name] = ephemeral_memory
 

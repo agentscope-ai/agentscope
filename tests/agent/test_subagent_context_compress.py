@@ -39,7 +39,10 @@ def test_context_compress_called_once() -> None:
             type="tool_use",
             id="ctx-1",
             name=tool_name,
-            input={"message": "Count context compress invocation.", "tag": "count"},
+            input={
+                "message": "Count context compress invocation.",
+                "tag": "count",
+            },
         )
 
         await invoke_tool(agent, tool_call)

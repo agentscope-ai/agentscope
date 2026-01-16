@@ -177,7 +177,10 @@ class MilvusLiteStore(VDBStoreBase):
         collected_res = []
         for hits in results:
             for hit in hits:
-                if score_threshold is not None and hit["distance"] < score_threshold:
+                if (
+                    score_threshold is not None
+                    and hit["distance"] < score_threshold
+                ):
                     continue
 
                 entity = hit["entity"]
@@ -230,4 +233,3 @@ class MilvusLiteStore(VDBStoreBase):
         the full functionality of Milvus.
         """
         return self._client
-

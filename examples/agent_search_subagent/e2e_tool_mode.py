@@ -4,12 +4,14 @@
 Flow:
 - make_subagent_tool(SearchSubReactAgent, SubAgentSpec(...))
 - host.toolkit.register_tool_function(..., group_name="search")
-- Host.ReActAgent produces tool_use → Toolkit.call_tool_function → export_agent(..., model_override=host.model)
+- Host.ReActAgent produces tool_use → Toolkit.call_tool_function →
+  export_agent(..., model_override=host.model)
 - delegate(...) folds Msg → ToolResponse → Host returns final Msg
 
 Requirements:
 - OPENAI_API_KEY set for OpenAIChatModel
-- Optional: playwright + webkit if Bing/Sogou/GitHub are selected; Wiki path works without browser
+- Optional: playwright + webkit if Bing/Sogou/GitHub are selected; Wiki path
+  works without browser
 """
 
 from __future__ import annotations
@@ -26,7 +28,10 @@ from src.agentscope.memory import InMemoryMemory
 from src.agentscope.tool import Toolkit
 from src.agentscope.message import Msg
 
-from src.agentscope.agent._subagent_tool import make_subagent_tool, SubAgentSpec
+from src.agentscope.agent._subagent_tool import (
+    SubAgentSpec,
+    make_subagent_tool,
+)
 from examples.agent_search_subagent.search_subreact_agent import (
     SearchSubReactAgent,
     get_all_search_tools,
@@ -54,15 +59,19 @@ async def main() -> None:
     _load_env_minimal()
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required; place it in environment or .env")
+        raise RuntimeError(
+            "OPENAI_API_KEY is required; place it in environment or .env",
+        )
     model_name = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
     base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or None
     # 1) Host with real ChatModel (no mocks)
     host = ReActAgent(
         name="Host",
         sys_prompt=(
-            "You are a research assistant. When the user's question requires web knowledge, "
-            "you MUST call the tool `search_web` with an appropriate query, then synthesize a concise answer."
+            "You are a research assistant. "
+            "When the user's question requires web knowledge, "
+            "you MUST call the tool `search_web` with an appropriate query, "
+            "then synthesize a concise answer."
         ),
         model=OpenAIChatModel(
             model_name=model_name,
@@ -75,10 +84,13 @@ async def main() -> None:
         parallel_tool_calls=False,
     )
 
-    # 2) Create search tool group and register subagent tool (provider-only to avoid recursion)
+    # 2) Create search tool group and register subagent tool (provider-only to
+    # avoid recursion)
     host.toolkit.create_tool_group(
         "search",
-        description="Web search tools exposed via a subagent (wiki/bing/sogou/github)",
+        description=(
+            "Web search tools exposed via a subagent (wiki/bing/sogou/github)"
+        ),
         active=True,
     )
 
@@ -102,10 +114,14 @@ async def main() -> None:
 
     # 3) Validate schema zero-deviation: {query} only
     schemas = host.toolkit.get_json_schemas()
-    search_schema = next(s for s in schemas if s["function"]["name"] == "search_web")
+    search_schema = next(
+        s for s in schemas if s["function"]["name"] == "search_web"
+    )
     props = search_schema["function"]["parameters"].get("properties", {})
     required = search_schema["function"]["parameters"].get("required", [])
-    assert set(props.keys()) == {"query"}, f"unexpected properties: {set(props.keys())}"
+    assert set(props.keys()) == {"query"}, (
+        f"unexpected properties: {set(props.keys())}"
+    )
     assert required == ["query"], f"unexpected required: {required}"
 
     # 4) Run: host should call search_web then return a final answer

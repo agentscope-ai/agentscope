@@ -17,11 +17,13 @@ from .common import Result, truncate_rows, render_text_list
 
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/16.0 Mobile/15E148 Safari/604.1"
 )
 
 
-async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def]
+# type: ignore[no-untyped-def]
+async def _extract_results(page) -> List[Result]:
     """Best-effort extraction for Bing results on mobile/desktop DOM.
 
     We probe common selectors to be resilient to layout variants.
@@ -77,7 +79,9 @@ async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def
                 "div[data-tag='snippet']",
             ]:
                 if await item.locator(s).count() > 0:
-                    snippet = (await item.locator(s).first.inner_text()).strip()
+                    snippet = (
+                        await item.locator(s).first.inner_text()
+                    ).strip()
                     break
         except Exception:  # pragma: no cover
             pass
@@ -122,7 +126,9 @@ async def search_bing(query: str) -> ToolResponse:
 
             await context.close()
             await browser.close()
-            return ToolResponse(content=[TextBlock(type="text", text=text_out)])
+            return ToolResponse(
+                content=[TextBlock(type="text", text=text_out)],
+            )
 
     except Exception as e:  # pylint: disable=broad-except
         # Never mutate metadata; report error in content succinctly.
@@ -130,7 +136,10 @@ async def search_bing(query: str) -> ToolResponse:
             content=[
                 TextBlock(
                     type="text",
-                    text=f"Error: failed to fetch Bing results ({type(e).__name__}: {e})",
+                    text=(
+                        "Error: failed to fetch Bing results "
+                        f"({type(e).__name__}: {e})"
+                    ),
                 ),
             ],
         )

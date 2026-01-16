@@ -21,7 +21,8 @@ else:
 
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
-    """Extract text from a paragraph, including text in text boxes and shapes."""
+    """Extract text from a paragraph, including text in text boxes and
+    shapes."""
     text = ""
 
     from docx.oxml.ns import qn
@@ -339,4 +340,3 @@ class WordReader(ReaderBase):
     def get_doc_id(self, word_path: str) -> str:
         """Generate a document ID based on the Word file path."""
         return hashlib.md5(word_path.encode("utf-8")).hexdigest()
-

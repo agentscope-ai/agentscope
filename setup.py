@@ -72,7 +72,10 @@ setuptools.setup(
     version=VERSION,
     author="AgentScope-easy maintainers",
     author_email="noreply@example.com",
-    description="AgentScope-easy: Developer-first, composable multi-agent scaffolding.",
+    description=(
+        "AgentScope-easy: Developer-first, composable "
+        "multi-agent scaffolding."
+    ),
     long_description=long_description,
     long_description_content_type="text/markdown",
     url=URL,

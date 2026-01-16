@@ -41,7 +41,10 @@ def _pick_lang(query: str) -> str:
 def search_wiki(query: str) -> ToolResponse:
     """Search Wikipedia using the public API and return plain text results."""
     lang = _pick_lang(query)
-    url = API_URL.replace("en.", f"{lang}.") if API_URL.startswith("https://en.") else f"https://{lang}.wikipedia.org/w/api.php"
+    if API_URL.startswith("https://en."):
+        url = API_URL.replace("en.", f"{lang}.")
+    else:
+        url = f"https://{lang}.wikipedia.org/w/api.php"
 
     try:
         res = requests.get(
@@ -65,7 +68,10 @@ def search_wiki(query: str) -> ToolResponse:
         for it in items:
             title = str(it.get("title", ""))
             pageid = it.get("pageid")
-            link = f"https://{lang}.wikipedia.org/?curid={pageid}" if pageid else ""
+            if pageid:
+                link = f"https://{lang}.wikipedia.org/?curid={pageid}"
+            else:
+                link = ""
             snippet = _strip_html(str(it.get("snippet", "")))
             rows.append(Result(title=title, url=link, snippet=snippet))
 
@@ -74,5 +80,6 @@ def search_wiki(query: str) -> ToolResponse:
         return ToolResponse(content=[TextBlock(type="text", text=text)])
 
     except Exception as e:  # pylint: disable=broad-except
-        return ToolResponse(content=[TextBlock(type="text", text=f"Error: {e}")])
-
+        return ToolResponse(
+            content=[TextBlock(type="text", text=f"Error: {e}")],
+        )

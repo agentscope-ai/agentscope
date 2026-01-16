@@ -37,7 +37,9 @@ def truncate_rows(rows: List[Result], max_words: int = 5000) -> List[Result]:
             budget -= len(words)
         else:
             cut = max(1, budget)
-            snippet = " ".join(words[:cut]) + (" …" if len(words) > cut else "")
+            snippet = " ".join(words[:cut]) + (
+                " …" if len(words) > cut else ""
+            )
             out.append(Result(title=r["title"], url=r["url"], snippet=snippet))
             budget = 0
         if budget <= 0:

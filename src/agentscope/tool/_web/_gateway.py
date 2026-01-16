@@ -45,13 +45,19 @@ def web_fetch_markdown_via_gateway(url: str) -> ToolResponse:
     try:
         norm_url = normalize_and_validate_url(url)
     except Exception as e:  # pylint: disable=broad-except
-        logger.warning("web_fetch_markdown_via_gateway: invalid url=%r; err=%s", url, e)
+        logger.warning(
+            "web_fetch_markdown_via_gateway: invalid url=%r; err=%s",
+            url,
+            e,
+        )
         return error_response(str(e))
 
     # Network client availability
     if requests is None:
         logger.error("requests module unavailable; cannot perform HTTP fetch")
-        return error_response("requests module unavailable (TODO: install requests)")
+        return error_response(
+            "requests module unavailable (TODO: install requests)",
+        )
 
     gw = f"https://r.jina.ai/{quote(norm_url, safe='') }"
 
@@ -69,16 +75,21 @@ def web_fetch_markdown_via_gateway(url: str) -> ToolResponse:
         # Non-2xx: log details, return concise error
         preview = truncate_text(res.text or "", 1000)
         logger.error(
-            "gateway fetch non-2xx: url=%s status=%s preview=%s", norm_url, status, preview,
+            "gateway fetch non-2xx: url=%s status=%s preview=%s",
+            norm_url,
+            status,
+            preview,
         )
         return error_response(f"gateway HTTP {status}")
 
     except Exception as e:  # pylint: disable=broad-except
         logger.error(
-            "gateway fetch exception: url=%s err=%s\n%s", norm_url, e, traceback.format_exc(),
+            "gateway fetch exception: url=%s err=%s\n%s",
+            norm_url,
+            e,
+            traceback.format_exc(),
         )
         return error_response(str(e))
 
 
 __all__ = ["web_fetch_markdown_via_gateway"]
-

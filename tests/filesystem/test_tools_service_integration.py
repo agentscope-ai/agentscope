@@ -16,17 +16,26 @@ def test_tools_register_and_execute_end_to_end(tmp_path) -> None:
         fs = DiskFileSystem()
         handle = fs.create_handle(
             grants=[
-                {"prefix": "/userinput/", "ops": {"list", "file", "read_file"}},
+                {
+                    "prefix": "/userinput/",
+                    "ops": {"list", "file", "read_file"},
+                },
                 {
                     "prefix": "/workspace/",
                     "ops": {"list", "file", "read_file", "write", "delete"},
                 },
-            ]
+            ],
         )
         svc = FileDomainService(handle)
 
         # seed corpus
-        with open(os.path.join(fs._userinput_dir, "corpus.txt"), "w", encoding="utf-8") as f:  # type: ignore[attr-defined]
+        # type: ignore[attr-defined]
+        corpus_dir = fs._userinput_dir
+        with open(
+            os.path.join(corpus_dir, "corpus.txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write("alpha\n")
 
         tk = Toolkit()
@@ -35,20 +44,33 @@ def test_tools_register_and_execute_end_to_end(tmp_path) -> None:
 
         async def run() -> None:
             # write workspace file
-            call = {"type": "tool_use", "id": "t1", "name": "write_file", "input": {"path": "/workspace/a.txt", "content": "hello"}}
+            call = {
+                "type": "tool_use",
+                "id": "t1",
+                "name": "write_file",
+                "input": {"path": "/workspace/a.txt", "content": "hello"},
+            }
             agen = await tk.call_tool_function(call)  # type: ignore[arg-type]
             async for _ in agen:
                 pass
 
             # list workspace
-            call = {"type": "tool_use", "id": "t2", "name": "list_directory", "input": {"path": "/workspace/"}}
+            call = {
+                "type": "tool_use",
+                "id": "t2",
+                "name": "list_directory",
+                "input": {"path": "/workspace/"},
+            }
             agen = await tk.call_tool_function(call)  # type: ignore[arg-type]
             out = None
             async for chunk in agen:
                 out = chunk
-            assert out and any("a.txt" in b.get("text", "") for b in out.content if b.get("type") == "text")
+            assert out and any(
+                "a.txt" in b.get("text", "")
+                for b in out.content
+                if b.get("type") == "text"
+            )
 
         asyncio.run(run())
     finally:
         os.chdir(cwd)
-

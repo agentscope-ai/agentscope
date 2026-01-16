@@ -46,7 +46,8 @@ def test_text_and_binary_round_trip() -> None:
     handle.write("/workspace/data.txt", "alpha\nbravo\ncharlie")
 
     assert handle.read_file("/workspace/data.txt") == "alpha\nbravo\ncharlie"
-    assert handle.read_binary("/workspace/data.txt") == b"alpha\nbravo\ncharlie"
+    expected = b"alpha\nbravo\ncharlie"
+    assert handle.read_binary("/workspace/data.txt") == expected
 
 
 def test_write_rejects_non_text_binary() -> None:

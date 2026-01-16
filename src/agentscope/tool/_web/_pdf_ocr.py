@@ -67,7 +67,8 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
         # - POST to ${DEEPSEEK_OCR_BASE_URL} with Authorization header
         # - Merge page-level Markdown
         raise NotImplementedError(
-            "TODO: implement Playwright PDF rendering and DeepSeek OCR conversion",
+            "TODO: implement Playwright PDF rendering and DeepSeek OCR "
+            "conversion",
         )
     except Exception as e:  # pylint: disable=broad-except
         logger.error(

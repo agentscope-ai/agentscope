@@ -31,7 +31,8 @@ class StaticModel(ChatModelBase):
     def __init__(self) -> None:
         super().__init__("static", stream=False)
 
-    async def __call__(self, _messages, **_) -> ChatResponse:  # type: ignore[override]
+    # type: ignore[override]
+    async def __call__(self, _messages, **_) -> ChatResponse:
         return ChatResponse(
             content=[
                 TextBlock(
@@ -232,7 +233,10 @@ class NamespaceSubAgent(SubAgentBase):
         self.__class__.writes.append(allowed_path)
 
         try:
-            self.filesystem_service.write_file("/workspace/forbidden.txt", "nope")
+            self.filesystem_service.write_file(
+                "/workspace/forbidden.txt",
+                "nope",
+            )
         except AccessDeniedError as exc:
             self.__class__.errors.append(type(exc).__name__)
 
@@ -306,7 +310,10 @@ class PermissionSubAgent(SubAgentBase):
         cls.permissions_snapshot = None
 
 
-async def invoke_tool(agent: ReActAgent, tool_call: ToolUseBlock) -> "ToolResponse":
+async def invoke_tool(
+    agent: ReActAgent,
+    tool_call: ToolUseBlock,
+) -> "ToolResponse":
     """Execute a registered tool and return the final ToolResponse."""
     chunk = None
     response_stream = await agent.toolkit.call_tool_function(tool_call)

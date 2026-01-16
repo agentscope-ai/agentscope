@@ -106,7 +106,10 @@ def _view_text_file(
     return "".join(f"{index + 1}: {line}" for index, line in enumerate(lines))
 
 
-def _dangerous_text_io_guard(tool_name: str, file_path: str) -> Tuple[bool, Dict[str, Any]]:
+def _dangerous_text_io_guard(
+    tool_name: str,
+    file_path: str,
+) -> Tuple[bool, Dict[str, Any]]:
     """Return (proceed, metadata) according to the policy.
 
     - Logs a prominent WARNING by default to highlight that this call

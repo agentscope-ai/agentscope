@@ -5,7 +5,13 @@ Contract: each tool MUST expose exactly one parameter `query` (required).
 """
 from __future__ import annotations
 
-from agentscope.tool import Toolkit, search_bing, search_sogou, search_github, search_wiki  # type: ignore
+from agentscope.tool import (  # type: ignore
+    Toolkit,
+    search_bing,
+    search_github,
+    search_sogou,
+    search_wiki,
+)
 
 
 def _assert_query_only_schema(schema: dict) -> None:
@@ -13,8 +19,12 @@ def _assert_query_only_schema(schema: dict) -> None:
     params = schema["function"]["parameters"]
     props = params.get("properties", {})
     required = params.get("required", [])
-    assert set(props.keys()) == {"query"}, f"{fn}: unexpected properties {set(props.keys())}"
-    assert required == ["query"], f"{fn}: required must be ['query'] but got {required}"
+    assert set(props.keys()) == {"query"}, (
+        f"{fn}: unexpected properties {set(props.keys())}"
+    )
+    assert required == ["query"], (
+        f"{fn}: required must be ['query'] but got {required}"
+    )
 
 
 def test_bing_schema_equals_query_only() -> None:
@@ -47,4 +57,3 @@ def test_wiki_schema_equals_query_only() -> None:
     schemas = tk.get_json_schemas()
     s = next(s for s in schemas if s["function"]["name"] == "search_wiki")
     _assert_query_only_schema(s)
-

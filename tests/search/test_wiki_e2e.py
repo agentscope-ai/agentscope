@@ -14,4 +14,3 @@ def test_wiki_search_e2e_returns_results() -> None:
     print(text)
     print("=== END ===")
     assert re.search(r"https?://\S+", text) is not None, "no URL detected"
-

@@ -23,13 +23,18 @@ def test_sogou_search_e2e_returns_results() -> None:
 
     async def _run() -> None:
         res: ToolResponse = await search_sogou("who is speed")  # type: ignore
-        text = "\n".join(b.get("text", "") for b in res.content if b.get("type") == "text")
+        text = "\n".join(
+            b.get("text", "")
+            for b in res.content
+            if b.get("type") == "text"
+        )
         print("=== E2E Sogou Results (who is speed) ===")
         print(text)
         print("=== END ===")
 
         import re
-        assert re.search(r"https?://\S+", text) is not None, "Expected at least one URL in output"
+        assert re.search(r"https?://\S+", text) is not None, (
+            "Expected at least one URL in output",
+        )
 
     asyncio.run(_run())
-
