@@ -481,17 +481,13 @@ This tutorial will guide you through how to leverage the <code class="docutils l
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>react_agent: To find the sum of 123 and 456, you simply add the two numbers together:
 
-\[
-123 + 456 = 579
-\]
+\[ 123 + 456 = 579 \]
 
 So, 123 plus 456 is 579.
 
 Workflow response: To find the sum of 123 and 456, you simply add the two numbers together:
 
-\[
-123 + 456 = 579
-\]
+\[ 123 + 456 = 579 \]
 
 So, 123 plus 456 is 579.
 </pre></div>
@@ -548,7 +544,7 @@ Below is a simple judge function that compares the agent’s response with the g
 <section id="configuration-and-running">
 <h2>Configuration and Running<a class="headerlink" href="#configuration-and-running" title="Link to this heading">¶</a></h2>
 <p>Finally, you can configure and run the tuning process using the <code class="docutils literal notranslate"><span class="pre">tuner</span></code> module.
-Before starting, ensure that <a class="reference external" href="https://github.com/modelscope/Trinity-RFT">Trinity-RFT</a> is installed in your environment, as it is required for tuning.</p>
+Before starting, ensure that <a class="reference external" href="https://github.com/agentscope-ai/Trinity-RFT">Trinity-RFT</a> is installed in your environment, as it is required for tuning.</p>
 <p>Below is an example of configuring and starting the tuning process:</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -578,9 +574,9 @@ Before starting, ensure that <a class="reference external" href="https://github.
 <p>Here, <code class="docutils literal notranslate"><span class="pre">DatasetConfig</span></code> configures the training dataset, <code class="docutils literal notranslate"><span class="pre">TunerModelConfig</span></code> sets the parameters for the trainable model, and <code class="docutils literal notranslate"><span class="pre">AlgorithmConfig</span></code> specifies the reinforcement learning algorithm and its hyperparameters.</p>
 <div class="admonition tip">
 <p class="admonition-title">Tip</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">tune</span></code> function is based on <a class="reference external" href="https://github.com/modelscope/Trinity-RFT">Trinity-RFT</a> and internally converts input parameters to a YAML configuration.
+<p>The <code class="docutils literal notranslate"><span class="pre">tune</span></code> function is based on <a class="reference external" href="https://github.com/agentscope-ai/Trinity-RFT">Trinity-RFT</a> and internally converts input parameters to a YAML configuration.
 Advanced users can skip the <code class="docutils literal notranslate"><span class="pre">model</span></code>, <code class="docutils literal notranslate"><span class="pre">train_dataset</span></code>, and <code class="docutils literal notranslate"><span class="pre">algorithm</span></code> arguments and instead provide a YAML config file path via the <code class="docutils literal notranslate"><span class="pre">config_path</span></code> argument.
-Using a configuration file is recommended for fine-grained control and to leverage advanced Trinity-RFT features. See the Trinity-RFT <a class="reference external" href="https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html">Configuration Guide</a> for more options.</p>
+Using a configuration file is recommended for fine-grained control and to leverage advanced Trinity-RFT features. See the Trinity-RFT <a class="reference external" href="https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html">Configuration Guide</a> for more options.</p>
 </div>
 <p>Save the above code as <code class="docutils literal notranslate"><span class="pre">main.py</span></code> and run it with:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ray<span class="w"> </span>start<span class="w"> </span>--head
@@ -601,7 +597,7 @@ python<span class="w"> </span>main.py
 <p class="admonition-title">Tip</p>
 <p>For more tuning examples, refer to the <a class="reference external" href="https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner">tuner directory</a> of the AgentScope-Samples repository.</p>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.961 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.984 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tuner-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/243e482519a51e80a9f627d3dbd503d2/task_tuner.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tuner.ipynb</span></code></a></p>
