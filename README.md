@@ -57,17 +57,21 @@
 
 ## What is AgentScope?
 
-AgentScope is a production-ready, open-source framework for building, orchestrating, training and deploying LLM-powered multi-agent applications at scale.
+AgentScope is a production-ready, easy-to-use agent framework with essential abstractions that work with growing model capability and finetuning.
+
+We design for LLMs that are increasingly agentic: rather than constraining
+them with strict prompts and opinionated orchestrations, we leverage their reasoning and tool
+use capabilities for complex tasks.
+
+## Why use AgentScope?
+
+- **Simple**: start building your agents in 5 minutes with built-in ReAct agent, tools, skills, human-in-the-loop steering, memory, planning, realtime voice, evaluation and model finetuning
+- **Extensible**: large number of ecosystem integrations for tools, memory and observability; built-in support for MCP and A2A; message hub for flexible multi-agent orchestration and workflows
+- **Production-ready**: deploy and serve your agents locally, as serverless in the cloud, or on your K8s cluster with built-in OTel support
 
 
-TODO: a picture here
+TODO: a picture here for ecosystem integrations.
 
-
-## Why AgentScope?
-
-- **High Transparence**: Everything is visible and controllable——no additional abstraction, deep encapsulation or implicit magic.
-- **Agentic-Oriented**: Designed from the ground up for agentic programming paradigms.
-- **Production-Ready**: Built-in support for robust deployment, monitoring, and management.
 
 ## News
 <!-- BEGIN NEWS -->
