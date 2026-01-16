@@ -536,7 +536,7 @@ to download the full example code.</p>
 <section id="id7">
 <h2>配置并运行<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h2>
 <p>最后，你可以用 <code class="docutils literal notranslate"><span class="pre">tuner</span></code> 模块配置并运行调优流程。
-在开始调优前，请确保环境已安装 <a class="reference external" href="https://github.com/modelscope/Trinity-RFT">Trinity-RFT</a>，这是 <code class="docutils literal notranslate"><span class="pre">tuner</span></code> 的依赖。</p>
+在开始调优前，请确保环境已安装 <a class="reference external" href="https://github.com/agentscope-ai/Trinity-RFT">Trinity-RFT</a>，这是 <code class="docutils literal notranslate"><span class="pre">tuner</span></code> 的依赖。</p>
 <p>下面是调优流程的配置与启动示例：</p>
 <div class="admonition note">
 <p class="admonition-title">备注</p>
@@ -566,10 +566,10 @@ to download the full example code.</p>
 <p>这里用 <code class="docutils literal notranslate"><span class="pre">DatasetConfig</span></code> 配置训练数据集，用 <code class="docutils literal notranslate"><span class="pre">TunerModelConfig</span></code> 配置可训练模型相关参数，用 <code class="docutils literal notranslate"><span class="pre">AlgorithmConfig</span></code> 指定强化学习算法及其超参数。</p>
 <div class="admonition tip">
 <p class="admonition-title">小技巧</p>
-<p><code class="docutils literal notranslate"><span class="pre">tune</span></code> 函数基于 <a class="reference external" href="https://github.com/modelscope/Trinity-RFT">Trinity-RFT</a> 实现，内部会将输入参数转换为 YAML 配置。
+<p><code class="docutils literal notranslate"><span class="pre">tune</span></code> 函数基于 <a class="reference external" href="https://github.com/agentscope-ai/Trinity-RFT">Trinity-RFT</a> 实现，内部会将输入参数转换为 YAML 配置。
 高级用户可忽略 <code class="docutils literal notranslate"><span class="pre">model</span></code>、<code class="docutils literal notranslate"><span class="pre">train_dataset</span></code>、<code class="docutils literal notranslate"><span class="pre">algorithm</span></code> 参数，直接通过 <code class="docutils literal notranslate"><span class="pre">config_path</span></code> 指定 YAML 配置文件。
 推荐使用配置文件方式以便更细粒度地控制训练过程，充分利用 Trinity-RFT 的高级功能。
-你可参考 Trinity-RFT 的 <a class="reference external" href="https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html">配置指南</a> 了解更多配置选项。</p>
+你可参考 Trinity-RFT 的 <a class="reference external" href="https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html">配置指南</a> 了解更多配置选项。</p>
 </div>
 <p>你可以将上述代码保存为 <code class="docutils literal notranslate"><span class="pre">main.py</span></code>，并用如下命令运行：</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ray<span class="w"> </span>start<span class="w"> </span>--head
@@ -591,7 +591,7 @@ tensorboard 日志可在检查点目录下的 <code class="docutils literal notr
 <p class="admonition-title">小技巧</p>
 <p>更多调优样例请参考 AgentScope-Samples 库中的 <a class="reference external" href="https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner">tuner 目录</a></p>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.771 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.630 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tuner-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/243e482519a51e80a9f627d3dbd503d2/task_tuner.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tuner.ipynb</span></code></a></p>
