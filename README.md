@@ -57,7 +57,7 @@
 
 ## What is AgentScope?
 
-AgentScope is a production-ready, easy-to-use agent framework with essential abstractions that work with growing model capability and finetuning.
+AgentScope is a production-ready, easy-to-use agent framework with essential abstractions that work with rising model capability and built-in support for finetuning.
 
 We design for LLMs that are increasingly agentic: rather than constraining
 them with strict prompts and opinionated orchestrations, we leverage their reasoning and tool
