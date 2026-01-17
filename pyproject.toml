@@ -83,21 +83,26 @@ memory = [
 
 # ------------ RAG ------------
 # readers
-text-reader = ["nltk"]
-pdf-reader = [
-    "agentscope[text-reader]",
+text_reader = ["nltk"]
+pdf_reader = [
+    "agentscope[text_reader]",
     # TODO: the latest pypdf has some issues with parsing PDFs
     #  (2026-01-13), so we fix the version here temporarily.
     "pypdf<=6.5.0",
 ]
-docx-reader = [
+docx_reader = [
     "agentscope[text-reader]",
     "python-docx"
 ]
-readers = [
+ppt_reader = [
     "agentscope[text-reader]",
-    "agentscope[pdf-reader]",
-    "agentscope[docx-reader]",
+    "python-pptx"
+]
+readers = [
+    "agentscope[text_reader]",
+    "agentscope[pdf_reader]",
+    "agentscope[docx_reader]",
+    "agentscope[ppt_reader]"
 ]
 
 # vdb
@@ -111,7 +116,6 @@ vdbs = [
     "agentscope[qdrant]",
     "agentscope[milvus]",
 ]
-
 
 rag = [
     "agentscope[readers]",

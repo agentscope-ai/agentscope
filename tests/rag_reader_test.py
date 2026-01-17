@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader, WordReader
+from agentscope.rag import TextReader, PDFReader, WordReader, PowerPointReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -153,4 +153,82 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 if _.metadata.content["type"] == "image"
             ],
             ["image/png", "image/png", "image/png"],
+        )
+
+    async def test_ppt_reader_with_images_and_tables(self) -> None:
+        """Test the PowerPointReader implementation with images and table
+        separation."""
+        # Test with images and table separation enabled
+        reader = PowerPointReader(
+            chunk_size=200,
+            split_by="sentence",
+            include_image=True,
+            separate_table=True,
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Verify document types match expected sequence
+        # Expected: text blocks from slides, then table, then image
+        self.assertListEqual(
+            [_.metadata.content["type"] for _ in docs],
+            ["text"] * 5 + ["image"] * 1 + ["text"],
+        )
+
+        import json
+
+        print(
+            json.dumps(
+                [_.metadata.content.get("text") for _ in docs],
+                indent=4,
+                ensure_ascii=False,
+            ),
+        )
+
+        # Verify exact document content
+        doc_texts = [_.metadata.content.get("text") for _ in docs]
+
+        # Verify slide content matches exactly
+        self.assertEqual(
+            doc_texts[0],
+            "Slide 1\nAgentScope\nText content in slide 1",
+        )
+        self.assertEqual(
+            doc_texts[1],
+            "Slide 2\nTitle 2\nText content above table",
+        )
+        # Table should be extracted as a separate block with Markdown format
+        self.assertEqual(
+            doc_texts[2],
+            "| Name | Age | Career |\n"
+            "| --- | --- | --- |\n"
+            "| Alice | 25 | Teacher |\n"
+            "| Bob | 26 | Doctor |",
+        )
+        self.assertEqual(
+            doc_texts[3],
+            "Text content below table",
+        )
+        self.assertEqual(
+            doc_texts[4],
+            "Slide 3\nTitle 3\ntext content above image",
+        )
+        # Image block
+        self.assertIsNone(doc_texts[5])
+        self.assertEqual(
+            doc_texts[6],
+            "text content below image",
+        )
+
+        # Verify image media types
+        self.assertEqual(
+            [
+                _.metadata.content["source"]["media_type"]
+                for _ in docs
+                if _.metadata.content["type"] == "image"
+            ],
+            ["image/png"],
         )

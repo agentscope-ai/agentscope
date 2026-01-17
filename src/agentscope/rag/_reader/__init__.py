@@ -6,6 +6,7 @@ from ._text_reader import TextReader
 from ._pdf_reader import PDFReader
 from ._word_reader import WordReader
 from ._image_reader import ImageReader
+from ._ppt_reader import PowerPointReader
 
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "PDFReader",
     "WordReader",
     "ImageReader",
+    "PowerPointReader",
 ]
