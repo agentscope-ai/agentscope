@@ -133,12 +133,14 @@ class TextReader(ReaderBase):
         return [
             Document(
                 id=doc_id,
+                # pylint: disable=E1120,E1125
                 metadata=DocMetadata(
                     content=TextBlock(type="text", text=_),
                     doc_id=doc_id,
                     chunk_id=idx,
                     total_chunks=len(splits),
                 ),
+                # pylint: enable=E1120,E1125
             )
             for idx, _ in enumerate(splits)
         ]

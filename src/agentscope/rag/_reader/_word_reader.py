@@ -203,24 +203,28 @@ class WordReader(ReaderBase):
                 for _ in await self._text_reader(block["text"]):
                     documents.append(
                         Document(
+                            # pylint: disable=E1120,E1125
                             metadata=DocMetadata(
                                 content=_.metadata.content,
                                 doc_id=doc_id,
                                 chunk_id=0,
                                 total_chunks=0,
                             ),
+                            # pylint: enable=E1120,E1125
                         ),
                     )
 
             elif block["type"] == "image":
                 documents.append(
                     Document(
+                        # pylint: disable=E1120,E1125
                         metadata=DocMetadata(
                             content=block,
                             doc_id=doc_id,
                             chunk_id=0,
                             total_chunks=1,
                         ),
+                        # pylint: enable=E1120,E1125
                     ),
                 )
 

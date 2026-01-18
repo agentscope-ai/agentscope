@@ -73,9 +73,11 @@ class RaySolutionActor:
     """
 
     def __init__(self, n_workers: int = 1):
+        # pylint: disable=E1101
         self.eval_actor = RayEvaluationActor.options(
             max_concurrency=n_workers,
         ).remote()
+        # pylint: enable=E1101
 
     async def run(
         self,
@@ -192,9 +194,11 @@ class RayEvaluator(EvaluatorBase):
         await self._save_evaluation_meta()
 
         futures = []
+        # pylint: disable=E1101
         solution_actor = RaySolutionActor.options(
             max_concurrency=self.n_workers,
         ).remote(n_workers=self.n_workers)
+        # pylint: enable=E1101
         for repeat_id in range(self.n_repeat):
             for task in self.benchmark:
                 futures.append(

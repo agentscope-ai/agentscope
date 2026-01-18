@@ -99,7 +99,9 @@ async def search_bing(query: str) -> ToolResponse:
     """
     try:
         # Lazy import to avoid hard dependency at import time
+        # pylint: disable=E0401
         from playwright.async_api import async_playwright  # type: ignore
+        # pylint: enable=E0401
 
         async with async_playwright() as p:  # type: ignore
             browser = await p.webkit.launch(headless=True)

@@ -172,7 +172,9 @@ async def search_github(query: str) -> ToolResponse:
     information online. No analysis; do not read/write files or alter metadata.
     """
     try:
+        # pylint: disable=E0401
         from playwright.async_api import async_playwright  # type: ignore
+        # pylint: enable=E0401
 
         async with async_playwright() as p:  # type: ignore
             browser = await p.webkit.launch(headless=True)

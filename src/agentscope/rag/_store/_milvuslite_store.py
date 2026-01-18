@@ -184,12 +184,14 @@ class MilvusLiteStore(VDBStoreBase):
                     continue
 
                 entity = hit["entity"]
+                # pylint: disable=E1120,E1125
                 doc_metadata = DocMetadata(
                     content=entity.get("content", ""),
                     doc_id=entity.get("doc_id", ""),
                     chunk_id=entity.get("chunk_id", 0),
                     total_chunks=entity.get("total_chunks", 0),
                 )
+                # pylint: enable=E1120,E1125
 
                 collected_res.append(
                     Document(
