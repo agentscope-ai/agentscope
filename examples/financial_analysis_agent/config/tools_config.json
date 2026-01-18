@@ -1,0 +1,75 @@
+{
+  "tools": {
+    "get_financial_statements": {
+      "enabled": true,
+      "category": "data",
+      "parameters": {
+        "timeout": 30,
+        "retry_count": 3,
+        "cache_duration": 3600
+      }
+    },
+    "get_stock_price": {
+      "enabled": true,
+      "category": "data",
+      "parameters": {
+        "timeout": 30,
+        "retry_count": 3,
+        "cache_duration": 60
+      }
+    },
+    "calculate_profitability_ratios": {
+      "enabled": true,
+      "category": "analysis",
+      "parameters": {
+        "include_industry_comparison": true,
+        "benchmark_period": "3y"
+      }
+    },
+    "calculate_solvency_ratios": {
+      "enabled": true,
+      "category": "analysis",
+      "parameters": {
+        "include_industry_comparison": true,
+        "risk_threshold": 0.7
+      }
+    },
+    "generate_financial_report": {
+      "enabled": true,
+      "category": "report",
+      "parameters": {
+        "default_format": "html",
+        "include_charts": true,
+        "template_style": "professional"
+      }
+    }
+  },
+  "groups": {
+    "data_collection": ["get_financial_statements", "get_stock_price", "get_company_info"],
+    "financial_analysis": ["calculate_profitability_ratios", "calculate_solvency_ratios", "calculate_efficiency_ratios"],
+    "reporting": ["generate_financial_report", "create_chart"],
+    "core_tools": ["data_collection", "financial_analysis", "reporting"]
+  },
+  "categories": {
+    "data": {
+      "name": "数据获取",
+      "description": "获取财务数据和相关信息"
+    },
+    "analysis": {
+      "name": "财务分析",
+      "description": "进行财务比率计算和趋势分析"
+    },
+    "report": {
+      "name": "报告生成",
+      "description": "生成分析报告和图表"
+    }
+  },
+  "global_settings": {
+    "default_timeout": 30,
+    "max_retry_count": 3,
+    "enable_caching": true,
+    "cache_duration": 1800,
+    "parallel_execution": true,
+    "max_concurrent_tools": 5
+  }
+}

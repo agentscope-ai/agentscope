@@ -1,0 +1,100 @@
+{
+  "financial_data": {
+    "type": "http_stateless",
+    "url": "https://financial-mcp.example.com/api",
+    "api_key": "${FINANCIAL_MCP_API_KEY}",
+    "description": "财务数据服务",
+    "tools": [
+      {
+        "name": "get_stock_price",
+        "description": "获取股票价格数据",
+        "parameters": {
+          "symbol": {"type": "string", "description": "股票代码"},
+          "period": {"type": "string", "description": "时间周期", "default": "1y"},
+          "interval": {"type": "string", "description": "数据间隔", "default": "1d"}
+        }
+      },
+      {
+        "name": "get_financial_statements",
+        "description": "获取财务报表数据",
+        "parameters": {
+          "symbol": {"type": "string", "description": "股票代码"},
+          "statement_type": {"type": "string", "description": "报表类型", "enum": ["income_statement", "balance_sheet", "cash_flow"]},
+          "period": {"type": "string", "description": "周期", "default": "annual"}
+        }
+      },
+      {
+        "name": "get_market_indices",
+        "description": "获取市场指数数据",
+        "parameters": {
+          "indices": {"type": "array", "description": "指数列表", "items": {"type": "string"}}
+        }
+      }
+    ]
+  },
+  "market_data": {
+    "type": "http_stateless", 
+    "url": "https://market-mcp.example.com/api",
+    "api_key": "${MARKET_MCP_API_KEY}",
+    "description": "市场数据服务",
+    "tools": [
+      {
+        "name": "get_real_time_price",
+        "description": "获取实时价格",
+        "parameters": {
+          "symbols": {"type": "array", "description": "股票代码列表", "items": {"type": "string"}}
+        }
+      },
+      {
+        "name": "get_technical_indicators",
+        "description": "获取技术指标",
+        "parameters": {
+          "symbol": {"type": "string", "description": "股票代码"},
+          "indicators": {"type": "array", "description": "技术指标列表", "items": {"type": "string"}},
+          "period": {"type": "string", "description": "分析周期", "default": "daily"}
+        }
+      },
+      {
+        "name": "get_market_sentiment",
+        "description": "获取市场情绪指标",
+        "parameters": {
+          "market": {"type": "string", "description": "市场名称", "default": "US"},
+          "timeframe": {"type": "string", "description": "时间框架", "default": "1w"}
+        }
+      }
+    ]
+  },
+  "news_data": {
+    "type": "http_stateful",
+    "url": "https://news-mcp.example.com/api", 
+    "api_key": "${NEWS_MCP_API_KEY}",
+    "description": "新闻数据服务",
+    "tools": [
+      {
+        "name": "search_news",
+        "description": "搜索新闻",
+        "parameters": {
+          "keywords": {"type": "array", "description": "关键词列表", "items": {"type": "string"}},
+          "days": {"type": "integer", "description": "搜索天数", "default": 7},
+          "sources": {"type": "array", "description": "新闻源列表", "items": {"type": "string"}}
+        }
+      },
+      {
+        "name": "get_company_news",
+        "description": "获取公司新闻",
+        "parameters": {
+          "symbol": {"type": "string", "description": "股票代码"},
+          "days": {"type": "integer", "description": "天数", "default": 30}
+        }
+      },
+      {
+        "name": "analyze_sentiment",
+        "description": "分析新闻情绪",
+        "parameters": {
+          "text": {"type": "string", "description": "要分析的文本"},
+          "granularity": {"type": "string", "description": "粒度", "enum": ["positive", "negative", "neutral", "detailed"], "default": "detailed"}
+        }
+      }
+    ]
+  }
+}
