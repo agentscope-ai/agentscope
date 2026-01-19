@@ -55,7 +55,11 @@ def validate_path(path: Path) -> Path:
 class FsHandle:
     """Authorized view over a :class:`FileSystemBase` backend."""
 
-    def __init__(self, filesystem: "FileSystemBase", grants: Sequence[Grant]) -> None:
+    def __init__(
+        self,
+        filesystem: "FileSystemBase",
+        grants: Sequence[Grant],
+    ) -> None:
         self._fs = filesystem
         self._grants: List[Grant] = list(grants)
         self._index: Dict[Path, EntryMeta] = {}
@@ -190,7 +194,6 @@ class FsHandle:
         if not any("list" in grant["ops"] for grant in self._grants):
             raise AccessDeniedError("/", "list")
 
-
     # ------------------------ Human-readable summary ------------------------
     def describe_grants_markdown(self) -> str:
         """Return a concise markdown summary of current grants.
@@ -219,7 +222,9 @@ class FsHandle:
         def _tokens(ops: set[str]) -> list[str]:
             has_ls = "list" in ops
             has_stat = "file" in ops
-            has_read = any(o in ops for o in {"read_file", "read_binary", "read_re"})
+            has_read = any(
+                o in ops for o in {"read_file", "read_binary", "read_re"}
+            )
             has_write = "write" in ops
             has_delete = "delete" in ops
             items: list[str] = []

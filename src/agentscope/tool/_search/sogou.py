@@ -17,11 +17,13 @@ from .common import Result, truncate_rows, render_text_list
 
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Version/16.0 Mobile/15E148 Safari/604.1"
 )
 
 
-async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def]
+# type: ignore[no-untyped-def]
+async def _extract_results(page) -> List[Result]:
     """Best-effort extraction for Sogou results on mobile/desktop DOM."""
     results: List[Result] = []
 
@@ -30,9 +32,9 @@ async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def
 
     # Candidate result item selectors (Sogou varies across AB tests)
     item_selectors = [
-        "div.vrwrap",           # common vr result wrapper
-        "div.vrResult",         # alternative wrapper
-        "div.results > div",    # generic results list
+        "div.vrwrap",  # common vr result wrapper
+        "div.vrResult",  # alternative wrapper
+        "div.results > div",  # generic results list
         "#main .vrwrap",
         "#main .vrResult",
         "#main > div",
@@ -76,7 +78,9 @@ async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def
                         url = unquote(cand[0])
                     else:
                         # Fallback to absolute path on Sogou domain
-                        url = "https://www.sogou.com" + (raw[1:] if raw.startswith("./") else raw)
+                        url = "https://www.sogou.com" + (
+                            raw[1:] if raw.startswith("./") else raw
+                        )
                 except Exception:  # pragma: no cover
                     url = raw
         except Exception:  # pragma: no cover
@@ -85,12 +89,14 @@ async def _extract_results(page) -> List[Result]:  # type: ignore[no-untyped-def
         snippet = ""
         try:
             for s in [
-                "p",                # primary snippet in many layouts
-                ".ft",              # fallback footer text
-                ".str_info",        # structured info
+                "p",  # primary snippet in many layouts
+                ".ft",  # fallback footer text
+                ".str_info",  # structured info
             ]:
                 if await item.locator(s).count() > 0:
-                    snippet = (await item.locator(s).first.inner_text()).strip()
+                    snippet = (
+                        await item.locator(s).first.inner_text()
+                    ).strip()
                     break
         except Exception:  # pragma: no cover
             pass
@@ -107,7 +113,10 @@ async def search_sogou(query: str) -> ToolResponse:
     no analysis or summarization. Do not read/write files or alter metadata.
     """
     try:
+        # pylint: disable=E0401
         from playwright.async_api import async_playwright  # type: ignore
+
+        # pylint: enable=E0401
 
         async with async_playwright() as p:  # type: ignore
             browser = await p.webkit.launch(headless=True)
@@ -133,14 +142,19 @@ async def search_sogou(query: str) -> ToolResponse:
 
             await context.close()
             await browser.close()
-            return ToolResponse(content=[TextBlock(type="text", text=text_out)])
+            return ToolResponse(
+                content=[TextBlock(type="text", text=text_out)],
+            )
 
     except Exception as e:  # pylint: disable=broad-except
         return ToolResponse(
             content=[
                 TextBlock(
                     type="text",
-                    text=f"Error: failed to fetch Sogou results ({type(e).__name__}: {e})",
+                    text=(
+                        "Error: failed to fetch Sogou results "
+                        f"({type(e).__name__}: {e})"
+                    ),
                 ),
             ],
         )

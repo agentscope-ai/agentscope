@@ -43,12 +43,14 @@ class ImageReader(ReaderBase):
 
         return [
             Document(
+                # pylint: disable=E1120,E1125
                 metadata=DocMetadata(
                     content=image_block,
                     doc_id=doc_id,
                     chunk_id=0,
                     total_chunks=1,
                 ),
+                # pylint: enable=E1120,E1125
             )
             for doc_id, image_block in zip(doc_idx, image_blocks)
         ]

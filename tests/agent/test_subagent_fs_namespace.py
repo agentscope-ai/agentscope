@@ -44,7 +44,9 @@ def test_subagent_filesystem_namespace() -> None:
 
         await invoke_tool(agent, tool_call)
 
-        assert NamespaceSubAgent.writes == ["/workspace/subagents/fs/artifact.txt"]
+        assert NamespaceSubAgent.writes == [
+            "/workspace/subagents/fs/artifact.txt",
+        ]
         assert NamespaceSubAgent.errors == ["AccessDeniedError"]
 
     asyncio.run(_run())

@@ -21,7 +21,7 @@ from src.agentscope.agent._subagent_base import (
 )
 from src.agentscope.agent import ReActAgent
 from src.agentscope.message import Msg, TextBlock
-from src.agentscope.tool import Toolkit
+from src.agentscope.tool import Toolkit, ToolResponse
 
 
 class SearchInput(BaseModel):
@@ -68,7 +68,9 @@ class SearchSubReactAgent(SubAgentBase):
             spec_name=spec_name,
             toolkit=toolkit,
             memory=memory,
-            tools=tools,  # host registers via SubAgentSpec(tools=get_all_search_tools())
+            # Host registers tools via
+            # SubAgentSpec(tools=get_all_search_tools()).
+            tools=tools,
             model_override=model_override,
             ephemeral_memory=ephemeral_memory,
         )
@@ -85,16 +87,19 @@ class SearchSubReactAgent(SubAgentBase):
         model = self.model_override
         if model is None:
             raise RuntimeError(
-                "SearchSubReactAgent requires host.model via model_override (see SOP: 模型继承).",
+                "SearchSubReactAgent requires host.model via model_override "
+                "(see SOP: 模型继承).",
             )
         formatter = OpenAIChatFormatter()
 
         self._inner = ReActAgent(
             name=f"{self.spec_name}-react",
             sys_prompt=(
-                "You are a search assistant. Use search_* tools to gather information. "
-                "Prefer Wiki for factual answers, GitHub for code, Bing/Sogou for general queries. "
-                "Return concise, source-backed findings."
+                "You are a search assistant. "
+                "Use search_* tools to gather information. "
+                "Prefer Wiki for factual answers, GitHub for code, "
+                "Bing/Sogou for general queries. Return concise, "
+                "source-backed findings."
             ),
             model=model,
             formatter=formatter,
@@ -104,12 +109,14 @@ class SearchSubReactAgent(SubAgentBase):
         return self._inner
 
     async def reply(self, input_obj: SearchInput, **_: Any) -> Msg:
-        # Forward the user query to the inner ReAct agent for autonomous tool use
+        # Forward the user query to the inner ReAct agent for autonomous tool
+        # use.
         msg = Msg(name="user", content=input_obj.query, role="user")
         agent = self._ensure_inner()
         return await agent(msg)
 
-    # Override delegate to avoid synthetic memory injection and consume no host history.
+    # Override delegate to avoid synthetic memory injection and consume no host
+    # history.
     async def delegate(
         self,
         input_obj: SearchInput,
@@ -117,7 +124,8 @@ class SearchSubReactAgent(SubAgentBase):
         delegation_context: DelegationContext | None = None,
         **kwargs: Any,
     ) -> "ToolResponse":
-        # Build a minimal context if none provided; do not inject into self.memory.
+        # Build a minimal context if none provided; do not inject into
+        # self.memory.
         context = delegation_context or self._delegation_context
         if context is None:
             context = DelegationContext(
@@ -168,5 +176,5 @@ class SearchSubReactAgent(SubAgentBase):
 
 __all__ = [
     "SearchInput",
-    "SearchSubReactAgent"
+    "SearchSubReactAgent",
 ]

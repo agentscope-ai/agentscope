@@ -5,7 +5,8 @@ The service enforces domain policies based on logical path prefixes and
 delegates I/O to the underlying FsHandle. Tools should depend on this service
 instead of capturing FsHandle/FileSystemBase directly.
 
-Note: SOP limits atomic ops to list/file/read_binary/read_file/read_re/write/delete.
+Note: SOP limits atomic ops to
+list/file/read_binary/read_file/read_re/write/delete.
 This service does not provide 'dry-run' features.
 """
 from __future__ import annotations
@@ -65,7 +66,8 @@ class FileDomainService:
         self._handle.list(prefix)  # permission check for list
         entries = self._handle.list(prefix)
 
-        # Compute immediate children by stripping the prefix and taking first segment
+        # Compute immediate children by stripping the prefix and taking the
+        # first segment.
         seen_dirs: set[str] = set()
         files: set[str] = set()
         for meta in entries:
@@ -77,10 +79,16 @@ class FileDomainService:
                 seen_dirs.add(top)
             else:
                 files.add(rel)
-        out = [f"[DIR] {d}" for d in sorted(seen_dirs)] + [f"[FILE] {f}" for f in sorted(files)]
+        out = [f"[DIR] {d}" for d in sorted(seen_dirs)] + [
+            f"[FILE] {f}" for f in sorted(files)
+        ]
         return out
 
-    def list_directory_with_sizes(self, path: str, sort_by: str = "name") -> Tuple[List[str], str]:
+    def list_directory_with_sizes(
+        self,
+        path: str,
+        sort_by: str = "name",
+    ) -> Tuple[List[str], str]:
         lines = self._handle.list(path if path.endswith("/") else path + "/")
         # map: child -> (is_dir, size)
         prefix = path if path.endswith("/") else path + "/"
@@ -111,7 +119,10 @@ class FileDomainService:
             listing.append((name, is_dir, size_eff))
 
         if sort_by == "size":
-            listing.sort(key=lambda t: (t[1] is False, t[2], t[0]))  # dirs first, then size
+            # dirs first, then size
+            listing.sort(
+                key=lambda t: (t[1] is False, t[2], t[0]),
+            )
         else:
             listing.sort(key=lambda t: (t[1] is False, t[0]))
 
@@ -121,12 +132,19 @@ class FileDomainService:
         ]
         total_size = sum(int(m.get("size", 0)) for m in lines)
         summary = (
-            f"total: {len(listing)} entries; files={sum(1 for _, d, _ in listing if not d)}, "
-            f"dirs={sum(1 for _, d, _ in listing if d)}; total_size={total_size}"
+            f"total: {len(listing)} entries; "
+            f"files={sum(1 for _, d, _ in listing if not d)}, "
+            f"dirs={sum(1 for _, d, _ in listing if d)}; "
+            f"total_size={total_size}"
         )
         return rendered, summary
 
-    def search_files(self, path: str, pattern: str, exclude_patterns: list[str] | None = None) -> List[str]:
+    def search_files(
+        self,
+        path: str,
+        pattern: str,
+        exclude_patterns: list[str] | None = None,
+    ) -> List[str]:
         prefix = path if path.endswith("/") else path + "/"
         entries = self._handle.list(prefix)
         matches: List[str] = []
@@ -146,7 +164,12 @@ class FileDomainService:
         return [USERINPUT_PREFIX, WORKSPACE_PREFIX]
 
     # ------------------------------- reads ----------------------------------
-    def read_text_file(self, path: str, start_line: int | None = 1, read_lines: int | None = None) -> str:
+    def read_text_file(
+        self,
+        path: str,
+        start_line: int | None = 1,
+        read_lines: int | None = None,
+    ) -> str:
         if start_line is not None and start_line < 1:
             raise InvalidArgumentError("start_line", value=start_line)
         if read_lines is not None and read_lines <= 0:
@@ -171,9 +194,15 @@ class FileDomainService:
     # ------------------------------ mutations -------------------------------
     def _assert_writable(self, path: str) -> None:
         domain = self._domain_of(path)
-        if domain == USERINPUT_PREFIX and not self._policy.allow_write_userinput:
+        if (
+            domain == USERINPUT_PREFIX
+            and not self._policy.allow_write_userinput
+        ):
             raise AccessDeniedError(path, "write")
-        if domain == INTERNAL_PREFIX and not self._policy.allow_delete_internal:
+        if (
+            domain == INTERNAL_PREFIX
+            and not self._policy.allow_delete_internal
+        ):
             # write is allowed via grants; delete policy handled elsewhere
             pass
 
@@ -184,7 +213,8 @@ class FileDomainService:
     def edit_file(self, path: str, edits: list[dict]) -> EntryMeta:
         """Apply sequential textual edits and overwrite the file.
 
-        Edits are ordered replacements with keys: {"oldText": str, "newText": str}.
+        Edits are ordered replacements with keys:
+        {"oldText": str, "newText": str}.
         No dry-run or diff; exact substring replacement.
         """
         # treat as write operation on the target domain
@@ -206,7 +236,10 @@ class FileDomainService:
         domain = self._domain_of(path)
         if domain == USERINPUT_PREFIX:
             raise AccessDeniedError(path, "delete")
-        if domain == INTERNAL_PREFIX and not self._policy.allow_delete_internal:
+        if (
+            domain == INTERNAL_PREFIX
+            and not self._policy.allow_delete_internal
+        ):
             raise AccessDeniedError(path, "delete")
         self._handle.delete(path)
 
@@ -221,7 +254,8 @@ class FileDomainService:
 
     # ---------------------- tool enumeration (optional) ----------------------
     def tools(self) -> list[tuple[callable, "FileDomainService"]]:
-        """Return the standard controlled filesystem tools bound to this service.
+        """Return the standard controlled filesystem tools bound to this
+        service.
 
         This is backend-agnostic and mirrors the generic set in
         ``src/agentscope/filesystem/_tools.py``.

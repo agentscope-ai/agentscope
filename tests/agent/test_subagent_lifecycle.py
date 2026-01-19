@@ -29,7 +29,11 @@ def test_subagent_registration_probe_constructor_failure() -> None:
                 pass
 
             async def reply(self, input_obj, **_):  # pragma: no cover
-                return Msg("ctor", input_obj.message, "assistant")  # type: ignore[name-defined]
+                return Msg(
+                    "ctor",
+                    input_obj.message,
+                    "assistant",
+                )  # type: ignore[name-defined]
 
             def __init__(self, **kwargs):  # type: ignore[no-untyped-def]
                 super().__init__(**kwargs)

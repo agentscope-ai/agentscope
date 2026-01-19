@@ -86,9 +86,10 @@ class DelegationContext:
         return payload
 
     @classmethod
-    def from_payload(cls, payload: dict[str, JSONSerializableObject]) -> (
-        "DelegationContext"
-    ):
+    def from_payload(
+        cls,
+        payload: dict[str, JSONSerializableObject],
+    ) -> "DelegationContext":
         """Hydrate from metadata payload."""
         preview = payload.get("input_preview")
         return cls(
@@ -137,6 +138,7 @@ class SubAgentBase(AgentBase):
         self.model_override = model_override
         if toolkit is None:
             from ..tool import Toolkit as _Toolkit
+
             toolkit = _Toolkit()
             if tools:
                 self._hydrate_toolkit(toolkit, tools)
@@ -164,7 +166,8 @@ class SubAgentBase(AgentBase):
         self._ephemeral_memory = ephemeral_memory
         self._current_input: BaseModel | None = None
 
-        # Inherit host-provided FileDomainService as-is; no hardcoded namespace.
+        # Inherit host-provided FileDomainService as-is; no hardcoded
+        # namespace.
         self.filesystem_service = permissions.filesystem_service
 
         self.set_console_output_enabled(False)
@@ -196,7 +199,8 @@ class SubAgentBase(AgentBase):
         """Return the declared Pydantic input model."""
         if cls.InputModel is None:
             raise NotImplementedError(
-                f"{cls.__name__} must set `InputModel` to a Pydantic BaseModel subclass.",
+                f"{cls.__name__} must set `InputModel` to a Pydantic "
+                "BaseModel subclass.",
             )
         return cls.InputModel
 

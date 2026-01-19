@@ -5,6 +5,7 @@ from ._reader_base import ReaderBase, Document
 from ._text_reader import TextReader
 from ._pdf_reader import PDFReader
 from ._image_reader import ImageReader
+from ._word_reader import WordReader
 
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "TextReader",
     "PDFReader",
     "ImageReader",
+    "WordReader",
 ]

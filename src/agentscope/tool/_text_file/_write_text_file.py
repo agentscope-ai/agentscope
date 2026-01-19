@@ -19,7 +19,11 @@ Policy:
 """
 import os
 
-from ._utils import _calculate_view_ranges, _view_text_file, _dangerous_text_io_guard
+from ._utils import (
+    _calculate_view_ranges,
+    _view_text_file,
+    _dangerous_text_io_guard,
+)
 from .._response import ToolResponse
 from ...message import TextBlock
 

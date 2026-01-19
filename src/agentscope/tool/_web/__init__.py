@@ -17,4 +17,3 @@ __all__ = [
     "web_pdf_ocr_markdown",
     "web_html_render_markdown",
 ]
-

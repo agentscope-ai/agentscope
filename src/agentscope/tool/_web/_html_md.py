@@ -20,7 +20,6 @@ from __future__ import annotations
 import traceback
 
 from .._response import ToolResponse
-from ...message import TextBlock
 from ..._logging import logger
 from ._common import normalize_and_validate_url, sanitize_html, error_response
 
@@ -30,7 +29,11 @@ def web_html_render_markdown(url: str) -> ToolResponse:
     try:
         norm_url = normalize_and_validate_url(url)
     except Exception as e:  # pylint: disable=broad-except
-        logger.warning("web_html_render_markdown: invalid url=%r; err=%s", url, e)
+        logger.warning(
+            "web_html_render_markdown: invalid url=%r; err=%s",
+            url,
+            e,
+        )
         return error_response(str(e))
 
     try:
@@ -39,12 +42,13 @@ def web_html_render_markdown(url: str) -> ToolResponse:
         html = ""  # placeholder
 
         # TODO: apply real sanitation/cleanup
-        cleaned = sanitize_html(html)
+        sanitize_html(html)
 
         # TODO: convert to Markdown via readability+markdownify (or similar)
         # md = html2md(cleaned)
         raise NotImplementedError(
-            "TODO: implement Playwright HTML capture and HTML→Markdown conversion",
+            "TODO: implement Playwright HTML capture and HTML→Markdown "
+            "conversion",
         )
 
     except Exception as e:  # pylint: disable=broad-except
@@ -58,4 +62,3 @@ def web_html_render_markdown(url: str) -> ToolResponse:
 
 
 __all__ = ["web_html_render_markdown"]
-

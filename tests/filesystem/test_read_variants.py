@@ -21,9 +21,11 @@ ALL_OPS = {
 
 def _handle() -> tuple[InMemoryFileSystem, FsHandle]:
     fs = InMemoryFileSystem()
-    handle = fs.create_handle([
-        {"prefix": "/workspace/", "ops": set(ALL_OPS)},
-    ])
+    handle = fs.create_handle(
+        [
+            {"prefix": "/workspace/", "ops": set(ALL_OPS)},
+        ],
+    )
     return fs, handle
 
 
@@ -46,7 +48,8 @@ def test_text_and_binary_round_trip() -> None:
     handle.write("/workspace/data.txt", "alpha\nbravo\ncharlie")
 
     assert handle.read_file("/workspace/data.txt") == "alpha\nbravo\ncharlie"
-    assert handle.read_binary("/workspace/data.txt") == b"alpha\nbravo\ncharlie"
+    expected = b"alpha\nbravo\ncharlie"
+    assert handle.read_binary("/workspace/data.txt") == expected
 
 
 def test_write_rejects_non_text_binary() -> None:

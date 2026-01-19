@@ -51,6 +51,8 @@ extra_requires = [
     "pypdf",
     "nltk",
     "qdrant-client",
+    "python-docx",
+    'pymilvus[milvus_lite]; platform_system != "Windows"',
 ]
 
 dev_requires = [
@@ -70,7 +72,10 @@ setuptools.setup(
     version=VERSION,
     author="AgentScope-easy maintainers",
     author_email="noreply@example.com",
-    description="AgentScope-easy: Developer-first, composable multi-agent scaffolding.",
+    description=(
+        "AgentScope-easy: Developer-first, composable "
+        "multi-agent scaffolding."
+    ),
     long_description=long_description,
     long_description_content_type="text/markdown",
     url=URL,
@@ -78,6 +83,7 @@ setuptools.setup(
     keywords=["deep-learning", "multi agents", "agents"],
     package_dir={"": "src"},
     packages=setuptools.find_packages("src"),
+    package_data={"agentscope": ["py.typed"]},
     install_requires=minimal_requires,
     extras_require={
         "full": minimal_requires + extra_requires,

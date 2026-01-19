@@ -22,6 +22,7 @@ from ._subagent_base import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
+    from ..model import ChatModelBase
     from ..tool import ToolResponse
 
 
@@ -71,12 +72,16 @@ async def make_subagent_tool(
 
     initial_permissions = permissions_builder()
 
-    # Resolve model for subagent: explicit override > host.model (fail-fast if none)
-    model_for_subagent = override_model if override_model is not None else getattr(host, "model", None)
+    # Resolve model for subagent: explicit override > host.model
+    # (fail-fast if none)
+    if override_model is not None:
+        model_for_subagent = override_model
+    else:
+        model_for_subagent = getattr(host, "model", None)
     if model_for_subagent is None:
         raise SubAgentUnavailable(
-            "Host does not provide a ChatModel; make_subagent_tool requires a model "
-            "to be propagated to the subagent via model_override.",
+            "Host does not provide a ChatModel; make_subagent_tool requires "
+            "a model to be propagated to the subagent via model_override.",
         )
 
     # Registration-time probe: construct once to gate tool exposure.
@@ -104,7 +109,9 @@ async def make_subagent_tool(
         _spec: SubAgentSpec = spec,
         _cls: type[SubAgentBase] = cls,
         _ephemeral_memory: bool = ephemeral_memory,
-        _permissions_builder: Callable[[], PermissionBundle] = permissions_builder,
+        _permissions_builder: Callable[[], PermissionBundle] = (
+            permissions_builder
+        ),
         **raw_input: Any,
     ) -> ToolResponse:
         from ..tool import ToolResponse as _ToolResponse
@@ -144,7 +151,10 @@ async def make_subagent_tool(
             input_obj,
         )
 
-        _annotate_latest_user_message(parent_context.conversation, delegation_context)
+        _annotate_latest_user_message(
+            parent_context.conversation,
+            delegation_context,
+        )
 
         try:
             subagent = await _cls.export_agent(
@@ -204,7 +214,10 @@ async def _build_context_bundle(host: AgentBase) -> ContextBundle:
     memory = getattr(host, "memory", None)
     if memory is not None and hasattr(memory, "get_memory"):
         try:
-            conversation = list(await memory.get_memory())  # type: ignore[arg-type]
+            # type: ignore[arg-type]
+            conversation = list(
+                await memory.get_memory(),
+            )
         except Exception:  # pragma: no cover
             conversation = []
 
@@ -276,7 +289,8 @@ def _build_model_schema(
     description: str,
     input_model: type[BaseModel],
 ) -> dict[str, Any]:
-    """Construct an OpenAI function schema from the subagent's Pydantic model."""
+    """Construct an OpenAI function schema from the subagent's Pydantic
+    model."""
     schema = input_model.model_json_schema()
     _remove_title_field(schema)
     if "type" not in schema:
@@ -300,7 +314,10 @@ def _build_sample_input(model: type[BaseModel]) -> BaseModel:
             values[name] = field.default
             continue
         default_factory = getattr(field, "default_factory", PydanticUndefined)
-        if default_factory is not PydanticUndefined and default_factory is not None:
+        if (
+            default_factory is not PydanticUndefined
+            and default_factory is not None
+        ):
             values[name] = default_factory()
             continue
         values[name] = _placeholder_value(field.annotation)

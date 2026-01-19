@@ -13,10 +13,18 @@ def test_edit_file_applies_ordered_replacements(tmp_path) -> None:
     os.chdir(tmp_path)
     try:
         fs = DiskFileSystem()
-        handle = fs.create_handle([
-            {"prefix": "/userinput/", "ops": {"list","file","read_file"}},
-            {"prefix": "/workspace/", "ops": {"list","file","read_file","write","delete"}},
-        ])
+        handle = fs.create_handle(
+            [
+                {
+                    "prefix": "/userinput/",
+                    "ops": {"list", "file", "read_file"},
+                },
+                {
+                    "prefix": "/workspace/",
+                    "ops": {"list", "file", "read_file", "write", "delete"},
+                },
+            ],
+        )
         svc = FileDomainService(handle)
 
         svc.write_file("/workspace/a.txt", "hello world\nalpha beta\n")
@@ -33,7 +41,9 @@ def test_edit_file_applies_ordered_replacements(tmp_path) -> None:
 
         # editing under /userinput is denied regardless of existence
         with pytest.raises(AccessDeniedError):
-            svc.edit_file("/userinput/corpus.txt", edits=[{"oldText":"x","newText":"y"}])
+            svc.edit_file(
+                "/userinput/corpus.txt",
+                edits=[{"oldText": "x", "newText": "y"}],
+            )
     finally:
         os.chdir(cwd)
-

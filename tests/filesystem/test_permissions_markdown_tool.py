@@ -22,7 +22,7 @@ def test_fs_describe_permissions_markdown_tool() -> None:
                     "prefix": "/tmp/",
                     "ops": {"list", "file", "read_file", "write", "delete"},
                 },
-            ]
+            ],
         )
         svc = FileDomainService(handle)
 
@@ -43,6 +43,9 @@ def test_fs_describe_permissions_markdown_tool() -> None:
         chunks = [chunk async for chunk in res_gen]
         assert len(chunks) == 1
         text = chunks[0].content[0]["text"]
-        assert text == "/proc/: ls, stat, read\n/tmp/: ls, stat, read, write, delete"
+        assert (
+            text
+            == "/proc/: ls, stat, read\n/tmp/: ls, stat, read, write, delete"
+        )
 
     asyncio.run(_run())

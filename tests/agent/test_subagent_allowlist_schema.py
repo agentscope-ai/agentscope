@@ -91,7 +91,8 @@ def test_subagent_allowlist_schema() -> None:
         assert AllowlistSubAgent.seen_tools == [{"_allowed_tool"}]
 
         schema_names = {
-            schema["function"]["name"] for schema in agent.toolkit.get_json_schemas()
+            schema["function"]["name"]
+            for schema in agent.toolkit.get_json_schemas()
         }
         assert tool_name in schema_names
 

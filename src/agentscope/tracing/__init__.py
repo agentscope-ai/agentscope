@@ -1,12 +1,54 @@
 # -*- coding: utf-8 -*-
-"""Tracing public API with lazy decorator imports to avoid circular deps."""
+"""Tracing public API.
+
+We keep imports lazy to avoid tracing↔model circular imports, while still
+exporting concrete names so linters can resolve them.
+"""
 
 from __future__ import annotations
 
-from types import ModuleType
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ._setup import setup_tracing
+
+R = TypeVar("R")
+
+
+def trace(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace as _trace
+
+    return _trace(*args, **kwargs)
+
+
+def trace_llm(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace_llm as _trace_llm
+
+    return _trace_llm(*args, **kwargs)
+
+
+def trace_reply(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace_reply as _trace_reply
+
+    return _trace_reply(*args, **kwargs)
+
+
+def trace_format(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace_format as _trace_format
+
+    return _trace_format(*args, **kwargs)
+
+
+def trace_toolkit(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace_toolkit as _trace_toolkit
+
+    return _trace_toolkit(*args, **kwargs)
+
+
+def trace_embedding(*args: Any, **kwargs: Any) -> Callable[..., Any]:
+    from ._trace import trace_embedding as _trace_embedding
+
+    return _trace_embedding(*args, **kwargs)
+
 
 __all__ = [
     "setup_tracing",
@@ -17,29 +59,3 @@ __all__ = [
     "trace_toolkit",
     "trace_embedding",
 ]
-
-
-_TRACE_EXPORTS = {
-    "trace",
-    "trace_llm",
-    "trace_reply",
-    "trace_format",
-    "trace_toolkit",
-    "trace_embedding",
-}
-
-_trace_module: ModuleType | None = None
-
-
-def __getattr__(name: str) -> Any:
-    """Lazily import decorators to break tracing↔model circular imports."""
-    global _trace_module  # noqa: PLW0603
-    if name not in _TRACE_EXPORTS:
-        raise AttributeError(f"module {__name__} has no attribute {name}")
-
-    if _trace_module is None:
-        from . import _trace as trace_mod
-
-        _trace_module = trace_mod
-
-    return getattr(_trace_module, name)

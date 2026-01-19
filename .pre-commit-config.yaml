@@ -46,6 +46,7 @@ repos:
     rev: v3.0.2
     hooks:
       - id: pylint
+        files: ^src/
         exclude:
             (?x)(
                 ^docs
@@ -57,6 +58,8 @@ repos:
                 | ^examples/paper_llm_based_algorithm/
           )
         args: [
+          -E,
+          --source-roots=src,
           --disable=W0511,
           --disable=W0718,
           --disable=W0122,

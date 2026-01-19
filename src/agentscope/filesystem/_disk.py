@@ -23,9 +23,9 @@ from ._builtin import (
     USERINPUT_PREFIX,
     WORKSPACE_PREFIX,
 )
-"""Do not import _tools at module import time to avoid heavy package chains.
-Tool functions are imported lazily inside supported_tools().
-"""
+
+# Do not import `_tools` at module import time to avoid heavy package chains.
+# Tool functions are imported lazily inside supported_tools().
 
 
 _RE_PATH_SEP = re.compile(r"\\+")
@@ -103,9 +103,17 @@ class DiskFileSystem(FileSystemBase):
     def _to_os_path(self, path: Path) -> str:
         prefix, rel = self._split_namespace(path)
         rel_norm = _RE_PATH_SEP.sub("/", rel).lstrip("/")
-        return _norm_join(self._ns_root(prefix), *rel_norm.split("/") if rel_norm else [])
+        pieces = rel_norm.split("/") if rel_norm else []
+        return _norm_join(
+            self._ns_root(prefix),
+            *pieces,
+        )
 
-    def _iter_visible_under(self, prefix: str, base_dir: str) -> dict[Path, EntryMeta]:
+    def _iter_visible_under(
+        self,
+        prefix: str,
+        base_dir: str,
+    ) -> dict[Path, EntryMeta]:
         view: dict[Path, EntryMeta] = {}
         for root, _dirs, files in os.walk(base_dir):
             for fname in files:
@@ -117,24 +125,43 @@ class DiskFileSystem(FileSystemBase):
                 view[logical] = {
                     "path": logical,
                     "size": int(stat.st_size),
-                    "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    "updated_at": datetime.fromtimestamp(
+                        stat.st_mtime,
+                        tz=timezone.utc,
+                    ).isoformat(),
                 }
         return view
 
     # --------------------------- Backend hooks -------------------------
     def _snapshot_impl(self, grants: Sequence[Grant]) -> dict[Path, EntryMeta]:
         visible: dict[Path, EntryMeta] = {}
-        prefixes = {g["prefix"] for g in grants} if grants else {
-            INTERNAL_PREFIX,
-            USERINPUT_PREFIX,
-            WORKSPACE_PREFIX,
-        }
+        prefixes = (
+            {g["prefix"] for g in grants}
+            if grants
+            else {
+                INTERNAL_PREFIX,
+                USERINPUT_PREFIX,
+                WORKSPACE_PREFIX,
+            }
+        )
         if INTERNAL_PREFIX in prefixes:
-            visible.update(self._iter_visible_under(INTERNAL_PREFIX, self._internal_dir))
+            visible.update(
+                self._iter_visible_under(INTERNAL_PREFIX, self._internal_dir),
+            )
         if USERINPUT_PREFIX in prefixes:
-            visible.update(self._iter_visible_under(USERINPUT_PREFIX, self._userinput_dir))
+            visible.update(
+                self._iter_visible_under(
+                    USERINPUT_PREFIX,
+                    self._userinput_dir,
+                ),
+            )
         if WORKSPACE_PREFIX in prefixes:
-            visible.update(self._iter_visible_under(WORKSPACE_PREFIX, self._workspace_dir))
+            visible.update(
+                self._iter_visible_under(
+                    WORKSPACE_PREFIX,
+                    self._workspace_dir,
+                ),
+            )
         return visible
 
     def _read_binary_impl(self, path: Path) -> bytes:
@@ -201,7 +228,10 @@ class DiskFileSystem(FileSystemBase):
         meta: EntryMeta = {
             "path": path,
             "size": int(stat.st_size),
-            "updated_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+            "updated_at": datetime.fromtimestamp(
+                stat.st_mtime,
+                tz=timezone.utc,
+            ).isoformat(),
         }
         return meta
 
@@ -215,8 +245,10 @@ class DiskFileSystem(FileSystemBase):
     # ----------------------------- Tools export -----------------------------
     @staticmethod
     def supported_tools() -> list:
-        """Return the set of tool functions supported by this implementation."""
+        """Return the set of tool functions supported by this
+        implementation."""
         from . import _tools as T
+
         return [
             T.read_text_file,
             T.read_multiple_files,

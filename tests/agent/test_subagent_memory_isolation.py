@@ -51,8 +51,9 @@ def test_subagent_memory_isolation() -> None:
         refreshed_history = await agent.memory.get_memory()
         assert refreshed_history[-1].metadata is not None
         assert (
-            refreshed_history[-1]
-            .metadata["delegation_context"]["input_payload"]["message"]
+            refreshed_history[-1].metadata["delegation_context"][
+                "input_payload"
+            ]["message"]
             == "Summarize the latest updates."
         )
 

@@ -14,8 +14,11 @@ def test_handle_permissions_union_and_denials() -> None:
     handle = fs.create_handle(
         [
             {"prefix": "/userinput/", "ops": set(ALL_READ)},
-            {"prefix": "/workspace/", "ops": set(ALL_READ) | {"write", "delete"}},
-        ]
+            {
+                "prefix": "/workspace/",
+                "ops": set(ALL_READ) | {"write", "delete"},
+            },
+        ],
     )
 
     # write/read/delete cycle is allowed in /workspace
@@ -26,4 +29,3 @@ def test_handle_permissions_union_and_denials() -> None:
     # /userinput is read-only: write should be denied regardless of content
     with pytest.raises(AccessDeniedError):
         handle.write("/userinput/a.txt", "nope")
-

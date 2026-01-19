@@ -21,7 +21,6 @@ import os
 import traceback
 
 from .._response import ToolResponse
-from ...message import TextBlock
 from ..._logging import logger
 from ._common import normalize_and_validate_url, error_response
 
@@ -54,10 +53,7 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
     # 2) Env fail-fast
     missing = _check_env()
     if missing:
-        msg = (
-            "Missing required environment variables: "
-            + ", ".join(missing)
-        )
+        msg = "Missing required environment variables: " + ", ".join(missing)
         logger.error("web_pdf_ocr_markdown: %s", msg)
         return error_response(msg)
 
@@ -68,7 +64,8 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
         # - POST to ${DEEPSEEK_OCR_BASE_URL} with Authorization header
         # - Merge page-level Markdown
         raise NotImplementedError(
-            "TODO: implement Playwright PDF rendering and DeepSeek OCR conversion",
+            "TODO: implement Playwright PDF rendering and DeepSeek OCR "
+            "conversion",
         )
     except Exception as e:  # pylint: disable=broad-except
         logger.error(
@@ -81,4 +78,3 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
 
 
 __all__ = ["web_pdf_ocr_markdown"]
-

@@ -30,8 +30,20 @@ def _seed_project_inputs(fs: DiskFileSystem) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     readme_src = repo_root / "README.md"
 
-    userinput_dir = Path(getattr(fs, "_userinput_dir", os.path.join(repo_root, "userinput")))
-    workspace_dir = Path(getattr(fs, "_workspace_dir", os.path.join(repo_root, "workspace")))
+    userinput_dir = Path(
+        getattr(
+            fs,
+            "_userinput_dir",
+            os.path.join(repo_root, "userinput"),
+        ),
+    )
+    workspace_dir = Path(
+        getattr(
+            fs,
+            "_workspace_dir",
+            os.path.join(repo_root, "workspace"),
+        ),
+    )
 
     userinput_dir.mkdir(parents=True, exist_ok=True)
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -57,12 +69,29 @@ def build_toolkit() -> Toolkit:
     _seed_project_inputs(fs)
     handle = fs.create_handle(
         [
-            {"prefix": "/userinput/", "ops": {"list", "file", "read_file", "read_binary", "read_re"}},
+            {
+                "prefix": "/userinput/",
+                "ops": {
+                    "list",
+                    "file",
+                    "read_file",
+                    "read_binary",
+                    "read_re",
+                },
+            },
             {
                 "prefix": "/workspace/",
-                "ops": {"list", "file", "read_file", "read_binary", "read_re", "write", "delete"},
+                "ops": {
+                    "list",
+                    "file",
+                    "read_file",
+                    "read_binary",
+                    "read_re",
+                    "write",
+                    "delete",
+                },
             },
-        ]
+        ],
     )
     svc = FileDomainService(handle)
     tk = Toolkit()
@@ -91,7 +120,11 @@ def build_agent(toolkit: Toolkit) -> ReActAgent:
         api_key=api_key,
         stream=False,
         client_args={"base_url": base_url},
-        generate_kwargs={"tool_choice": "auto", "max_tokens": 1024, "temperature": 0.2},
+        generate_kwargs={
+            "tool_choice": "auto",
+            "max_tokens": 1024,
+            "temperature": 0.2,
+        },
     )
     formatter = OpenAIChatFormatter()
     return ReActAgent(
