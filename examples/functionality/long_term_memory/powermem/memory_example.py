@@ -185,7 +185,7 @@ async def test_react_agent_with_memory(
         ),
         model=DashScopeChatModel(
             model_name=os.getenv("DASHSCOPE_LLM_MODEL", "qwen-max-latest"),
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
             stream=False,
         ),
         formatter=DashScopeChatFormatter(),
