@@ -497,10 +497,10 @@
 </li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.HttpStatelessClient.__init__">__init__() （HttpStatelessClient 方法）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.token.html#agentscope.token.HuggingFaceTokenCounter.__init__">__init__() （HuggingFaceTokenCounter 方法）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.memory.html#agentscope.memory.InMemoryMemory.__init__">__init__() （InMemoryMemory 方法）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.__init__">__init__() （InMemoryPlanStorage 方法）</a>
@@ -522,6 +522,8 @@
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.MetricResult.__init__">__init__() （MetricResult 方法）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.__init__">__init__() （MilvusLiteStore 方法）</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.__init__">__init__() （MongoDBStore 方法）</a>
 </li>
         <li><a href="api/agentscope.message.html#agentscope.message.Msg.__init__">__init__() （Msg 方法）</a>
 </li>
@@ -679,6 +681,8 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.add">add() （MilvusLiteStore 方法）</a>
 </li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.add">add() （MongoDBStore 方法）</a>
+</li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.add">add() （MsgHub 方法）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.add">add() （QdrantStore 方法）</a>
@@ -775,6 +779,8 @@
           <li><a href="api/agentscope.memory.html#module-agentscope.memory">module</a>
 </li>
         </ul></li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.message
 
@@ -782,8 +788,6 @@
           <li><a href="api/agentscope.message.html#module-agentscope.message">module</a>
 </li>
         </ul></li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li>
     agentscope.model
 
@@ -980,14 +984,16 @@
 </li>
         <li><a href="api/agentscope.tts.html#agentscope.tts.DashScopeRealtimeTTSModel.close">close() （DashScopeRealtimeTTSModel 方法）</a>
 </li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.close">close() （MongoDBStore 方法）</a>
+</li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.close">close() （RedisMemory 方法）</a>
 </li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">close() （StatefulClientBase 方法）</a>
 </li>
-        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.close">close() （TTSModelBase 方法）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.close">close() （TTSModelBase 方法）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.compression_formatter">compression_formatter（ReActAgent.CompressionConfig 属性）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.compression_model">compression_model（ReActAgent.CompressionConfig 属性）</a>
@@ -1090,9 +1096,11 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.delete">delete() （MemoryBase 方法）</a>
 </li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.delete">delete() （MilvusLiteStore 方法）</a>
+</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
-        <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.delete">delete() （MilvusLiteStore 方法）</a>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.delete">delete() （MongoDBStore 方法）</a>
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub.delete">delete() （MsgHub 方法）</a>
 </li>
@@ -1109,6 +1117,10 @@
         <li><a href="api/agentscope.memory.html#agentscope.memory.MemoryBase.delete_by_mark">delete_by_mark() （MemoryBase 方法）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.delete_by_mark">delete_by_mark() （RedisMemory 方法）</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.delete_collection">delete_collection() （MongoDBStore 方法）</a>
+</li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.delete_database">delete_database() （MongoDBStore 方法）</a>
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.InMemoryPlanStorage.delete_plan">delete_plan() （InMemoryPlanStorage 方法）</a>
 </li>
@@ -1292,6 +1304,8 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.get_client">get_client() （MilvusLiteStore 方法）</a>
 </li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.get_client">get_client() （MongoDBStore 方法）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.get_client">get_client() （QdrantStore 方法）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.get_client">get_client() （RedisMemory 方法）</a>
@@ -1300,10 +1314,10 @@
 </li>
         <li><a href="api/agentscope.tuner.html#agentscope.tuner.TunerModelConfig.get_config">get_config() （TunerModelConfig 方法）</a>
 </li>
-        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() （Msg 方法）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() （Msg 方法）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() （PlanNotebook 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() （ACEPhone 方法）</a>
@@ -1596,10 +1610,10 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask.model_config">model_config（SubTask 属性）</a>
 </li>
-    </ul></td>
-    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tuner.html#agentscope.tuner.TunerModelConfig.model_config">model_config（TunerModelConfig 属性）</a>
 </li>
+    </ul></td>
+    <td style="width: 33%; vertical-align: top;"><ul>
         <li><a href="api/agentscope.tuner.html#agentscope.tuner.WorkflowOutput.model_config">model_config（WorkflowOutput 属性）</a>
 </li>
         <li><a href="api/agentscope.model.html#agentscope.model.ChatModelBase.model_name">model_name（ChatModelBase 属性）</a>
@@ -1661,6 +1675,8 @@
           <li><a href="api/agentscope.types.html#module-agentscope.types">agentscope.types</a>
 </li>
         </ul></li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore">MongoDBStore（agentscope.rag 中的类）</a>
+</li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.AsyncSQLAlchemyMemory.MessageMarkTable.msg_id">msg_id（AsyncSQLAlchemyMemory.MessageMarkTable 属性）</a>
 </li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.MsgHub">MsgHub（agentscope.pipeline 中的类）</a>
@@ -1999,6 +2015,8 @@
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.MilvusLiteStore.search">search() （MilvusLiteStore 方法）</a>
 </li>
+        <li><a href="api/agentscope.rag.html#agentscope.rag.MongoDBStore.search">search() （MongoDBStore 方法）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.QdrantStore.search">search() （QdrantStore 方法）</a>
 </li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.search">search() （VDBStoreBase 方法）</a>
@@ -2101,10 +2119,10 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask">SubTask（agentscope.plan 中的类）</a>
 </li>
-        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.success">success（SolutionOutput 属性）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.success">success（SolutionOutput 属性）</a>
+</li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.summary_schema">summary_schema（ReActAgent.CompressionConfig 属性）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.summary_template">summary_template（ReActAgent.CompressionConfig 属性）</a>

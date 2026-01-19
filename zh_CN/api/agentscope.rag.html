@@ -1053,6 +1053,197 @@ the full functionality of Milvus.</p>
 </dd></dl>
 
 <dl class="py class">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">MongoDBStore</span></span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore" title="Link to this definition">¶</a></dt>
+<dd><p>基类：<a class="reference internal" href="#agentscope.rag.VDBStoreBase" title="agentscope.rag._store._store_base.VDBStoreBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">VDBStoreBase</span></code></a></p>
+<p>MongoDB vector store using MongoDB Vector Search.</p>
+<p>This class provides a vector database store implementation using MongoDB's
+vector search capabilities. It requires MongoDB with vector search support
+and creates vector search indexes automatically.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>Ensure your MongoDB instance supports Vector Search</p>
+</div>
+<p>functionality.</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>The store automatically creates database, collection, and vector</p>
+</div>
+<p>search index on first operation. No manual initialization is required.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">collection_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'vector_index'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">distance</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'cosine'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">filter_fields</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">collection_kwargs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the MongoDB vector store.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>) -- MongoDB connection host, e.g., &quot;mongodb://localhost:27017&quot; or
+&quot;mongodb+srv://cluster.mongodb.net/&quot;.</p></li>
+<li><p><strong>db_name</strong> (<cite>str</cite>) -- Database name to store vector documents.</p></li>
+<li><p><strong>collection_name</strong> (<cite>str</cite>) -- Collection name to store vector documents.</p></li>
+<li><p><strong>dimensions</strong> (<cite>int</cite>) -- Embedding dimensions for the vector search index.</p></li>
+<li><p><strong>index_name</strong> (<cite>str</cite>, defaults to &quot;vector_index&quot;) -- Vector search index name.</p></li>
+<li><p><strong>distance</strong> (<cite>Literal[&quot;cosine&quot;, &quot;euclidean&quot;, &quot;dotProduct&quot;]</cite>,             defaults to &quot;cosine&quot;) -- Distance metric for vector similarity. Can be one of &quot;cosine&quot;,
+&quot;euclidean&quot;, or &quot;dotProduct&quot;.</p></li>
+<li><p><strong>filter_fields</strong> (<cite>list[str] | None</cite>, optional) -- List of field paths to index for filtering in $vectorSearch.
+For example: [&quot;payload.doc_id&quot;, &quot;payload.chunk_id&quot;].
+These fields can then be used in the <cite>filter</cite> parameter of
+the <cite>search</cite> method. MongoDB $vectorSearch filter supports:
+$gt, $gte, $lt, $lte, $eq, $ne, $in, $nin, $exists, $not.</p></li>
+<li><p><strong>client_kwargs</strong> (<cite>dict[str, Any] | None</cite>, optional) -- Additional kwargs for MongoDB client.</p></li>
+<li><p><strong>db_kwargs</strong> (<cite>dict[str, Any] | None</cite>, optional) -- Additional kwargs for database.</p></li>
+<li><p><strong>collection_kwargs</strong> (<cite>dict[str, Any] | None</cite>, optional) -- Additional kwargs for collection.</p></li>
+</ul>
+</dd>
+<dt class="field-even">抛出<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ImportError</strong> -- If pymongo is not installed.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.add">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">add</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">documents</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.add"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.add" title="Link to this definition">¶</a></dt>
+<dd><p>Insert documents with embeddings into MongoDB.</p>
+<p>This method automatically creates the database, collection, and vector
+search index if they don't exist.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>documents</strong> (<cite>list[Document]</cite>) -- List of Document objects to insert.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- Additional arguments (unused).</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>Each inserted record has structure:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>                <span class="c1"># Document ID</span>
+    <span class="s2">&quot;vector&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span>    <span class="c1"># Vector embedding</span>
+    <span class="s2">&quot;payload&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>          <span class="c1"># DocMetadata as dict</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.search">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">search</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">query_embedding</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">limit</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">score_threshold</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.search"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.search" title="Link to this definition">¶</a></dt>
+<dd><p>Search relevant documents using MongoDB Vector Search.</p>
+<p>This method uses MongoDB's $vectorSearch aggregation pipeline for
+vector similarity search. It automatically waits for the vector search
+index to be ready before performing the search.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>query_embedding</strong> (<cite>Embedding</cite>) -- The embedding vector to search for.</p></li>
+<li><p><strong>limit</strong> (<cite>int</cite>) -- Maximum number of documents to return.</p></li>
+<li><p><strong>score_threshold</strong> (<cite>float | None</cite>, optional) -- Minimum similarity score threshold. Documents with scores below
+this threshold will be filtered out.</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- Additional arguments for the search operation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">返回<span class="colon">:</span></dt>
+<dd class="field-even"><p>List of Document objects with embedding,
+score, and metadata.</p>
+</dd>
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Document]</cite></p>
+</dd>
+</dl>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<ul class="simple">
+<li><p>Requires MongoDB with vector search support</p></li>
+<li><p>Uses $vectorSearch aggregation pipeline</p></li>
+</ul>
+</div>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.delete">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ids</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.delete"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.delete" title="Link to this definition">¶</a></dt>
+<dd><p>Delete documents from the MongoDB collection.</p>
+<dl class="field-list simple">
+<dt class="field-odd">参数<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>ids</strong> (<cite>str | list[str] | None</cite>, optional) -- List of document IDs to delete. If provided, deletes documents
+with matching doc_id in payload.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.get_client">
+<span class="sig-name descname"><span class="pre">get_client</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.get_client"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.get_client" title="Link to this definition">¶</a></dt>
+<dd><p>Get the underlying MongoDB client for advanced operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The AsyncMongoClient instance.</p>
+</dd>
+<dt class="field-even">返回类型<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>AsyncMongoClient</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.delete_collection">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_collection</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.delete_collection"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.delete_collection" title="Link to this definition">¶</a></dt>
+<dd><p>Delete the entire collection.</p>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p>This will permanently delete all documents in the collection.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.delete_database">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">delete_database</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.delete_database"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.delete_database" title="Link to this definition">¶</a></dt>
+<dd><p>Delete the entire database.</p>
+<div class="admonition warning">
+<p class="admonition-title">警告</p>
+<p>This will permanently delete the entire database and all its
+collections.</p>
+</div>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.MongoDBStore.close">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_store/_mongodb_store.html#MongoDBStore.close"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.MongoDBStore.close" title="Link to this definition">¶</a></dt>
+<dd><p>Close the MongoDB connection.</p>
+<p>This should be called when the store is no longer needed to properly
+clean up resources.</p>
+<dl class="field-list simple">
+<dt class="field-odd">返回类型<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
 <dt class="sig sig-object py" id="agentscope.rag.AlibabaCloudMySQLStore">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">AlibabaCloudMySQLStore</span></span><a class="reference internal" href="../_modules/agentscope/rag/_store/_alibabacloud_mysql_store.html#AlibabaCloudMySQLStore"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.rag.AlibabaCloudMySQLStore" title="Link to this definition">¶</a></dt>
 <dd><p>基类：<a class="reference internal" href="#agentscope.rag.VDBStoreBase" title="agentscope.rag._store._store_base.VDBStoreBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">VDBStoreBase</span></code></a></p>
@@ -1489,6 +1680,17 @@ The threshold of the score to filter the results.</p></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.search"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.search()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.delete"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.delete()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.MilvusLiteStore.get_client"><code class="docutils literal notranslate"><span class="pre">MilvusLiteStore.get_client()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore"><code class="docutils literal notranslate"><span class="pre">MongoDBStore</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.__init__"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.add"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.add()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.search"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.search()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.delete"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.delete()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.get_client"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.get_client()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.delete_collection"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.delete_collection()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.delete_database"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.delete_database()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.MongoDBStore.close"><code class="docutils literal notranslate"><span class="pre">MongoDBStore.close()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.rag.AlibabaCloudMySQLStore"><code class="docutils literal notranslate"><span class="pre">AlibabaCloudMySQLStore</span></code></a><ul>
