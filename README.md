@@ -251,7 +251,7 @@ async def fine_grained_mcp_control():
 
 ### Agentic RL
 
-Train your agentic application seamlessly with Trinity-RFT integration.
+Train your agentic application seamlessly with Reinforcement Learning integration. We also prepare multiple sample projects covering various scenarios:
 
 | Example                                                                                          | Description                                                 | Multi-step Interaction | LLM-as-a-Judge | Tool-use | Multi-Agent | Data Augmentation | Reward Curve                                                                                                           |
 |--------------------------------------------------------------------------------------------------|-------------------------------------------------------------|------------------------|----------------|----------|-------------|-------------------|------------------------------------------------------------------------------------------------------------------------|
