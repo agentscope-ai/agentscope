@@ -111,7 +111,8 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         try:
             await self._ensure_initialized()
             payload = self._join_record_content(thinking, content)
-            await self._add_messages(payload, infer=self._infer, **kwargs)
+            infer = kwargs.pop("infer", self._infer)
+            await self._add_messages(payload, infer=infer, **kwargs)
             return ToolResponse(
                 content=[
                     TextBlock(
@@ -277,7 +278,10 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
     async def _call_memory(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)
-        return await asyncio.to_thread(func, *args, **kwargs)
+        result = await asyncio.to_thread(func, *args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     @staticmethod
     def _join_record_content(thinking: str, content: list[str]) -> str:
