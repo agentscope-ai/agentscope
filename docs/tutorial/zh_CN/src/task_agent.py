@@ -19,6 +19,8 @@ ReAct 智能体
       - 参考文档
     * - 支持实时介入（Realtime Steering）
       -
+    * - 支持记忆压缩
+      -
     * - 支持并行工具调用
       -
     * - 支持结构化输出
@@ -103,6 +105,120 @@ from agentscope.tool import Toolkit, ToolResponse
 #     中断智能体 ``reply`` 的执行过程
 #
 # 开发者可以通过覆盖 ``handle_interrupt`` 函数实现自定义的中断后处理逻辑，例如，调用 LLM 生成对中断的简单响应。
+#
+#
+# 记忆压缩
+# ----------------------------------------
+# 随着对话的不断增长，记忆中的 token 数量可能会超过模型的上下文限制或导致推理速度变慢。
+# ``ReActAgent`` 提供了自动记忆压缩功能来解决这个问题。
+#
+# **基础用法**
+#
+# 要启用记忆压缩，在初始化 ``ReActAgent`` 时提供一个 ``CompressionConfig`` 实例：
+#
+# .. code-block:: python
+#
+#     from agentscope.agent import ReActAgent
+#     from agentscope.token import CharTokenCounter
+#
+#     agent = ReActAgent(
+#         name="助手",
+#         sys_prompt="你是一个有用的助手。",
+#         model=model,
+#         formatter=formatter,
+#         compression_config=ReActAgent.CompressionConfig(
+#             enable=True,
+#             agent_token_counter=CharTokenCounter(),  # 智能体的 token 计数器
+#             trigger_threshold=10000,  # 超过 10000 个 token 时触发压缩
+#             keep_recent=3,            # 保持最近 3 条消息不被压缩
+#         ),
+#     )
+#
+# 启用记忆压缩后，智能体会监控其记忆中的 token 数量。
+# 一旦超过 ``trigger_threshold``，智能体会自动：
+#
+# 1. 识别尚未被压缩的消息（通过 ``exclude_mark``）
+# 2. 保持最近 ``keep_recent`` 条消息不被压缩（以保留最近的上下文）
+# 3. 将较早的消息发送给 LLM 生成结构化摘要
+# 4. 使用 ``MemoryMark.COMPRESSED`` 标记已压缩的消息（通过 ``update_messages_mark``）
+# 5. 将摘要存储在记忆中（通过 ``update_compressed_summary``）
+#
+# .. important:: 压缩采用**标记机制**而非替换消息。旧消息被标记为已压缩，并通过 ``exclude_mark=MemoryMark.COMPRESSED`` 在后续检索中被排除，而生成的摘要则单独存储，在需要时检索。这种方式保留了原始消息，允许灵活的记忆管理。关于标记功能的更多详情，请参考 :ref:`memory`。
+#
+# 默认情况下，压缩摘要被结构化为五个关键字段：
+#
+# - **task_overview**：用户的核心请求和成功标准
+# - **current_state**：到目前为止已完成的工作，包括文件和输出
+# - **important_discoveries**：技术约束、决策、错误和失败的尝试
+# - **next_steps**：完成任务所需的具体操作
+# - **context_to_preserve**：用户偏好、领域细节和做出的承诺
+#
+# **自定义压缩**
+#
+# 可以通过指定 ``summary_schema``、``summary_template`` 和 ``compression_prompt`` 参数来自定义压缩的工作方式。
+#
+# - **summary_schema**：使用 Pydantic 模型定义压缩摘要的结构
+# - **compression_prompt**：指导 LLM 如何生成摘要
+# - **summary_template**：格式化压缩摘要如何呈现给智能体
+#
+# 下面是一个自定义压缩的示例：
+#
+# .. code-block:: python
+#
+#     from pydantic import BaseModel, Field
+#
+#     # 定义自定义摘要结构
+#     class CustomSummary(BaseModel):
+#         main_topic: str = Field(
+#             max_length=200,
+#             description="对话的主题"
+#         )
+#         key_points: str = Field(
+#             max_length=400,
+#             description="讨论的重要观点"
+#         )
+#         pending_tasks: str = Field(
+#             max_length=200,
+#             description="待完成的任务"
+#         )
+#
+#     # 使用自定义压缩配置创建智能体
+#     agent = ReActAgent(
+#         name="助手",
+#         sys_prompt="你是一个有用的助手。",
+#         model=model,
+#         formatter=formatter,
+#         compression_config=ReActAgent.CompressionConfig(
+#             enable=True,
+#             agent_token_counter=CharTokenCounter(),
+#             trigger_threshold=10000,
+#             keep_recent=3,
+#             # 结构化摘要的自定义 schema
+#             summary_schema=CustomSummary,
+#             # 指导压缩的自定义提示
+#             compression_prompt=(
+#                 "<system-hint>请总结上述对话，"
+#                 "重点关注主题、关键讨论点和待完成任务。</system-hint>"
+#             ),
+#             # 格式化摘要的自定义模板
+#             summary_template=(
+#                 "<system-info>对话摘要：\n"
+#                 "主题：{main_topic}\n\n"
+#                 "关键观点：\n{key_points}\n\n"
+#                 "待完成任务：\n{pending_tasks}"
+#                 "</system-info>"
+#             ),
+#         ),
+#     )
+#
+# ``summary_template`` 使用 ``summary_schema`` 中定义的字段作为占位符
+# （例如 ``{main_topic}``、``{key_points}``）。在 LLM 生成结构化摘要后，
+# 这些占位符将被实际值替换。
+#
+# .. note:: 智能体确保工具使用和工具结果对在压缩过程中保持在一起，以维护对话流程的完整性。
+#
+# .. tip:: 可以通过指定不同的 ``compression_model`` 和 ``compression_formatter`` 来使用更小、更快的模型进行压缩，以降低成本和延迟。
+#
 #
 #
 # 并行工具调用
