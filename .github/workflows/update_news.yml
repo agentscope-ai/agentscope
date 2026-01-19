@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'docs/NEWS.md'
+      - 'docs/NEWS_zh.md'
     branches-ignore:
       - 'main'
 
@@ -28,6 +29,6 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add README.md README_zh.md
-          git diff --staged --quiet || git commit -m "docs: auto-update NEWS section from docs/NEWS.md"
+          git diff --staged --quiet || git commit -m "docs: auto-sync NEWS section to README files"
           git push
 

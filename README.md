@@ -75,17 +75,16 @@ TODO: a picture here for ecosystem integrations.
 
 ## News
 <!-- BEGIN NEWS -->
-- **[2026-01]** Hi community, we are launching AgentScope Biweekly Meetings to share ecosystem updates and development plans - join us! [Details & Schedule](https://github.com/agentscope-ai/agentscope/discussions/1126)
-- **[2026-01]** AgentScope integrates [database support](https://doc.agentscope.io/tutorial/task_memory.html) in the memory module now, as well as the [memory compression](https://doc.agentscope.io/tutorial/task_agent.html) feature. Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) and [tutorial](https://doc.agentscope.io/tutorial/task_memory.html) for more details.
 - **[2025-12]** AgentScope supports [A2A(Agent-to-Agent) protocol](https://doc.agentscope.io/tutorial/task_a2a.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) and [tutorial](https://doc.agentscope.io/tutorial/task_a2a.html) for more details.
 - **[2025-12]** AgentScope supports [TTS(Text-to-Speech)](https://doc.agentscope.io/tutorial/task_tts.html) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) and [tutorial](https://doc.agentscope.io/tutorial/task_tts.html) for more details.
 - **[2025-11]** AgentScope supports [Anthropic Agent Skill](https://claude.com/blog/skills) now! Check our [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) and [tutorial](https://doc.agentscope.io/tutorial/task_agent_skill.html) for more details.
 - **[2025-11]** AgentScope open-sources [Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) for diverse real-world tasks and [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent) for data processing.
-- **[2025-11]** AgentScope supports [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent) via integrating [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT) library.
+- **[2025-11]** AgentScope supports [Agentic RL](https://github.com/agentscope-ai/agentscope/tree/main/examples/training/react_agent) via integrating [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) library.
 - **[2025-11]** AgentScope integrates [ReMe](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme) for enhanced long-term memory.
 - **[2025-11]** AgentScope launches [agentscope-samples](https://github.com/agentscope-ai/agentscope-samples) repository and upgrades [agentscope-runtime](https://github.com/agentscope-ai/agentscope-runtime) with Docker/K8s deployment and VNC-powered GUI sandboxes.
 - **[2025-11]** [Contributing Guide](./CONTRIBUTING.md) is online now! Welcome to contribute to AgentScope.
 - **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
+- **[2025-09]** **Voice agent** is online! `ReActAgent` supports Qwen-Omni and GPT-Audio natively now, check our [new example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/voice_agent) and [roadmap](https://github.com/agentscope-ai/agentscope/issues/773).
 <!-- END NEWS -->
 
 ## Community
