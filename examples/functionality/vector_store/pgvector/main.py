@@ -9,6 +9,74 @@ from agentscope.rag import (
 from agentscope.message import TextBlock
 
 
+async def setup_database() -> None:
+    """Setup PostgreSQL database and enable pgvector extension."""
+    print("\n" + "=" * 60)
+    print("Database Setup")
+    print("=" * 60)
+
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+    except ImportError:
+        print("✗ psycopg2 is not installed. Please install it with:")
+        print("  pip install psycopg2-binary")
+        return
+
+    # Connect to PostgreSQL server (default postgres database)
+    try:
+        conn = psycopg2.connect(
+            host="localhost",
+            port=5432,
+            user="postgres",
+            password="your_password",
+            database="postgres",  # Connect to default database first
+        )
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cursor = conn.cursor()
+
+        # Create database if not exists
+        cursor.execute(
+            "SELECT 1 FROM pg_database WHERE datname = 'agentscope_test'",
+        )
+        if not cursor.fetchone():
+            cursor.execute("CREATE DATABASE agentscope_test")
+            print("✓ Created database 'agentscope_test'")
+        else:
+            print("✓ Database 'agentscope_test' already exists")
+
+        cursor.close()
+        conn.close()
+
+        # Connect to the agentscope_test database and enable pgvector
+        conn = psycopg2.connect(
+            host="localhost",
+            port=5432,
+            user="postgres",
+            password="your_password",
+            database="agentscope_test",
+        )
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cursor = conn.cursor()
+
+        # Enable pgvector extension
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        print("✓ Enabled pgvector extension")
+
+        cursor.close()
+        conn.close()
+
+        print("✓ Database setup completed successfully")
+
+    except Exception as e:
+        print(f"✗ Database setup failed: {e}")
+        print("\nPlease ensure:")
+        print("1. PostgreSQL is running")
+        print("2. Connection parameters are correct")
+        print("3. pgvector extension is installed")
+        raise
+
+
 async def example_basic_operations() -> None:
     """The example of basic CRUD operations with PgVectorStore."""
     print("\n" + "=" * 60)
@@ -295,6 +363,10 @@ async def main() -> None:
     print("=" * 60)
 
     try:
+        # Setup database and enable pgvector extension
+        await setup_database()
+
+        # Run all examples
         await example_basic_operations()
         await example_filter_search()
         await example_multiple_chunks()

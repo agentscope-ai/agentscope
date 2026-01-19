@@ -98,7 +98,8 @@ class PgVectorStore(VDBStoreBase):
 
         # Initialize connection
         self._conn = psycopg2.connect(**self.connection_params)
-        self._conn.autocommit = False
+        # Use autocommit mode for DDL operations to avoid transaction issues
+        self._conn.autocommit = True
         self._cursor = self._conn.cursor()
 
     def _get_distance_operator(self) -> str:
@@ -193,8 +194,6 @@ class PgVectorStore(VDBStoreBase):
                 # Index can be created manually later
                 pass
 
-        self._conn.commit()
-
     async def add(self, documents: list[Document], **kwargs: Any) -> None:
         """Add embeddings to the pgvector store.
 
@@ -260,8 +259,6 @@ class PgVectorStore(VDBStoreBase):
                 ),
             )
 
-        self._conn.commit()
-
     async def search(
         self,
         query_embedding: Embedding,
@@ -294,14 +291,19 @@ class PgVectorStore(VDBStoreBase):
 
         # Build WHERE clause
         where_conditions = []
+        where_params: list[str | float] = []
+        
         if "filter" in kwargs and kwargs["filter"]:
-            where_conditions.append(kwargs["filter"])
+            # Escape % in filter to avoid psycopg2 treating it as placeholder
+            filter_clause = kwargs["filter"].replace("%", "%%")
+            where_conditions.append(filter_clause)
 
         # Add distance threshold condition if specified
         if score_threshold is not None:
             where_conditions.append(
                 f"(embedding {operator} %s::vector) <= %s",
             )
+            where_params.extend([query_vector_text, score_threshold])
 
         where_clause = ""
         if where_conditions:
@@ -322,13 +324,13 @@ class PgVectorStore(VDBStoreBase):
         LIMIT %s
         """
 
-        # Prepare parameters
+        # Prepare parameters in the correct order
         params: list[str | float | int] = [query_vector_text]
-        if score_threshold is not None:
-            params.extend([query_vector_text, score_threshold])
-        params.extend([query_vector_text, limit])
-
-        self._cursor.execute(search_sql, params)
+        params.extend(where_params)
+        params.append(query_vector_text)
+        params.append(limit)
+        
+        self._cursor.execute(search_sql, tuple(params))
         results = self._cursor.fetchall()
 
         # Process results
@@ -403,8 +405,6 @@ class PgVectorStore(VDBStoreBase):
             # Delete by filter
             delete_sql = f"DELETE FROM {self.table_name} WHERE {filter}"
             self._cursor.execute(delete_sql)
-
-        self._conn.commit()
 
     def get_client(self) -> Any:
         """Get the underlying PostgreSQL connection, so that developers can
