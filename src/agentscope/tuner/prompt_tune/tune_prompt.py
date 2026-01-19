@@ -1,3 +1,4 @@
+"""Prompt tuning functionality using DSPy's MIPROv2 optimizer."""
 
 from agentscope.agent import ReActAgent
 from agentscope.tuner import (
@@ -22,6 +23,14 @@ from agentscope.tuner.prompt_tune.wrapper import WorkflowWrapperModule
 
 
 def wrap_judge_fn(judge_fn: JudgeType):
+    """Wrap an async judge function into a synchronous callable.
+
+    Args:
+        judge_fn: The async judge function to wrap.
+
+    Returns:
+        A synchronous wrapper function that returns only the reward value.
+    """
     async def inner(task: dict, response: Any, auxiliary_models: dict[str, ChatModelBase]):
         output = await judge_fn(task, response, auxiliary_models)
         return output.reward
@@ -43,6 +52,27 @@ def tune_prompt(
     auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
 ) -> ReActAgent:
+    """Tune the system prompt of a ReActAgent using DSPy's MIPROv2 optimizer.
+
+    This function optimizes the agent's system prompt by leveraging DSPy's
+    automatic prompt optimization capabilities.
+
+    Args:
+        workflow_func: A factory function that takes a ReActAgent and returns
+            an async workflow function.
+        init_agent: The initial ReActAgent to be optimized.
+        judge_func: An async function that evaluates the agent's response and
+            returns a JudgeOutput.
+        train_dataset: The dataset used for training/optimization.
+        eval_dataset: Optional dataset for evaluation after optimization.
+        model: The chat model used in the workflow.
+        auxiliary_models: Optional dictionary of additional chat models for
+            LLM-as-a-Judge usage.
+        config: Configuration for prompt tuning. Defaults to PromptTuneConfig().
+
+    Returns:
+        The optimized ReActAgent with an improved system prompt.
+    """
     config = config or PromptTuneConfig()
     auxiliary_models = auxiliary_models or {}
     if isinstance(model, TunerChatModel):
