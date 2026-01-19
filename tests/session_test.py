@@ -9,7 +9,7 @@ from agentscope.formatter import DashScopeChatFormatter
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
-from agentscope.session import JSONSession
+from agentscope.session import JSONSession, RedisSession
 from agentscope.tool import Toolkit
 
 
@@ -85,3 +85,63 @@ class SessionTest(IsolatedAsyncioTestCase):
         session_file = "./user_1.json"
         if os.path.exists(session_file):
             os.remove(session_file)
+
+
+class RedisSessionTest(IsolatedAsyncioTestCase):
+    """Test cases for the redis session module (with fake redis)."""
+
+    async def asyncSetUp(self) -> None:
+        # Use fakeredis (async)
+        try:
+            import fakeredis.aioredis  # type: ignore
+        except ImportError as e:
+            raise ImportError(
+                "fakeredis is required for this test. "
+                "Please install it via `pip install fakeredis`.",
+            ) from e
+
+        self._redis = fakeredis.aioredis.FakeRedis()
+        self.session = RedisSession(
+            connection_pool=self._redis.connection_pool,
+            key_prefix="test_agentscope",
+        )
+
+    async def test_redis_session_save_and_load(self) -> None:
+        """Test the RedisSession class."""
+        agent1 = ReActAgent(
+            name="Friday",
+            sys_prompt="A helpful assistant.",
+            model=DashScopeChatModel(api_key="xxx", model_name="qwen_max"),
+            formatter=DashScopeChatFormatter(),
+            toolkit=Toolkit(),
+            memory=InMemoryMemory(),
+        )
+        agent2 = MyAgent()
+
+        await agent2.memory.add(Msg("Alice", "Hi!", "user"))
+
+        # Save
+        await self.session.save_session_state(
+            session_id="user_1",
+            agent1=agent1,
+            agent2=agent2,
+        )
+
+        # Mutate local state to verify load really works
+        agent1.name = "Changed"
+        agent2.sys_prompt = "Changed prompt"
+
+        # Load back
+        await self.session.load_session_state(
+            session_id="user_1",
+            agent1=agent1,
+            agent2=agent2,
+        )
+
+        self.assertEqual(agent1.name, "Friday")
+        self.assertEqual(agent2.sys_prompt, "A helpful assistant.")
+
+    async def asyncTearDown(self) -> None:
+        # close clients
+        await self.session.close()
+        await self._redis.close()
