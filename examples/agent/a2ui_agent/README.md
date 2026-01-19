@@ -36,16 +36,18 @@ Therefore, these dependencies are currently included in this example repository 
 
 ## Quick Start
 
-Install the latest version of AgentScope to run this example:
+Download the a2ui and agentscope package to the same directory
 
 ```bash
-pip install agentscope --upgrade
+git clone https://github.com/google/A2UI.git
+git clone -b main https://github.com/agentscope-ai/agentscope.git
 ```
+
 
 Then, navigate to the client directory and run the restaurant finder demo:
 
 ```bash
-cd examples/agent/a2ui_agent/samples/client/lit
+cd AgentScope/examples/agent/a2ui_agent/samples/client/lit
 npm run demo:restaurant
 ```
 
@@ -57,7 +59,7 @@ This command will:
 > Note:
 > - The example is built with DashScope chat model. Make sure to set your `DASHSCOPE_API_KEY`
 >   environment variable before running the demo.
-> - If you are using Qwen series models, we recommend using `qwen-max` for better performance in
+> - If you are using Qwen series models, we recommend using `qwen3-max` for better performance in
 >   generating A2UI-compliant JSON responses.
 > - Generating UI JSON responses may take some time, typically 1-2 minutes, as the agent needs to
 >   process the schema, examples, and generate complex UI structures.

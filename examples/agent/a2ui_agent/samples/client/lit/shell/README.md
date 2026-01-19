@@ -24,7 +24,7 @@ This sample depends on the Lit renderer. Before running this sample, you need to
    ```
 
 3. **Run the servers:**
-   - Run the [A2A server](../../../agent/adk/restaurant_finder/)
+   - Run the [A2A server](../../../agent/general_agent/)
    - Run the dev server: `npm run dev`
 
 After starting the dev server, you can open http://localhost:5173/ to view the sample.

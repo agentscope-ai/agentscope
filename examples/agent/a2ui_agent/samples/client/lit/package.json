@@ -9,7 +9,7 @@
     "shell"
   ],
   "scripts": {
-    "serve:agent:restaurant": "cd ../../agent/as/restaurant_finder && uv run .",
+    "serve:agent:restaurant": "cd ../../agent/general_agent && uv run .",
     "serve:agent:contact_example": "cd ../../agent/as/contact_example && uv run .",
     "serve:agent:contact_multi_surface": "cd ../../agent/adk/contact_multiple_surfaces && uv run .",
     "serve:shell": "cd shell && npm run dev",
