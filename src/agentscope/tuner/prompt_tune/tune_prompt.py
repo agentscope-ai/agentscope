@@ -2,8 +2,8 @@
 
 from agentscope.agent import ReActAgent
 from agentscope.tuner import (
-    Dataset,
-    TunerChatModel,
+    DatasetConfig,
+    TunerModelConfig,
 )
 import asyncio
 from typing import Any, Callable
@@ -14,10 +14,8 @@ from agentscope import logger
 from agentscope.agent._react_agent import ReActAgent
 from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import check_judge_function
-from agentscope.tuner._model import TunerChatModel
 from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
-from agentscope.tuner._dataset import Dataset
 from agentscope.tuner.prompt_tune.config import PromptTuneConfig
 from agentscope.tuner.prompt_tune.wrapper import WorkflowWrapperModule
 
@@ -46,8 +44,8 @@ def tune_prompt(
     workflow_func: Callable[[ReActAgent], WorkflowType],
     init_agent: ReActAgent,
     judge_func: JudgeType,
-    train_dataset: Dataset,
-    eval_dataset: Dataset | None = None,
+    train_dataset: DatasetConfig,
+    eval_dataset: DatasetConfig | None = None,
     model: ChatModelBase,
     auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
@@ -75,10 +73,7 @@ def tune_prompt(
     """
     config = config or PromptTuneConfig()
     auxiliary_models = auxiliary_models or {}
-    if isinstance(model, TunerChatModel):
-        logger.warning(
-            "Model is a TunerChatModel, which will not be optimized during prompt tuning.",
-        )
+    logger.warning("Model will not be optimized during prompt tuning.")
     check_judge_function(judge_func)
 
     logger.info("loading training dataset...")

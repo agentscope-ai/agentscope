@@ -6,7 +6,7 @@ from agentscope.formatter._openai_formatter import OpenAIChatFormatter
 from agentscope.message._message_base import Msg
 from agentscope.model._dashscope_model import DashScopeChatModel
 from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._dataset import Dataset
+from agentscope.tuner._dataset import DatasetConfig
 from agentscope.tuner._judge import JudgeOutput
 from agentscope.tuner._workflow import WorkflowOutput
 from agentscope.tuner.prompt_tune.tune_prompt import tune_prompt
@@ -88,7 +88,7 @@ async def gsm8k_judge(
 
 
 if __name__ == "__main__":
-    dataset = Dataset(
+    dataset = DatasetConfig(
         path="openai/gsm8k",
         name="main",
         split="train",
