@@ -338,7 +338,7 @@ class PgVectorStore(VDBStoreBase):
         for row in results:
             # Unpack row
             (
-                row_id,
+                _,
                 doc_id,
                 chunk_id,
                 content,
