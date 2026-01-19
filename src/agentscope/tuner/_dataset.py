@@ -57,5 +57,5 @@ class DatasetConfig(BaseModel):
             streaming=True,
         )
         samples = list(islice(ds, n))
-        print(json.dumps(samples, indent=2))
+        print(json.dumps(samples, indent=2, ensure_ascii=False))
         return samples

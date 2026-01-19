@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The OceanBase vector store implementation."""
+import asyncio
 import json
 from typing import Any, Callable, Literal, TYPE_CHECKING
 
@@ -110,7 +111,10 @@ class OceanBaseStore(VDBStoreBase):
         if self._collection_ready:
             return
 
-        if self._client.has_collection(self.collection_name):
+        if await asyncio.to_thread(
+            self._client.has_collection,
+            self.collection_name,
+        ):
             self._collection_ready = True
             return
 
@@ -122,7 +126,8 @@ class OceanBaseStore(VDBStoreBase):
         if "index_params" not in collection_kwargs:
             collection_kwargs["index_params"] = self._create_index_params()
 
-        self._client.create_collection(
+        await asyncio.to_thread(
+            self._client.create_collection,
             collection_name=self.collection_name,
             **collection_kwargs,
         )
@@ -258,7 +263,8 @@ class OceanBaseStore(VDBStoreBase):
 
         data = [self._document_to_dict(doc) for doc in documents]
 
-        self._client.insert(
+        await asyncio.to_thread(
+            self._client.insert,
             collection_name=self.collection_name,
             data=data,
             **kwargs,
@@ -381,7 +387,8 @@ class OceanBaseStore(VDBStoreBase):
             kwargs.pop("search_params", None),
         )
 
-        results = self._client.search(
+        results = await asyncio.to_thread(
+            self._client.search,
             collection_name=self.collection_name,
             data=query_embedding,
             anns_field=self.VECTOR_FIELD,
@@ -497,7 +504,8 @@ class OceanBaseStore(VDBStoreBase):
                 "At least one of ids or where must be provided for deletion.",
             )
 
-        self._client.delete(
+        await asyncio.to_thread(
+            self._client.delete,
             collection_name=self.collection_name,
             ids=ids,
             flter=where,

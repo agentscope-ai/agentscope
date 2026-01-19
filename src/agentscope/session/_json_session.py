@@ -71,6 +71,7 @@ class JSONSession(SessionBase):
             self._get_save_path(session_id),
             "w",
             encoding="utf-8",
+            errors="surrogatepass",
         ) as file:
             json.dump(state_dicts, file, ensure_ascii=False)
 
@@ -93,7 +94,12 @@ class JSONSession(SessionBase):
         """
         session_save_path = self._get_save_path(session_id)
         if os.path.exists(session_save_path):
-            with open(session_save_path, "r", encoding="utf-8") as file:
+            with open(
+                session_save_path,
+                "r",
+                encoding="utf-8",
+                errors="surrogatepass",
+            ) as file:
                 states = json.load(file)
 
             for name, state_module in state_modules_mapping.items():

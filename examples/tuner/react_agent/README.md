@@ -236,10 +236,10 @@ if __name__ == "__main__":
 Here, we use `DatasetConfig` to load the training dataset, `TunerModelConfig` to initialize the trainable model, and `AlgorithmConfig` to specify the RL algorithm and its hyperparameters.
 
 > Note:
-> The `tune` function is based on [Trinity-RFT](https://github.com/modelscope/Trinity-RFT) and it converts the input parameters into a YAML configuration internally.
+> The `tune` function is based on [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT) and it converts the input parameters into a YAML configuration internally.
 > Advanced users can ignore `model`, `train_dataset`, `algorithm` arguments and provide a configuration file path pointing to a YAML file using the `config_path` argument instead (see [config.yaml](./config.yaml) for an example).
 > We recommend using the configuration file approach for fine-grained control over the training process and leveraging advanced features provided by Trinity-RFT.
-> You can refer to the Trinity-RFT [Configuration Guide](https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html) for more details on configuration options.
+> You can refer to the Trinity-RFT [Configuration Guide](https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html) for more details on configuration options.
 
 The checkpoint and logs will automatically be saved to the `checkpoints/AgentScope` directory under the current working directory and each run will be save in a sub-directory suffixed with current timestamp.
 You can found the tensorboard logs inside `monitor/tensorboard` of the checkpoint directory.
@@ -261,16 +261,17 @@ react_agent/
 ```python
 from typing import Dict
 
-from agentscope.tuner import tune, WorkflowOutput, JudgeOutput, DatasetConfig, TunerModelConfig, AlgorithmConfig
+from agentscope.tuner import tune, WorkflowOutput, JudgeOutput, DatasetConfig, AlgorithmConfig
 from agentscope.agent import ReActAgent
+from agentscope.model import ChatModelBase
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 
 
 async def run_react_agent(
     task: Dict,
-    model: TunerModelConfig,
-    auxiliary_models: Dict[str, TunerModelConfig],
+    model: ChatModelBase,
+    auxiliary_models: Dict[str, ChatModelBase],
 ) -> WorkflowOutput:
     agent = ReActAgent(
         name="react_agent",
@@ -289,7 +290,7 @@ async def run_react_agent(
 
 
 async def judge_function(
-    task: Dict, response: Msg, auxiliary_models: Dict[str, TunerModelConfig]
+    task: Dict, response: Msg, auxiliary_models: Dict[str, ChatModelBase]
 ) -> JudgeOutput:
     """Simple reward: 1.0 for exact match, else 0.0."""
     ground_truth = task["answer"]
@@ -329,7 +330,7 @@ After implementing the workflow function, follow these steps to run the training
 
     - At least 2 NVIDIA GPUs with CUDA 12.8 or newer.
     - Adjust the configuration file ([config.yaml](./config.yaml)) based on your hardware.
-    - Follow the Trinity-RFT [installation guide](https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_installation.html) to install the latest version from source code.
+    - Follow the Trinity-RFT [installation guide](https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_installation.html) to install the latest version from source code.
     - Download the GSM8K dataset and Qwen/Qwen3-0.6B model checkpoints (example):
 
       ```bash
@@ -362,4 +363,4 @@ After implementing the workflow function, follow these steps to run the training
     ![reward_curve](./reward_curve.png)
 
 > [!TIP]
-> For more tuning examples, refer to [tuner] directory of the AgentScope-Samples repository.
+> For more tuning examples, refer to [tuner](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner) directory of the AgentScope-Samples repository.

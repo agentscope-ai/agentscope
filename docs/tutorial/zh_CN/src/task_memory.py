@@ -184,7 +184,7 @@ async def sqlalchemy_example() -> None:
 asyncio.run(sqlalchemy_example())
 
 # %%
-# 可选地，您也可以将 ``AsyncSQLAlchemyMemory`` 用作���步上下文管理器，退出上下文时会话将自动关闭。
+# 可选地，您也可以将 ``AsyncSQLAlchemyMemory`` 用作异步上下文管理器，退出上下文时会话将自动关闭。
 
 
 async def sqlalchemy_context_example() -> None:
