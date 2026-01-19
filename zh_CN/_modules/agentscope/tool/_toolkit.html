@@ -568,6 +568,7 @@
         <span class="n">tool_func</span><span class="p">:</span> <span class="n">ToolFunction</span><span class="p">,</span>
         <span class="n">group_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;basic&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;basic&quot;</span><span class="p">,</span>
         <span class="n">preset_kwargs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">JSONSerializableObject</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">func_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">func_description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">json_schema</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">include_long_description</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
@@ -606,6 +607,11 @@
 <span class="sd">            optional):</span>
 <span class="sd">                Preset arguments by the user, which will not be included in</span>
 <span class="sd">                the JSON schema, nor exposed to the agent.</span>
+<span class="sd">            func_name (`str | None`, optional):</span>
+<span class="sd">                The custom function name, which should be consistent with the</span>
+<span class="sd">                name in function_description and json_schema (if provided).</span>
+<span class="sd">                By default, the function name will be extracted from the</span>
+<span class="sd">                function automatically.</span>
 <span class="sd">            func_description (`str | None`, optional):</span>
 <span class="sd">                The function description. If not provided, the description</span>
 <span class="sd">                will be extracted from the docstring automatically.</span>
@@ -661,7 +667,7 @@
         <span class="c1"># Handle MCP tool function and regular function respectively</span>
         <span class="n">mcp_name</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tool_func</span><span class="p">,</span> <span class="n">MCPToolFunction</span><span class="p">):</span>
-            <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">name</span>
+            <span class="n">input_func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">name</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="fm">__call__</span>
             <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">json_schema</span>
             <span class="n">mcp_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">mcp_name</span>
@@ -683,7 +689,7 @@
                 <span class="o">**</span><span class="p">(</span><span class="n">preset_kwargs</span> <span class="ow">or</span> <span class="p">{}),</span>
             <span class="p">}</span>
 
-            <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+            <span class="n">input_func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span>
             <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">_parse_tool_function</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="o">.</span><span class="n">func</span><span class="p">,</span>
@@ -694,7 +700,7 @@
 
         <span class="k">else</span><span class="p">:</span>
             <span class="c1"># normal function</span>
-            <span class="n">func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="vm">__name__</span>
+            <span class="n">input_func_name</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="vm">__name__</span>
             <span class="n">original_func</span> <span class="o">=</span> <span class="n">tool_func</span>
             <span class="n">json_schema</span> <span class="o">=</span> <span class="n">json_schema</span> <span class="ow">or</span> <span class="n">_parse_tool_function</span><span class="p">(</span>
                 <span class="n">tool_func</span><span class="p">,</span>
@@ -702,6 +708,15 @@
                 <span class="n">include_var_positional</span><span class="o">=</span><span class="n">include_var_positional</span><span class="p">,</span>
                 <span class="n">include_var_keyword</span><span class="o">=</span><span class="n">include_var_keyword</span><span class="p">,</span>
             <span class="p">)</span>
+
+        <span class="c1"># Record the original function name if the func_name is given</span>
+        <span class="n">original_name</span> <span class="o">=</span> <span class="n">input_func_name</span> <span class="k">if</span> <span class="n">func_name</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="c1"># Use the given function name if provided</span>
+        <span class="n">func_name</span> <span class="o">=</span> <span class="n">func_name</span> <span class="ow">or</span> <span class="n">input_func_name</span>
+
+        <span class="c1"># Always set the function name in json_schema</span>
+        <span class="n">json_schema</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">func_name</span>
 
         <span class="c1"># Override the description if provided</span>
         <span class="k">if</span> <span class="n">func_description</span><span class="p">:</span>
@@ -735,6 +750,7 @@
             <span class="n">original_func</span><span class="o">=</span><span class="n">original_func</span><span class="p">,</span>
             <span class="n">json_schema</span><span class="o">=</span><span class="n">json_schema</span><span class="p">,</span>
             <span class="n">preset_kwargs</span><span class="o">=</span><span class="n">preset_kwargs</span> <span class="ow">or</span> <span class="p">{},</span>
+            <span class="n">original_name</span><span class="o">=</span><span class="n">original_name</span><span class="p">,</span>
             <span class="n">extended_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
             <span class="n">mcp_name</span><span class="o">=</span><span class="n">mcp_name</span><span class="p">,</span>
             <span class="n">postprocess_func</span><span class="o">=</span><span class="n">postprocess_func</span><span class="p">,</span>
@@ -785,7 +801,7 @@
                 <span class="p">)</span>
 
                 <span class="c1"># Replace the function name with the new one</span>
-                <span class="n">func_obj</span><span class="o">.</span><span class="n">original_name</span> <span class="o">=</span> <span class="n">func_name</span>
+                <span class="n">func_obj</span><span class="o">.</span><span class="n">original_name</span> <span class="o">=</span> <span class="n">original_name</span> <span class="ow">or</span> <span class="n">func_name</span>
                 <span class="n">func_obj</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">new_func_name</span>
                 <span class="n">func_obj</span><span class="o">.</span><span class="n">json_schema</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">new_func_name</span>
 
