@@ -207,7 +207,7 @@ examples/
 - `examples/game/` 用于游戏相关示例
 - `examples/evaluation/` 用于评估脚本
 - `examples/workflows/` 用于工作流演示
-- `examples/training/` 用于训练相关示例
+- `examples/tuner/` 用于微调相关示例
 
 示例结构如下：
 
