@@ -192,9 +192,11 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when you travel to Hangzhou. Homestays can indeed be a great way to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who can provide insider tips about the city.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a great way to immerse yourself in the local culture, enjoy a more homey atmosphere, and even connect with friendly hosts who can share insider tips about the city.
 
-    If you're looking for recommendations or help in finding the perfect homestay in Hangzhou—whether it's near popular attractions like West Lake (Xihu), Lingyin Temple, or amidst the lush tea fields of Longjing Village—I’d be happy to assist! Would you like me to suggest some specific neighborhoods or homestay options based on your preferences?
+    If you're looking for recommendations or tips on finding the best homestays in Hangzhou, I can help with that. For example, many travelers love staying near **West Lake**, as it offers beautiful scenery and easy access to Hangzhou's top attractions. Alternatively, areas like **Hefang Street** or **Lingyin Temple** also provide unique experiences with plenty of charm.
+
+    Would you like suggestions on specific neighborhoods, booking platforms, or what to look for in a homestay?
 
 
 
@@ -230,7 +232,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: Based on the information available, when you travel to Hangzhou, you prefer staying in homestays. There's no other specific preference data stored currently.
+    Friday: You prefer staying in homestays when traveling to Hangzhou.
 
 
 
@@ -532,7 +534,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 33.902 seconds)
+   **Total running time of the script:** (0 minutes 37.151 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

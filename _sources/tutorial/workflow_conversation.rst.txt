@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! Could you tell me a little about yourself?
-    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and technology. It's great to meet you too! What kind of things are you currently exploring?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been diving into lately?
+    Alice: Hi there! I'm Alice, a student currently navigating through my studies and exploring my interests. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology, and I'm always looking to learn new things. It's great to meet you too! What kind of interests do you have?
+    Charlie: Hi, I'm Charlie! I'm really into music and play a bit of guitar. I also love hiking and being outdoors. It's great to meet you both! What are some of your favorite things to do in your free time?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! Could you tell me a little about yourself?
-    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and technology. It's great to meet you too! What kind of things are you currently exploring?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been diving into lately?
+    Alice: Hi there! I'm Alice, a student currently navigating through my studies and exploring my interests. It's nice to meet you! Could you tell me a bit about yourself?
+    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology, and I'm always looking to learn new things. It's great to meet you too! What kind of interests do you have?
+    Charlie: Hi, I'm Charlie! I'm really into music and play a bit of guitar. I also love hiking and being outdoors. It's great to meet you both! What are some of your favorite things to do in your free time?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 6.786 seconds)
+   **Total running time of the script:** (0 minutes 7.895 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
