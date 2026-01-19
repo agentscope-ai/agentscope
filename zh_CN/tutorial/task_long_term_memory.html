@@ -405,7 +405,7 @@ to download the full example code.</p>
   class ProjectConfig(BaseModel):
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">Mem0LongTermMemory</span></code> 类提供了两个操作长期记忆的方法，<a href="#id3"><span class="problematic" id="id4">``</span></a>record` 和 <cite>retrieve</cite>。
+<p><code class="docutils literal notranslate"><span class="pre">Mem0LongTermMemory</span></code> 类提供了两个操作长期记忆的方法，<code class="docutils literal notranslate"><span class="pre">record</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>。
 它们接收消息对象的列表作为输入，分别记录和检索长期记忆中的信息。</p>
 <p>例如下面的例子中，我们先存入用户的一条偏好，然后在长期记忆中检索相关信息。</p>
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 基本使用示例</span>
@@ -464,7 +464,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">record_preferences</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你的喜好，我建议你可以考虑杭州的一些特色民宿。比如在西湖附近，有许多充满江南韵味的民宿，不仅环境优美，而且交通便利。你可以选择一家带有庭院的民宿，早晨可以在院子里享受一杯咖啡，感受杭州的悠闲生活。如果你喜欢更现代的风格，也可以选择一些设计感强的精品民宿。记得提前预订，以确保有一个舒适的住宿体验。希望你在杭州的旅行愉快！
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你的喜好，我建议你可以考虑住在西湖周边的民宿。那里不仅风景优美，而且交通便利，步行即可游览西湖美景。很多民宿都是传统中式建筑风格，能让你深入体验当地文化。我记得你之前提到过喜欢住民宿，所以我特别留意了一些评价不错的特色民宿，比如隐居西湖、漫心府等，它们都提供高品质的服务和舒适的居住环境。要不要我帮你查一下近期的价格和空房情况?
 </pre></div>
 </div>
 <p>然后我们清空智能体的短期记忆，以避免造成干扰，并测试智能体是否会记住之前的对话。</p>
@@ -492,8 +492,8 @@ to download the full example code.</p>
 <p class="admonition-title">备注</p>
 <p>在 GitHub 仓库的 <code class="docutils literal notranslate"><span class="pre">examples/long_term_memory/reme</span></code> 目录下我们提供了 ReMe 长期记忆的使用示例。</p>
 </div>
-<div class="literal-block-wrapper docutils container" id="id8">
-<div class="code-block-caption"><span class="caption-text">安装 ReMe 依赖</span><a class="headerlink" href="#id8" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id6">
+<div class="code-block-caption"><span class="caption-text">安装 ReMe 依赖</span><a class="headerlink" href="#id6" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReMePersonalLongTermMemory</span>
 
 <span class="c1"># 创建 ReMe 个人长期记忆实例</span>
@@ -518,8 +518,8 @@ to download the full example code.</p>
 它们分别是用于工具调用的 <code class="docutils literal notranslate"><span class="pre">record_to_memory</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve_from_memory</span></code>，
 以及用于直接调用的 <code class="docutils literal notranslate"><span class="pre">record</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>。</p>
 <p>例如下面的例子中，我们使用 <code class="docutils literal notranslate"><span class="pre">record_to_memory</span></code> 记录用户偏好。</p>
-<div class="literal-block-wrapper docutils container" id="id9">
-<div class="code-block-caption"><span class="caption-text">创建 ReMe 个人长期记忆实例</span><a class="headerlink" href="#id9" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id7">
+<div class="code-block-caption"><span class="caption-text">创建 ReMe 个人长期记忆实例</span><a class="headerlink" href="#id7" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_record_to_memory</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;测试 record_to_memory 工具函数接口&quot;&quot;&quot;</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">reme_long_term_memory</span><span class="p">:</span>
@@ -542,8 +542,8 @@ to download the full example code.</p>
 </div>
 </div>
 <p>然后我们使用 <code class="docutils literal notranslate"><span class="pre">retrieve_from_memory</span></code> 检索相关记忆。</p>
-<div class="literal-block-wrapper docutils container" id="id10">
-<div class="code-block-caption"><span class="caption-text">使用 retrieve_from_memory 检索记忆</span><a class="headerlink" href="#id10" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id8">
+<div class="code-block-caption"><span class="caption-text">使用 retrieve_from_memory 检索记忆</span><a class="headerlink" href="#id8" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_retrieve_from_memory</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;测试 retrieve_from_memory 工具函数接口&quot;&quot;&quot;</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">reme_long_term_memory</span><span class="p">:</span>
@@ -567,8 +567,8 @@ to download the full example code.</p>
 </div>
 </div>
 <p>除了工具函数接口，我们也可以使用 <code class="docutils literal notranslate"><span class="pre">record</span></code> 方法直接记录消息对话。</p>
-<div class="literal-block-wrapper docutils container" id="id11">
-<div class="code-block-caption"><span class="caption-text">使用 record 直接记录消息</span><a class="headerlink" href="#id11" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id9">
+<div class="code-block-caption"><span class="caption-text">使用 record 直接记录消息</span><a class="headerlink" href="#id9" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_record_direct</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;测试 record 直接记录方法&quot;&quot;&quot;</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">reme_long_term_memory</span><span class="p">:</span>
@@ -596,8 +596,8 @@ to download the full example code.</p>
 </div>
 </div>
 <p>类似地，我们使用 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code> 方法检索相关记忆。</p>
-<div class="literal-block-wrapper docutils container" id="id12">
-<div class="code-block-caption"><span class="caption-text">使用 retrieve 直接检索消息</span><a class="headerlink" href="#id12" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id10">
+<div class="code-block-caption"><span class="caption-text">使用 retrieve 直接检索消息</span><a class="headerlink" href="#id10" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_retrieve_direct</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;测试 retrieve 直接检索方法&quot;&quot;&quot;</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">reme_long_term_memory</span><span class="p">:</span>
@@ -624,8 +624,8 @@ to download the full example code.</p>
 </pre></div>
 </div>
 </div>
-<section id="id5">
-<h3>与 ReAct 智能体集成<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<section id="id3">
+<h3>与 ReAct 智能体集成<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
 <p>AgentScope 中的 <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> 在构造函数中包含 <code class="docutils literal notranslate"><span class="pre">long_term_memory</span></code> 和 <code class="docutils literal notranslate"><span class="pre">long_term_memory_mode</span></code> 两个参数。</p>
 <p>当 <code class="docutils literal notranslate"><span class="pre">long_term_memory_mode</span></code> 设置为 <code class="docutils literal notranslate"><span class="pre">&quot;agent_control&quot;</span></code> 或 <code class="docutils literal notranslate"><span class="pre">both</span></code> 时，在 <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> 的构造函数中将
 注册 <code class="docutils literal notranslate"><span class="pre">record_to_memory</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve_from_memory</span></code> 工具函数，使智能体能够自主的管理长期记忆。</p>
@@ -633,8 +633,8 @@ to download the full example code.</p>
 <p class="admonition-title">备注</p>
 <p>为了达到最好的效果，<code class="docutils literal notranslate"><span class="pre">&quot;agent_control&quot;</span></code> 模式可能还需要在系统提示（system prompt）中添加相应的说明。</p>
 </div>
-<div class="literal-block-wrapper docutils container" id="id13">
-<div class="code-block-caption"><span class="caption-text">创建带有长期记忆的 ReAct 智能体</span><a class="headerlink" href="#id13" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id11">
+<div class="code-block-caption"><span class="caption-text">创建带有长期记忆的 ReAct 智能体</span><a class="headerlink" href="#id11" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 创建带有长期记忆的 ReAct 智能体（agent_control 模式）</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">test_react_agent_with_reme</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;测试 ReActAgent 与 ReMe 个人记忆的集成&quot;&quot;&quot;</span>
@@ -689,8 +689,8 @@ to download the full example code.</p>
 </div>
 </div>
 <p>然后我们清空智能体的短期记忆，以避免造成干扰，并测试智能体是否会记住之前的对话。</p>
-<div class="literal-block-wrapper docutils container" id="id14">
-<div class="code-block-caption"><span class="caption-text">测试 ReAct 智能体是否记住偏好</span><a class="headerlink" href="#id14" title="Link to this code">¶</a></div>
+<div class="literal-block-wrapper docutils container" id="id12">
+<div class="code-block-caption"><span class="caption-text">测试 ReAct 智能体是否记住偏好</span><a class="headerlink" href="#id12" title="Link to this code">¶</a></div>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">retrieve_reme_preferences</span><span class="p">():</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;从长期记忆中检索用户偏好&quot;&quot;&quot;</span>
     <span class="k">async</span> <span class="k">with</span> <span class="n">reme_long_term_memory</span><span class="p">:</span>
@@ -721,13 +721,13 @@ to download the full example code.</p>
 </div>
 </section>
 </section>
-<section id="id6">
-<h2>自定义长期记忆<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h2>自定义长期记忆<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
 <p>AgentScope 提供了 <code class="docutils literal notranslate"><span class="pre">LongTermMemoryBase</span></code> 基类，它定义了长期记忆的基本接口。</p>
 <p>开发者可以继承 <code class="docutils literal notranslate"><span class="pre">LongTermMemoryBase</span></code> 并实现以下的抽象方法来定义自己的长期记忆类：</p>
-<div class="table-wrapper docutils container" id="id15">
-<table class="docutils align-default" id="id15">
-<caption><span class="caption-text">AgentScope 中的长期记忆类</span><a class="headerlink" href="#id15" title="Link to this table">¶</a></caption>
+<div class="table-wrapper docutils container" id="id13">
+<table class="docutils align-default" id="id13">
+<caption><span class="caption-text">AgentScope 中的长期记忆类</span><a class="headerlink" href="#id13" title="Link to this table">¶</a></caption>
 <thead>
 <tr class="row-odd"><th class="head"><p>类</p></th>
 <th class="head"><p>抽象方法</p></th>
@@ -773,14 +773,14 @@ to download the full example code.</p>
 </table>
 </div>
 </section>
-<section id="id7">
-<h2>进一步阅读<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h2>
+<section id="id5">
+<h2>进一步阅读<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p><a class="reference internal" href="task_memory.html#memory"><span class="std std-ref">记忆</span></a> - 基础记忆系统</p></li>
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a> - ReAct 智能体</p></li>
 <li><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">工具</span></a> - 工具系统</p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.538 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 29.700 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-long-term-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/cf2bfcc46b2b3d58d3df8c98a6a13f87/task_long_term_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_long_term_memory.ipynb</span></code></a></p>
@@ -874,11 +874,11 @@ to download the full example code.</p>
 </ul>
 </li>
 <li><a class="reference internal" href="#reme">使用 ReMe 个人长期记忆</a><ul>
-<li><a class="reference internal" href="#id5">与 ReAct 智能体集成</a></li>
+<li><a class="reference internal" href="#id3">与 ReAct 智能体集成</a></li>
 </ul>
 </li>
-<li><a class="reference internal" href="#id6">自定义长期记忆</a></li>
-<li><a class="reference internal" href="#id7">进一步阅读</a></li>
+<li><a class="reference internal" href="#id4">自定义长期记忆</a></li>
+<li><a class="reference internal" href="#id5">进一步阅读</a></li>
 </ul>
 </li>
 </ul>
