@@ -64,13 +64,17 @@ Provide **production-ready** agent skill integration solutions.
 - **A2UI (Agent-to-UI)**: Enable seamless agent-to-user interface interactions
 - **A2A (Agent-to-Agent)**: Enhance agent-to-agent communication capabilities
 
+### 🚀 Agentic RL
+
+- Support using [Tinker](https://tinker-docs.thinkingmachines.ai/) backend to tune agent applications on devices without GPU.
+- Support tuning agent applications based on their run history.
+- Integrate with AgentScope Runtime to provide better environment abstraction.
+- Add more tutorials and examples on how to build complex judge functions with the help of evaluation module.
+- Add more tutorials and examples on data selection and augmentation.
+
 ### 📈 Code Quality
 
 Continuous refinement and improvement of code quality and maintainability.
-
-### 🚀 Agentic RL
-
-
 
 # Completed Milestones
 

@@ -31,16 +31,16 @@
             alt="pypi"
         />
     </a>
+    <a href="https://discord.gg/eYMpfnkG8h">
+        <img
+            src="https://img.shields.io/discord/1194846673529213039?label=Discord&logo=discord"
+            alt="discord"
+        />
+    </a>
     <a href="https://doc.agentscope.io/">
         <img
             src="https://img.shields.io/badge/Docs-English%7C%E4%B8%AD%E6%96%87-blue?logo=markdown"
             alt="docs"
-        />
-    </a>
-    <a href="https://agentscope.io/">
-        <img
-            src="https://img.shields.io/badge/GUI-AgentScope_Studio-blue?logo=look&logoColor=green&color=dark-green"
-            alt="workstation"
         />
     </a>
     <a href="./LICENSE">
@@ -86,7 +86,7 @@ TODO: a picture here for ecosystem integrations.
 - **[2025-09]** **RAG** module in AgentScope 1.0 is online now! Check our [tutorial](https://doc.agentscope.io/tutorial/task_rag.html) and [example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/rag) for more details.
 <!-- END NEWS -->
 
-## Contact
+## Community
 
 Welcome to join our community on
 
@@ -129,31 +129,7 @@ Welcome to join our community on
 
 > AgentScope requires **Python 3.10** or higher.
 
-####️ From source
-
-```bash
-# Pull the source code from GitHub
-git clone -b main https://github.com/agentscope-ai/agentscope.git
-
-# Install the package in editable mode
-cd agentscope
-pip install -e .
-```
-
-#### Using uv (recommended for faster installs)
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver, written in Rust.
-
-```bash
-# Clone the repository
-git clone -b main https://github.com/agentscope-ai/agentscope.git
-cd agentscope
-
-# Install with uv
-uv pip install -e .
-```
-
-#### From PyPi
+#### From PyPI
 
 ```bash
 pip install agentscope
@@ -164,6 +140,21 @@ Or with uv:
 ```bash
 uv pip install agentscope
 ```
+
+#### From source
+
+```bash
+# Pull the source code from GitHub
+git clone -b main https://github.com/agentscope-ai/agentscope.git
+
+# Install the package in editable mode
+cd agentscope
+
+pip install -e .
+# or with uv:
+# uv pip install -e .
+```
+
 
 ## Example
 
@@ -218,15 +209,16 @@ Create a voice-enabled ReAct agent that can understand and respond with speech, 
 https://github.com/user-attachments/assets/c5f05254-aff6-4375-90df-85e8da95d5da
 
 
-### Realtime Interruption
+### Human-in-the-loop
 
-Natively support **realtime interruption** in ``ReActAgent`` with robust memory preservation, and convert interruption into an **observable event** for agent to seamlessly resume conversations.
+Support realtime interruption in ReActAgent: conversation can be interrupted via cancellation in realtime and resumed
+seamlessly via robust memory preservation.
 
 <img src="./assets/images/realtime_steering_en.gif" alt="Realtime Steering" width="60%"/>
 
-### Fine-Grained MCP Control
+### Flexible MCP Usage
 
-Developers can obtain the MCP tool as a **local callable function**, and use it anywhere (e.g. call directly, pass to agent, wrap into a more complex tool, etc.)
+Use individual MCP tools as **local callable functions** to compose toolkits or wrap into a more complex tool.
 
 ```python
 from agentscope.mcp import HttpStatelessClient
@@ -255,6 +247,10 @@ async def fine_grained_mcp_control():
     # Option 3: Wrap into a more complex tool
     # ...
 ```
+
+### Agentic RL
+
+
 
 ### Multi-Agent Conversation
 
@@ -307,7 +303,7 @@ asyncio.run(multi_agent_conversation())
 - [Session with SQLite](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/session_with_sqlite)
 - [Stream Printing Messages](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/stream_printing_messages)
 - [TTS](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts)
-- [High-code Deployment](https://github.com/agentscope-ai/agentscope/tree/main/examples/deployment/planning_agent)
+- [Code-first Deployment](https://github.com/agentscope-ai/agentscope/tree/main/examples/deployment/planning_agent)
 
 ### Agent
 
