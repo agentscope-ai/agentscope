@@ -103,7 +103,6 @@ class RedisSessionTest(IsolatedAsyncioTestCase):
         self._redis = fakeredis.aioredis.FakeRedis()
         self.session = RedisSession(
             connection_pool=self._redis.connection_pool,
-            key_prefix="test_agentscope",
         )
 
     async def test_redis_session_save_and_load(self) -> None:
