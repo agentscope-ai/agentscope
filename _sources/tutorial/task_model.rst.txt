@@ -132,7 +132,7 @@ The ``ChatResponse`` instance contains the generated thinking/text/tool use cont
 
  .. code-block:: none
 
-    ChatResponse(content=[{'type': 'thinking', 'thinking': 'I should search for AgentScope on Google.'}, {'type': 'text', 'text': "I'll search for AgentScope on Google."}, {'type': 'tool_use', 'id': '642n298gjna', 'name': 'google_search', 'input': {'query': 'AgentScope?'}}], id='2026-01-19 03:31:36.743_982647', created_at='2026-01-19 03:31:36.743', type='chat', usage=None, metadata=None)
+    ChatResponse(content=[{'type': 'thinking', 'thinking': 'I should search for AgentScope on Google.'}, {'type': 'text', 'text': "I'll search for AgentScope on Google."}, {'type': 'tool_use', 'id': '642n298gjna', 'name': 'google_search', 'input': {'query': 'AgentScope?'}}], id='2026-01-19 04:32:26.989_e1b5eb', created_at='2026-01-19 04:32:26.989', type='chat', usage=None, metadata=None)
 
 
 
@@ -178,8 +178,8 @@ Taking ``DashScopeChatModel`` as an example, we can use it to create a chat mode
 
  .. code-block:: none
 
-    The response: ChatResponse(content=[{'type': 'text', 'text': 'Hello! How can I assist you today?'}], id='2026-01-19 03:31:38.293_3f6848', created_at='2026-01-19 03:31:38.293', type='chat', usage=ChatUsage(input_tokens=10, output_tokens=9, time=1.548875, type='chat'), metadata=None)
-    The response as Msg: Msg(id='g7sbCGGqtijhnhAQ57GYzm', name='Friday', content=[{'type': 'text', 'text': 'Hello! How can I assist you today?'}], role='assistant', metadata=None, timestamp='2026-01-19 03:31:38.293', invocation_id='None')
+    The response: ChatResponse(content=[{'type': 'text', 'text': 'Hello! How can I assist you today?'}], id='2026-01-19 04:32:28.348_218c0e', created_at='2026-01-19 04:32:28.348', type='chat', usage=ChatUsage(input_tokens=10, output_tokens=9, time=1.357545, type='chat'), metadata=None)
+    The response as Msg: Msg(id='NrZTgRwegzgcqocS4ADURM', name='Friday', content=[{'type': 'text', 'text': 'Hello! How can I assist you today?'}], role='assistant', metadata=None, timestamp='2026-01-19 04:32:28.348', invocation_id='None')
 
 
 
@@ -239,51 +239,51 @@ When streaming is enabled, the ``__call__`` method will return an **async genera
     The type of the response: <class 'async_generator'>
     Chunk 0
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1'}], id='2026-01-19 03:31:40.299_491628', created_at='2026-01-19 03:31:40.299', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=1, time=2.004128, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1'}], id='2026-01-19 04:32:29.395_47edf2', created_at='2026-01-19 04:32:29.395', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=1, time=1.045612, type='chat'), metadata=None)
 
     Chunk 1
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n'}], id='2026-01-19 03:31:40.335_28d413', created_at='2026-01-19 03:31:40.335', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=4, time=2.040079, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n'}], id='2026-01-19 04:32:29.443_58997a', created_at='2026-01-19 04:32:29.443', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=4, time=1.093457, type='chat'), metadata=None)
 
     Chunk 2
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4'}], id='2026-01-19 03:31:40.376_c9ceff', created_at='2026-01-19 03:31:40.376', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=7, time=2.081299, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4'}], id='2026-01-19 04:32:29.493_fb6942', created_at='2026-01-19 04:32:29.493', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=7, time=1.143797, type='chat'), metadata=None)
 
     Chunk 3
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n'}], id='2026-01-19 03:31:40.414_c03192', created_at='2026-01-19 03:31:40.414', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=10, time=2.119984, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n'}], id='2026-01-19 04:32:29.542_7eaa7b', created_at='2026-01-19 04:32:29.542', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=10, time=1.193283, type='chat'), metadata=None)
 
     Chunk 4
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n'}], id='2026-01-19 03:31:40.514_e90fc6', created_at='2026-01-19 03:31:40.514', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=16, time=2.219032, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n'}], id='2026-01-19 04:32:29.666_650c68', created_at='2026-01-19 04:32:29.666', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=16, time=1.316909, type='chat'), metadata=None)
 
     Chunk 5
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1'}], id='2026-01-19 03:31:40.565_f2c79c', created_at='2026-01-19 03:31:40.565', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=22, time=2.270968, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1'}], id='2026-01-19 04:32:29.743_9ee772', created_at='2026-01-19 04:32:29.743', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=22, time=1.393664, type='chat'), metadata=None)
 
     Chunk 6
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n1'}], id='2026-01-19 03:31:40.641_e99907', created_at='2026-01-19 03:31:40.641', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=28, time=2.346853, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n1'}], id='2026-01-19 04:32:29.844_1bb725', created_at='2026-01-19 04:32:29.844', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=28, time=1.494913, type='chat'), metadata=None)
 
     Chunk 7
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n1'}], id='2026-01-19 03:31:40.740_ccd9ad', created_at='2026-01-19 03:31:40.740', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=34, time=2.445896, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n1'}], id='2026-01-19 04:32:29.965_a406f8', created_at='2026-01-19 04:32:29.965', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=34, time=1.615788, type='chat'), metadata=None)
 
     Chunk 8
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n1'}], id='2026-01-19 03:31:40.793_a9ab51', created_at='2026-01-19 03:31:40.793', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=40, time=2.498247, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n1'}], id='2026-01-19 04:32:30.045_310b54', created_at='2026-01-19 04:32:30.045', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=40, time=1.695878, type='chat'), metadata=None)
 
     Chunk 9
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n1'}], id='2026-01-19 03:31:40.868_86769c', created_at='2026-01-19 03:31:40.868', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=46, time=2.573858, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n1'}], id='2026-01-19 04:32:30.146_30429c', created_at='2026-01-19 04:32:30.146', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=46, time=1.797016, type='chat'), metadata=None)
 
     Chunk 10
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20'}], id='2026-01-19 03:31:40.964_44f6cf', created_at='2026-01-19 03:31:40.964', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=50, time=2.669178, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20'}], id='2026-01-19 04:32:30.274_ef4e37', created_at='2026-01-19 04:32:30.275', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=50, time=1.925305, type='chat'), metadata=None)
 
     Chunk 11
             type: <class 'list'>
-            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20'}], id='2026-01-19 03:31:40.986_eb49e1', created_at='2026-01-19 03:31:40.986', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=50, time=2.691211, type='chat'), metadata=None)
+            ChatResponse(content=[{'type': 'text', 'text': '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20'}], id='2026-01-19 04:32:30.297_407b9b', created_at='2026-01-19 04:32:30.297', type='chat', usage=ChatUsage(input_tokens=27, output_tokens=50, time=1.948282, type='chat'), metadata=None)
 
 
 
@@ -334,7 +334,7 @@ AgentScope supports reasoning models by providing the ``ThinkingBlock``.
  .. code-block:: none
 
     The final response:
-    ChatResponse(content=[{'type': 'thinking', 'thinking': 'Okay, the user asked "Who am I?" and I need to respond appropriately. First, I should acknowledge that the question is about their identity. Since I don\'t have access to personal information, I can\'t tell them who they are. But I can guide them to reflect on their own identity.\n\nI should explain that identity is shaped by various factors like experiences, values, and relationships. Maybe suggest they think about what makes them unique. Also, offer to help with self-discovery through questions or discussions. Need to keep the tone supportive and encouraging. Make sure not to make assumptions and keep it open-ended. Let them know I\'m here to help if they want to explore more.\n'}, {'type': 'text', 'text': 'The question "Who am I?" is one of the most profound and personal inquiries a person can ask. While I can’t define your identity for you, I can help guide you in exploring it. Your identity is shaped by a combination of factors, including:\n\n- **Experiences**: The events, challenges, and moments that have shaped your perspective.  \n- **Values and beliefs**: The principles you hold dear, such as kindness, creativity, or integrity.  \n- **Relationships**: The connections you nurture with others, which often reflect your sense of self.  \n- **Passions and goals**: What you care about, dream of, or strive to achieve.  \n- **Unique qualities**: The traits, talents, or quirks that make you distinct.  \n\nTo explore this further, you might ask yourself:  \n- What brings me joy or fulfillment?  \n- What values do I stand for, even in difficult moments?  \n- How do I see myself in the world, and how does that align with how others see me?  \n- What lessons have I learned that define my journey?  \n\nIf you’d like, I can help you reflect on these questions or explore aspects of your identity further. 🌟'}], id='2026-01-19 03:31:46.963_29745b', created_at='2026-01-19 03:31:46.963', type='chat', usage=ChatUsage(input_tokens=12, output_tokens=389, time=5.973394, type='chat'), metadata=None)
+    ChatResponse(content=[{'type': 'thinking', 'thinking': 'Okay, the user asked, "Who am I?" That\'s a pretty deep question. First, I need to understand the context. They might be looking for a philosophical answer, or maybe they\'re curious about their identity in a more personal sense.\n\nI should consider different angles. From a philosophical perspective, identity can be about self-awareness, consciousness, or the essence of one\'s being. But since I\'m an AI, I need to be careful not to overstep. I can\'t claim to know their personal experiences or inner thoughts.\n\nMaybe they\'re feeling lost or trying to figure out their purpose. In that case, I should offer a supportive response, encouraging self-reflection. I can mention that identity is shaped by experiences, relationships, and personal choices. Also, it\'s okay to not have all the answers right away.\n\nI should avoid making assumptions. Instead, invite them to explore their own thoughts. Maybe ask questions like what they value, what makes them happy, or their goals. That way, I can guide them towards self-discovery without imposing my own views.\n\nAlso, keep the tone empathetic and non-judgmental. Let them know it\'s a journey and there\'s no rush. Emphasize that their identity is unique and evolving. Maybe mention that it\'s okay to change and grow over time.\n\nCheck if there\'s any cultural or personal context I should be aware of, but since it\'s a general question, stick to universal aspects. Avoid technical jargon to keep it accessible. Make sure the response is encouraging and open-ended.'}, {'type': 'text', 'text': 'The question "Who am I?" is one of the most profound and deeply personal inquiries a person can ask. It touches on identity, purpose, and the essence of existence. Here’s a reflection to help guide your exploration:\n\n### 1. **You Are More Than Your Roles or Labels**  \n   You are not just a job, a title, or a set of traits. You are a dynamic blend of experiences, values, relationships, and aspirations. Your identity is shaped by how you interact with the world and how you choose to grow.\n\n### 2. **A Journey of Discovery**  \n   Identity is not static. It evolves over time as you learn, change, and encounter new perspectives. You might find yourself redefining who you are in different phases of life—whether through challenges, creativity, love, or moments of solitude.\n\n### 3. **Your Inner World Matters**  \n   The answer to "Who am I?" often lies in your inner thoughts, feelings, and values. Reflect on what brings you joy, what you stand for, and what you fear. These elements form the core of your being.\n\n### 4. **Connection to Others**  \n   You are also shaped by your relationships. The people you care about, the communities you belong to, and the ways you contribute to the world all play a role in defining your sense of self.\n\n### 5. **Embrace the Mystery**  \n   Sometimes, the question isn’t about finding a definitive answer but about embracing the mystery. It’s okay to not have all the answers. Curiosity and openness can lead you to unexpected truths about yourself.\n\n### 6. **Ask Yourself:**\n   - What values do I live by?\n   - What would I do if I weren’t afraid?\n   - What parts of myself feel most authentic?\n   - How do I want to be remembered?\n\nUltimately, **you are the author of your story**, and the journey to understand yourself is ongoing. It’s okay to explore, question, and evolve. Would you like to share more about what this question means to you? 🌱'}], id='2026-01-19 04:32:38.456_b0b8fa', created_at='2026-01-19 04:32:38.456', type='chat', usage=ChatUsage(input_tokens=12, output_tokens=749, time=8.153679, type='chat'), metadata=None)
 
 
 
@@ -393,7 +393,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.226 seconds)
+   **Total running time of the script:** (0 minutes 11.473 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_model.py:
