@@ -16,6 +16,7 @@ from ._store import (
     VDBStoreBase,
     QdrantStore,
     MilvusLiteStore,
+    MongoDBStore,
     AlibabaCloudMySQLStore,
     PgVectorStore,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "VDBStoreBase",
     "QdrantStore",
     "MilvusLiteStore",
+    "MongoDBStore",
     "AlibabaCloudMySQLStore",
     "PgVectorStore",
     "KnowledgeBase",

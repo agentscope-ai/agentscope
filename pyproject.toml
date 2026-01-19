@@ -106,10 +106,12 @@ readers = [
 qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
 ali_mysql = ["mysql-connector-python"]
+mongodb = ["pymongo"]
 vdbs = [
     "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
+    "agentscope[mongodb]",
 ]
 
 
