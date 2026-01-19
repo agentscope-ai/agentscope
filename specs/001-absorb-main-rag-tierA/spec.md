@@ -1,9 +1,9 @@
 # Feature Specification: Absorb main Tier-A RAG additions (py.typed + MilvusLiteStore + WordReader)
 
-**Feature Branch**: `001-absorb-main-rag-tierA`  
-**Base Branch**: `easy` (do not use `main/master` as mainline)  
-**Created**: 2025-12-25  
-**Status**: Draft  
+**Feature Branch**: `001-absorb-main-rag-tierA`
+**Base Branch**: `easy` (do not use `main/master` as mainline)
+**Created**: 2025-12-25
+**Status**: Draft
 **Input**: User description: "A1,A2,A3一起，记住要符合easy分支生态进行（cherry-pick 吸收，不做 merge 同步）"
 
 ## Clarifications

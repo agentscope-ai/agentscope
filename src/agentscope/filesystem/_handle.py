@@ -223,8 +223,7 @@ class FsHandle:
             has_ls = "list" in ops
             has_stat = "file" in ops
             has_read = any(
-                o in ops
-                for o in {"read_file", "read_binary", "read_re"}
+                o in ops for o in {"read_file", "read_binary", "read_re"}
             )
             has_write = "write" in ops
             has_delete = "delete" in ops

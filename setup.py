@@ -52,7 +52,7 @@ extra_requires = [
     "nltk",
     "qdrant-client",
     "python-docx",
-    "pymilvus[milvus_lite]; platform_system != \"Windows\"",
+    'pymilvus[milvus_lite]; platform_system != "Windows"',
 ]
 
 dev_requires = [

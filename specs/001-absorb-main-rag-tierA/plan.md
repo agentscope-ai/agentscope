@@ -1,6 +1,6 @@
 # Implementation Plan: Absorb main Tier-A RAG additions (py.typed + MilvusLiteStore + WordReader)
 
-**Branch**: `001-absorb-main-rag-tierA` | **Date**: 2025-12-25 | **Spec**: `specs/001-absorb-main-rag-tierA/spec.md`  
+**Branch**: `001-absorb-main-rag-tierA` | **Date**: 2025-12-25 | **Spec**: `specs/001-absorb-main-rag-tierA/spec.md`
 **Input**: Feature specification from `specs/001-absorb-main-rag-tierA/spec.md`
 
 ## Summary
@@ -16,12 +16,12 @@ unchanged, and ensuring optional deps do not break import-time behavior.
 
 ## Technical Context
 
-**Language/Version**: Python (repo declares `python_requires>=3.10`)  
-**Primary Dependencies**: Packaging via `setup.py`; tests via `pytest`  
-**Storage**: N/A (library code)  
-**Testing**: `pytest` (use `./.venv/bin/python`)  
-**Target Platform**: cross-platform, with upstream note that Milvus Lite is not supported on Windows  
-**Project Type**: single package (`src/agentscope`, `tests/`)  
+**Language/Version**: Python (repo declares `python_requires>=3.10`)
+**Primary Dependencies**: Packaging via `setup.py`; tests via `pytest`
+**Storage**: N/A (library code)
+**Testing**: `pytest` (use `./.venv/bin/python`)
+**Target Platform**: cross-platform, with upstream note that Milvus Lite is not supported on Windows
+**Project Type**: single package (`src/agentscope`, `tests/`)
 **Constraints**:
 - No hard import dependency on `python-docx` or `pymilvus` at `agentscope` import time
 - Exports MUST work via `from agentscope.rag import ...`

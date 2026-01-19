@@ -23,15 +23,14 @@ def test_github_search_e2e_returns_results() -> None:
     async def _run() -> None:
         res: ToolResponse = await search_github("who is speed")  # type: ignore
         text = "\n".join(
-            b.get("text", "")
-            for b in res.content
-            if b.get("type") == "text"
+            b.get("text", "") for b in res.content if b.get("type") == "text"
         )
         print("=== E2E GitHub Results (who is speed) ===")
         print(text)
         print("=== END ===")
 
         import re
+
         pattern = r"https://github\.com/[^/\s]+/[^/\s]+"
         assert re.search(pattern, text) is not None, (
             "Expected at least one GitHub repo URL in output",

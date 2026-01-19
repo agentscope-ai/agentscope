@@ -53,10 +53,7 @@ def web_pdf_ocr_markdown(url: str) -> ToolResponse:
     # 2) Env fail-fast
     missing = _check_env()
     if missing:
-        msg = (
-            "Missing required environment variables: "
-            + ", ".join(missing)
-        )
+        msg = "Missing required environment variables: " + ", ".join(missing)
         logger.error("web_pdf_ocr_markdown: %s", msg)
         return error_response(msg)
 

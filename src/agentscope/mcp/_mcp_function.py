@@ -79,6 +79,7 @@ class MCPToolFunction:
 
         if self.wrap_tool_result:
             from ..tool import ToolResponse
+
             as_content = MCPClientBase._convert_mcp_content_to_as_blocks(
                 res.content,
             )

@@ -15,7 +15,7 @@ def test_handle_describe_grants_markdown() -> None:
                 "prefix": "/tmp/",
                 "ops": {"list", "file", "read_file", "write", "delete"},
             },
-        ]
+        ],
     )
 
     summary = handle.describe_grants_markdown()
@@ -34,7 +34,7 @@ def test_service_describe_permissions_markdown() -> None:
                 "prefix": "/tmp/",
                 "ops": {"list", "file", "read_binary", "write"},
             },
-        ]
+        ],
     )
     svc = FileDomainService(handle)
     summary = svc.describe_permissions_markdown()

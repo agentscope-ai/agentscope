@@ -23,9 +23,9 @@ from ._builtin import (
     USERINPUT_PREFIX,
     WORKSPACE_PREFIX,
 )
-"""Do not import _tools at module import time to avoid heavy package chains.
-Tool functions are imported lazily inside supported_tools().
-"""
+
+# Do not import `_tools` at module import time to avoid heavy package chains.
+# Tool functions are imported lazily inside supported_tools().
 
 
 _RE_PATH_SEP = re.compile(r"\\+")
@@ -135,11 +135,15 @@ class DiskFileSystem(FileSystemBase):
     # --------------------------- Backend hooks -------------------------
     def _snapshot_impl(self, grants: Sequence[Grant]) -> dict[Path, EntryMeta]:
         visible: dict[Path, EntryMeta] = {}
-        prefixes = {g["prefix"] for g in grants} if grants else {
-            INTERNAL_PREFIX,
-            USERINPUT_PREFIX,
-            WORKSPACE_PREFIX,
-        }
+        prefixes = (
+            {g["prefix"] for g in grants}
+            if grants
+            else {
+                INTERNAL_PREFIX,
+                USERINPUT_PREFIX,
+                WORKSPACE_PREFIX,
+            }
+        )
         if INTERNAL_PREFIX in prefixes:
             visible.update(
                 self._iter_visible_under(INTERNAL_PREFIX, self._internal_dir),
@@ -244,6 +248,7 @@ class DiskFileSystem(FileSystemBase):
         """Return the set of tool functions supported by this
         implementation."""
         from . import _tools as T
+
         return [
             T.read_text_file,
             T.read_multiple_files,

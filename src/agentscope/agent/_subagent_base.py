@@ -86,9 +86,10 @@ class DelegationContext:
         return payload
 
     @classmethod
-    def from_payload(cls, payload: dict[str, JSONSerializableObject]) -> (
-        "DelegationContext"
-    ):
+    def from_payload(
+        cls,
+        payload: dict[str, JSONSerializableObject],
+    ) -> "DelegationContext":
         """Hydrate from metadata payload."""
         preview = payload.get("input_preview")
         return cls(
@@ -137,6 +138,7 @@ class SubAgentBase(AgentBase):
         self.model_override = model_override
         if toolkit is None:
             from ..tool import Toolkit as _Toolkit
+
             toolkit = _Toolkit()
             if tools:
                 self._hydrate_toolkit(toolkit, tools)

@@ -22,7 +22,7 @@ def test_fs_describe_permissions_markdown_tool() -> None:
                     "prefix": "/tmp/",
                     "ops": {"list", "file", "read_file", "write", "delete"},
                 },
-            ]
+            ],
         )
         svc = FileDomainService(handle)
 

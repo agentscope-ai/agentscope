@@ -39,7 +39,7 @@ from examples.agent_search_subagent.search_subreact_agent import (
 
 
 def _load_env_minimal() -> None:
-    "+""Load .env into os.environ (minimal, no external deps)."""
+    "+" "Load .env into os.environ (minimal, no external deps)." ""
     env_path = Path(".env")
     if not env_path.exists():
         return
@@ -119,9 +119,9 @@ async def main() -> None:
     )
     props = search_schema["function"]["parameters"].get("properties", {})
     required = search_schema["function"]["parameters"].get("required", [])
-    assert set(props.keys()) == {"query"}, (
-        f"unexpected properties: {set(props.keys())}"
-    )
+    assert set(props.keys()) == {
+        "query",
+    }, f"unexpected properties: {set(props.keys())}"
     assert required == ["query"], f"unexpected required: {required}"
 
     # 4) Run: host should call search_web then return a final answer

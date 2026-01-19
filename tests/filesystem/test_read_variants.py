@@ -21,9 +21,11 @@ ALL_OPS = {
 
 def _handle() -> tuple[InMemoryFileSystem, FsHandle]:
     fs = InMemoryFileSystem()
-    handle = fs.create_handle([
-        {"prefix": "/workspace/", "ops": set(ALL_OPS)},
-    ])
+    handle = fs.create_handle(
+        [
+            {"prefix": "/workspace/", "ops": set(ALL_OPS)},
+        ],
+    )
     return fs, handle
 
 

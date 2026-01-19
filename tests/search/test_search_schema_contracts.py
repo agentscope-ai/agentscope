@@ -19,12 +19,12 @@ def _assert_query_only_schema(schema: dict) -> None:
     params = schema["function"]["parameters"]
     props = params.get("properties", {})
     required = params.get("required", [])
-    assert set(props.keys()) == {"query"}, (
-        f"{fn}: unexpected properties {set(props.keys())}"
-    )
-    assert required == ["query"], (
-        f"{fn}: required must be ['query'] but got {required}"
-    )
+    assert set(props.keys()) == {
+        "query",
+    }, f"{fn}: unexpected properties {set(props.keys())}"
+    assert required == [
+        "query",
+    ], f"{fn}: required must be ['query'] but got {required}"
 
 
 def test_bing_schema_equals_query_only() -> None:

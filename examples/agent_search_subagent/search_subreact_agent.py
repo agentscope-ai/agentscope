@@ -176,5 +176,5 @@ class SearchSubReactAgent(SubAgentBase):
 
 __all__ = [
     "SearchInput",
-    "SearchSubReactAgent"
+    "SearchSubReactAgent",
 ]

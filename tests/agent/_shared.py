@@ -77,7 +77,7 @@ def attach_filesystem(agent: ReActAgent) -> None:
                     "delete",
                 },
             },
-        ]
+        ],
     )
     agent.filesystem_service = FileDomainService(handle)
 

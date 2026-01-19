@@ -174,6 +174,7 @@ async def search_github(query: str) -> ToolResponse:
     try:
         # pylint: disable=E0401
         from playwright.async_api import async_playwright  # type: ignore
+
         # pylint: enable=E0401
 
         async with async_playwright() as p:  # type: ignore
@@ -210,6 +211,7 @@ async def search_github(query: str) -> ToolResponse:
                     # try to extract url= param
                     try:
                         from urllib.parse import parse_qs
+
                         q = href.split("?", 1)[1] if "?" in href else ""
                         params = parse_qs(q)
                         cand = params.get("url", [])

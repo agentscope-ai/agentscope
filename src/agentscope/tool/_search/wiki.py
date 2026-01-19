@@ -62,7 +62,7 @@ def search_wiki(query: str) -> ToolResponse:
         )
         res.raise_for_status()
         data = res.json()
-        items = (data.get("query", {}).get("search", []) or [])
+        items = data.get("query", {}).get("search", []) or []
 
         rows: List[Result] = []
         for it in items:

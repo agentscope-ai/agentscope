@@ -32,9 +32,9 @@ async def _extract_results(page) -> List[Result]:
 
     # Candidate result item selectors (Sogou varies across AB tests)
     item_selectors = [
-        "div.vrwrap",           # common vr result wrapper
-        "div.vrResult",         # alternative wrapper
-        "div.results > div",    # generic results list
+        "div.vrwrap",  # common vr result wrapper
+        "div.vrResult",  # alternative wrapper
+        "div.results > div",  # generic results list
         "#main .vrwrap",
         "#main .vrResult",
         "#main > div",
@@ -89,9 +89,9 @@ async def _extract_results(page) -> List[Result]:
         snippet = ""
         try:
             for s in [
-                "p",                # primary snippet in many layouts
-                ".ft",              # fallback footer text
-                ".str_info",        # structured info
+                "p",  # primary snippet in many layouts
+                ".ft",  # fallback footer text
+                ".str_info",  # structured info
             ]:
                 if await item.locator(s).count() > 0:
                     snippet = (
@@ -115,6 +115,7 @@ async def search_sogou(query: str) -> ToolResponse:
     try:
         # pylint: disable=E0401
         from playwright.async_api import async_playwright  # type: ignore
+
         # pylint: enable=E0401
 
         async with async_playwright() as p:  # type: ignore

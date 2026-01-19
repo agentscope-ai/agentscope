@@ -18,7 +18,7 @@ def test_handle_permissions_union_and_denials() -> None:
                 "prefix": "/workspace/",
                 "ops": set(ALL_READ) | {"write", "delete"},
             },
-        ]
+        ],
     )
 
     # write/read/delete cycle is allowed in /workspace

@@ -6,8 +6,8 @@ description: "Absorb main Tier-A RAG additions into easy (py.typed + MilvusLiteS
 
 # Tasks: Absorb main Tier-A RAG additions (py.typed + MilvusLiteStore + WordReader)
 
-**Input**: `specs/001-absorb-main-rag-tierA/spec.md`, `specs/001-absorb-main-rag-tierA/plan.md`  
-**Base Branch**: `easy` (do not use `main/master` as mainline)  
+**Input**: `specs/001-absorb-main-rag-tierA/spec.md`, `specs/001-absorb-main-rag-tierA/plan.md`
+**Base Branch**: `easy` (do not use `main/master` as mainline)
 **Branch**: `001-absorb-main-rag-tierA`
 
 ## Constitution Gates (applies to all tasks)
@@ -22,7 +22,7 @@ description: "Absorb main Tier-A RAG additions into easy (py.typed + MilvusLiteS
 - [X] T002 Identify upstream source files and commits for A1/A2/A3 (record in PR description)
 - [X] T003 Update `docs/rag/SOP.md` to include `MilvusLiteStore` and `WordReader` (document `include_image=False` default)
 - [X] T004 Update root `todo.md` with acceptance items for A1/A2/A3 (exports, optional-dep behavior, extras policy, Windows marker)
- 
+
 
 ---
 

@@ -100,7 +100,7 @@ AgentScope-easy follows a **modular, composable architecture** with clear separa
 
 ## 🤝 Acknowledgment
 
-This project is built upon the foundation of the upstream project: 
+This project is built upon the foundation of the upstream project:
 [AgentScope](https://github.com/agentscope-ai/agentscope).
 
 ---
