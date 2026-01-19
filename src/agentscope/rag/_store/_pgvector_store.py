@@ -292,7 +292,7 @@ class PgVectorStore(VDBStoreBase):
         # Build WHERE clause
         where_conditions = []
         where_params: list[str | float] = []
-        
+
         if "filter" in kwargs and kwargs["filter"]:
             # Escape % in filter to avoid psycopg2 treating it as placeholder
             filter_clause = kwargs["filter"].replace("%", "%%")
@@ -329,7 +329,7 @@ class PgVectorStore(VDBStoreBase):
         params.extend(where_params)
         params.append(query_vector_text)
         params.append(limit)
-        
+
         self._cursor.execute(search_sql, tuple(params))
         results = self._cursor.fetchall()
 

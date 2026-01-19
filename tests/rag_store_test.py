@@ -454,7 +454,7 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
                 "test-uuid-1",  # id
                 "doc1",  # doc_id
                 0,  # chunk_id
-                '{"type": "text", "text": "This is a test document."}',  # content
+                '{"type": "text", "text": "This is a test document."}',
                 2,  # total_chunks
                 0.03,  # distance (low distance = high similarity for COSINE)
             ),

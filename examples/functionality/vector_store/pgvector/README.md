@@ -9,10 +9,10 @@ This example demonstrates how to use `PgVectorStore` for vector similarity searc
    # Install PostgreSQL (if not already installed)
    # On macOS:
    brew install postgresql@15
-   
+
    # On Ubuntu/Debian:
    sudo apt-get install postgresql-15
-   
+
    # Install pgvector extension
    # Follow instructions at: https://github.com/pgvector/pgvector
    ```
