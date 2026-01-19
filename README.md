@@ -1,3 +1,31 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## 📑 Table of Contents
+
+- [AgentScope-easy: Developer-First Multi-Agent Framework](#agentscope-easy-developer-first-multi-agent-framework)
+  - [🚀 Why AgentScope-easy?](#-why-agentscope-easy)
+  - [✨ Core Philosophy](#-core-philosophy)
+    - [Transparency First](#transparency-first)
+    - [Architectural Excellence](#architectural-excellence)
+  - [🎯 Key Features](#-key-features)
+    - [⚡ Real-Time Steering](#-real-time-steering)
+    - [Advanced Capabilities](#advanced-capabilities)
+  - [🛠️ Feature Matrix](#-feature-matrix)
+  - [🚀 Quickstart](#-quickstart)
+    - [Installation](#installation)
+      - [From Source (recommended)](#from-source-recommended)
+    - [Hello AgentScope-easy!](#hello-agentscope-easy)
+  - [💡 Advanced Features](#-advanced-features)
+    - [Real-Time Steering](#real-time-steering)
+    - [Multi-Agent Conversation](#multi-agent-conversation)
+  - [🔧 Architecture Overview](#-architecture-overview)
+  - [📖 Documentation](#-documentation)
+  - [🤝 Acknowledgment](#-acknowledgment)
+  - [📄 License](#-license)
+  - [📞 Contact](#-contact)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 # AgentScope-easy: Developer-First Multi-Agent Framework
 
 <p align="center">
