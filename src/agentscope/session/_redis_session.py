@@ -26,7 +26,6 @@ class RedisSession(SessionBase):
         db: int = 0,
         password: str | None = None,
         connection_pool: ConnectionPool | None = None,
-        key_prefix: str = "agentscope",
         ttl: int | None = None,
         **kwargs: Any,
     ) -> None:
@@ -43,8 +42,6 @@ class RedisSession(SessionBase):
                 Redis password if required.
             connection_pool (`ConnectionPool | None`, optional):
                 Optional Redis connection pool.
-            key_prefix (`str`, defaults to `"agentscope"`):
-                Prefix for redis keys to avoid collision.
             ttl (`int | None`, optional):
                 Expire time in seconds for each session state key. If `None`,
                 the session state will not expire.
@@ -59,7 +56,6 @@ class RedisSession(SessionBase):
                 "Please install it via 'pip install redis[async]'.",
             ) from e
 
-        self.key_prefix = key_prefix
         self.ttl = ttl
 
         self._client = redis.Redis(
@@ -82,7 +78,9 @@ class RedisSession(SessionBase):
 
     def _get_session_key(self, session_id: str) -> str:
         """Get the Redis key to store a given session state."""
-        return f"{self.key_prefix}:session:{session_id}:state"
+        return self.SESSION_KEY.format(
+            session_id=session_id,
+        )
 
     async def save_session_state(
         self,
