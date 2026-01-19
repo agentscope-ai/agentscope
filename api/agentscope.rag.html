@@ -658,6 +658,142 @@ chunked text, doc id and chunk id.</p>
 </dd></dl>
 
 <dl class="py class">
+<dt class="sig sig-object py" id="agentscope.rag.ExcelReader">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ExcelReader</span></span><a class="reference internal" href="../_modules/agentscope/rag/_reader/_excel_reader.html#ExcelReader"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.ExcelReader" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.rag.ReaderBase" title="agentscope.rag._reader._reader_base.ReaderBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">ReaderBase</span></code></a></p>
+<p>The Excel reader that supports reading text, image, and table
+content from Excel files (.xlsx, .xls files), and chunking the text
+content into smaller pieces.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The table content can be extracted in Markdown or JSON format.</p>
+<p><strong>Markdown format example</strong> (<code class="docutils literal notranslate"><span class="pre">include_cell_coordinates=False</span></code>):</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>| Name  | Age | City     |
+|-------|-----|----------|
+| Alice | 25  | New York |
+| Bob   | 30  | London   |
+</pre></div>
+</div>
+<p><strong>Markdown format example</strong> (<code class="docutils literal notranslate"><span class="pre">include_cell_coordinates=True</span></code>):</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>| [A1] Name  | [B1] Age | [C1] City     |
+|------------|----------|---------------|
+| [A2] Alice | [B2] 25  | [C2] New York |
+| [A3] Bob   | [B3] 30  | [C3] London   |
+</pre></div>
+</div>
+<p><strong>JSON format example</strong> (<code class="docutils literal notranslate"><span class="pre">include_cell_coordinates=False</span></code>):</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">[</span><span class="s2">&quot;Name&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Age&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;City&quot;</span><span class="p">]</span>
+<span class="p">[</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;25&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;New York&quot;</span><span class="p">]</span>
+<span class="p">[</span><span class="s2">&quot;Bob&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;30&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;London&quot;</span><span class="p">]</span>
+</pre></div>
+</div>
+<p><strong>JSON format example</strong> (<code class="docutils literal notranslate"><span class="pre">include_cell_coordinates=True</span></code>):</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">&quot;A1&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Name&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;B1&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Age&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;C1&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;City&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">&quot;A2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;B2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;25&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;C2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;New York&quot;</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">&quot;A3&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Bob&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;B3&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;30&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;C3&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;London&quot;</span><span class="p">}</span>
+</pre></div>
+</div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.ExcelReader.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">chunk_size</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">512</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">split_by</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'sentence'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_sheet_names</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_cell_coordinates</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">include_image</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">separate_sheet</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">separate_table</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">table_format</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'markdown'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_reader/_excel_reader.html#ExcelReader.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.ExcelReader.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Excel reader.</p>
+<blockquote>
+<div><dl class="simple">
+<dt>Args:</dt><dd><dl class="simple">
+<dt>chunk_size (<cite>int</cite>, default to 512):</dt><dd><p>The size of each chunk, in number of characters.</p>
+</dd>
+<dt>split_by (<cite>Literal[“char”, “sentence”, “paragraph”]</cite>, default to             “sentence”):</dt><dd><p>The unit to split the text, can be “char”, “sentence”, or
+“paragraph”. The “sentence” option is implemented using the
+“nltk” library, which only supports English text.</p>
+</dd>
+<dt>include_sheet_names (<cite>bool</cite>, default to True):</dt><dd><p>Whether to include sheet names in the extracted text.</p>
+</dd>
+<dt>include_cell_coordinates (<cite>bool</cite>, default to False):</dt><dd><p>Whether to include cell coordinates (e.g., A1, B2) in the
+extracted text.</p>
+</dd>
+<dt>include_image (<cite>bool</cite>, default to False):</dt><dd><p>Whether to include image content in the document. If True,
+images will be extracted and included as base64-encoded images.</p>
+</dd>
+<dt>separate_sheet (<cite>bool</cite>, default to False):</dt><dd><p>Whether to treat each sheet as a separate document. If True,
+each sheet will be extracted as a separate Document object
+instead of being merged together.</p>
+</dd>
+<dt>separate_table (<cite>bool</cite>, default to False):</dt><dd><p>If True, tables will be treated as a new chunk to avoid
+truncation. But note when the table exceeds the chunk size,
+it will still be truncated.</p>
+</dd>
+<dt>table_format (<cite>Literal[“markdown”, “json”]</cite>,             default to “markdown”):</dt><dd><p>The format to extract table content. Note if the table cell
+contains `</p>
+</dd>
+</dl>
+</dd>
+</dl>
+</div></blockquote>
+<dl class="simple">
+<dt><a href="#id3"><span class="problematic" id="id4">`</span></a>, the Markdown format may not render correctly.</dt><dd><p>In that case, you can use the <cite>json</cite> format, which extracts
+the table as a JSON string of a <cite>list[list[str]]</cite> object.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>chunk_size</strong> (<em>int</em>)</p></li>
+<li><p><strong>split_by</strong> (<em>Literal</em><em>[</em><em>'char'</em><em>, </em><em>'sentence'</em><em>, </em><em>'paragraph'</em><em>]</em>)</p></li>
+<li><p><strong>include_sheet_names</strong> (<em>bool</em>)</p></li>
+<li><p><strong>include_cell_coordinates</strong> (<em>bool</em>)</p></li>
+<li><p><strong>include_image</strong> (<em>bool</em>)</p></li>
+<li><p><strong>separate_sheet</strong> (<em>bool</em>)</p></li>
+<li><p><strong>separate_table</strong> (<em>bool</em>)</p></li>
+<li><p><strong>table_format</strong> (<em>Literal</em><em>[</em><em>'markdown'</em><em>, </em><em>'json'</em><em>]</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.ExcelReader.__call__">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">__call__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">excel_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_reader/_excel_reader.html#ExcelReader.__call__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.ExcelReader.__call__" title="Link to this definition">¶</a></dt>
+<dd><p>Read an Excel file, split it into chunks, and return a list of
+Document objects. The text, image, and table content will be returned
+in the same order as they appear in the Excel file.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>excel_path</strong> (<cite>str</cite>) – The input Excel file path (.xlsx or .xls file).</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of Document objects, where the metadata contains the
+chunked text, doc id and chunk id.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>list[Document]</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.rag.ExcelReader.get_doc_id">
+<span class="sig-name descname"><span class="pre">get_doc_id</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">excel_path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/rag/_reader/_excel_reader.html#ExcelReader.get_doc_id"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.ExcelReader.get_doc_id" title="Link to this definition">¶</a></dt>
+<dd><p>Generate unique document ID from file path.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>excel_path</strong> (<cite>str</cite>) – The path to the Excel file.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The document ID (SHA256 hash of the file path).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><cite>str</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
 <dt class="sig sig-object py" id="agentscope.rag.DocMetadata">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">DocMetadata</span></span><a class="reference internal" href="../_modules/agentscope/rag/_document.html#DocMetadata"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.rag.DocMetadata" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">DictMixin</span></code></p>
@@ -1641,6 +1777,12 @@ The threshold of the score to filter the results.</p></li>
 <li><a class="reference internal" href="#agentscope.rag.WordReader.__init__"><code class="docutils literal notranslate"><span class="pre">WordReader.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.WordReader.__call__"><code class="docutils literal notranslate"><span class="pre">WordReader.__call__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.rag.WordReader.get_doc_id"><code class="docutils literal notranslate"><span class="pre">WordReader.get_doc_id()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.rag.ExcelReader"><code class="docutils literal notranslate"><span class="pre">ExcelReader</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.rag.ExcelReader.__init__"><code class="docutils literal notranslate"><span class="pre">ExcelReader.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.ExcelReader.__call__"><code class="docutils literal notranslate"><span class="pre">ExcelReader.__call__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.rag.ExcelReader.get_doc_id"><code class="docutils literal notranslate"><span class="pre">ExcelReader.get_doc_id()</span></code></a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#agentscope.rag.DocMetadata"><code class="docutils literal notranslate"><span class="pre">DocMetadata</span></code></a><ul>
