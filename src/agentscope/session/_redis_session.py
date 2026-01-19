@@ -172,6 +172,12 @@ class RedisSession(SessionBase):
         await self._client.close()
 
     async def __aenter__(self) -> "RedisSession":
+        """Enter the async context manager.
+
+        Returns:
+            `RedisSession`:
+                The current `RedisSession` instance.
+        """
         return self
 
     async def __aexit__(
@@ -180,4 +186,14 @@ class RedisSession(SessionBase):
         exc_value: BaseException | None,
         traceback: Any,
     ) -> None:
+        """Exit the async context manager and close the connection.
+
+        Args:
+            exc_type (`type[BaseException] | None`):
+                The type of the exception.
+            exc_value (`BaseException | None`):
+                The exception instance.
+            traceback (`Any`):
+                The traceback.
+        """
         await self.close()

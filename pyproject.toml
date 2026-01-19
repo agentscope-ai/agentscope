@@ -155,7 +155,6 @@ dev = [
     "fakeredis",
     "aiosqlite",
     "greenlet",
-    "fakeredis",
 ]
 
 [project.urls]
