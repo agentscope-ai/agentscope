@@ -89,9 +89,6 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 config=config,
                 agent_id=resolved_agent_id,
             )
-            self._owns_memory = True
-        else:
-            self._owns_memory = False
 
         self._memory = memory
         self._agent_id = resolved_agent_id
@@ -107,7 +104,20 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         content: list[str],
         **kwargs: Any,
     ) -> ToolResponse:
-        """Record important information to long-term memory."""
+        """Record important information to long-term memory.
+
+        Args:
+            thinking (`str`):
+                Your reasoning about what to record.
+            content (`list[str]`):
+                The content to remember.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the memory backend.
+
+        Returns:
+            `ToolResponse`:
+                A response object describing the result.
+        """
         try:
             await self._ensure_initialized()
             payload = self._join_record_content(thinking, content)
@@ -137,7 +147,20 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         limit: int = 5,
         **kwargs: Any,
     ) -> ToolResponse:
-        """Retrieve memories based on the given keywords."""
+        """Retrieve memories based on the given keywords.
+
+        Args:
+            keywords (`list[str]`):
+                Search terms for memory retrieval.
+            limit (`int`, optional):
+                Maximum number of results per keyword.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the memory backend.
+
+        Returns:
+            `ToolResponse`:
+                A response object describing the retrieved memories.
+        """
         try:
             await self._ensure_initialized()
             results = await self._search_keywords(keywords, limit, **kwargs)
@@ -166,7 +189,18 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         infer: bool | None = None,
         **kwargs: Any,
     ) -> None:
-        """Record messages to long-term memory."""
+        """Record messages to long-term memory.
+
+        Args:
+            msgs (`list[Msg | None]`):
+                Messages to record.
+            memory_type (`str | None`, optional):
+                Memory type passed to the backend.
+            infer (`bool | None`, optional):
+                Override inference behavior.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the backend.
+        """
         if isinstance(msgs, Msg):
             msgs = [msgs]
 
@@ -198,7 +232,20 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         limit: int = 5,
         **kwargs: Any,
     ) -> str:
-        """Retrieve related memories based on the given messages."""
+        """Retrieve related memories based on the given messages.
+
+        Args:
+            msg (`Msg | list[Msg] | None`):
+                Input message(s) to build search queries.
+            limit (`int`, optional):
+                Maximum number of results per query.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the backend.
+
+        Returns:
+            `str`:
+                Concatenated memory results.
+        """
         if msg is None:
             return ""
 
@@ -222,6 +269,12 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         return "\n".join(results)
 
     async def _ensure_initialized(self) -> None:
+        """Ensure the backend is initialized before first use.
+
+        Returns:
+            `None`:
+                This method returns nothing.
+        """
         if self._initialized:
             return
         async with self._init_lock:
@@ -235,6 +288,18 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             self._initialized = True
 
     async def _add_messages(self, payload: str, **kwargs: Any) -> None:
+        """Add messages to the memory backend.
+
+        Args:
+            payload (`str`):
+                Serialized message payload to store.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the backend.
+
+        Returns:
+            `None`:
+                This method returns nothing.
+        """
         await self._call_memory(
             self._memory.add,
             messages=payload,
@@ -250,6 +315,20 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         limit: int,
         **kwargs: Any,
     ) -> list[str]:
+        """Search the backend with a list of queries.
+
+        Args:
+            queries (`list[str]`):
+                Search queries.
+            limit (`int`):
+                Maximum number of results per query.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the backend.
+
+        Returns:
+            `list[str]`:
+                Flattened memory results.
+        """
         results: list[str] = []
         for query in queries:
             response = await self._call_memory(
@@ -270,12 +349,40 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         limit: int,
         **kwargs: Any,
     ) -> list[str]:
+        """Search the backend using keyword queries.
+
+        Args:
+            keywords (`list[str]`):
+                Search keywords.
+            limit (`int`):
+                Maximum number of results per keyword.
+            **kwargs (`Any`):
+                Extra keyword arguments passed to the backend.
+
+        Returns:
+            `list[str]`:
+                Flattened memory results.
+        """
         keywords = [keyword for keyword in keywords if keyword]
         if not keywords:
             return []
         return await self._search_queries(keywords, limit, **kwargs)
 
     async def _call_memory(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Invoke a backend method in async or sync mode.
+
+        Args:
+            func (`Any`):
+                Callable memory backend method.
+            *args (`Any`):
+                Positional arguments for the callable.
+            **kwargs (`Any`):
+                Keyword arguments for the callable.
+
+        Returns:
+            `Any`:
+                Backend result or awaited coroutine result.
+        """
         if inspect.iscoroutinefunction(func):
             return await func(*args, **kwargs)
         result = await asyncio.to_thread(func, *args, **kwargs)
@@ -285,11 +392,33 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
 
     @staticmethod
     def _join_record_content(thinking: str, content: list[str]) -> str:
+        """Join thinking and content entries into a payload string.
+
+        Args:
+            thinking (`str`):
+                Reasoning text.
+            content (`list[str]`):
+                Content items.
+
+        Returns:
+            `str`:
+                Joined payload string.
+        """
         parts = [item for item in [thinking, *content] if item]
         return "\n".join(parts)
 
     @staticmethod
     def _message_to_query(msg: Msg) -> str:
+        """Convert a message into a search query string.
+
+        Args:
+            msg (`Msg`):
+                Input message.
+
+        Returns:
+            `str`:
+                Extracted query string.
+        """
         text = msg.get_text_content()
         if text is not None:
             return text
@@ -297,6 +426,16 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
 
     @staticmethod
     def _to_powermem_messages(msgs: list[Msg]) -> list[dict[str, str]]:
+        """Convert AgentScope messages to powermem message format.
+
+        Args:
+            msgs (`list[Msg]`):
+                Input messages.
+
+        Returns:
+            `list[dict[str, str]]`:
+                Converted message payloads.
+        """
         messages = []
         for msg in msgs:
             text = msg.get_text_content()
@@ -310,6 +449,16 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
 
     @staticmethod
     def _extract_search_results(response: Any) -> list[str]:
+        """Extract memory strings from a backend search response.
+
+        Args:
+            response (`Any`):
+                Backend search response.
+
+        Returns:
+            `list[str]`:
+                Memory strings and formatted relations.
+        """
         if not isinstance(response, dict):
             return []
 
@@ -339,6 +488,24 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         primary: str | None,
         legacy: str | None,
     ) -> str | None:
+        """Resolve primary and legacy identifiers with conflict checks.
+
+        Args:
+            kind (`str`):
+                Identifier kind label for error messages.
+            primary (`str | None`):
+                Primary identifier value.
+            legacy (`str | None`):
+                Legacy identifier value.
+
+        Returns:
+            `str | None`:
+                Resolved identifier.
+
+        Raises:
+            `ValueError`:
+                When both identifiers are set and conflict.
+        """
         if primary is not None and legacy is not None and primary != legacy:
             raise ValueError(
                 f"Conflicting {kind} identifiers: {primary} vs {legacy}",
