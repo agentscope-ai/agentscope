@@ -87,6 +87,8 @@ TODO: a picture here for ecosystem integrations.
 - **[2025-11] `DOCS`:** Contributing Guide is online - welcome to contribute! [Guide](./CONTRIBUTING.md)
 <!-- END NEWS -->
 
+[More news →](./docs/NEWS.md)
+
 ## Community
 
 Welcome to join our community on
