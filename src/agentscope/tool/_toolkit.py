@@ -208,6 +208,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         tool_func: ToolFunction,
         group_name: str | Literal["basic"] = "basic",
         preset_kwargs: dict[str, JSONSerializableObject] | None = None,
+        func_name: str | None = None,
         func_description: str | None = None,
         json_schema: dict | None = None,
         include_long_description: bool = True,
@@ -246,6 +247,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             optional):
                 Preset arguments by the user, which will not be included in
                 the JSON schema, nor exposed to the agent.
+            func_name (`str | None`, optional):
+                The custom function name, which should be consistent with the
+                name in function_description and json_schema (if provided).
+                By default, the function name will be extracted from the
+                function automatically.
             func_description (`str | None`, optional):
                 The function description. If not provided, the description
                 will be extracted from the docstring automatically.
@@ -301,7 +307,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         # Handle MCP tool function and regular function respectively
         mcp_name = None
         if isinstance(tool_func, MCPToolFunction):
-            func_name = tool_func.name
+            input_func_name = tool_func.name
             original_func = tool_func.__call__
             json_schema = json_schema or tool_func.json_schema
             mcp_name = tool_func.mcp_name
@@ -323,7 +329,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 **(preset_kwargs or {}),
             }
 
-            func_name = tool_func.func.__name__
+            input_func_name = tool_func.func.__name__
             original_func = tool_func.func
             json_schema = json_schema or _parse_tool_function(
                 tool_func.func,
@@ -334,7 +340,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         else:
             # normal function
-            func_name = tool_func.__name__
+            input_func_name = tool_func.__name__
             original_func = tool_func
             json_schema = json_schema or _parse_tool_function(
                 tool_func,
@@ -342,6 +348,15 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 include_var_positional=include_var_positional,
                 include_var_keyword=include_var_keyword,
             )
+
+        # Record the original function name if the func_name is given
+        original_name = input_func_name if func_name else None
+
+        # Use the given function name if provided
+        func_name = func_name or input_func_name
+
+        # Always set the function name in json_schema
+        json_schema["function"]["name"] = func_name
 
         # Override the description if provided
         if func_description:
@@ -375,6 +390,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             original_func=original_func,
             json_schema=json_schema,
             preset_kwargs=preset_kwargs or {},
+            original_name=original_name,
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
@@ -425,7 +441,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 )
 
                 # Replace the function name with the new one
-                func_obj.original_name = func_name
+                func_obj.original_name = original_name or func_name
                 func_obj.name = new_func_name
                 func_obj.json_schema["function"]["name"] = new_func_name
 

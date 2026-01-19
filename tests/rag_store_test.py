@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
 import os
+from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 from agentscope.message import TextBlock
 from agentscope.rag import (
@@ -11,6 +12,7 @@ from agentscope.rag import (
     DocMetadata,
     MilvusLiteStore,
     AlibabaCloudMySQLStore,
+    MongoDBStore,
 )
 
 
@@ -258,6 +260,178 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             # Verify connections were closed
             mock_cursor.close.assert_called()
             mock_conn.close.assert_called()
+
+    async def test_mongodb_store(self) -> None:
+        """Test the MongoDBStore implementation using mocks."""
+        # Create mock pymongo module
+        mock_pymongo = MagicMock()
+        mock_operations = MagicMock()
+        mock_pymongo.operations = mock_operations
+
+        # Create mock AsyncMongoClient
+        mock_client = MagicMock()
+        mock_db = MagicMock()
+        mock_collection = MagicMock()
+
+        # Configure mock client
+        mock_pymongo.AsyncMongoClient.return_value = mock_client
+        mock_client.get_database.return_value = mock_db
+
+        # Configure mock database
+        mock_db.list_collection_names = AsyncMock(return_value=[])
+        mock_db.create_collection = AsyncMock(return_value=mock_collection)
+        mock_db.get_collection.return_value = mock_collection
+
+        # Configure mock collection
+        mock_collection.create_search_index = AsyncMock()
+        mock_collection.bulk_write = AsyncMock()
+        mock_collection.delete_many = AsyncMock()
+        mock_collection.drop = AsyncMock()
+
+        # Mock list_search_indexes to return queryable index
+        async def mock_index_iter() -> AsyncGenerator:
+            yield {"queryable": True}
+
+        mock_collection.list_search_indexes = AsyncMock(
+            return_value=mock_index_iter(),
+        )
+
+        # Mock aggregate to return search results
+        mock_search_results = [
+            {
+                "vector": [0.1, 0.2, 0.3],
+                "payload": {
+                    "doc_id": "doc1",
+                    "chunk_id": 0,
+                    "total_chunks": 2,
+                    "content": {
+                        "type": "text",
+                        "text": "This is a test document.",
+                    },
+                },
+                "score": 0.97,
+            },
+        ]
+
+        async def mock_aggregate_iter() -> AsyncGenerator:
+            for item in mock_search_results:
+                yield item
+
+        mock_collection.aggregate = AsyncMock(
+            return_value=mock_aggregate_iter(),
+        )
+
+        # Mock client close
+        mock_client.close = AsyncMock()
+        mock_client.drop_database = AsyncMock()
+
+        # Mock ReplaceOne
+        mock_replace_one = MagicMock()
+        mock_pymongo.ReplaceOne = mock_replace_one
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "pymongo": mock_pymongo,
+                "pymongo.operations": mock_operations,
+            },
+        ):
+            # Create store instance
+            store = MongoDBStore(
+                host="mongodb://localhost:27017",
+                db_name="test_db",
+                collection_name="test_collection",
+                dimensions=3,
+                distance="cosine",
+            )
+
+            # Verify client was created
+            mock_pymongo.AsyncMongoClient.assert_called_once()
+
+            # Test add operation
+            await store.add(
+                [
+                    Document(
+                        embedding=[0.1, 0.2, 0.3],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is a test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=0,
+                            total_chunks=2,
+                        ),
+                    ),
+                    Document(
+                        embedding=[0.9, 0.1, 0.4],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is another test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=1,
+                            total_chunks=2,
+                        ),
+                    ),
+                ],
+            )
+
+            # Verify add operations
+            self.assertTrue(mock_collection.bulk_write.called)
+
+            # Reset mocks for search operation
+            mock_collection.reset_mock()
+
+            # Reconfigure list_search_indexes for search
+            mock_collection.list_search_indexes = AsyncMock(
+                return_value=mock_index_iter(),
+            )
+            mock_collection.aggregate = AsyncMock(
+                return_value=mock_aggregate_iter(),
+            )
+
+            # Test search operation
+            res = await store.search(
+                query_embedding=[0.15, 0.25, 0.35],
+                limit=3,
+                score_threshold=0.8,
+            )
+
+            # Verify search results
+            self.assertEqual(len(res), 1)
+            self.assertAlmostEqual(res[0].score, 0.97, places=2)
+            self.assertEqual(
+                res[0].metadata.content["text"],
+                "This is a test document.",
+            )
+            self.assertEqual(res[0].metadata.doc_id, "doc1")
+            self.assertEqual(res[0].metadata.chunk_id, 0)
+            self.assertEqual(res[0].metadata.total_chunks, 2)
+
+            # Verify search executed aggregate
+            self.assertTrue(mock_collection.aggregate.called)
+
+            # Test delete operation
+            await store.delete(ids="doc1")
+
+            # Verify delete executed
+            mock_collection.delete_many.assert_called_with(
+                {"payload.doc_id": {"$in": ["doc1"]}},
+            )
+
+            # Test delete_collection
+            await store.delete_collection()
+            mock_collection.drop.assert_called()
+
+            # Test delete_database
+            await store.delete_database()
+            mock_client.drop_database.assert_called_with("test_db")
+
+            # Test close
+            await store.close()
+            mock_client.close.assert_called()
 
     async def asyncTearDown(self) -> None:
         """Clean up after tests."""

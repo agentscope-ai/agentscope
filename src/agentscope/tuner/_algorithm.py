@@ -11,7 +11,7 @@ class AlgorithmConfig(BaseModel):
         description=(
             "The tuning algorithm type "
             "e.g., 'multi_step_grpo', 'sft'."
-            "Please refer to https://github.com/modelscope/Trinity-RFT"
+            "Please refer to https://github.com/agentscope-ai/Trinity-RFT"
             "for all supported algorithms. We recommend 'multi_step_grpo'"
             "for most agent tuning scenarios."
         ),

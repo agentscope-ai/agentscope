@@ -51,7 +51,7 @@ long_term_memory = Mem0LongTermMemory(
 )
 
 # %%
-# ``Mem0LongTermMemory`` 类提供了两个操作长期记忆的方法，``record` 和 `retrieve`。
+# ``Mem0LongTermMemory`` 类提供了两个操作长期记忆的方法，``record`` 和 ``retrieve``。
 # 它们接收消息对象的列表作为输入，分别记录和检索长期记忆中的信息。
 #
 # 例如下面的例子中，我们先存入用户的一条偏好，然后在长期记忆中检索相关信息。
