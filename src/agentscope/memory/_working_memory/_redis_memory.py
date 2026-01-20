@@ -88,7 +88,6 @@ class RedisMemory(MemoryBase):
             db=db,
             password=password,
             connection_pool=connection_pool,
-            decode_responses=True,
             **kwargs,
         )
 
