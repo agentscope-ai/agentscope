@@ -64,6 +64,7 @@ class RedisSession(SessionBase):
             db=db,
             password=password,
             connection_pool=connection_pool,
+            decode_responses=True,
             **kwargs,
         )
 
