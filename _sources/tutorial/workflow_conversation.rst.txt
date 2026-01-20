@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. How about you? What do you do?
-    Bob: Hey Alice! Nice to meet you. I'm Bob, and I'm also a student. I'm studying computer science, but I have a keen interest in how technology can be used to support environmental causes. It's great to hear about your passion for sustainability!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I'm focusing on business, but I have a strong interest in how businesses can be more socially responsible and sustainable. It's really cool to see how different fields can come together for a common cause!
+    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm studying business. It's great to meet you!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm studying computer science. I also love playing video games and exploring new tech gadgets. Nice to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. How about you? What do you do?
-    Bob: Hey Alice! Nice to meet you. I'm Bob, and I'm also a student. I'm studying computer science, but I have a keen interest in how technology can be used to support environmental causes. It's great to hear about your passion for sustainability!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I'm focusing on business, but I have a strong interest in how businesses can be more socially responsible and sustainable. It's really cool to see how different fields can come together for a common cause!
+    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm studying business. It's great to meet you!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm studying computer science. I also love playing video games and exploring new tech gadgets. Nice to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.064 seconds)
+   **Total running time of the script:** (0 minutes 5.650 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
