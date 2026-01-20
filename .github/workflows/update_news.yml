@@ -7,6 +7,11 @@ on:
     branches-ignore:
       - 'main'
 
+# Prevent concurrent runs that modify README files
+concurrency:
+  group: readme-updates-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   updateNews:
     name: NEWS Updater
