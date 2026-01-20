@@ -560,9 +560,17 @@ class RedisMemory(MemoryBase):
         await pipe.execute()
         return updated_count
 
-    async def close(self) -> None:
-        """Close the Redis client connection."""
-        await self._client.close()
+    async def close(self, close_connection_pool: bool | None = None) -> None:
+        """Close the Redis client connection.
+
+        Args:
+            close_connection_pool (`bool | None`, optional):
+                Decides whether to close the connection pool used by this
+                Redis client, overriding Redis.auto_close_connection_pool.
+                By default, let Redis.auto_close_connection_pool decide
+                whether to close the connection pool
+        """
+        await self._client.aclose(close_connection_pool)
 
     async def __aenter__(self) -> "RedisMemory":
         """Enter the async context manager.
