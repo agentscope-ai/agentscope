@@ -210,7 +210,8 @@ asyncio.run(main())
 
 创建支持语音的 ReAct 智能体，能够理解语音并进行语音回复，还可以使用语音交互玩多智能体狼人杀游戏。
 
-https://github.com/user-attachments/assets/c5f05254-aff6-4375-90df-85e8da95d5da
+
+https://github.com/user-attachments/assets/559af387-fd6f-4f0c-b882-cd4778214801
 
 
 ### 人机协作
