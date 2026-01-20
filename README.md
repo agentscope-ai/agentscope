@@ -70,7 +70,11 @@ rather than constraining them with strict prompts and opinionated orchestrations
 - **Production-ready**: deploy and serve your agents locally, as serverless in the cloud, or on your K8s cluster with built-in OTel support
 
 
-TODO: a picture here for ecosystem integrations.
+<p align="center">
+<img src="./assets/images/agentscope_20260120.png" width="60%" />
+<br/>
+The AgentScope Ecosystem
+</p>
 
 
 ## News
@@ -255,17 +259,16 @@ async def fine_grained_mcp_control():
 
 Train your agentic application seamlessly with Reinforcement Learning integration. We also prepare multiple sample projects covering various scenarios:
 
-| Example                                                                                          | Description                                                 | Multi-step Interaction | LLM-as-a-Judge | Tool-use | Multi-Agent | Data Augmentation | Reward Curve                                                                                                           |
-|--------------------------------------------------------------------------------------------------|-------------------------------------------------------------|------------------------|----------------|----------|-------------|-------------------|------------------------------------------------------------------------------------------------------------------------|
-| [Math Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/math_agent)     | Tune a math-solving agent with multi-step reasoning.        | ✅                      | -              | -        | -           | -                 | [<img src="https://img.alicdn.com/imgextra/i3/O1CN01Nwr22b1xMzozxAOTX_!!6000000006430-2-tps-770-696.png" width="250" height="150">](https://img.alicdn.com/imgextra/i3/O1CN01Nwr22b1xMzozxAOTX_!!6000000006430-2-tps-770-696.png)   |
-| [Frozen Lake](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/frozen_lake)   | Train an agent to navigate the Frozen Lake environment.     | ✅                      | -              | -        | -           | -                 | [<img src="https://img.alicdn.com/imgextra/i3/O1CN010DmrKW1fb2t5pYAG0_!!6000000004024-2-tps-1200-600.png" width="250" height="150">](https://img.alicdn.com/imgextra/i3/O1CN010DmrKW1fb2t5pYAG0_!!6000000004024-2-tps-1200-600.png)  |
-| [Learn to Ask](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/learn_to_ask) | Tune agents using LLM-as-a-judge for automated feedback.    | ✅                      | ✅              | -        | -           | -                 | [<img src="https://img.alicdn.com/imgextra/i2/O1CN011W9lQH1mtYCTmoXYY_!!6000000005012-2-tps-541-474.png" width="250" height="150">](https://img.alicdn.com/imgextra/i2/O1CN011W9lQH1mtYCTmoXYY_!!6000000005012-2-tps-541-474.png)   |
-| [Email Search](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/email_search) | Improve tool-use capabilities without labeled ground truth. | ✅                      | ✅              | ✅        | -           | -                 | [<img src="https://img.alicdn.com/imgextra/i2/O1CN01oUqc1y1ePJ7YALyjs_!!6000000003863-2-tps-5056-2656.png" width="250" height="150">](https://img.alicdn.com/imgextra/i2/O1CN01oUqc1y1ePJ7YALyjs_!!6000000003863-2-tps-5056-2656.png) |
-| [Werewolf Game](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/werewolves)  | Train agents for strategic multi-agent game interactions.   | ✅                      | ✅              | ✅        | ✅           | -                 | [<img src="https://img.alicdn.com/imgextra/i1/O1CN013GaiBx1yNk5BaLN51_!!6000000006567-2-tps-5056-2656.png" width="250" height="150">](https://img.alicdn.com/imgextra/i1/O1CN013GaiBx1yNk5BaLN51_!!6000000006567-2-tps-5056-2656.png) |
-| [Data Augment](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/data_augment) | Generate synthetic training data to enhance tuning results. | -                      | -              | -        | -           | ✅                 | [<img src="https://img.alicdn.com/imgextra/i4/O1CN016kpgYD1pxAAguLsXn_!!6000000005426-2-tps-1137-807.png" width="250" height="150">](https://img.alicdn.com/imgextra/i4/O1CN016kpgYD1pxAAguLsXn_!!6000000005426-2-tps-1137-807.png)  |
+| Example                                                                                          | Description                                                 | Model               | Training Result              |
+|--------------------------------------------------------------------------------------------------|-------------------------------------------------------------|---------------------|------------------------------|
+| [Math Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/math_agent)     | Tune a math-solving agent with multi-step reasoning.        | Qwen-3-4B           | -                            |
+| [Frozen Lake](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/frozen_lake)   | Train an agent to navigate the Frozen Lake environment.     | Qwen2.5-7B          | -                            |
+| [Learn to Ask](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/learn_to_ask) | Tune agents using LLM-as-a-judge for automated feedback.    | Qwen3-7B            | -                            |
+| [Email Search](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/email_search) | Improve tool-use capabilities without labeled ground truth. | Qwen3-7B            | -                            |
+| [Werewolf Game](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/werewolves)  | Train agents for strategic multi-agent game interactions.   | Qwen2.5-7B-Instruct | Werewolf win rate: 50% → 80% |
+| [Data Augment](https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner/data_augment) | Generate synthetic training data to enhance tuning results. | Qwen3-7B            | -                            |
 
-
-### Multi-Agent Conversation
+### Multi-Agent Workflows
 
 AgentScope provides ``MsgHub`` and pipelines to streamline multi-agent conversations, offering efficient message routing and seamless information sharing
 
