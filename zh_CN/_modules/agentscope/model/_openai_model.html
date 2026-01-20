@@ -728,7 +728,9 @@
                 <span class="p">):</span>
                     <span class="n">text</span> <span class="o">+=</span> <span class="n">choice</span><span class="o">.</span><span class="n">delta</span><span class="o">.</span><span class="n">audio</span><span class="p">[</span><span class="s2">&quot;transcript&quot;</span><span class="p">]</span>
 
-                <span class="k">for</span> <span class="n">tool_call</span> <span class="ow">in</span> <span class="n">choice</span><span class="o">.</span><span class="n">delta</span><span class="o">.</span><span class="n">tool_calls</span> <span class="ow">or</span> <span class="p">[]:</span>
+                <span class="k">for</span> <span class="n">tool_call</span> <span class="ow">in</span> <span class="p">(</span>
+                    <span class="nb">getattr</span><span class="p">(</span><span class="n">choice</span><span class="o">.</span><span class="n">delta</span><span class="p">,</span> <span class="s2">&quot;tool_calls&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[]</span>
+                <span class="p">):</span>
                     <span class="k">if</span> <span class="n">tool_call</span><span class="o">.</span><span class="n">index</span> <span class="ow">in</span> <span class="n">tool_calls</span><span class="p">:</span>
                         <span class="k">if</span> <span class="n">tool_call</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">arguments</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
                             <span class="n">tool_calls</span><span class="p">[</span><span class="n">tool_call</span><span class="o">.</span><span class="n">index</span><span class="p">][</span>
