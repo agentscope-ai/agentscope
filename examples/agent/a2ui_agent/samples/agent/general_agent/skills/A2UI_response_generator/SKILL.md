@@ -16,6 +16,33 @@ Instead of loading the entire A2UI schema and all examples at once, this skill a
 3. Reduce prompt token usage by loading only necessary templates
 4. Easily extend with new UI templates for different domains
 
+### File Structure
+
+```
+A2UI_response_generator/
+├── SKILL.md                          # This file - main skill documentation
+├── view_a2ui_schema.py               # Tool to view the complete A2UI schema (schema included in file)
+├── view_a2ui_examples.py             # Tool to view UI template examples (templates included in file)
+├── __init__.py                       # Package initialization
+├── schema/                           # A2UI schema definitions
+│   ├── __init__.py
+│   └── base_schema.py                # Base A2UI schema
+└── UI_templete_examples/             # UI template examples
+    ├── __init__.py
+    ├── booking_form.py               # Booking form template
+    ├── contact_form.py               # Contact form template
+    ├── email_compose_form.py         # Email compose form template
+    ├── error_message.py              # Error message template
+    ├── info_message.py               # Info message template
+    ├── item_detail_card_with_image.py # Item detail card with image template
+    ├── profile_view.py               # Profile view template
+    ├── search_filter_form.py         # Search filter form template
+    ├── simple_column_list_without_image.py # Simple list template
+    ├── single_column_list.py         # Single column list template
+    ├── success_confirmation_with_image.py # Success confirmation template
+    └── two_column_list.py            # Two column list template
+```
+
 ## Quick Start
 
 When it is required to generate UI JSON, follow these steps:
@@ -95,32 +122,7 @@ Second Part. **A2UI JSON messages**: A raw JSON array of A2UI message objects th
 
 **Important**: The JSON portion must be valid JSON and conform to the A2UI schema loaded in Step 1.
 
-## File Structure
 
-```
-A2UI_response_generator/
-├── SKILL.md                          # This file - main skill documentation
-├── view_a2ui_schema.py               # Tool to view the complete A2UI schema (schema included in file)
-├── view_a2ui_examples.py             # Tool to view UI template examples (templates included in file)
-├── __init__.py                       # Package initialization
-├── schema/                           # A2UI schema definitions
-│   ├── __init__.py
-│   └── base_schema.py                # Base A2UI schema
-└── UI_templete_examples/             # UI template examples
-    ├── __init__.py
-    ├── booking_form.py               # Booking form template
-    ├── contact_form.py               # Contact form template
-    ├── email_compose_form.py         # Email compose form template
-    ├── error_message.py              # Error message template
-    ├── info_message.py               # Info message template
-    ├── item_detail_card_with_image.py # Item detail card with image template
-    ├── profile_view.py               # Profile view template
-    ├── search_filter_form.py         # Search filter form template
-    ├── simple_column_list_without_image.py # Simple list template
-    ├── single_column_list.py         # Single column list template
-    ├── success_confirmation_with_image.py # Success confirmation template
-    └── two_column_list.py            # Two column list template
-```
 
 ## Domain-Specific Extensions
 
