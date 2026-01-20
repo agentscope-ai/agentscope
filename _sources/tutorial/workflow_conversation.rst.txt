@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm studying business. It's great to meet you!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm studying computer science. I also love playing video games and exploring new tech gadgets. Nice to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in literature and art. Nice to meet you! What about you?
+    Bob: Hey Alice, I'm Bob. It's great to meet you! I'm into science and technology, but I also enjoy playing sports in my free time.
+    Charlie: Hi Alice and Bob, I'm Charlie. I love exploring different genres of music and playing the guitar. It's great to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I'm studying business. It's great to meet you!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm studying computer science. I also love playing video games and exploring new tech gadgets. Nice to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in literature and art. Nice to meet you! What about you?
+    Bob: Hey Alice, I'm Bob. It's great to meet you! I'm into science and technology, but I also enjoy playing sports in my free time.
+    Charlie: Hi Alice and Bob, I'm Charlie. I love exploring different genres of music and playing the guitar. It's great to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 5.650 seconds)
+   **Total running time of the script:** (0 minutes 7.029 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
