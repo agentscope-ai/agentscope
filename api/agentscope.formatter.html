@@ -522,6 +522,22 @@ them into the required format for the LLM API.</p>
 <p>The DashScope formatter class for chatbot scenario, where only a user
 and an agent are involved. We use the <cite>role</cite> field to identify different
 entities in the conversation.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Known Issues with DashScope API:</p>
+<ol class="arabic simple">
+<li><p><strong>Missing content field</strong>: When messages lack the ‘content’ field,
+qwen-vl-max models will raise <code class="docutils literal notranslate"><span class="pre">KeyError:</span> <span class="pre">'content'</span></code>.</p></li>
+<li><p><strong>None content value</strong>: When content is <code class="docutils literal notranslate"><span class="pre">None</span></code>, qwen-vl-max models
+will raise <code class="docutils literal notranslate"><span class="pre">TypeError:</span> <span class="pre">'NoneType'</span> <span class="pre">object</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">iterable</span></code>.</p></li>
+<li><p><strong>Empty text in content</strong>: When content contains
+<code class="docutils literal notranslate"><span class="pre">[{&quot;text&quot;:</span> <span class="pre">None}]</span></code>, qwen3-max may repeatedly invoke tools
+multiple times. Note that when qwen3-max initiates tool calls,
+the returned message contains <code class="docutils literal notranslate"><span class="pre">&quot;content&quot;:</span> <span class="pre">&quot;&quot;</span></code>.</p></li>
+</ol>
+<p>To avoid these issues, this formatter assigns content as an empty
+list <code class="docutils literal notranslate"><span class="pre">[]</span></code> for messages without valid content blocks.</p>
+</div>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.formatter.DashScopeChatFormatter.support_tools_api">
 <span class="sig-name descname"><span class="pre">support_tools_api</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">bool</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">True</span></em><a class="headerlink" href="#agentscope.formatter.DashScopeChatFormatter.support_tools_api" title="Link to this definition">¶</a></dt>

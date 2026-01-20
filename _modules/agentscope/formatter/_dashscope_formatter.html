@@ -494,6 +494,24 @@
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The DashScope formatter class for chatbot scenario, where only a user</span>
 <span class="sd">    and an agent are involved. We use the `role` field to identify different</span>
 <span class="sd">    entities in the conversation.</span>
+
+<span class="sd">    .. warning::</span>
+<span class="sd">        Known Issues with DashScope API:</span>
+
+<span class="sd">        1. **Missing content field**: When messages lack the &#39;content&#39; field,</span>
+<span class="sd">           qwen-vl-max models will raise ``KeyError: &#39;content&#39;``.</span>
+
+<span class="sd">        2. **None content value**: When content is ``None``, qwen-vl-max models</span>
+<span class="sd">           will raise ``TypeError: &#39;NoneType&#39; object is not iterable``.</span>
+
+<span class="sd">        3. **Empty text in content**: When content contains</span>
+<span class="sd">           ``[{&quot;text&quot;: None}]``, qwen3-max may repeatedly invoke tools</span>
+<span class="sd">           multiple times. Note that when qwen3-max initiates tool calls,</span>
+<span class="sd">           the returned message contains ``&quot;content&quot;: &quot;&quot;``.</span>
+
+<span class="sd">        To avoid these issues, this formatter assigns content as an empty</span>
+<span class="sd">        list ``[]`` for messages without valid content blocks.</span>
+
 <span class="sd">    &quot;&quot;&quot;</span>
 
     <span class="n">support_tools_api</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
@@ -728,17 +746,13 @@
 
             <span class="n">msg_dashscope</span> <span class="o">=</span> <span class="p">{</span>
                 <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="o">.</span><span class="n">role</span><span class="p">,</span>
-                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">content_blocks</span> <span class="ow">or</span> <span class="p">[{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">}],</span>
+                <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">content_blocks</span><span class="p">,</span>
             <span class="p">}</span>
 
             <span class="k">if</span> <span class="n">tool_calls</span><span class="p">:</span>
                 <span class="n">msg_dashscope</span><span class="p">[</span><span class="s2">&quot;tool_calls&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tool_calls</span>
 
-            <span class="k">if</span> <span class="n">msg_dashscope</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span> <span class="o">!=</span> <span class="p">[</span>
-                <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
-            <span class="p">]</span> <span class="ow">or</span> <span class="n">msg_dashscope</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-                <span class="s2">&quot;tool_calls&quot;</span><span class="p">,</span>
-            <span class="p">):</span>
+            <span class="k">if</span> <span class="n">msg_dashscope</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span> <span class="ow">or</span> <span class="n">msg_dashscope</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tool_calls&quot;</span><span class="p">):</span>
                 <span class="n">formatted_msgs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg_dashscope</span><span class="p">)</span>
 
             <span class="c1"># Move to next message</span>

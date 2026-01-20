@@ -626,11 +626,7 @@ Taking DashScope as an example, the formatted message will look like this:</p>
     },
     {
         &quot;role&quot;: &quot;assistant&quot;,
-        &quot;content&quot;: [
-            {
-                &quot;text&quot;: null
-            }
-        ],
+        &quot;content&quot;: [],
         &quot;tool_calls&quot;: [
             {
                 &quot;id&quot;: &quot;1&quot;,
@@ -650,11 +646,7 @@ Taking DashScope as an example, the formatted message will look like this:</p>
     },
     {
         &quot;role&quot;: &quot;assistant&quot;,
-        &quot;content&quot;: [
-            {
-                &quot;text&quot;: null
-            }
-        ],
+        &quot;content&quot;: [],
         &quot;tool_calls&quot;: [
             {
                 &quot;id&quot;: &quot;2&quot;,
@@ -725,7 +717,7 @@ Alice: Let&#39;s go together.
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>None of PyTorch, TensorFlow &gt;= 2.0, or Flax have been found. Models won&#39;t be available and only tokenizers, configuration and file/data utilities can be used.
-The tokens in the formatted messages are:  156
+The tokens in the formatted messages are:  154
 </pre></div>
 </div>
 <p>Then we set the maximum token limit to 20 tokens less than the total number of tokens and run the formatter.</p>
@@ -750,7 +742,7 @@ The tokens in the formatted messages are:  156
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_truncated_formatter</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The tokens after truncation:  126
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The tokens after truncation:  124
 
 The conversation history after truncation:
 # Conversation History
@@ -809,7 +801,7 @@ The <code class="docutils literal notranslate"><span class="pre">TruncatedFormat
 <li><p><a class="reference internal" href="task_token.html#token"><span class="std std-ref">Token</span></a></p></li>
 <li><p><a class="reference internal" href="task_model.html#model"><span class="std std-ref">Model</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.187 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.489 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-prompt-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dfe7448b311839d65e0e1c6dc9aeb195/task_prompt.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_prompt.ipynb</span></code></a></p>
