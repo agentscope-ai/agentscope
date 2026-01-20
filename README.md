@@ -71,7 +71,7 @@ rather than constraining them with strict prompts and opinionated orchestrations
 
 
 <p align="center">
-<img src="./assets/images/agentscope_20260120.png" width="60%" />
+<img src="./assets/images/agentscope_20260120.png" width="90%" />
 <br/>
 The AgentScope Ecosystem
 </p>
