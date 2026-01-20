@@ -18,9 +18,8 @@ from a2a.types import (
 from starlette.middleware.cors import CORSMiddleware
 
 from agent_card import agent_card
-from prompt_builder import get_ui_prompt, get_text_prompt
+from prompt_builder import get_ui_prompt
 from a2ui_utils import (
-    check_a2ui_extension,
     pre_process_request_with_ui_event,
     post_process_a2a_message_for_ui,
     A2UIResponse,
@@ -181,18 +180,10 @@ class SimpleStreamHandler:
         task_id = params.message.task_id or uuid.uuid4().hex
         context_id = params.message.context_id or "default-context"
         # ============ Agent Logic ============
-
-        # Register the tool functions
-        # toolkit = Toolkit(
-        #     agent_skill_instruction=A2UI_SKILL_INSTRUCTION,
-        #     agent_skill_template=A2UI_SKILL_TEMPLATE_MINIMAL,
-        # )
         toolkit = Toolkit()
         toolkit.register_tool_function(execute_python_code)
         toolkit.register_tool_function(execute_shell_command)
         toolkit.register_tool_function(view_text_file)
-        # toolkit.register_tool_function(get_restaurants)
-        # toolkit.register_tool_function(book_restaurants)
         # Get the skill path relative to this file
         # From restaurant_finder/ to restaurant_finder/skills/
         # A2UI_response_generator
@@ -203,20 +194,12 @@ class SimpleStreamHandler:
                 "A2UI_response_generator",
             ),
         )
-        logger.info("skill_path: %s", skill_path)
         toolkit.register_agent_skill(skill_path)
-        logger.info("Agent skill prompt: %s", toolkit.get_agent_skill_prompt())
-        use_ui = check_a2ui_extension(*args)
-
-        if use_ui:
-            system_prompt = get_ui_prompt()
-        else:
-            system_prompt = get_text_prompt()
 
         # Create the agent instance
         agent = ReActAgent(
             name="Friday",
-            sys_prompt=system_prompt,
+            sys_prompt=get_ui_prompt(),
             model=DashScopeChatModel(
                 model_name="qwen-max",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
@@ -266,7 +249,7 @@ class SimpleStreamHandler:
                 if last:
                     # Print message content preview (first 100 characters)
                     log_text = f"----{msg}"
-                    logger.info(log_text[0 : min(len(log_text), 500)])
+                    logger.debug(log_text[0 : min(len(log_text), 500)])
                     # Track the last complete message
                     # (only keep reference, no expensive ops)
                     last_complete_msg = copy.deepcopy(msg)

@@ -149,3 +149,4 @@ package-lock.json
 .wireit/
 .angular/
 *.ts
+uv.lock

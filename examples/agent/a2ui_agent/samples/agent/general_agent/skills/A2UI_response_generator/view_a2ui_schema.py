@@ -13,7 +13,7 @@ Usage:
 from schema import A2UI_SCHEMA
 
 
-def view_a2ui_schema(schema_category: str = "BASE_SCHEME") -> str:
+def view_a2ui_schema(schema_category: str = "BASE_SCHEMA") -> str:
     """
     View the complete A2UI schema for generating UI responses.
 
@@ -21,12 +21,12 @@ def view_a2ui_schema(schema_category: str = "BASE_SCHEME") -> str:
     available UI components and message types.
 
     Args:
-        schema_category: The category of the schema to view. Can be "BASE_SCHEME".
+        schema_category: The category of the schema to view. Can be "BASE_SCHEMA".
 
     Returns:
         The complete A2UI schema as a string.
     """
-    if schema_category == "BASE_SCHEME":
+    if schema_category == "BASE_SCHEMA":
         return f"""
 ## A2UI JSON Schema
 
@@ -62,9 +62,9 @@ if __name__ == "__main__":
         "--schema_category",
         type=str,
         required=True,
-        help="The category of the schema to view. Can be 'BASE_SCHEME'.",
-        choices=["BASE_SCHEME"],
-        default="BASE_SCHEME",
+        help="The category of the schema to view. Can be 'BASE_SCHEMA'.",
+        choices=["BASE_SCHEMA"],
+        default="BASE_SCHEMA",
     )
     args = parser.parse_args()
 

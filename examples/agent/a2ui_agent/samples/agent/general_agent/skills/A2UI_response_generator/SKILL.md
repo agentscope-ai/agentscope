@@ -26,14 +26,14 @@ Important: Please use the `execute_shell_command` tool to execute Python command
 
 Run the following script to load the complete A2UI schema.
 
-Currently available `schema_category` is `BASE_SCHEME`.
+Currently available `schema_category` is `BASE_SCHEMA`.
 
 **Use the `execute_shell_command` tool to run (make sure you are in the skill directory):**
 ```bash
-python -m view_a2ui_schema --schema_category BASE_SCHEME
+python -m view_a2ui_schema --schema_category BASE_SCHEMA
 ```
 
-**Usage**: `python -m view_a2ui_schema --schema_category [schema_category]` - Loads the A2UI schema definition for validating A2UI JSON response structure. Currently only `BASE_SCHEME` is available.
+**Usage**: `python -m view_a2ui_schema --schema_category [schema_category]` - Loads the A2UI schema definition for validating A2UI JSON response structure. Currently only `BASE_SCHEMA` is available.
 
 About detailed usage, please refer to the `./view_a2ui_schema.py` script (located in the same folder as this SKILL.md file).
 

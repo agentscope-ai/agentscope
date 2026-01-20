@@ -24,8 +24,6 @@ Specifically, we have:
 
 The following directories in this example contain content sourced from the [Google A2UI repository](https://github.com/google/A2UI):
 
-- **`specification/`**: A2UI protocol specification files
-- **`renderers/`**: A2UI renderer implementations (Lit and Angular)
 - **`samples/client/`**: A2UI client sample applications
 
 **NPM Package Status**: As of now, the A2UI client libraries (`@a2ui/lit` and `@a2ui/angular`) are **not yet published to NPM**. According to the [official A2UI client setup guide](https://a2ui.org/guides/client-setup/#renderers): "The Lit client library is not yet published to NPM. Check back in the coming days."
@@ -41,6 +39,9 @@ Download the a2ui and agentscope package to the same directory
 ```bash
 git clone https://github.com/google/A2UI.git
 git clone -b main https://github.com/agentscope-ai/agentscope.git
+# copy the renders and specification directory to AgentScope/examples/agent/a2ui_agent
+copy -r a2ui/renderers AgentScope/examples/agent/a2ui_agent
+copy -r a2ui/specification AgentScope/examples/agent/a2ui_agent
 ```
 
 
