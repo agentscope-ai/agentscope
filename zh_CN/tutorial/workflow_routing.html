@@ -432,20 +432,20 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_router_explicit</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:173: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Router: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;your_choice&quot;: &quot;Content Generation&quot;,
-        &quot;task_description&quot;: &quot;用户请求帮助写一首诗&quot;
+        &quot;task_description&quot;: &quot;写一首诗&quot;
     },
-    &quot;id&quot;: &quot;call_a91fb1726b264df2b50af0&quot;
+    &quot;id&quot;: &quot;call_68233c7eb3e04d7484ce17&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a91fb1726b264df2b50af0&quot;,
+    &quot;id&quot;: &quot;call_68233c7eb3e04d7484ce17&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -454,11 +454,11 @@ system: {
         }
     ]
 }
-Router: 我将为您转接到我们的内容创作助手，它会帮助您完成这首诗的创作。请稍等片刻。
+Router: 我已经将您的请求路由给了内容生成任务，专门为您创作一首诗。请稍等片刻。
 结构化输出：
 {
     &quot;your_choice&quot;: &quot;Content Generation&quot;,
-    &quot;task_description&quot;: &quot;用户请求帮助写一首诗&quot;
+    &quot;task_description&quot;: &quot;写一首诗&quot;
 }
 </pre></div>
 </div>
@@ -557,9 +557,9 @@ Router: 我将为您转接到我们的内容创作助手，它会帮助您完成
     &quot;input&quot;: {
         &quot;demand&quot;: &quot;生成一个快速排序函数&quot;
     },
-    &quot;id&quot;: &quot;call_4b86732cbd0a427ca47625&quot;
+    &quot;id&quot;: &quot;call_bb7f1f22479d4716bc6193&quot;
 }
-PythonAgent: 当然！快速排序是一种非常高效的排序算法，其平均时间复杂度为 O(n log n)。以下是一个用 Python 实现的快速排序函数：
+PythonAgent: 当然！快速排序是一种非常高效的排序算法，采用分治策略来对一个数组进行排序。以下是一个用 Python 实现的快速排序函数：
 
 ```python
 def quicksort(arr):
@@ -575,24 +575,49 @@ def quicksort(arr):
 # 示例用法
 arr = [3, 6, 8, 10, 1, 2, 1]
 sorted_arr = quicksort(arr)
-print(sorted_arr)
+print(&quot;Sorted array:&quot;, sorted_arr)
 ```
 
-这个实现使用了递归的方法。它选择一个基准元素（pivot），然后将数组分为三部分：小于基准的部分、等于基准的部分和大于基准的部分。然后对小于和大于基准的部分递归地进行快速排序，最后将结果合并。
+这个实现使用了递归的方法。它选择一个基准值（pivot），然后将数组分成三部分：小于基准值的部分、等于基准值的部分和大于基准值的部分。然后递归地对左右两部分进行排序，最后将结果合并。
 
-如果你有任何其他需求或想要进一步优化，请告诉我！
+如果你想要一个更传统的原地排序版本，可以参考以下代码：
+
+```python
+def quicksort_inplace(arr, low, high):
+    if low &lt; high:
+        pi = partition(arr, low, high)
+        quicksort_inplace(arr, low, pi - 1)
+        quicksort_inplace(arr, pi + 1, high)
+
+def partition(arr, low, high):
+    pivot = arr[high]
+    i = low - 1
+    for j in range(low, high):
+        if arr[j] &lt; pivot:
+            i += 1
+            arr[i], arr[j] = arr[j], arr[i]
+    arr[i + 1], arr[high] = arr[high], arr[i + 1]
+    return i + 1
+
+# 示例用法
+arr = [3, 6, 8, 10, 1, 2, 1]
+quicksort_inplace(arr, 0, len(arr) - 1)
+print(&quot;Sorted array:&quot;, arr)
+```
+
+这个版本的快速排序是原地排序，不需要额外的空间来存储临时数组。`partition` 函数用于将数组分成两部分，并返回基准值的位置。`quicksort_inplace` 函数递归地对左右两部分进行排序。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_4b86732cbd0a427ca47625&quot;,
+    &quot;id&quot;: &quot;call_bb7f1f22479d4716bc6193&quot;,
     &quot;name&quot;: &quot;generate_python&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;当然！快速排序是一种非常高效的排序算法，其平均时间复杂度为 O(n log n)。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(sorted_arr)\n```\n\n这个实现使用了递归的方法。它选择一个基准元素（pivot），然后将数组分为三部分：小于基准的部分、等于基准的部分和大于基准的部分。然后对小于和大于基准的部分递归地进行快速排序，最后将结果合并。\n\n如果你有任何其他需求或想要进一步优化，请告诉我！&quot;
+            &quot;text&quot;: &quot;当然！快速排序是一种非常高效的排序算法，采用分治策略来对一个数组进行排序。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) &lt;= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x &lt; pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x &gt; pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(\&quot;Sorted array:\&quot;, sorted_arr)\n```\n\n这个实现使用了递归的方法。它选择一个基准值（pivot），然后将数组分成三部分：小于基准值的部分、等于基准值的部分和大于基准值的部分。然后递归地对左右两部分进行排序，最后将结果合并。\n\n如果你想要一个更传统的原地排序版本，可以参考以下代码：\n\n```python\ndef quicksort_inplace(arr, low, high):\n    if low &lt; high:\n        pi = partition(arr, low, high)\n        quicksort_inplace(arr, low, pi - 1)\n        quicksort_inplace(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] &lt; pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nquicksort_inplace(arr, 0, len(arr) - 1)\nprint(\&quot;Sorted array:\&quot;, arr)\n```\n\n这个版本的快速排序是原地排序，不需要额外的空间来存储临时数组。`partition` 函数用于将数组分成两部分，并返回基准值的位置。`quicksort_inplace` 函数递归地对左右两部分进行排序。&quot;
         }
     ]
 }
-Router: 生成的快速排序函数如下所示：
+Router: 生成的 Python 快速排序函数包括两个版本。第一个版本是非原地排序，使用了额外的空间来创建小于、等于和大于基准值的子数组。下面是该版本的代码：
 
 ```python
 def quicksort(arr):
@@ -604,19 +629,32 @@ def quicksort(arr):
         middle = [x for x in arr if x == pivot]
         right = [x for x in arr if x &gt; pivot]
         return quicksort(left) + middle + quicksort(right)
-
-# 示例用法
-arr = [3, 6, 8, 10, 1, 2, 1]
-sorted_arr = quicksort(arr)
-print(sorted_arr)
 ```
 
-这个实现使用了递归的方法。它选择一个基准元素（pivot），然后将数组分为三部分：小于基准的部分、等于基准的部分和大于基准的部分。然后对小于和大于基准的部分递归地进行快速排序，最后将结果合并。
+第二个版本是原地排序，不需要额外的空间来存储临时数组，并且使用了一个 `partition` 函数来划分数组并找到基准值的位置。这里是该版本的代码：
 
-您可以直接使用这段代码来对列表进行快速排序。如果您有任何其他需求或想要进一步优化，请告诉我！
+```python
+def quicksort_inplace(arr, low, high):
+    if low &lt; high:
+        pi = partition(arr, low, high)
+        quicksort_inplace(arr, low, pi - 1)
+        quicksort_inplace(arr, pi + 1, high)
+
+def partition(arr, low, high):
+    pivot = arr[high]
+    i = low - 1
+    for j in range(low, high):
+        if arr[j] &lt; pivot:
+            i += 1
+            arr[i], arr[j] = arr[j], arr[i]
+    arr[i + 1], arr[high] = arr[high], arr[i + 1]
+    return i + 1
+```
+
+你可以根据需要选择其中一个版本来使用。如果你想要节省空间，那么推荐使用原地排序版本。对于每一个版本，都给出了示例用法，您可以直接运行这些代码来看到排序的效果。
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 23.140 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 22.374 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-routing-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/3266c75280f96697c4cc46d7d55a3ac8/workflow_routing.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_routing.ipynb</span></code></a></p>

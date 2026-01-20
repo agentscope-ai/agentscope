@@ -626,11 +626,7 @@ to download the full example code.</p>
     },
     {
         &quot;role&quot;: &quot;assistant&quot;,
-        &quot;content&quot;: [
-            {
-                &quot;text&quot;: null
-            }
-        ],
+        &quot;content&quot;: [],
         &quot;tool_calls&quot;: [
             {
                 &quot;id&quot;: &quot;1&quot;,
@@ -650,11 +646,7 @@ to download the full example code.</p>
     },
     {
         &quot;role&quot;: &quot;assistant&quot;,
-        &quot;content&quot;: [
-            {
-                &quot;text&quot;: null
-            }
-        ],
+        &quot;content&quot;: [],
         &quot;tool_calls&quot;: [
             {
                 &quot;id&quot;: &quot;2&quot;,
@@ -725,7 +717,7 @@ Alice: 我们一起去吧。
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>None of PyTorch, TensorFlow &gt;= 2.0, or Flax have been found. Models won&#39;t be available and only tokenizers, configuration and file/data utilities can be used.
-格式化消息中的 token 数量为： 165
+格式化消息中的 token 数量为： 163
 </pre></div>
 </div>
 <p>然后我们将最大 token 限制设置为比总 token 数少 20 个，并运行格式化器。</p>
@@ -750,7 +742,7 @@ Alice: 我们一起去吧。
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_truncated_formatter</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>截断后的 token 数量： 136
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>截断后的 token 数量： 134
 
 截断后的对话历史：
 # Conversation History
@@ -810,7 +802,7 @@ Charlie: 没有，我们问问 Friday 吧。Friday，帮我找到最近的图书
 <li><p><a class="reference internal" href="task_token.html#token"><span class="std std-ref">Token 计数</span></a></p></li>
 <li><p><a class="reference internal" href="task_model.html#model"><span class="std std-ref">模型</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.320 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.213 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-prompt-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dfe7448b311839d65e0e1c6dc9aeb195/task_prompt.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_prompt.ipynb</span></code></a></p>

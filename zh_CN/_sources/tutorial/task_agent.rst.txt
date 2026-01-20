@@ -331,7 +331,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_30ad36ec1e6f49bbb4c5e2",
+        "id": "call_7804852520b446d3aee63a",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -339,7 +339,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_903afb5eaf3947eab72af6",
+        "id": "call_e1c93b2e49be48e392ca97",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -347,32 +347,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_30ad36ec1e6f49bbb4c5e2",
+        "id": "call_7804852520b446d3aee63a",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 06:51:14.677583，结束于 06:51:17.680820。"
+                "text": "标签 tag1 开始于 07:00:51.634330，结束于 07:00:54.637632。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_903afb5eaf3947eab72af6",
+        "id": "call_e1c93b2e49be48e392ca97",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 06:51:14.677677，结束于 06:51:17.681502。"
+                "text": "标签 tag2 开始于 07:00:51.634421，结束于 07:00:54.638363。"
             }
         ]
     }
-    Jarvis: 两个 `example_tool_function` 函数已经并行执行完成。下面是它们的执行时间信息：
+    Jarvis: 两个 `example_tool_function` 函数已并行执行。下面是它们的执行时间：
 
-    - 标签为 'tag1' 的函数开始于 06:51:14.677583，结束于 06:51:17.680820。
-    - 标签为 'tag2' 的函数开始于 06:51:14.677677，结束于 06:51:17.681502。
+    - 标签为 `tag1` 的函数从 07:00:51.634330 开始，在 07:00:54.637632 结束。
+    - 标签为 `tag2` 的函数从 07:00:51.634421 开始，在 07:00:54.638363 结束。
 
-    这两个函数几乎是同时开始和结束的，表明它们确实被并行调用了。
+    这两个函数几乎是同时开始和结束的，这表明它们确实被并行调用了。
 
 
 
@@ -437,11 +437,11 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
 
  .. code-block:: none
 
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:182: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:173: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_4d4278834c0a45c8b1d4fd",
+        "id": "call_c9518d6c51b14218a55d9f",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
@@ -449,14 +449,15 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             "age": 76,
             "honor": [
                 "诺贝尔物理学奖",
-                "普朗克奖章",
-                "科普利奖章"
+                "科普利奖章",
+                "马泰乌奇奖章",
+                "富兰克林奖章"
             ]
         }
     }
     system: {
         "type": "tool_result",
-        "id": "call_4d4278834c0a45c8b1d4fd",
+        "id": "call_c9518d6c51b14218a55d9f",
         "name": "generate_response",
         "output": [
             {
@@ -465,7 +466,15 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。出生于1879年的爱因斯坦，在其一生中对物理学乃至整个科学界产生了深远的影响。他的工作不仅改变了我们对于时间、空间以及引力的理解，还为现代技术的发展奠定了基础。爱因斯坦在76岁时逝世，享年高寿。在其辉煌的职业生涯中，他获得了包括诺贝尔物理学奖在内的多个重要奖项，如普朗克奖章和科普利奖章等荣誉，这些成就充分体现了他在科学领域的杰出贡献。
+    Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein）是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。出生于1879年，并在1955年去世，享年76岁。爱因斯坦对于物理学的贡献深远地改变了我们对时间、空间以及重力的理解。
+
+    爱因斯坦一生中获得了许多荣誉与奖项，其中包括：
+    - 诺贝尔物理学奖：这是科学界最高荣誉之一，爱因斯坦因为在光电效应方面的研究成就而获得此奖。
+    - 科普利奖章：由英国皇家学会颁发，表彰他在理论物理学领域的杰出贡献。
+    - 马泰乌奇奖章：意大利林琴科学院授予给在物理学或天文学上做出重大发现的人士。
+    - 富兰克林奖章：美国富兰克林研究所为奖励那些在科学和艺术领域内作出突出贡献的人所设立的一个奖项。
+
+    除了这些学术上的成就外，爱因斯坦还是一位和平主义者和社会活动家，在二战期间呼吁建立世界政府来防止未来战争的发生。他的智慧、幽默感以及对人类福祉的关注使他成为了全球范围内广受尊敬的人物。
 
     结构化输出：
     {
@@ -474,8 +483,9 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
         "age": 76,
         "honor": [
             "诺贝尔物理学奖",
-            "普朗克奖章",
-            "科普利奖章"
+            "科普利奖章",
+            "马泰乌奇奖章",
+            "富兰克林奖章"
         ]
     }
 
@@ -552,7 +562,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 15.197 seconds)
+   **Total running time of the script:** (0 minutes 21.984 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
