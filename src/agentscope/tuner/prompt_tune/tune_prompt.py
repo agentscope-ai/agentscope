@@ -81,7 +81,6 @@ def tune_prompt(
         path=train_dataset.path,
         name=train_dataset.name,
         split=train_dataset.split,
-        streaming=True,
     )
     logger.info("training dataset loaded")
 

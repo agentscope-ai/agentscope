@@ -112,6 +112,7 @@ class WorkflowWrapperModule(Module):
         async def _workflow():
             # dspy deepcopy modules during optimization,
             # the new agent must be injected in real-time.
+            await self._agent.memory.clear()
             return await self._workflow(self._agent)(inp, self._model, self._auxiliary_models)
 
         result = asyncio.run(_workflow())
