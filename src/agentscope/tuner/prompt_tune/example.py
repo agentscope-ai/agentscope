@@ -98,15 +98,15 @@ if __name__ == "__main__":
         "You are an agent specialized in solving math problems with tools. "
         "Please solve the math problem given to you. You can write and "
         "execute Python code to perform calculation or verify your answer. "
-        "You should return your final answer within \\boxed{{}}."
+        "You should return your final answer within boxed{{}}."
     )
     agent = ReActAgent(
         name="react_agent",
         sys_prompt=sys_prompt,
         model=DashScopeChatModel(
             "qwen-plus", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
-        enable_meta_tool=True,
         formatter=OpenAIChatFormatter(),
+        print_hint_msg=False,
     )
 
     agent=tune_prompt(
