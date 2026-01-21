@@ -1,12 +1,14 @@
 """Prompt tuning functionality using DSPy's MIPROv2 optimizer."""
 
+import os
+from pathlib import Path
 from agentscope.agent import ReActAgent
 from agentscope.tuner import (
     DatasetConfig,
     TunerModelConfig,
 )
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Optional, cast
 
 from datasets import load_dataset
 import dspy
@@ -38,6 +40,21 @@ def wrap_judge_fn(judge_fn: JudgeType):
 
     return _sync_wrapper
 
+
+def _guess_by_ext(p: str) -> Optional[str]:
+    pp = Path(p)
+    ext = pp.suffix.lower()
+    if ext in {".jsonl", ".jl"}:
+        return "json"
+    if ext == ".json":
+        return "json"
+    if ext in {".csv", ".tsv"}:
+        return "csv"
+    if ext in {".parquet"}:
+        return "parquet"
+    if ext in {".txt"}:
+        return "text"
+    return None
 
 def tune_prompt(
     *,
@@ -76,12 +93,19 @@ def tune_prompt(
     logger.warning("Model will not be optimized during prompt tuning.")
     check_judge_function(judge_func)
 
-    logger.info("loading training dataset...")
-    trainset = load_dataset(
-        path=train_dataset.path,
-        name=train_dataset.name,
-        split=train_dataset.split,
-    )
+    if os.path.exists(train_dataset.path) and _guess_by_ext(train_dataset.path):
+        logger.info(f"loading dataset from file: {train_dataset.path}")
+        trainset = load_dataset(
+            cast(str, _guess_by_ext(train_dataset.path)),
+            train_dataset.path,
+        )
+    else:
+        logger.info("loading training dataset from remote...")
+        trainset = load_dataset(
+            path=train_dataset.path,
+            name=train_dataset.name,
+            split=train_dataset.split,
+        )
     logger.info("training dataset loaded")
 
     dspy_trainset = [
