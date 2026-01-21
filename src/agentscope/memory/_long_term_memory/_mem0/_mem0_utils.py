@@ -5,6 +5,7 @@ This module provides wrapper classes that allow AgentScope models to be used
 with the mem0 library for long-term memory functionality.
 """
 import asyncio
+import threading
 from typing import Any, Coroutine, Dict, List, Literal
 
 from mem0.configs.embeddings.base import BaseEmbedderConfig
@@ -15,51 +16,28 @@ from mem0.llms.base import LLMBase
 from ....embedding import EmbeddingModelBase
 from ....model import ChatModelBase, ChatResponse
 
-# Try to import nest_asyncio for nested event loop support
-try:
-    import nest_asyncio
-
-    nest_asyncio.apply()
-    _nest_asyncio_available = True
-except ImportError:
-    _nest_asyncio_available = False
-
 
 def _run_async(
     coro: Coroutine,
     target_loop: asyncio.AbstractEventLoop | None = None,
 ) -> Any:
     """Run an async coroutine, handling nested event loops.
-
     Args:
-        coro: The coroutine to run.
-        target_loop: Optional target event loop where the coroutine should
-        run.
-        If provided and still valid, the coroutine will be scheduled in
-        that loop using run_coroutine_threadsafe.
-
+        coro (`Coroutine`):
+            The coroutine to run.
+        target_loop (`asyncio.AbstractEventLoop | None`, optional):
+            Optional target event loop where the coroutine should
+            run. If provided and still valid, the coroutine will be
+            scheduled in that loop using run_coroutine_threadsafe.
     Returns:
-        The result of the coroutine.
+        `Any`:
+            The result of the coroutine.
     """
     # If we have a target loop (where the model client was created),
     # use run_coroutine_threadsafe to run in that loop
     if target_loop is not None and not target_loop.is_closed():
-        try:
-            # Check if we're already in the target loop
-            current_loop = asyncio.get_running_loop()
-            if current_loop is target_loop:
-                # Same loop, but we're in a sync function so we can't await
-                # Use run_coroutine_threadsafe anyway (it will handle it)
-                future = asyncio.run_coroutine_threadsafe(coro, target_loop)
-                return future.result()
-            else:
-                # Different loop, use run_coroutine_threadsafe
-                future = asyncio.run_coroutine_threadsafe(coro, target_loop)
-                return future.result()
-        except RuntimeError:
-            # No running loop in current thread, use run_coroutine_threadsafe
-            future = asyncio.run_coroutine_threadsafe(coro, target_loop)
-            return future.result()
+        future = asyncio.run_coroutine_threadsafe(coro, target_loop)
+        return future.result()
 
     # No target loop or target loop is closed, use standard approach
     try:
@@ -67,7 +45,6 @@ def _run_async(
         asyncio.get_running_loop()
         # There's a running event loop. Use thread-based approach to avoid
         # event loop binding issues with clients like Ollama.
-        import threading
 
         result_container = {"result": None, "exception": None}
         event = threading.Event()
