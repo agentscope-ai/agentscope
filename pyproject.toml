@@ -72,7 +72,8 @@ redis_memory = ["redis"]
 
 mem0ai = [
     "mem0ai<=0.1.116",
-    "packaging"
+    "packaging",
+    "nest_asyncio"
 ]
 reme = ["reme-ai>=0.2.0.3"]
 memory = [
