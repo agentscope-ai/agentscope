@@ -1,6 +1,7 @@
 """Wrapper modules for integrating AgentScope agents."""
 
 import asyncio
+from copy import deepcopy
 import os
 import random
 from types import SimpleNamespace
@@ -106,14 +107,15 @@ class WorkflowWrapperModule(Module):
         Returns:
             The response message from the workflow execution.
         """
-
         self.predictor._sync_instruction_i2a()
 
         async def _workflow():
             # dspy deepcopy modules during optimization,
             # the new agent must be injected in real-time.
-            await self._agent.memory.clear()
-            return await self._workflow(self._agent)(inp, self._model, self._auxiliary_models)
+            agent=deepcopy(self._agent)
+            await agent.memory.clear()
+            
+            return await self._workflow(agent)(inp, self._model, self._auxiliary_models)
 
         result = asyncio.run(_workflow())
 
