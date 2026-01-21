@@ -1,6 +1,14 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=unused-argument
-"""The Python code execution tool in agentscope."""
+"""The Python code execution tool in agentscope.
+
+.. warning::
+    This tool is potentially dangerous and should only be used for testing
+    and proof-of-concept purposes. For production deployments, this tool
+    must be executed within a sandboxed environment (e.g., Docker containers,
+    virtual machines, or dedicated sandbox solutions) to prevent unauthorized
+    system access and potential security breaches.
+"""
 
 import asyncio
 import os
