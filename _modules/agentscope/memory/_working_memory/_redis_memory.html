@@ -436,6 +436,7 @@
             <span class="n">db</span><span class="o">=</span><span class="n">db</span><span class="p">,</span>
             <span class="n">password</span><span class="o">=</span><span class="n">password</span><span class="p">,</span>
             <span class="n">connection_pool</span><span class="o">=</span><span class="n">connection_pool</span><span class="p">,</span>
+            <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
         <span class="p">)</span></div>
 
@@ -934,9 +935,17 @@
 
 <div class="viewcode-block" id="RedisMemory.close">
 <a class="viewcode-back" href="../../../../api/agentscope.memory.html#agentscope.memory.RedisMemory.close">[docs]</a>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Close the Redis client connection.&quot;&quot;&quot;</span>
-        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span></div>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">close_connection_pool</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Close the Redis client connection.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            close_connection_pool (`bool | None`, optional):</span>
+<span class="sd">                Decides whether to close the connection pool used by this</span>
+<span class="sd">                Redis client, overriding Redis.auto_close_connection_pool.</span>
+<span class="sd">                By default, let Redis.auto_close_connection_pool decide</span>
+<span class="sd">                whether to close the connection pool</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">aclose</span><span class="p">(</span><span class="n">close_connection_pool</span><span class="o">=</span><span class="n">close_connection_pool</span><span class="p">)</span></div>
 
 
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__aenter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;RedisMemory&quot;</span><span class="p">:</span>
