@@ -98,7 +98,7 @@ def tune_prompt(
         trainset = load_dataset(
             cast(str, _guess_by_ext(train_dataset.path)),
             data_files=train_dataset.path,
-        )
+        )['train']
     else:
         logger.info("loading training dataset from remote...")
         trainset = load_dataset(
@@ -143,13 +143,19 @@ def tune_prompt(
 
     # evaluate if eval_dataset is provided
     if eval_dataset is not None:
-        logger.info("loading evaluation dataset...")
-        evalset = load_dataset(
-            path=eval_dataset.path,
-            name=eval_dataset.name,
-            split=eval_dataset.split,
-            streaming=True,
-        )
+        if os.path.exists(eval_dataset.path) and _guess_by_ext(eval_dataset.path):
+            logger.info(f"loading evaluation dataset from file: {eval_dataset.path}")
+            evalset = load_dataset(
+                cast(str, _guess_by_ext(eval_dataset.path)),
+                data_files=eval_dataset.path,
+            )['train']
+        else:
+            logger.info("loading evaluation dataset from remote...")
+            evalset = load_dataset(
+                path=eval_dataset.path,
+                name=eval_dataset.name,
+                split=eval_dataset.split,
+            )
         logger.info("evaluation dataset loaded")
 
         dspy_evalset = [
