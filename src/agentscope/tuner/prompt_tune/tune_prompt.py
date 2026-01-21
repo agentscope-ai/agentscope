@@ -97,7 +97,7 @@ def tune_prompt(
         logger.info(f"loading dataset from file: {train_dataset.path}")
         trainset = load_dataset(
             cast(str, _guess_by_ext(train_dataset.path)),
-            train_dataset.path,
+            data_files=train_dataset.path,
         )
     else:
         logger.info("loading training dataset from remote...")
