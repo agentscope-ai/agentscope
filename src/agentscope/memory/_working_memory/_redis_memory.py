@@ -570,7 +570,7 @@ class RedisMemory(MemoryBase):
                 By default, let Redis.auto_close_connection_pool decide
                 whether to close the connection pool
         """
-        await self._client.aclose(close_connection_pool)
+        await self._client.aclose(close_connection_pool=close_connection_pool)
 
     async def __aenter__(self) -> "RedisMemory":
         """Enter the async context manager.
