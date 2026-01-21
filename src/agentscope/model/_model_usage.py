@@ -22,5 +22,5 @@ class ChatUsage(DictMixin):
     type: Literal["chat"] = field(default_factory=lambda: "chat")
     """The type of the usage, must be `chat`."""
 
-    metadata: dict[str, Any] | None = field(default=None)
+    metadata: dict[str, Any] | None = field(default_factory=None)
     """The metadata of the usage."""
