@@ -331,6 +331,7 @@ class OpenAIChatModel(ChatModelBase):
                         input_tokens=chunk.usage.prompt_tokens,
                         output_tokens=chunk.usage.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
+                        metadata=chunk.usage,
                     )
 
                 if not chunk.choices:
@@ -531,6 +532,7 @@ class OpenAIChatModel(ChatModelBase):
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=response.usage,
             )
 
         parsed_response = ChatResponse(

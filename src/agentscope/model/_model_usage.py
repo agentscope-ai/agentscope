@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The model usage class in agentscope."""
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Any
 
 from .._utils._mixin import DictMixin
 
@@ -21,3 +21,6 @@ class ChatUsage(DictMixin):
 
     type: Literal["chat"] = field(default_factory=lambda: "chat")
     """The type of the usage, must be `chat`."""
+
+    metadata: dict[str, Any] | None = field(default=None)
+    """The metadata of the usage."""
