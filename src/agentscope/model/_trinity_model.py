@@ -4,6 +4,7 @@ from typing import (
     Optional,
     TYPE_CHECKING,
 )
+from typing_extensions import deprecated
 from ._openai_model import OpenAIChatModel
 from ..types import JSONSerializableObject
 
@@ -14,6 +15,9 @@ else:
     AsyncOpenAI = "openai.AsyncOpenAI"
 
 
+@deprecated(
+    "TrinityChatModel is deprecated. Please use OpenAIChatModel directly.",
+)
 class TrinityChatModel(OpenAIChatModel):
     """A model class for RL Training with Trinity-RFT."""
 

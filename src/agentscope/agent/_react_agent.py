@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=not-an-iterable
+# TODO: simplify the ReActAgent class
+# pylint: disable=not-an-iterable, too-many-lines
 # mypy: disable-error-code="list-item"
 """ReAct agent class in agentscope."""
 import asyncio
+from enum import Enum
 from typing import Type, Any, AsyncGenerator, Literal
 
 from pydantic import BaseModel, ValidationError, Field
@@ -22,6 +24,7 @@ from ..message import (
 from ..model import ChatModelBase
 from ..rag import KnowledgeBase, Document
 from ..plan import PlanNotebook
+from ..token import TokenCounterBase
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
 from ..tts import TTSModelBase
@@ -37,6 +40,61 @@ class _QueryRewriteModel(BaseModel):
     )
 
 
+class SummarySchema(BaseModel):
+    """The compressed memory model, used to generate summary of old memories"""
+
+    task_overview: str = Field(
+        max_length=300,
+        description=(
+            "The user's core request and success criteria.\n"
+            "Any clarifications or constraints they specified"
+        ),
+    )
+    current_state: str = Field(
+        max_length=300,
+        description=(
+            "What has been completed so far.\n"
+            "File created, modified, or analyzed (with paths if relevant).\n"
+            "Key outputs or artifacts produced."
+        ),
+    )
+    important_discoveries: str = Field(
+        max_length=300,
+        description=(
+            "Technical constraints or requirements uncovered.\n"
+            "Decisions made and their rationale.\n"
+            "Errors encountered and how they were resolved.\n"
+            "What approaches were tried that didn't work (and why)"
+        ),
+    )
+    next_steps: str = Field(
+        max_length=200,
+        description=(
+            "Specific actions needed to complete the task.\n"
+            "Any blockers or open questions to resolve.\n"
+            "Priority order if multiple steps remain"
+        ),
+    )
+    context_to_preserve: str = Field(
+        max_length=300,
+        description=(
+            "User preferences or style requirements.\n"
+            "Domain-specific details that aren't obvious.\n"
+            "Any promises made to the user"
+        ),
+    )
+
+
+class _MemoryMark(str, Enum):
+    """The memory marks used in the ReAct agent."""
+
+    HINT = "hint"
+    """Used to mark the hint messages that will be cleared after use."""
+
+    COMPRESSED = "compressed"
+    """Used to mark the compressed messages in the memory."""
+
+
 class ReActAgent(ReActAgentBase):
     """A ReAct agent implementation in AgentScope, which supports
 
@@ -45,6 +103,72 @@ class ReActAgent(ReActAgentBase):
     - Hooks around reasoning, acting, reply, observe and print functions
     - Structured output generation
     """
+
+    class CompressionConfig(BaseModel):
+        """The compression related configuration in AgentScope"""
+
+        model_config = {"arbitrary_types_allowed": True}
+        """Allow arbitrary types in the pydantic model."""
+
+        enable: bool
+        """Whether to enable the auto compression feature."""
+
+        agent_token_counter: TokenCounterBase
+        """The token counter for the agent's model, which must be consistent
+        with the model used in the agent."""
+
+        trigger_threshold: int
+        """The token threshold to trigger the compression process. When the
+        total token count in the memory exceeds this threshold, the
+        compression will be activated."""
+
+        keep_recent: int = 3
+        """The number of most recent messages to keep uncompressed in the
+        memory to preserve the recent context."""
+
+        compression_prompt: str = (
+            "<system-hint>You have been working on the task described above "
+            "but have not yet completed it. "
+            "Now write a continuation summary that will allow you to resume "
+            "work efficiently in a future context window where the "
+            "conversation history will be replaced with this summary. "
+            "Your summary should be structured, concise, and actionable."
+            "</system-hint>"
+        )
+        """The prompt used to guide the compression model to generate the
+        compressed summary, which will be wrapped into a user message and
+        attach to the end of the current memory."""
+
+        summary_template: str = (
+            "<system-info>Here is a summary of your previous work\n"
+            "# Task Overview\n"
+            "{task_overview}\n\n"
+            "# Current State\n"
+            "{current_state}\n\n"
+            "# Important Discoveries\n"
+            "{important_discoveries}\n\n"
+            "# Next Steps\n"
+            "{next_steps}\n\n"
+            "# Context to Preserve\n"
+            "{context_to_preserve}"
+            "</system-info>"
+        )
+        """The string template to present the compressed summary to the agent,
+        which will be formatted with the fields from the
+        `compression_summary_model`."""
+
+        summary_schema: Type[BaseModel] = SummarySchema
+        """The structured model used to guide the agent to generate the
+        structured compressed summary."""
+
+        compression_model: ChatModelBase | None = None
+        """The compression model used to generate the compressed summary. If
+        not provided, the agent's model will be used."""
+
+        compression_formatter: FormatterBase | None = None
+        """The corresponding formatter form the compression model, when the
+        `compression_model` is provided, the `compression_formatter` must also
+        be provided."""
 
     finish_function_name: str = "generate_response"
     """The name of the function used to generate structured output. Only
@@ -72,6 +196,7 @@ class ReActAgent(ReActAgentBase):
         print_hint_msg: bool = False,
         max_iters: int = 10,
         tts_model: TTSModelBase | None = None,
+        compression_config: CompressionConfig | None = None,
     ) -> None:
         """Initialize the ReAct agent
 
@@ -131,6 +256,9 @@ class ReActAgent(ReActAgentBase):
                 The maximum number of iterations of the reasoning-acting loops.
             tts_model (`TTSModelBase | None` optional):
                 The TTS model used by the agent.
+            compression_config (`CompressionConfig | None`, optional):
+                The compression configuration. If provided, the auto
+                compression will be activated.
         """
         super().__init__()
 
@@ -147,6 +275,7 @@ class ReActAgent(ReActAgentBase):
         self.model = model
         self.formatter = formatter
         self.tts_model = tts_model
+        self.compression_config = compression_config
 
         # -------------- Memory management --------------
         # Record the dialogue history in the memory
@@ -223,12 +352,6 @@ class ReActAgent(ReActAgentBase):
 
         # The maximum number of iterations of the reasoning-acting loops
         self.max_iters = max_iters
-
-        # The hint messages that will be attached to the prompt to guide the
-        # agent's behavior before each reasoning step, and cleared after
-        # each reasoning step, meaning the hint messages is one-time use only.
-        # We use an InMemoryMemory instance to store the hint messages
-        self._reasoning_hint_msgs = InMemoryMemory()
 
         # Variables to record the intermediate state
 
@@ -307,6 +430,9 @@ class ReActAgent(ReActAgentBase):
         structured_output = None
         reply_msg = None
         for _ in range(self.max_iters):
+            # -------------- Memory compression --------------
+            await self._compress_memory_if_needed()
+
             # -------------- The reasoning process --------------
             msg_reasoning = await self._reasoning(tool_choice)
 
@@ -356,7 +482,10 @@ class ReActAgent(ReActAgentBase):
                         "</system-hint>",
                         "user",
                     )
-                    await self._reasoning_hint_msgs.add(msg_hint)
+                    await self.memory.add(
+                        msg_hint,
+                        marks=_MemoryMark.HINT,
+                    )
 
                     # Just generate text response in the next reasoning step
                     tool_choice = "none"
@@ -374,7 +503,7 @@ class ReActAgent(ReActAgentBase):
                         f"required structured output.</system-hint>",
                         "user",
                     )
-                    await self._reasoning_hint_msgs.add(msg_hint)
+                    await self.memory.add(msg_hint, marks=_MemoryMark.HINT)
                     # Require tool call in the next reasoning step
                     tool_choice = "required"
 
@@ -400,7 +529,9 @@ class ReActAgent(ReActAgentBase):
             await self.long_term_memory.record(
                 [
                     *([*msg] if isinstance(msg, list) else [msg]),
-                    *await self.memory.get_memory(),
+                    *await self.memory.get_memory(
+                        exclude_mark=_MemoryMark.COMPRESSED,
+                    ),
                     reply_msg,
                 ],
             )
@@ -419,19 +550,17 @@ class ReActAgent(ReActAgentBase):
             hint_msg = await self.plan_notebook.get_current_hint()
             if self.print_hint_msg and hint_msg:
                 await self.print(hint_msg)
-            await self._reasoning_hint_msgs.add(hint_msg)
+            await self.memory.add(hint_msg, marks=_MemoryMark.HINT)
 
         # Convert Msg objects into the required format of the model API
         prompt = await self.formatter.format(
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
                 *await self.memory.get_memory(),
-                # The hint messages to guide the agent's behavior, maybe empty
-                *await self._reasoning_hint_msgs.get_memory(),
             ],
         )
         # Clear the hint messages after use
-        await self._reasoning_hint_msgs.clear()
+        await self.memory.delete_by_mark(mark=_MemoryMark.HINT)
 
         res = await self.model(
             prompt,
@@ -794,6 +923,7 @@ class ReActAgent(ReActAgentBase):
 
             # Rewrite the query by the LLM if enabled
             if self.enable_rewrite_query:
+                stream_tmp = self.model.stream
                 try:
                     rewrite_prompt = await self.formatter.format(
                         msgs=[
@@ -812,13 +942,11 @@ class ReActAgent(ReActAgentBase):
                             ),
                         ],
                     )
-                    stream_tmp = self.model.stream
                     self.model.stream = False
                     res = await self.model(
                         rewrite_prompt,
                         structured_model=_QueryRewriteModel,
                     )
-                    self.model.stream = stream_tmp
                     if res.metadata and res.metadata.get("rewritten_query"):
                         query = res.metadata["rewritten_query"]
 
@@ -827,6 +955,8 @@ class ReActAgent(ReActAgentBase):
                         "Skipping the query rewriting due to error: %s",
                         str(e),
                     )
+                finally:
+                    self.model.stream = stream_tmp
 
             docs: list[Document] = []
             for kb in self.knowledge:
@@ -864,3 +994,127 @@ class ReActAgent(ReActAgentBase):
                 if self.print_hint_msg:
                     await self.print(retrieved_msg, True)
                 await self.memory.add(retrieved_msg)
+
+    async def _compress_memory_if_needed(self) -> None:
+        """Compress the memory content if needed."""
+        if (
+            self.compression_config is None
+            or not self.compression_config.enable
+        ):
+            return
+
+        # Obtain the messages that have not been compressed yet
+        to_compressed_msgs = await self.memory.get_memory(
+            exclude_mark=_MemoryMark.COMPRESSED,
+        )
+
+        # keep the recent n messages uncompressed, note messages with tool
+        #  use and result pairs should be kept together
+        n_keep = 0
+        accumulated_tool_call_ids = set()
+        for i in range(len(to_compressed_msgs) - 1, -1, -1):
+            msg = to_compressed_msgs[i]
+            for block in msg.get_content_blocks("tool_result"):
+                accumulated_tool_call_ids.add(block["id"])
+
+            for block in msg.get_content_blocks("tool_use"):
+                if block["id"] in accumulated_tool_call_ids:
+                    accumulated_tool_call_ids.remove(block["id"])
+
+            # Handle the tool use/result pairs
+            if len(accumulated_tool_call_ids) == 0:
+                n_keep += 1
+
+            # Break if reach the number of messages to keep
+            if n_keep >= self.compression_config.keep_recent:
+                # Remove the messages that should be kept uncompressed
+                to_compressed_msgs = to_compressed_msgs[:i]
+                break
+
+        # Skip compression if no messages to compress
+        if not to_compressed_msgs:
+            return
+
+        # Calculate the token
+        prompt = await self.formatter.format(
+            [
+                Msg("system", self.sys_prompt, "system"),
+                *to_compressed_msgs,
+            ],
+        )
+        n_tokens = await self.compression_config.agent_token_counter.count(
+            prompt,
+        )
+
+        if n_tokens > self.compression_config.trigger_threshold:
+            logger.info(
+                "Memory compression is triggered (%d > "
+                "threshold %d) for agent %s.",
+                n_tokens,
+                self.compression_config.trigger_threshold,
+                self.name,
+            )
+
+            # The formatter used for compression
+            compression_formatter = (
+                self.compression_config.compression_formatter or self.formatter
+            )
+
+            # Prepare the prompt used to compress the memories
+            compression_prompt = await compression_formatter.format(
+                [
+                    Msg("system", self.sys_prompt, "system"),
+                    *to_compressed_msgs,
+                    Msg(
+                        "user",
+                        self.compression_config.compression_prompt,
+                        "user",
+                    ),
+                ],
+            )
+
+            # TODO: What if the compressed messages include multimodal blocks?
+            # Use the specified compression model if provided
+            compression_model = (
+                self.compression_config.compression_model or self.model
+            )
+            res = await compression_model(
+                compression_prompt,
+                structured_model=(self.compression_config.summary_schema),
+            )
+
+            # Obtain the structured output from the model response
+            last_chunk = None
+            if compression_model.stream:
+                async for chunk in res:
+                    last_chunk = chunk
+            else:
+                last_chunk = res
+
+            # Format the compressed memory summary
+            if last_chunk.metadata:
+                # Update the compressed summary in the memory storage
+                await self.memory.update_compressed_summary(
+                    self.compression_config.summary_template.format(
+                        **last_chunk.metadata,
+                    ),
+                )
+
+                # Mark the compressed messages in the memory storage
+                await self.memory.update_messages_mark(
+                    msg_ids=[_.id for _ in to_compressed_msgs],
+                    new_mark=_MemoryMark.COMPRESSED,
+                )
+
+                logger.info(
+                    "Finished compressing %d messages in agent %s.",
+                    len(to_compressed_msgs),
+                    self.name,
+                )
+
+            else:
+                logger.warning(
+                    "Failed to obtain compression summary from the model "
+                    "structured output in agent %s.",
+                    self.name,
+                )
