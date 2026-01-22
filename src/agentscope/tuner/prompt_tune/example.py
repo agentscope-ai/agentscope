@@ -33,7 +33,7 @@ def workflow(agent: ReActAgent):
         assert (
             len(auxiliary_models) == 0
         ), "No auxiliary models are used in this workflow."
-
+        # print("sysprompt: ",agent.sys_prompt)
         response = await agent.reply(
             msg=Msg("user", task["question"], role="user"),
         )
@@ -95,19 +95,19 @@ if __name__ == "__main__":
     )
 
     sys_prompt = (
-        "You are an agent specialized in solving math problems with tools. "
-        "Please solve the math problem given to you. You can write and "
-        "execute Python code to perform calculation or verify your answer. "
-        "You should return your final answer within boxed{{}}."
+        "You are an agent."
+        "Please solve the math problem given to you."
+        "You should provife your output within \\boxed{{}}."
     )
     agent = ReActAgent(
         name="react_agent",
         sys_prompt=sys_prompt,
         model=DashScopeChatModel(
-            "qwen-plus", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
+            "qwen-turbo", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
         formatter=OpenAIChatFormatter(),
         print_hint_msg=False,
     )
+    agent.set_console_output_enabled(False)
 
     agent=tune_prompt(
         workflow_func=workflow,
@@ -115,5 +115,5 @@ if __name__ == "__main__":
         judge_func=gsm8k_judge,
         train_dataset=dataset,
         model=DashScopeChatModel(
-            "qwen-plus", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
+            "qwen-turbo", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
     )
