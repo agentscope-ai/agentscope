@@ -21,30 +21,29 @@ from agentscope.agent import ReActAgent
 from dspy.predict.predict import Predict
 
 
-class OptimizableAgent(Predict):
-    """A DSPy Predict wrapper that makes a ReActAgent's prompt optimizable.
+class OptimizablePrompt(Predict):
+    """A DSPy Predict wrapper that makes a system prompt optimizable.
 
     This class bridges AgentScope's ReActAgent with DSPy's optimization
-    framework by exposing the agent's system prompt as a DSPy signature.
+    framework by exposing the system prompt as a DSPy signature.
 
     Attributes:
-        _agent: The wrapped ReActAgent instance.
+        _sys_prompt: The current system prompt being optimized.
     """
 
-    def __init__(self, agent: ReActAgent):
+    def __init__(self, init_prompt: str):
         """Initialize the OptimizableAgent.
 
         Args:
-            agent: The ReActAgent to wrap for optimization.
+            init_prompt: The initial system prompt to optimize.
         """
         super().__init__("input -> output")
         self.signature = dspy.make_signature("input -> output")
         self.instructions = self.signature.instructions
         self.demos = []
 
-        self._agent = agent
-        # sync init instruction from agent to dspy signature
-        self.instructions = self._agent._sys_prompt
+        self._sys_prompt = init_prompt
+        self.instructions = self._sys_prompt
         self.signature.instructions = self.instructions
 
     def forward(self, **kwargs):
@@ -56,37 +55,40 @@ class OptimizableAgent(Predict):
         raise NotImplementedError(
             "OptimizableAgent is a wrapper, not callable")
 
-    def _sync_instruction_i2a(self):
-        """Sync instruction from DSPy signature to the wrapped agent."""
+    def _sync_instruction(self):
+        """Sync instruction from DSPy signature to internal state."""
         self.instructions = self.signature.instructions
-        self._agent._sys_prompt = self.instructions
+        self._sys_prompt = self.instructions
+
+    def get_current_prompt(self) -> str:
+        """Get the current optimized system prompt."""
+        return self._sys_prompt
 
 
 class WorkflowWrapperModule(Module):
     """A DSPy Module that wraps an AgentScope workflow for optimization.
 
-    This module enables DSPy to optimize the system prompt of a ReActAgent
-    by wrapping the workflow execution in a DSPy-compatible interface.
+    This module enables DSPy to optimize the system prompt by wrapping
+    the workflow execution in a DSPy-compatible interface.
 
     Attributes:
-        _workflow: The workflow factory function.
-        _agent: The ReActAgent being optimized.
-        predictor: The OptimizableAgent wrapping the agent's prompt.
+        _workflow: The workflow factory function that takes a system prompt.
+        predictor: The OptimizableAgent wrapping the system prompt.
     """
 
-    def __init__(self, workflow: Callable[[ReActAgent], WorkflowType], init_agent: ReActAgent):
+    def __init__(self, workflow: Callable[[str], WorkflowType], init_prompt: str):
         """Initialize the WorkflowWrapperModule.
 
         Args:
-            workflow: A factory function that takes a ReActAgent and returns
+            workflow: A factory function that takes a system prompt and returns
                 an async workflow function.
-            init_agent: The initial ReActAgent to be optimized.
+            init_prompt: The initial system prompt to be optimized.
         """
         super().__init__()
         self._workflow = workflow
-        self._agent = init_agent
+        self._init_prompt = init_prompt
 
-        self.predictor = OptimizableAgent(self._agent)
+        self.predictor = OptimizablePrompt(self._init_prompt)
 
     def _set_chatmodel(self, model: ChatModelBase, auxiliary_models: dict[str, ChatModelBase]):
         """Set the chat models for workflow execution.
@@ -107,15 +109,11 @@ class WorkflowWrapperModule(Module):
         Returns:
             The response message from the workflow execution.
         """
-        self.predictor._sync_instruction_i2a()
+        self.predictor._sync_instruction()
+        current_prompt = self.predictor.get_current_prompt()
 
         async def _workflow():
-            # dspy deepcopy modules during optimization,
-            # the new agent must be injected in real-time.
-            agent=deepcopy(self._agent)
-            await agent.memory.clear()
-            
-            return await self._workflow(agent)(inp, self._model, self._auxiliary_models)
+            return await self._workflow(current_prompt)(inp, self._model, self._auxiliary_models)
 
         result = asyncio.run(_workflow())
 

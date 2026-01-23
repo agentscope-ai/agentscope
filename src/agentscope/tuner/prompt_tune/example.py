@@ -12,7 +12,7 @@ from agentscope.tuner._workflow import WorkflowOutput
 from agentscope.tuner.prompt_tune.tune_prompt import tune_prompt
 
 
-def workflow(agent: ReActAgent):
+def workflow(sys_prompt: str):
     async def run_react_agent(
         task: dict,
         model: ChatModelBase,
@@ -33,7 +33,16 @@ def workflow(agent: ReActAgent):
         assert (
             len(auxiliary_models) == 0
         ), "No auxiliary models are used in this workflow."
-        # print("sysprompt: ",agent.sys_prompt)
+
+        agent = ReActAgent(
+            name="react_agent",
+            sys_prompt=sys_prompt,
+            model=model,
+            formatter=OpenAIChatFormatter(),
+            print_hint_msg=False,
+        )
+        agent.set_console_output_enabled(False)
+
         response = await agent.reply(
             msg=Msg("user", task["question"], role="user"),
         )
@@ -94,26 +103,19 @@ if __name__ == "__main__":
         split="train",
     )
 
-    sys_prompt = (
+    init_prompt = (
         "You are an agent."
         "Please solve the math problem given to you."
         "You should provife your output within \\boxed{{}}."
     )
-    agent = ReActAgent(
-        name="react_agent",
-        sys_prompt=sys_prompt,
-        model=DashScopeChatModel(
-            "qwen-turbo", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
-        formatter=OpenAIChatFormatter(),
-        print_hint_msg=False,
-    )
-    agent.set_console_output_enabled(False)
 
-    agent=tune_prompt(
+    optimized_prompt = tune_prompt(
         workflow_func=workflow,
-        init_agent=agent,
+        init_system_prompt=init_prompt,
         judge_func=gsm8k_judge,
         train_dataset=dataset,
         model=DashScopeChatModel(
             "qwen-turbo", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
     )
+
+    print(f"Optimized prompt: {optimized_prompt}")
