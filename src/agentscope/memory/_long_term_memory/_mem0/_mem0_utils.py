@@ -7,8 +7,7 @@ with the mem0 library for long-term memory functionality.
 import asyncio
 import atexit
 import threading
-import time
-from typing import Any, Dict, List, Literal
+from typing import Any, Coroutine, Dict, List, Literal
 
 from mem0.configs.embeddings.base import BaseEmbedderConfig
 from mem0.configs.llms.base import BaseLlmConfig
@@ -33,16 +32,18 @@ class _EventLoopManager:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.thread: threading.Thread | None = None
         self.lock = threading.Lock()
+        self.loop_started = threading.Event()
 
         # Register cleanup function to be called on program exit
         atexit.register(self.cleanup)
 
-    def get_loop(self) -> asyncio.AbstractEventLoop:
+    def get_loop(self) -> asyncio.AbstractEventLoop | None:
         """Get or create the persistent background event loop.
 
         Returns:
             `asyncio.AbstractEventLoop`:
                 The persistent event loop running in a background thread.
+                Returns None if the event loop is not initialized.
         """
         with self.lock:
             if self.loop is None or self.loop.is_closed():
@@ -53,7 +54,11 @@ class _EventLoopManager:
                     asyncio.set_event_loop(loop)
                     # Store the loop reference before starting
                     self.loop = loop
+                    self.loop_started.set()
                     loop.run_forever()
+
+                # Clear the event before starting the thread
+                self.loop_started.clear()
 
                 # Create and start the background thread
                 self.thread = threading.Thread(
@@ -65,13 +70,10 @@ class _EventLoopManager:
 
                 # Wait for the loop to be ready
                 timeout = 5.0  # 5 seconds timeout
-                start_time = time.time()
-                while self.loop is None:
-                    if time.time() - start_time > timeout:
-                        raise RuntimeError(
-                            "Timeout waiting for event loop to start",
-                        )
-                    time.sleep(0.01)
+                if not self.loop_started.wait(timeout=timeout):
+                    raise RuntimeError(
+                        "Timeout waiting for event loop to start",
+                    )
 
             return self.loop
 
@@ -96,7 +98,7 @@ class _EventLoopManager:
 _event_loop_manager = _EventLoopManager()
 
 
-def _run_async_in_persistent_loop(coro: Any) -> Any:
+def _run_async_in_persistent_loop(coro: "Coroutine") -> Any:
     """Run an async coroutine in the persistent background event loop.
 
     This function uses a global event loop manager to ensure that all
@@ -116,6 +118,8 @@ def _run_async_in_persistent_loop(coro: Any) -> Any:
             If there's an error running the coroutine.
     """
     loop = _event_loop_manager.get_loop()
+    if loop is None:
+        raise RuntimeError("Event loop is not initialized")
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return future.result()
 
@@ -251,7 +255,6 @@ class AgentScopeLLM(LLMBase):
             response = _run_async_in_persistent_loop(
                 _async_call(),
             )
-            print(f"Response: {response}\n")
             has_tool = tools is not None
 
             # Extract text from the response content blocks
@@ -331,11 +334,9 @@ class AgentScopeEmbedding(EmbeddingBase):
                 response = await self.agentscope_model(text_list)
                 return response
 
-                # Use _run_async which will handle event loop context properly
-                # Pass the creation loop to ensure the model client runs in
-                # the same loop where it was created, avoiding Event binding
-                # issues
-
+            # Run in the persistent event loop
+            # This ensures the model client (e.g., Ollama AsyncClient)
+            # always runs in the same event loop, avoiding binding issues
             response = _run_async_in_persistent_loop(
                 _async_call(),
             )
