@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-from agentscope.agent import ReActAgent
 from agentscope.tuner import (
     DatasetConfig,
     TunerModelConfig,
@@ -13,7 +12,6 @@ from typing import Any, Callable, Optional, cast
 from datasets import load_dataset
 import dspy
 from agentscope import logger
-from agentscope.agent._react_agent import ReActAgent
 from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import check_judge_function
 from agentscope.tuner._workflow import WorkflowType
@@ -58,24 +56,24 @@ def _guess_by_ext(p: str) -> Optional[str]:
 
 def tune_prompt(
     *,
-    workflow_func: Callable[[ReActAgent], WorkflowType],
-    init_agent: ReActAgent,
+    workflow_func: Callable[[str], WorkflowType],
+    init_system_prompt: str,
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     eval_dataset: DatasetConfig | None = None,
     model: ChatModelBase,
     auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
-) -> ReActAgent:
-    """Tune the system prompt of a ReActAgent using DSPy's MIPROv2 optimizer.
+) -> str:
+    """Tune a system prompt using DSPy's MIPROv2 optimizer.
 
-    This function optimizes the agent's system prompt by leveraging DSPy's
+    This function optimizes the system prompt by leveraging DSPy's
     automatic prompt optimization capabilities.
 
     Args:
-        workflow_func: A factory function that takes a ReActAgent and returns
-            an async workflow function.
-        init_agent: The initial ReActAgent to be optimized.
+        workflow_func: A factory function that takes a system prompt (str) and
+            returns an async workflow function.
+        init_system_prompt: The initial system prompt to be optimized.
         judge_func: An async function that evaluates the agent's response and
             returns a JudgeOutput.
         train_dataset: The dataset used for training/optimization.
@@ -86,7 +84,7 @@ def tune_prompt(
         config: Configuration for prompt tuning. Defaults to PromptTuneConfig().
 
     Returns:
-        The optimized ReActAgent with an improved system prompt.
+        The optimized system prompt string.
     """
     config = config or PromptTuneConfig()
     auxiliary_models = auxiliary_models or {}
@@ -112,7 +110,7 @@ def tune_prompt(
         dspy.Example(inp=x).with_inputs("inp") for x in trainset
     ]
 
-    module = WorkflowWrapperModule(workflow_func, init_agent)
+    module = WorkflowWrapperModule(workflow_func, init_system_prompt)
     # model and auxiliary_models are not necessary for prompt tuning.
     # what about providing a new interface?
     module._set_chatmodel(model, auxiliary_models)
@@ -192,8 +190,9 @@ def tune_prompt(
             )
             logger.info(f"improvement: {improvement:.2f}%")
 
+    optimized_prompt = result.predictor.get_current_prompt()
     logger.info("---------- Optimized Prompt ----------")
-    logger.info(result.predictor.signature.instructions)
+    logger.info(optimized_prompt)
     logger.info("--------------------------------------")
 
-    return result._agent
+    return optimized_prompt
