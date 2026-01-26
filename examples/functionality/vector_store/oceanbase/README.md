@@ -37,12 +37,10 @@ store = OceanBaseStore(
     collection_name="test_collection",
     dimensions=768,
     distance="COSINE",
-    client_kwargs={
-        "uri": "127.0.0.1:2881",
-        "user": "root",
-        "password": "",
-        "db_name": "test",
-    },
+    uri="127.0.0.1:2881",
+    user="root",
+    password="",
+    db_name="test",
 )
 ```
 
