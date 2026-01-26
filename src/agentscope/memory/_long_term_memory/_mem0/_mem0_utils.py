@@ -27,6 +27,8 @@ class _EventLoopManager:
     across multiple calls, avoiding "Event loop is closed" errors.
     """
 
+    _DEFAULT_TIMEOUT = 5.0  # Default timeout in seconds
+
     def __init__(self) -> None:
         """Initialize the event loop manager."""
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -37,13 +39,16 @@ class _EventLoopManager:
         # Register cleanup function to be called on program exit
         atexit.register(self.cleanup)
 
-    def get_loop(self) -> asyncio.AbstractEventLoop | None:
+    def get_loop(self) -> asyncio.AbstractEventLoop:
         """Get or create the persistent background event loop.
 
         Returns:
             `asyncio.AbstractEventLoop`:
                 The persistent event loop running in a background thread.
-                Returns None if the event loop is not initialized.
+
+        Raises:
+            `RuntimeError`: If the event loop fails to start within the
+            timeout.
         """
         with self.lock:
             if self.loop is None or self.loop.is_closed():
@@ -69,12 +74,15 @@ class _EventLoopManager:
                 self.thread.start()
 
                 # Wait for the loop to be ready
-                timeout = 5.0  # 5 seconds timeout
-                if not self.loop_started.wait(timeout=timeout):
+                if not self.loop_started.wait(timeout=self._DEFAULT_TIMEOUT):
                     raise RuntimeError(
                         "Timeout waiting for event loop to start",
                     )
 
+            # After waiting, self.loop should be set by the background thread
+            assert (
+                self.loop is not None
+            ), "Event loop was not initialized properly"
             return self.loop
 
     def cleanup(self) -> None:
@@ -86,7 +94,7 @@ class _EventLoopManager:
 
                 # Wait for the thread to finish
                 if self.thread is not None and self.thread.is_alive():
-                    self.thread.join(timeout=5.0)
+                    self.thread.join(timeout=self._DEFAULT_TIMEOUT)
 
                 # Close the loop
                 self.loop.close()
@@ -98,7 +106,7 @@ class _EventLoopManager:
 _event_loop_manager = _EventLoopManager()
 
 
-def _run_async_in_persistent_loop(coro: "Coroutine") -> Any:
+def _run_async_in_persistent_loop(coro: Coroutine) -> Any:
     """Run an async coroutine in the persistent background event loop.
 
     This function uses a global event loop manager to ensure that all
@@ -118,8 +126,6 @@ def _run_async_in_persistent_loop(coro: "Coroutine") -> Any:
             If there's an error running the coroutine.
     """
     loop = _event_loop_manager.get_loop()
-    if loop is None:
-        raise RuntimeError("Event loop is not initialized")
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return future.result()
 
