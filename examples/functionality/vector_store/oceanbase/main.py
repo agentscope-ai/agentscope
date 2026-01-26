@@ -11,15 +11,6 @@ from agentscope.rag import (
 from agentscope.message import TextBlock
 
 
-def _client_kwargs() -> dict[str, str]:
-    return {
-        "uri": os.getenv("OCEANBASE_URI", "127.0.0.1:2881"),
-        "user": os.getenv("OCEANBASE_USER", "root"),
-        "password": os.getenv("OCEANBASE_PASSWORD", ""),
-        "db_name": os.getenv("OCEANBASE_DB", "test"),
-    }
-
-
 def _create_store(
     collection_name: str,
     dimensions: int = 4,
@@ -29,7 +20,10 @@ def _create_store(
         collection_name=collection_name,
         dimensions=dimensions,
         distance=distance,
-        client_kwargs=_client_kwargs(),
+        uri=os.getenv("OCEANBASE_URI", "127.0.0.1:2881"),
+        user=os.getenv("OCEANBASE_USER", "root"),
+        password=os.getenv("OCEANBASE_PASSWORD", ""),
+        db_name=os.getenv("OCEANBASE_DB", "test"),
     )
 
 

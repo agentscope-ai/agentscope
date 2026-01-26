@@ -57,6 +57,11 @@ class OceanBaseStore(VDBStoreBase):
         distance: Literal["COSINE", "L2", "IP"] = "COSINE",
         client_kwargs: dict[str, Any] | None = None,
         collection_kwargs: dict[str, Any] | None = None,
+        *,
+        uri: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        db_name: str | None = None,
     ) -> None:
         """Initialize the OceanBase vector store.
 
@@ -68,8 +73,17 @@ class OceanBaseStore(VDBStoreBase):
             distance (`Literal["COSINE", "L2", "IP"]`, default to "COSINE"):
                 The distance metric to use for the collection. Can be one of
                 "COSINE", "L2", or "IP". Defaults to "COSINE".
+            uri (`str | None`, optional):
+                The OceanBase server URI, such as "127.0.0.1:2881".
+            user (`str | None`, optional):
+                The username for authentication.
+            password (`str | None`, optional):
+                The password for authentication.
+            db_name (`str | None`, optional):
+                The database name to connect to.
             client_kwargs (`dict[str, Any] | None`, optional):
                 Keyword arguments passed to `pyobvector.MilvusLikeClient`.
+                Explicit connection arguments override matching keys here.
             collection_kwargs (`dict[str, Any] | None`, optional):
                 Keyword arguments passed to `create_collection`.
         """
@@ -82,7 +96,17 @@ class OceanBaseStore(VDBStoreBase):
             ) from e
 
         self._pyobvector = pyobvector
-        self._client = pyobvector.MilvusLikeClient(**(client_kwargs or {}))
+        client_kwargs = dict(client_kwargs or {})
+        if uri is not None:
+            client_kwargs["uri"] = uri
+        if user is not None:
+            client_kwargs["user"] = user
+        if password is not None:
+            client_kwargs["password"] = password
+        if db_name is not None:
+            client_kwargs["db_name"] = db_name
+
+        self._client = pyobvector.MilvusLikeClient(**client_kwargs)
 
         self.collection_name = collection_name
         self.dimensions = dimensions
@@ -329,10 +353,6 @@ class OceanBaseStore(VDBStoreBase):
         Returns:
             Converted score (similarity for COSINE, raw value for others)
 
-        Note:
-            Data-driven approach: only metrics with converters are transformed.
-            - COSINE: applies (1 - d) to convert distance to similarity
-            - L2/IP: no converter, returns raw value (identity function)
         """
         if distance is None:
             return None

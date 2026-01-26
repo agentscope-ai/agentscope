@@ -147,12 +147,10 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         store = OceanBaseStore(
             collection_name=collection_name,
             dimensions=3,
-            client_kwargs={
-                "uri": os.getenv("OCEANBASE_URI", ""),
-                "user": os.getenv("OCEANBASE_USER", ""),
-                "password": os.getenv("OCEANBASE_PASSWORD", ""),
-                "db_name": os.getenv("OCEANBASE_DB", ""),
-            },
+            uri=os.getenv("OCEANBASE_URI", ""),
+            user=os.getenv("OCEANBASE_USER", ""),
+            password=os.getenv("OCEANBASE_PASSWORD", ""),
+            db_name=os.getenv("OCEANBASE_DB", ""),
         )
 
         client = store.get_client()
