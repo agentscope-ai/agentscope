@@ -137,9 +137,9 @@
 
  .. code-block:: none
 
-    Alice: 您好，我是Alice，今年50岁，是一名教师。我热爱我的职业，并且喜欢与学生们分享知识和经验。在我的课堂上，我总是尽力创造一个积极和支持的学习环境。
-    Bob: 你好，我叫Bob，今年35岁，是一名工程师。我在技术领域工作，专注于解决复杂的问题并设计创新的解决方案。我喜欢挑战，并且总是对新技术和新方法保持好奇心。在我的工作中，我追求的是高效和精确，同时也注重团队合作。
-    Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。我对创造美观且功能性强的设计充满热情，无论是平面设计还是产品设计。我喜欢在工作中结合艺术与实用性，同时也关注用户体验。在我的职业生涯中，我追求的是创新和对细节的关注，并且我总是努力保持我的设计理念与时俱进。
+    Alice: 你好，我叫Alice，今年50岁，是一名教师。我在教育领域工作了很多年，非常喜欢与学生们分享知识和帮助他们成长。如果你有关于学习或者教学方面的问题，我很乐意帮助你。
+    Bob: 嗨，我叫Bob，今年35岁，是一名工程师。我在工程领域工作了大约十年，专注于解决技术问题和设计新的解决方案。如果你有任何关于工程技术或者项目管理的问题，我很乐意提供帮助。
+    Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。我在设计行业工作了几年，专注于创造既美观又实用的产品和体验。如果你对设计有任何疑问，或者需要关于创意过程的建议，我很乐意与你分享我的经验和知识。
 
 
 
@@ -178,9 +178,9 @@
 
  .. code-block:: none
 
-    Bob: Alice 是一位50岁的教师。她热爱她的职业，喜欢与学生们分享知识和经验，并且在她的课堂上努力创造一个积极和支持的学习环境。
-    Charlie: Alice 是一位50岁的教师，她热爱自己的职业，并乐于与学生分享知识和经验。她在教学时致力于营造积极支持的学习氛围。
-    David: 你提到的Alice可能是指很多人，因为这是一个常见的名字。如果你能提供更多的信息，比如她的职业或者她在哪个领域工作，我就能更好地帮助你了解她是做什么的。另外，如果Alice是你们共同认识的人，那么请给我一些上下文，这样我或许能够理解你指的是哪位Alice。
+    Bob: Alice 是一位50岁的教师，她在教育领域工作了很多年，热衷于与学生分享知识，并帮助他们成长。如果你有关于学习或教学方面的问题，她会很乐意提供帮助。
+    Charlie: Alice 是一位50岁的教师，她在教育领域工作了很长时间，非常热爱她的职业，并且喜欢与学生分享知识，帮助他们成长。如果你有关于学习或教学方面的问题，她会很乐意提供帮助。
+    David: Alice这个名字很常见，没有更多的上下文信息的话，我无法确定你指的是哪位Alice。如果你能提供一些额外的信息，比如她的职业、她所在的领域或者你们是如何认识的，我可能能够更好地帮助你了解她是做什么的。你能给我更多关于Alice的细节吗？
 
 
 
@@ -345,15 +345,15 @@ Alice 一无所知，因为他没有包含在 ``MsgHub`` 上下文中。
 
  .. code-block:: none
 
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个20岁的学生。很高兴'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') False
-    Msg(id='A74fQeVr9UMm5crjon8iGP', name='Alice', content=[{'type': 'text', 'text': '你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？'}], role='assistant', metadata=None, timestamp='2026-01-23 09:09:30.061', invocation_id='None') True
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个20岁的学生。很高兴'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个20岁的学生。很高兴遇见你！你想'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个20岁的学生。很高兴遇见你！你想聊些什么？'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个20岁的学生。很高兴遇见你！你想聊些什么？'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') False
+    Msg(id='MhKnFeiRs435hu5BSSJYc9', name='Alice', content=[{'type': 'text', 'text': '嗨！我是Alice，一个20岁的学生。很高兴遇见你！你想聊些什么？'}], role='assistant', metadata=None, timestamp='2026-01-26 10:04:54.687', invocation_id='None') True
 
 
 
@@ -399,7 +399,7 @@ Alice 一无所知，因为他没有包含在 ``MsgHub`` 上下文中。
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 21.702 seconds)
+   **Total running time of the script:** (0 minutes 24.380 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_pipeline.py:
