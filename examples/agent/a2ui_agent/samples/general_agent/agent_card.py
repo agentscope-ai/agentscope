@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent card definition for the A2A agent."""
 from a2a.types import AgentCard, AgentCapabilities, AgentSkill
-from a2ui.a2ui_extension import get_a2ui_agent_extension
+from a2ui.extension.a2ui_extension import get_a2ui_agent_extension
 
 agent_card = AgentCard(
     name="Friday",

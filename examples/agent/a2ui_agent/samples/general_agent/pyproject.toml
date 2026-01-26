@@ -9,7 +9,7 @@ dependencies = [
     "starlette",
     "fastapi",
     "shortuuid",
-    "a2ui"
+    "a2ui-agent @ file:///Users/liuyi/Documents/Research/LLM-research/clarify_tool/github_project/A2UI/a2a_agents/python/a2ui_agent"
 ]
 
 [build-system]
@@ -23,5 +23,5 @@ packages = ["."]
 allow-direct-references = true
 
 [tool.uv.sources]
-a2ui = { path = "../../../../../../../a2ui/a2a_agents/python/a2ui_extension" }
-agentscope = { path = "../../../../../../" }
+a2ui-agent = { path = "../../../../../../A2UI/a2a_agents/python/a2ui_agent" }
+agentscope = { path = "../../../../../" }

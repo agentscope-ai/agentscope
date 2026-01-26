@@ -30,17 +30,20 @@ from agentscope.formatter import DashScopeChatFormatter, A2AChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.pipeline import stream_printing_messages
 from agentscope.session import JSONSession
-from agentscope.tool import (
-    Toolkit,
-    view_text_file,
-    execute_python_code,
-    execute_shell_command,
-)
 from agentscope.message import Msg
 
 
 def get_final_structured_output(message: Msg) -> None | str:
-    """Get the final structured output from the message."""
+    """Get the final structured output from the message.
+
+    Args:
+        message (`Msg`):
+            The message object to extract structured output from.
+
+    Returns:
+        `None | str`:
+            The structured output string if found, None otherwise.
+    """
     if isinstance(message.content, list):
         for block in message.content:
             if (
@@ -55,8 +58,13 @@ def get_final_structured_output(message: Msg) -> None | str:
 
 
 class SimpleStreamHandler:
-    """A simple request handler that handles the input query by an
-    ReAct agent."""
+    """A simple request handler that handles the input query by a
+    ReAct agent.
+
+    This handler processes A2A protocol messages by using a ReAct agent
+    to generate responses. It supports both streaming and non-streaming
+    message handling, and manages session state for conversation continuity.
+    """
 
     async def _prepare_final_message(
         self,
@@ -67,12 +75,16 @@ class SimpleStreamHandler:
         """Prepare the final message for response.
 
         Args:
-            formatter: The A2AChatFormatter instance.
-            final_msg_text: The structured output text if available.
-            last_complete_msg: The last complete message if available.
+            formatter (`A2AChatFormatter`):
+                The A2AChatFormatter instance.
+            final_msg_text (`str | None`, optional):
+                The structured output text if available.
+            last_complete_msg (`Msg | None`, optional):
+                The last complete message if available.
 
         Returns:
-            The prepared final message.
+            `Message`:
+                The prepared final message.
         """
         logger.info(
             "--- Processing final response, final_msg_text: %s ---",
@@ -114,9 +126,14 @@ class SimpleStreamHandler:
         Args:
             params (`MessageSendParams`):
                 The parameters for sending the message.
+            *args (`Any`):
+                Additional positional arguments.
+            **kwargs (`Any`):
+                Additional keyword arguments.
 
         Returns:
-            The final Task object.
+            `Task`:
+                The final Task object.
         """
         logger.info("--- params: %s ---", params)
         logger.info("args: %s ---", args)
@@ -165,11 +182,15 @@ class SimpleStreamHandler:
         *args: Any,
         **kwargs: Any,
     ) -> AsyncGenerator[Event, None]:
-        """Handles the message_send method by the agent
+        """Handles the message_send method by the agent.
 
         Args:
             params (`MessageSendParams`):
                 The parameters for sending the message.
+            *args (`Any`):
+                Additional positional arguments.
+            **kwargs (`Any`):
+                Additional keyword arguments.
 
         Returns:
             `AsyncGenerator[Event, None]`:
@@ -180,6 +201,13 @@ class SimpleStreamHandler:
         task_id = params.message.task_id or uuid.uuid4().hex
         context_id = params.message.context_id or "default-context"
         # ============ Agent Logic ============
+        from agentscope.tool import (
+            Toolkit,
+            view_text_file,
+            execute_python_code,
+            execute_shell_command,
+        )
+
         toolkit = Toolkit()
         toolkit.register_tool_function(execute_python_code)
         toolkit.register_tool_function(execute_shell_command)
@@ -201,7 +229,7 @@ class SimpleStreamHandler:
             name="Friday",
             sys_prompt=get_ui_prompt(),
             model=DashScopeChatModel(
-                model_name="qwen-max",
+                model_name="qwen3-max",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
             ),
             formatter=DashScopeChatFormatter(),

@@ -40,8 +40,8 @@ Download the a2ui and agentscope package to the same directory
 git clone https://github.com/google/A2UI.git
 git clone -b main https://github.com/agentscope-ai/agentscope.git
 # copy the renders and specification directory to AgentScope/examples/agent/a2ui_agent
-copy -r a2ui/renderers AgentScope/examples/agent/a2ui_agent
-copy -r a2ui/specification AgentScope/examples/agent/a2ui_agent
+cp -r A2UI/renderers AgentScope/examples/agent/a2ui_agent
+cp -r A2UI/specification AgentScope/examples/agent/a2ui_agent
 ```
 
 

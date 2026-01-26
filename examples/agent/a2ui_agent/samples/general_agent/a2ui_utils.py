@@ -11,7 +11,7 @@ from a2a.types import (
     Message,
     Part,
 )
-from a2ui.a2ui_extension import (
+from a2ui.extension.a2ui_extension import (
     A2UI_MIME_TYPE,
     MIME_TYPE_KEY,
     A2UI_EXTENSION_URI,
