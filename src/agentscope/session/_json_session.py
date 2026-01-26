@@ -36,7 +36,7 @@ class JSONSession(SessionBase):
                 "`load_session_state` methods instead.",
             )
 
-    def _get_save_path(self, session_id: str) -> str:
+    def _get_save_path(self, session_id: str, user_id: str = "") -> str:
         """The path to save the session state.
 
         Args:
@@ -48,11 +48,17 @@ class JSONSession(SessionBase):
                 The path to save the session state.
         """
         os.makedirs(self.save_dir, exist_ok=True)
-        return os.path.join(self.save_dir, f"{session_id}.json")
+        if user_id:
+            file_path = f"{user_id}_{session_id}.json"
+        else:
+            file_path = f"{session_id}.json"
+        return os.path.join(self.save_dir, file_path)
 
     async def save_session_state(
         self,
         session_id: str,
+        *,
+        user_id: str = "",
         **state_modules_mapping: StateModule,
     ) -> None:
         """Load the state dictionary from a JSON file.
@@ -60,6 +66,8 @@ class JSONSession(SessionBase):
         Args:
             session_id (`str`):
                 The session id.
+            user_id (`str`, default to `""`):
+                The user ID for the storage.
             **state_modules_mapping (`dict[str, StateModule]`):
                 A dictionary mapping of state module names to their instances.
         """
@@ -68,7 +76,7 @@ class JSONSession(SessionBase):
             for name, state_module in state_modules_mapping.items()
         }
         with open(
-            self._get_save_path(session_id),
+            self._get_save_path(session_id, user_id=user_id),
             "w",
             encoding="utf-8",
             errors="surrogatepass",
@@ -79,6 +87,8 @@ class JSONSession(SessionBase):
         self,
         session_id: str,
         allow_not_exist: bool = True,
+        *,
+        user_id: str = "",
         **state_modules_mapping: StateModule,
     ) -> None:
         """Get the state dictionary to be saved to a JSON file.
@@ -86,13 +96,15 @@ class JSONSession(SessionBase):
         Args:
             session_id (`str`):
                 The session id.
+            user_id (`str`, default to `""`):
+                The user ID for the storage.
             allow_not_exist (`bool`, defaults to `True`):
                 Whether to allow the session to not exist. If `False`, raises
                 an error if the session does not exist.
             state_modules_mapping (`list[StateModule]`):
                 The list of state modules to be loaded.
         """
-        session_save_path = self._get_save_path(session_id)
+        session_save_path = self._get_save_path(session_id, user_id=user_id)
         if os.path.exists(session_save_path):
             with open(
                 session_save_path,
