@@ -148,19 +148,6 @@ async def main() -> None:
 
         response = await client.send_message(request)
         print(response.model_dump(mode="json", exclude_none=True))
-        # --8<-- [end:send_message]
-
-        # # --8<-- [start:send_message_streaming]
-
-        # streaming_request = SendStreamingMessageRequest(
-        #     id=str(uuid4()), params=MessageSendParams(**send_message_payload)
-        # )
-
-        # stream_response = client.send_message_streaming(streaming_request)
-
-        # async for chunk in stream_response:
-        #     print(chunk.model_dump(mode='json', exclude_none=True))
-        # --8<-- [end:send_message_streaming]
 
 
 if __name__ == "__main__":
