@@ -313,10 +313,6 @@ class OceanBaseStore(VDBStoreBase):
 
         Returns:
             Tuple of (Document, score)
-
-        Note:
-            For COSINE metric, converts distance to similarity (1 - distance)
-            to align with Milvus behavior. Other metrics return raw values.
         """
         distance = self._extract_distance(row, output_fields)
         score = self._convert_distance_to_score(distance)
