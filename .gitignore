@@ -148,5 +148,4 @@ package-lock.json
 *.tsbuildinfo
 .wireit/
 .angular/
-*.ts
 uv.lock
