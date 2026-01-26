@@ -116,14 +116,14 @@ Initialize a routing agent
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "your_choice": "Content Generation",
-            "task_description": "The user is requesting help to write a poem."
+            "task_description": "Write a poem",
+            "your_choice": "Content Generation"
         },
-        "id": "call_690923826e6447a1af4888"
+        "id": "call_793f429684c64ef992c820"
     }
     system: {
         "type": "tool_result",
-        "id": "call_690923826e6447a1af4888",
+        "id": "call_793f429684c64ef992c820",
         "name": "generate_response",
         "output": [
             {
@@ -132,11 +132,11 @@ Initialize a routing agent
             }
         ]
     }
-    Router: Sure, I can help with that! Could you tell me a bit more about what you'd like the poem to be about? For example, do you have a specific theme, mood, or style in mind? Any particular poetic forms you're interested in, like sonnets, haikus, or free verse?
+    Router: Sure, I can help with that! To get started, could you share a bit more about what you'd like the poem to be about? For example, do you have a specific theme, mood, or occasion in mind? Any particular style or length you're aiming for? This will help me tailor the poem just for you.
     The structured output:
     {
         "your_choice": "Content Generation",
-        "task_description": "The user is requesting help to write a poem."
+        "task_description": "Write a poem"
     }
 
 
@@ -269,9 +269,9 @@ After that, we define a routing agent and equip it with the above tool functions
         "input": {
             "demand": "a quick sort function"
         },
-        "id": "call_83180eb1a2d94190a12aaa"
+        "id": "call_cbd2341998354f409a2e62"
     }
-    PythonAgent: Certainly! Here's a Python implementation of the Quick Sort algorithm. This version uses the Lomuto partition scheme, which is simpler to understand and implement compared to the Hoare partition scheme.
+    PythonAgent: Certainly! Here's a Python implementation of the Quick Sort algorithm. This function sorts an array in-place:
 
     ```python
     def quick_sort(arr):
@@ -290,9 +290,9 @@ After that, we define a routing agent and equip it with the above tool functions
     print(sorted_arr)
     ```
 
-    This implementation is concise and easy to understand. It works by selecting a pivot element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
+    This is a simple and clear implementation, but it creates new lists at each recursive call, which can be memory-intensive for large arrays.
 
-    If you prefer an in-place version of Quick Sort, here is an implementation using the Lomuto partition scheme:
+    If you prefer an in-place version that modifies the original array, here is an alternative:
 
     ```python
     def quick_sort_in_place(arr, low, high):
@@ -317,19 +317,38 @@ After that, we define a routing agent and equip it with the above tool functions
     print(arr)
     ```
 
-    This in-place version sorts the array in place without using additional lists, making it more memory efficient.
+    In this in-place version, the `partition` function rearranges the elements around the pivot, and `quick_sort_in_place` recursively sorts the sub-arrays. This approach is more memory-efficient as it does not create new lists.
     system: {
         "type": "tool_result",
-        "id": "call_83180eb1a2d94190a12aaa",
+        "id": "call_cbd2341998354f409a2e62",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "Certainly! Here's a Python implementation of the Quick Sort algorithm. This version uses the Lomuto partition scheme, which is simpler to understand and implement compared to the Hoare partition scheme.\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(sorted_arr)\n```\n\nThis implementation is concise and easy to understand. It works by selecting a pivot element from the array and partitioning the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.\n\nIf you prefer an in-place version of Quick Sort, here is an implementation using the Lomuto partition scheme:\n\n```python\ndef quick_sort_in_place(arr, low, high):\n    if low < high:\n        pi = partition(arr, low, high)\n        quick_sort_in_place(arr, low, pi - 1)\n        quick_sort_in_place(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] <= pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nquick_sort_in_place(arr, 0, len(arr) - 1)\nprint(arr)\n```\n\nThis in-place version sorts the array in place without using additional lists, making it more memory efficient."
+                "text": "Certainly! Here's a Python implementation of the Quick Sort algorithm. This function sorts an array in-place:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quick_sort(arr)\nprint(sorted_arr)\n```\n\nThis is a simple and clear implementation, but it creates new lists at each recursive call, which can be memory-intensive for large arrays.\n\nIf you prefer an in-place version that modifies the original array, here is an alternative:\n\n```python\ndef quick_sort_in_place(arr, low, high):\n    if low < high:\n        pi = partition(arr, low, high)\n        quick_sort_in_place(arr, low, pi - 1)\n        quick_sort_in_place(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] <= pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nquick_sort_in_place(arr, 0, len(arr) - 1)\nprint(arr)\n```\n\nIn this in-place version, the `partition` function rearranges the elements around the pivot, and `quick_sort_in_place` recursively sorts the sub-arrays. This approach is more memory-efficient as it does not create new lists."
             }
         ]
     }
-    Router: The Python code for a quick sort function has been generated. Here's the implementation using the Lomuto partition scheme, which is an in-place sorting algorithm:
+    Router: Here is a Python implementation of the Quick Sort algorithm, provided in two versions. The first one is a simple and clear implementation that creates new lists at each recursive call, which can be memory-intensive for large arrays:
+
+    ```python
+    def quick_sort(arr):
+        if len(arr) <= 1:
+            return arr
+        else:
+            pivot = arr[len(arr) // 2]
+            left = [x for x in arr if x < pivot]
+            middle = [x for x in arr if x == pivot]
+            right = [x for x in arr if x > pivot]
+            return quick_sort(left) + middle + quick_sort(right)
+
+    # Example usage:
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    sorted_arr = quick_sort(arr)
+    print(sorted_arr)
+    ```
+
+    The second version is an in-place quick sort that modifies the original array and is more memory-efficient as it does not create new lists:
 
     ```python
     def quick_sort_in_place(arr, low, high):
@@ -354,7 +373,7 @@ After that, we define a routing agent and equip it with the above tool functions
     print(arr)
     ```
 
-    This in-place version of Quick Sort sorts the array without using additional lists, making it more memory efficient. To use this function, simply call `quick_sort_in_place` with your array and the indices of the range you want to sort (usually `0` and `len(arr) - 1` for the entire array).
+    You can use either of these implementations depending on your specific needs. If you have any further questions or need additional assistance, feel free to ask!
 
 
 
@@ -362,7 +381,7 @@ After that, we define a routing agent and equip it with the above tool functions
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 29.069 seconds)
+   **Total running time of the script:** (0 minutes 36.204 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:

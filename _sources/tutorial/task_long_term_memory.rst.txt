@@ -192,23 +192,9 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and get insider tips from your hosts about hidden gems in the city.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a great way to immerse yourself in the local culture, enjoy home-cooked meals, and get insider tips from your hosts about hidden gems in the city.
 
-    If you're planning another trip to Hangzhou, here are some suggestions to enhance your homestay experience:
-
-    1. **Choose a Homestay Near West Lake**: Staying close to West Lake will allow you to enjoy the serene beauty of the area early in the morning or late in the evening when it's less crowded. Many homestays in this area offer stunning views and easy access to the lake's famous walking paths.
-
-    2. **Explore Local Tea Villages**: Hangzhou is renowned for its Longjing (Dragon Well) tea. Consider staying in a homestay located in or near Meijiawu or Longjing Village. You'll have the chance to participate in tea-picking experiences and learn about traditional tea-making processes from local farmers.
-
-    3. **Experience Traditional Hangzhou Cuisine**: One of the perks of staying in a homestay is the opportunity to try authentic home-cooked meals. Ask your host if they can prepare some local specialties like Dongpo Pork, West Lake Fish in Vinegar Gravy, or Beggar’s Chicken.
-
-    4. **Ask Your Host for Recommendations**: Locals often know the best spots that aren't always listed in guidebooks. Whether it's a quiet temple, a scenic hiking trail, or a bustling night market, your host can provide valuable insights into places you might not discover on your own.
-
-    5. **Look for Homestays with Unique Themes**: Some homestays in Hangzhou are designed with specific themes, such as traditional Chinese decor, minimalist modern design, or even artistic studios. If you enjoy unique accommodations, seek out a homestay that aligns with your personal style.
-
-    6. **Check Reviews and Amenities**: While the charm of a homestay lies in its personal touch, make sure to check reviews and ensure the place has the amenities you need, whether it's Wi-Fi, air conditioning, or proximity to public transportation.
-
-    Would you like help finding specific homestay options in Hangzhou based on your preferences? I'd be happy to assist further!
+    If you're looking for recommendations or tips on finding the best homestays in Hangzhou, I can help with that! Would you like suggestions on specific areas or types of homestays that might suit your preferences?
 
 
 
@@ -244,7 +230,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: Based on the information available, when you travel to Hangzhou, you prefer staying in homestays. There's no other specific preference indicated in the provided information.
+    Friday: Based on the information available, when you travel to Hangzhou, you prefer staying in homestays. There are no other specific preferences mentioned in the provided information.
 
 
 
@@ -546,7 +532,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 51.808 seconds)
+   **Total running time of the script:** (0 minutes 31.493 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
