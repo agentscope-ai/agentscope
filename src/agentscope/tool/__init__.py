@@ -23,11 +23,9 @@ from ._multi_modality import (
     openai_audio_to_text,
 )
 from ._toolkit import Toolkit
-from ._sandbox_toolkit import SandboxToolkit
 
 __all__ = [
     "Toolkit",
-    "SandboxToolkit",
     "ToolResponse",
     "execute_python_code",
     "execute_shell_command",
