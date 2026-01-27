@@ -28,9 +28,39 @@ else:
     Part = "a2a.types.Part"
 
 
+# Constants for metadata keys used in A2A Part to preserve AgentScope Msg info
+_AGENTSCOPE_MSG_SOURCE = "_agentscope_msg_source"
+_AGENTSCOPE_MSG_ID = "_agentscope_msg_id"
+
+
 class A2AChatFormatter(FormatterBase):
     """A2A message formatter class, which convert AgentScope messages into
     A2A message format."""
+
+    def __init__(self, context_id: str | None = None) -> None:
+        """Initialize the A2A formatter.
+
+        Args:
+            context_id (`str | None`, optional):
+                The context ID for A2A messages. If provided, it will be
+                included in all formatted A2A messages.
+        """
+        self.context_id = context_id
+
+    def _create_metadata(self, msg_source: str, msg_id: str) -> dict:
+        """Create metadata dict containing AgentScope Msg information.
+
+        Args:
+            msg_source (`str`): The source name of the original Msg.
+            msg_id (`str`): The id of the original Msg.
+
+        Returns:
+            `dict`: The metadata dictionary.
+        """
+        return {
+            _AGENTSCOPE_MSG_SOURCE: msg_source,
+            _AGENTSCOPE_MSG_ID: msg_id,
+        }
 
     async def format(self, msgs: list[Msg]) -> Message:
         """Convert AgentScope messages into a A2A message object. Note that
@@ -39,7 +69,9 @@ class A2AChatFormatter(FormatterBase):
 
         .. note:: Note the A2A protocol receives a single message per request,
          so multi-message inputs will be merged into one A2A Message with role
-         'user'.
+         'user'. Each Part in the Message will contain metadata with
+         `_agentscope_msg_source` (Msg.name) and `_agentscope_msg_id` (Msg.id)
+         to preserve the original Msg information for reconstruction.
 
         Args:
             msgs (`list[Msg]`):
@@ -65,6 +97,10 @@ class A2AChatFormatter(FormatterBase):
 
         parts = []
         for msg in msgs:
+            msg_source = msg.name
+            msg_id = msg.id
+            metadata = self._create_metadata(msg_source, msg_id)
+
             for block in msg.get_content_blocks():
                 block_type = block.get("type")
                 if block_type == "text" and block.get("text"):
@@ -72,6 +108,7 @@ class A2AChatFormatter(FormatterBase):
                         Part(
                             root=TextPart(
                                 text=block.get("text"),
+                                metadata=metadata,
                             ),
                         ),
                     )
@@ -81,6 +118,7 @@ class A2AChatFormatter(FormatterBase):
                         Part(
                             root=TextPart(
                                 text=block.get("thinking"),
+                                metadata=metadata,
                             ),
                         ),
                     )
@@ -100,6 +138,7 @@ class A2AChatFormatter(FormatterBase):
                                     file=FileWithUri(
                                         uri=source.get("url"),
                                     ),
+                                    metadata=metadata,
                                 ),
                             ),
                         )
@@ -112,6 +151,7 @@ class A2AChatFormatter(FormatterBase):
                                         bytes=source.get("data"),
                                         mime_type=source.get("media_type"),
                                     ),
+                                    metadata=metadata,
                                 ),
                             ),
                         )
@@ -126,6 +166,7 @@ class A2AChatFormatter(FormatterBase):
                         Part(
                             root=DataPart(
                                 data=block,
+                                metadata=metadata,
                             ),
                         ),
                     )
@@ -136,11 +177,16 @@ class A2AChatFormatter(FormatterBase):
                         block_type,
                     )
 
-        a2a_message = Message(
-            message_id=str(uuid.uuid4()),
-            role=Role.user,
-            parts=parts,
-        )
+        # Build Message kwargs, only include context_id if not None
+        message_kwargs = {
+            "message_id": str(uuid.uuid4()),
+            "role": Role.user,
+            "parts": parts,
+        }
+        if self.context_id is not None:
+            message_kwargs["context_id"] = self.context_id
+
+        a2a_message = Message(**message_kwargs)
 
         return a2a_message
 
@@ -234,7 +280,9 @@ class A2AChatFormatter(FormatterBase):
             `list[Msg]`:
                 Converted AgentScope Msg objects.
         """
-        msgs = []
+        msgs: list[Msg] = []
+
+        # Process status message
         if task.status and task.status.message:
             msgs.append(
                 await self.format_a2a_message(name, task.status.message),
