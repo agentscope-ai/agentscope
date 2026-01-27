@@ -103,7 +103,7 @@ About detailed usage, please refer to the `./view_a2ui_examples.py` script (loca
 
 ### Step 3: Generate the A2UI Response
 
-After loading the schema and examples, construct your A2UI response using the **generate_response** tool. The `response_with_a2ui` parameter must be a string containing two parts separated by the delimiter `---a2ui_JSON---`:
+After loading the schema and examples, output your A2UI response directly as text. The text output must contain two parts separated by the delimiter `---a2ui_JSON---`:
 
 First Part: **Conversational text response**: Your natural language reply to the user
 Second Part. **A2UI JSON messages**: A raw JSON array of A2UI message objects that MUST validate against the A2UI schema

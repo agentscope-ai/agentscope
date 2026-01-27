@@ -22,7 +22,6 @@ from prompt_builder import get_ui_prompt
 from a2ui_utils import (
     pre_process_request_with_ui_event,
     post_process_a2a_message_for_ui,
-    A2UIResponse,
 )
 from agentscope._logging import logger
 from agentscope.agent import ReActAgent
@@ -31,30 +30,6 @@ from agentscope.model import DashScopeChatModel
 from agentscope.pipeline import stream_printing_messages
 from agentscope.session import JSONSession
 from agentscope.message import Msg
-
-
-def get_final_structured_output(message: Msg) -> None | str:
-    """Get the final structured output from the message.
-
-    Args:
-        message (`Msg`):
-            The message object to extract structured output from.
-
-    Returns:
-        `None | str`:
-            The structured output string if found, None otherwise.
-    """
-    if isinstance(message.content, list):
-        for block in message.content:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "tool_use"
-                and block.get("name") == "generate_response"
-            ):
-                input_data = block.get("input")
-                if input_data is not None and isinstance(input_data, dict):
-                    return input_data.get("response_with_a2ui")
-    return None
 
 
 class SimpleStreamHandler:
@@ -69,39 +44,33 @@ class SimpleStreamHandler:
     async def _prepare_final_message(
         self,
         formatter: A2AChatFormatter,
-        final_msg_text: str | None,
-        last_complete_msg: Msg | None,
+        final_msg: Msg | None,
     ) -> Message:
         """Prepare the final message for response.
 
         Args:
             formatter (`A2AChatFormatter`):
                 The A2AChatFormatter instance.
-            final_msg_text (`str | None`, optional):
-                The structured output text if available.
-            last_complete_msg (`Msg | None`, optional):
-                The last complete message if available.
+            final_msg (`Msg | None`, optional):
+                The final message if available.
 
         Returns:
             `Message`:
                 The prepared final message.
         """
         logger.info(
-            "--- Processing final response, final_msg_text: %s ---",
-            final_msg_text is not None,
+            "--- Processing final response, final_msg: %s ---",
+            final_msg is not None,
         )
 
-        if final_msg_text is not None:
-            logger.info("--- Using structured output for final message ---")
+        if final_msg is not None:
+            logger.info("--- Using final message for final message ---")
             final_a2a_message = await formatter.format(
-                [Msg(name="Friday", content=final_msg_text, role="assistant")],
+                [final_msg],
             )
         else:
             logger.info(
                 "--- Using last complete message for final message ---",
-            )
-            final_a2a_message = await formatter.format(
-                [copy.deepcopy(last_complete_msg)],
             )
 
         logger.info(
@@ -110,7 +79,6 @@ class SimpleStreamHandler:
         )
         final_a2a_message = post_process_a2a_message_for_ui(
             final_a2a_message,
-            is_final=True,
         )
         return final_a2a_message
 
@@ -229,7 +197,7 @@ class SimpleStreamHandler:
             name="Friday",
             sys_prompt=get_ui_prompt(),
             model=DashScopeChatModel(
-                model_name="qwen3-max",
+                model_name="qwen-plus",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
             ),
             formatter=DashScopeChatFormatter(),
@@ -265,27 +233,16 @@ class SimpleStreamHandler:
         # Collect all messages from the stream
         # The 'last' flag indicates the last chunk of a streaming message,
         # not the last message from the agent
-        final_msg_text = None
-        last_complete_msg = None  # Track the last complete message
         message_count = 0
+        final_msg = None
         try:
             async for msg, last in stream_printing_messages(
                 agents=[agent],
-                coroutine_task=agent(as_msg, structured_model=A2UIResponse),
+                coroutine_task=agent(as_msg),
             ):
                 message_count += 1
                 if last:
-                    # Print message content preview (first 100 characters)
-                    log_text = f"----{msg}"
-                    logger.debug(log_text[0 : min(len(log_text), 500)])
-                    # Track the last complete message
-                    # (only keep reference, no expensive ops)
-                    last_complete_msg = copy.deepcopy(msg)
-                    if isinstance(msg.content, list):
-                        structured_output = get_final_structured_output(msg)
-                        if structured_output:
-                            final_msg_text = structured_output
-                            break
+                    final_msg = copy.deepcopy(msg)
         except Exception as e:
             logger.error(
                 "--- Error in message stream: %s ---",
@@ -299,7 +256,7 @@ class SimpleStreamHandler:
                 "Total messages: %s, "
                 "Last message: %s ---",
                 message_count,
-                last_complete_msg,
+                final_msg,
             )
 
         # Save session state (move before final message processing
@@ -311,8 +268,7 @@ class SimpleStreamHandler:
 
         final_a2a_message = await self._prepare_final_message(
             formatter,
-            final_msg_text,
-            last_complete_msg,
+            final_msg,
         )
 
         logger.info("--- Yielding final TaskStatusUpdateEvent ---")
