@@ -150,7 +150,12 @@ class RedisSession(SessionBase):
                 The mapping of state modules to be loaded.
         """
         key = self._get_session_key(session_id, user_id=user_id)
-        data = await self._client.get(key)
+
+        # Use GETEX to get and refresh TTL in a single atomic operation
+        if self.key_ttl is not None:
+            data = await self._client.getex(key, ex=self.key_ttl)
+        else:
+            data = await self._client.get(key)
 
         if data is None:
             if allow_not_exist:
@@ -164,9 +169,6 @@ class RedisSession(SessionBase):
                 f"Failed to load session state because redis key {key} "
                 "does not exist.",
             )
-
-        if self.key_ttl is not None:
-            await self._client.expire(key, self.key_ttl)
 
         if isinstance(data, (bytes, bytearray)):
             data = data.decode("utf-8")
