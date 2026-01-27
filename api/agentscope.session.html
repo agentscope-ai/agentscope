@@ -358,12 +358,13 @@
 <p>The base class for session in agentscope.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.session.SessionBase.save_session_state">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_session_base.html#SessionBase.save_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.SessionBase.save_session_state" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_session_base.html#SessionBase.save_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.SessionBase.save_session_state" title="Link to this definition">¶</a></dt>
 <dd><p>Save the session state</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“”</cite>) – The user ID for the storage.</p></li>
 <li><p><strong>**state_modules_mapping</strong> (<cite>dict[str, StateModule]</cite>) – A dictionary mapping of state module names to their instances.</p></li>
 </ul>
 </dd>
@@ -375,14 +376,15 @@
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.session.SessionBase.load_session_state">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_session_base.html#SessionBase.load_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.SessionBase.load_session_state" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">abstract</span><span class="w"> </span><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_session_base.html#SessionBase.load_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.SessionBase.load_session_state" title="Link to this definition">¶</a></dt>
 <dd><p>Load the session state</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>session_id</strong> (<em>str</em>)</p></li>
-<li><p><strong>allow_not_exist</strong> (<em>bool</em>)</p></li>
-<li><p><strong>state_modules_mapping</strong> (<a class="reference internal" href="agentscope.module.html#agentscope.module.StateModule" title="agentscope.module._state_module.StateModule"><em>StateModule</em></a>)</p></li>
+<li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“”</cite>) – The user ID for the storage.</p></li>
+<li><p><strong>allow_not_exist</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether to allow the session to not exist.</p></li>
+<li><p><strong>**state_modules_mapping</strong> (<cite>dict[str, StateModule]</cite>) – The mapping of state modules to be loaded.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
@@ -400,16 +402,11 @@
 <p>The JSON session class.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.session.JSONSession.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">save_dir</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'./'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">save_dir</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'./'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the JSON session class.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><ul class="simple">
-<li><p><strong>session_id</strong> (<cite>str</cite>) – The session id, deprecated and move to the <cite>save_session_state</cite>
-and <cite>load_session_state</cite> methods to support different session
-ids.</p></li>
-<li><p><strong>save_dir</strong> (<cite>str</cite>, defaults to <a href="#id1"><span class="problematic" id="id2">`</span></a>”./”) – The directory to save the session state.</p></li>
-</ul>
+<dd class="field-odd"><p><strong>save_dir</strong> (<cite>str</cite>, defaults to <a href="#id1"><span class="problematic" id="id2">`</span></a>”./”) – The directory to save the session state.</p>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
 <dd class="field-even"><p>None</p>
@@ -419,12 +416,13 @@ ids.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.session.JSONSession.save_session_state">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.save_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.save_session_state" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.save_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.save_session_state" title="Link to this definition">¶</a></dt>
 <dd><p>Load the state dictionary from a JSON file.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“”</cite>) – The user ID for the storage.</p></li>
 <li><p><strong>**state_modules_mapping</strong> (<cite>dict[str, StateModule]</cite>) – A dictionary mapping of state module names to their instances.</p></li>
 </ul>
 </dd>
@@ -436,12 +434,13 @@ ids.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.session.JSONSession.load_session_state">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.load_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.load_session_state" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_json_session.html#JSONSession.load_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.JSONSession.load_session_state" title="Link to this definition">¶</a></dt>
 <dd><p>Get the state dictionary to be saved to a JSON file.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“”</cite>) – The user ID for the storage.</p></li>
 <li><p><strong>allow_not_exist</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether to allow the session to not exist. If <cite>False</cite>, raises
 an error if the session does not exist.</p></li>
 <li><p><strong>state_modules_mapping</strong> (<cite>list[StateModule]</cite>) – The list of state modules to be loaded.</p></li>
@@ -449,6 +448,109 @@ an error if the session does not exist.</p></li>
 </dd>
 <dt class="field-even">Return type<span class="colon">:</span></dt>
 <dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">RedisSession</span></span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#agentscope.session.SessionBase" title="agentscope.session._session_base.SessionBase"><code class="xref py py-class docutils literal notranslate"><span class="pre">SessionBase</span></code></a></p>
+<p>The Redis session class.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.SESSION_KEY">
+<span class="sig-name descname"><span class="pre">SESSION_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:state'</span></em><a class="headerlink" href="#agentscope.session.RedisSession.SESSION_KEY" title="Link to this definition">¶</a></dt>
+<dd><p>Redis key pattern (without prefix) for storing sessions state for
+a specific session.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">6379</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">password</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">connection_pool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">key_ttl</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">key_prefix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession.__init__" title="Link to this definition">¶</a></dt>
+<dd><p>Initialize the Redis session class by connecting to Redis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>host</strong> (<cite>str</cite>, defaults to <cite>“localhost”</cite>) – Redis server host.</p></li>
+<li><p><strong>port</strong> (<cite>int</cite>, defaults to <cite>6379</cite>) – Redis server port.</p></li>
+<li><p><strong>db</strong> (<cite>int</cite>, defaults to <cite>0</cite>) – Redis database index.</p></li>
+<li><p><strong>password</strong> (<cite>str | None</cite>, optional) – Redis password if required.</p></li>
+<li><p><strong>connection_pool</strong> (<cite>ConnectionPool | None</cite>, optional) – Optional Redis connection pool.</p></li>
+<li><p><strong>key_ttl</strong> (<cite>int | None</cite>, optional) – Expire time in seconds for each session state key. If provided,
+the expiration will be refreshed on every save/load
+(sliding TTL). If <cite>None</cite>, the session state will not expire.</p></li>
+<li><p><strong>key_prefix</strong> (<cite>str</cite>, default to <cite>“”</cite>) – Optional Redis key prefix prepended to every key generated by
+this storage. Useful for isolating keys across
+apps/environments (e.g. <cite>“prod:”</cite>, <cite>“staging:”</cite>, <cite>“myapp:”</cite>).</p></li>
+<li><p><strong>**kwargs</strong> (<cite>Any</cite>) – Additional keyword arguments passed to redis client.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.get_client">
+<span class="sig-name descname"><span class="pre">get_client</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession.get_client"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession.get_client" title="Link to this definition">¶</a></dt>
+<dd><p>Get the underlying Redis client.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The Redis client instance.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><cite>Redis</cite></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.save_session_state">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">save_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_user'</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession.save_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession.save_session_state" title="Link to this definition">¶</a></dt>
+<dd><p>Save the state dictionary to Redis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“default_user”</cite>) – The user ID for the storage.</p></li>
+<li><p><strong>**state_modules_mapping</strong> (<cite>dict[str, StateModule]</cite>) – A dictionary mapping of state module names to their instances.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.load_session_state">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load_session_state</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_user'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">allow_not_exist</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">state_modules_mapping</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession.load_session_state"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession.load_session_state" title="Link to this definition">¶</a></dt>
+<dd><p>Load the state dictionary from Redis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>session_id</strong> (<cite>str</cite>) – The session id.</p></li>
+<li><p><strong>user_id</strong> (<cite>str</cite>, default to <cite>“default_user”</cite>) – The user ID for the storage.</p></li>
+<li><p><strong>allow_not_exist</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) – Whether to allow the session to not exist.</p></li>
+<li><p><strong>**state_modules_mapping</strong> (<cite>dict[str, StateModule]</cite>) – The mapping of state modules to be loaded.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="agentscope.session.RedisSession.close">
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">close</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/session/_redis_session.html#RedisSession.close"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#agentscope.session.RedisSession.close" title="Link to this definition">¶</a></dt>
+<dd><p>Close the Redis client connection.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
 </dd>
 </dl>
 </dd></dl>
@@ -539,6 +641,15 @@ an error if the session does not exist.</p></li>
 <li><a class="reference internal" href="#agentscope.session.JSONSession.__init__"><code class="docutils literal notranslate"><span class="pre">JSONSession.__init__()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.session.JSONSession.save_session_state"><code class="docutils literal notranslate"><span class="pre">JSONSession.save_session_state()</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.session.JSONSession.load_session_state"><code class="docutils literal notranslate"><span class="pre">JSONSession.load_session_state()</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession"><code class="docutils literal notranslate"><span class="pre">RedisSession</span></code></a><ul>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.SESSION_KEY"><code class="docutils literal notranslate"><span class="pre">RedisSession.SESSION_KEY</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.__init__"><code class="docutils literal notranslate"><span class="pre">RedisSession.__init__()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.get_client"><code class="docutils literal notranslate"><span class="pre">RedisSession.get_client()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.save_session_state"><code class="docutils literal notranslate"><span class="pre">RedisSession.save_session_state()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.load_session_state"><code class="docutils literal notranslate"><span class="pre">RedisSession.load_session_state()</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.session.RedisSession.close"><code class="docutils literal notranslate"><span class="pre">RedisSession.close()</span></code></a></li>
 </ul>
 </li>
 </ul>

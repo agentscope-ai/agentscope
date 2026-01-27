@@ -6,7 +6,7 @@
         <link rel="prefetch" href="../../../_static/logo.svg" as="image">
 
     <link rel="shortcut icon" href="../../../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.12.19 -->
-        <title>agentscope.token._anthropic_token_counter - AgentScope</title>
+        <title>agentscope.session._redis_session - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
@@ -341,77 +341,233 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <h1>Source code for agentscope.token._anthropic_token_counter</h1><div class="highlight"><pre>
+          <h1>Source code for agentscope.session._redis_session</h1><div class="highlight"><pre>
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
-<span class="sd">&quot;&quot;&quot;The Anthropic token counter class.&quot;&quot;&quot;</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">._token_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">TokenCounterBase</span>
+<span class="sd">&quot;&quot;&quot;The Redis session class.&quot;&quot;&quot;</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">._session_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">SessionBase</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..module</span><span class="w"> </span><span class="kn">import</span> <span class="n">StateModule</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">redis.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConnectionPool</span><span class="p">,</span> <span class="n">Redis</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">ConnectionPool</span> <span class="o">=</span> <span class="n">Any</span>
+    <span class="n">Redis</span> <span class="o">=</span> <span class="n">Any</span>
 
 
-<div class="viewcode-block" id="AnthropicTokenCounter">
-<a class="viewcode-back" href="../../../api/agentscope.token.html#agentscope.token.AnthropicTokenCounter">[docs]</a>
-<span class="k">class</span><span class="w"> </span><span class="nc">AnthropicTokenCounter</span><span class="p">(</span><span class="n">TokenCounterBase</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;The Anthropic token counter class.&quot;&quot;&quot;</span>
+<div class="viewcode-block" id="RedisSession">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RedisSession</span><span class="p">(</span><span class="n">SessionBase</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The Redis session class.&quot;&quot;&quot;</span>
 
-<div class="viewcode-block" id="AnthropicTokenCounter.__init__">
-<a class="viewcode-back" href="../../../api/agentscope.token.html#agentscope.token.AnthropicTokenCounter.__init__">[docs]</a>
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the Anthropic token counter.</span>
+    <span class="n">SESSION_KEY</span> <span class="o">=</span> <span class="s2">&quot;user_id:</span><span class="si">{user_id}</span><span class="s2">:session:</span><span class="si">{session_id}</span><span class="s2">:state&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Redis key pattern (without prefix) for storing sessions state for</span>
+<span class="sd">    a specific session.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
 
-<span class="sd">        Args:</span>
-<span class="sd">            model_name (`str`):</span>
-<span class="sd">                The name of the Anthropic model to use, e.g. &quot;claude-2&quot;.</span>
-<span class="sd">            api_key (`str`):</span>
-<span class="sd">                The API key for Anthropic.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="kn">import</span><span class="w"> </span><span class="nn">anthropic</span>
-
-        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">anthropic</span><span class="o">.</span><span class="n">AsyncAnthropic</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="n">api_key</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">model_name</span> <span class="o">=</span> <span class="n">model_name</span></div>
-
-
-<div class="viewcode-block" id="AnthropicTokenCounter.count">
-<a class="viewcode-back" href="../../../api/agentscope.token.html#agentscope.token.AnthropicTokenCounter.count">[docs]</a>
-    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">count</span><span class="p">(</span>
+<div class="viewcode-block" id="RedisSession.__init__">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span>
-        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;localhost&quot;</span><span class="p">,</span>
+        <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">6379</span><span class="p">,</span>
+        <span class="n">db</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="n">password</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">connection_pool</span><span class="p">:</span> <span class="n">ConnectionPool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">key_ttl</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">key_prefix</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
         <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Count the number of tokens for the given messages</span>
-
-<span class="sd">        .. note:: The Anthropic token counting API requires the multimodal</span>
-<span class="sd">         data to be in base64 format,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the Redis session class by connecting to Redis.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            messages (`list[dict]`):</span>
-<span class="sd">                A list of dictionaries, where `role` and `content` fields are</span>
-<span class="sd">                required.</span>
-<span class="sd">            tools (`list[dict] | None`, defaults to `None`):</span>
-<span class="sd">                The tools JSON schemas that the model can use.</span>
+<span class="sd">            host (`str`, defaults to `&quot;localhost&quot;`):</span>
+<span class="sd">                Redis server host.</span>
+<span class="sd">            port (`int`, defaults to `6379`):</span>
+<span class="sd">                Redis server port.</span>
+<span class="sd">            db (`int`, defaults to `0`):</span>
+<span class="sd">                Redis database index.</span>
+<span class="sd">            password (`str | None`, optional):</span>
+<span class="sd">                Redis password if required.</span>
+<span class="sd">            connection_pool (`ConnectionPool | None`, optional):</span>
+<span class="sd">                Optional Redis connection pool.</span>
+<span class="sd">            key_ttl (`int | None`, optional):</span>
+<span class="sd">                Expire time in seconds for each session state key. If provided,</span>
+<span class="sd">                the expiration will be refreshed on every save/load</span>
+<span class="sd">                (sliding TTL). If `None`, the session state will not expire.</span>
+<span class="sd">            key_prefix (`str`, default to `&quot;&quot;`):</span>
+<span class="sd">                Optional Redis key prefix prepended to every key generated by</span>
+<span class="sd">                this storage. Useful for isolating keys across</span>
+<span class="sd">                apps/environments (e.g. `&quot;prod:&quot;`, `&quot;staging:&quot;`, `&quot;myapp:&quot;`).</span>
 <span class="sd">            **kwargs (`Any`):</span>
-<span class="sd">                Additional keyword arguments for the token counting API.</span>
+<span class="sd">                Additional keyword arguments passed to redis client.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">system_message</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="k">if</span> <span class="n">messages</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;role&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;system&quot;</span><span class="p">:</span>
-            <span class="n">system_message</span> <span class="o">=</span> <span class="n">messages</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">redis.asyncio</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">redis</span>
+        <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">&quot;The &#39;redis&#39; package is required for RedisSession. &quot;</span>
+                <span class="s2">&quot;Please install it via &#39;pip install redis[async]&#39;.&quot;</span><span class="p">,</span>
+            <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
 
-        <span class="n">extra_kwargs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{</span>
-            <span class="s2">&quot;model&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_name</span><span class="p">,</span>
-            <span class="s2">&quot;messages&quot;</span><span class="p">:</span> <span class="n">messages</span><span class="p">,</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_ttl</span> <span class="o">=</span> <span class="n">key_ttl</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_prefix</span> <span class="o">=</span> <span class="n">key_prefix</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span>
+            <span class="n">host</span><span class="o">=</span><span class="n">host</span><span class="p">,</span>
+            <span class="n">port</span><span class="o">=</span><span class="n">port</span><span class="p">,</span>
+            <span class="n">db</span><span class="o">=</span><span class="n">db</span><span class="p">,</span>
+            <span class="n">password</span><span class="o">=</span><span class="n">password</span><span class="p">,</span>
+            <span class="n">connection_pool</span><span class="o">=</span><span class="n">connection_pool</span><span class="p">,</span>
+            <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
             <span class="o">**</span><span class="n">kwargs</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="RedisSession.get_client">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession.get_client">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_client</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Redis</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the underlying Redis client.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `Redis`:</span>
+<span class="sd">                The Redis client instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_session_key</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get the Redis key to store a given session state.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">key_prefix</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">SESSION_KEY</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+            <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+            <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="RedisSession.save_session_state">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession.save_session_state">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">save_session_state</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;default_user&quot;</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the state dictionary to Redis.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            session_id (`str`):</span>
+<span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;default_user&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
+<span class="sd">            **state_modules_mapping (`dict[str, StateModule]`):</span>
+<span class="sd">                A dictionary mapping of state module names to their instances.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">state_dicts</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">name</span><span class="p">:</span> <span class="n">state_module</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">state_module</span> <span class="ow">in</span> <span class="n">state_modules_mapping</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
         <span class="p">}</span>
 
-        <span class="k">if</span> <span class="n">tools</span><span class="p">:</span>
-            <span class="n">extra_kwargs</span><span class="p">[</span><span class="s2">&quot;tools&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">tools</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_session_key</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">)</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state_dicts</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 
-        <span class="k">if</span> <span class="n">system_message</span><span class="p">:</span>
-            <span class="n">extra_kwargs</span><span class="p">[</span><span class="s2">&quot;system&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">system_message</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ex</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">key_ttl</span><span class="p">)</span>
 
-        <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">messages</span><span class="o">.</span><span class="n">count_tokens</span><span class="p">(</span><span class="o">**</span><span class="n">extra_kwargs</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Save session state to redis key </span><span class="si">%s</span><span class="s2"> successfully.&quot;</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span></div>
 
-        <span class="k">return</span> <span class="n">res</span><span class="o">.</span><span class="n">input_tokens</span></div>
-</div>
+
+<div class="viewcode-block" id="RedisSession.load_session_state">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession.load_session_state">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">load_session_state</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;default_user&quot;</span><span class="p">,</span>
+        <span class="n">allow_not_exist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load the state dictionary from Redis.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            session_id (`str`):</span>
+<span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;default_user&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
+<span class="sd">            allow_not_exist (`bool`, defaults to `True`):</span>
+<span class="sd">                Whether to allow the session to not exist.</span>
+<span class="sd">            **state_modules_mapping (`dict[str, StateModule]`):</span>
+<span class="sd">                The mapping of state modules to be loaded.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_session_key</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">)</span>
+
+        <span class="c1"># Use GETEX to get and refresh TTL in a single atomic operation</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">key_ttl</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">getex</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">ex</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">key_ttl</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">data</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">allow_not_exist</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">&quot;Session key </span><span class="si">%s</span><span class="s2"> does not exist in Redis. Skip loading &quot;</span>
+                    <span class="s2">&quot;session state.&quot;</span><span class="p">,</span>
+                    <span class="n">key</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">return</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Failed to load session state because redis key </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2"> &quot;</span>
+                <span class="s2">&quot;does not exist.&quot;</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="p">(</span><span class="nb">bytes</span><span class="p">,</span> <span class="nb">bytearray</span><span class="p">)):</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+
+        <span class="n">states</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">state_module</span> <span class="ow">in</span> <span class="n">state_modules_mapping</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">states</span><span class="p">:</span>
+                <span class="n">state_module</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">states</span><span class="p">[</span><span class="n">name</span><span class="p">])</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Load session state from redis key </span><span class="si">%s</span><span class="s2"> successfully.&quot;</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="RedisSession.close">
+<a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.RedisSession.close">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Close the Redis client connection.&quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span></div>
+
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__aenter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;RedisSession&quot;</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Enter the async context manager.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            `RedisSession`:</span>
+<span class="sd">                The current `RedisSession` instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="fm">__aexit__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">exc_type</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">exc_value</span><span class="p">:</span> <span class="ne">BaseException</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">traceback</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Exit the async context manager and close the connection.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            exc_type (`type[BaseException] | None`):</span>
+<span class="sd">                The type of the exception.</span>
+<span class="sd">            exc_value (`BaseException | None`):</span>
+<span class="sd">                The exception instance.</span>
+<span class="sd">            traceback (`Any`):</span>
+<span class="sd">                The traceback.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">close</span><span class="p">()</span></div>
 
 </pre></div>
         </article>

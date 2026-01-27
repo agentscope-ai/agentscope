@@ -361,49 +361,43 @@
 <a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.JSONSession.__init__">[docs]</a>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
-        <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">save_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;./&quot;</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the JSON session class.</span>
 
 <span class="sd">        Args:</span>
-<span class="sd">            session_id (`str`):</span>
-<span class="sd">                The session id, deprecated and move to the `save_session_state`</span>
-<span class="sd">                and `load_session_state` methods to support different session</span>
-<span class="sd">                ids.</span>
 <span class="sd">            save_dir (`str`, defaults to `&quot;./&quot;):</span>
 <span class="sd">                The directory to save the session state.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span> <span class="o">=</span> <span class="n">save_dir</span>
-
-        <span class="k">if</span> <span class="n">session_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
-                <span class="s2">&quot;The `session_id` argument in the JSONSession constructor is &quot;</span>
-                <span class="s2">&quot;deprecated and will be removed in future versions. Please &quot;</span>
-                <span class="s2">&quot;pass the `session_id` to the `save_session_state` and &quot;</span>
-                <span class="s2">&quot;`load_session_state` methods instead.&quot;</span><span class="p">,</span>
-            <span class="p">)</span></div>
+        <span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span> <span class="o">=</span> <span class="n">save_dir</span></div>
 
 
-    <span class="k">def</span><span class="w"> </span><span class="nf">_get_save_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_save_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;The path to save the session state.</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            session_id (`str`):</span>
 <span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`):</span>
+<span class="sd">                The user ID for the storage.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            `str`:</span>
 <span class="sd">                The path to save the session state.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">.json&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">user_id</span><span class="p">:</span>
+            <span class="n">file_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">.json&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">file_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">session_id</span><span class="si">}</span><span class="s2">.json&quot;</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">save_dir</span><span class="p">,</span> <span class="n">file_path</span><span class="p">)</span>
 
 <div class="viewcode-block" id="JSONSession.save_session_state">
 <a class="viewcode-back" href="../../../api/agentscope.session.html#agentscope.session.JSONSession.save_session_state">[docs]</a>
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">save_session_state</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
         <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Load the state dictionary from a JSON file.</span>
@@ -411,6 +405,8 @@
 <span class="sd">        Args:</span>
 <span class="sd">            session_id (`str`):</span>
 <span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
 <span class="sd">            **state_modules_mapping (`dict[str, StateModule]`):</span>
 <span class="sd">                A dictionary mapping of state module names to their instances.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
@@ -419,7 +415,7 @@
             <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">state_module</span> <span class="ow">in</span> <span class="n">state_modules_mapping</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
         <span class="p">}</span>
         <span class="k">with</span> <span class="nb">open</span><span class="p">(</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span><span class="n">session_id</span><span class="p">),</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">),</span>
             <span class="s2">&quot;w&quot;</span><span class="p">,</span>
             <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
             <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;surrogatepass&quot;</span><span class="p">,</span>
@@ -432,6 +428,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">load_session_state</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
         <span class="n">allow_not_exist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -440,13 +437,15 @@
 <span class="sd">        Args:</span>
 <span class="sd">            session_id (`str`):</span>
 <span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
 <span class="sd">            allow_not_exist (`bool`, defaults to `True`):</span>
 <span class="sd">                Whether to allow the session to not exist. If `False`, raises</span>
 <span class="sd">                an error if the session does not exist.</span>
 <span class="sd">            state_modules_mapping (`list[StateModule]`):</span>
 <span class="sd">                The list of state modules to be loaded.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">session_save_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span><span class="n">session_id</span><span class="p">)</span>
+        <span class="n">session_save_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_save_path</span><span class="p">(</span><span class="n">session_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">session_save_path</span><span class="p">):</span>
             <span class="k">with</span> <span class="nb">open</span><span class="p">(</span>
                 <span class="n">session_save_path</span><span class="p">,</span>

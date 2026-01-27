@@ -570,6 +570,8 @@
 </li>
           <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.__init__">(RedisMemory method)</a>
 </li>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.__init__">(RedisSession method)</a>
+</li>
           <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.SequentialPipeline.__init__">(SequentialPipeline method)</a>
 </li>
           <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.__init__">(SolutionOutput method)</a>
@@ -1015,6 +1017,8 @@
 </li>
           <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.close">(RedisMemory method)</a>
 </li>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.close">(RedisSession method)</a>
+</li>
           <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">(StatefulClientBase method)</a>
 </li>
           <li><a href="api/agentscope.tts.html#agentscope.tts.TTSModelBase.close">(TTSModelBase method)</a>
@@ -1373,15 +1377,17 @@
 </li>
           <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.get_client">(RedisMemory method)</a>
 </li>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.get_client">(RedisSession method)</a>
+</li>
           <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.get_client">(VDBStoreBase method)</a>
 </li>
         </ul></li>
         <li><a href="api/agentscope.tuner.html#agentscope.tuner.TunerModelConfig.get_config">get_config() (TunerModelConfig method)</a>
 </li>
-        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() (Msg method)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() (Msg method)</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() (PlanNotebook method)</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() (ACEPhone method)</a>
@@ -1611,6 +1617,8 @@
         <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.load_session_state">load_session_state() (JSONSession method)</a>
 
         <ul>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.load_session_state">(RedisSession method)</a>
+</li>
           <li><a href="api/agentscope.session.html#agentscope.session.SessionBase.load_session_state">(SessionBase method)</a>
 </li>
         </ul></li>
@@ -1981,6 +1989,8 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory">RedisMemory (class in agentscope.memory)</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession">RedisSession (class in agentscope.session)</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.refresh_plan_state">refresh_plan_state() (Plan method)</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.register_agent_skill">register_agent_skill() (Toolkit method)</a>
@@ -2015,10 +2025,10 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_instance_hook">remove_instance_hook() (AgentBase method)</a>
 </li>
-        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() (Toolkit method)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() (Toolkit method)</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.remove_plan_change_hook">remove_plan_change_hook() (PlanNotebook method)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_subscribers">remove_subscribers() (AgentBase method)</a>
@@ -2130,6 +2140,8 @@
         <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.save_session_state">save_session_state() (JSONSession method)</a>
 
         <ul>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.save_session_state">(RedisSession method)</a>
+</li>
           <li><a href="api/agentscope.session.html#agentscope.session.SessionBase.save_session_state">(SessionBase method)</a>
 </li>
         </ul></li>
@@ -2178,6 +2190,12 @@
         <li><a href="api/agentscope.memory.html#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session_id">session_id (AsyncSQLAlchemyMemory.MessageTable attribute)</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.SESSION_KEY">SESSION_KEY (RedisMemory attribute)</a>
+
+        <ul>
+          <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.SESSION_KEY">(RedisSession attribute)</a>
+</li>
+        </ul></li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.SESSION_PATTERN">SESSION_PATTERN (RedisMemory attribute)</a>
 </li>
         <li><a href="api/agentscope.session.html#agentscope.session.SessionBase">SessionBase (class in agentscope.session)</a>
 </li>
@@ -2277,10 +2295,10 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask">SubTask (class in agentscope.plan)</a>
 </li>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.subtasks">subtasks (Plan attribute)</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.subtasks">subtasks (Plan attribute)</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.success">success (SolutionOutput attribute)</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.summary_schema">summary_schema (ReActAgent.CompressionConfig attribute)</a>

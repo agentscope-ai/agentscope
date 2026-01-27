@@ -330,9 +330,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='8krHmTimZ4WKpaxXqFUDnc', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='n8BLXRQARDc5exda4KiAhs', embedding=None, score=0.5657136536003617) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='giNQ7uk5D4LLsVUBBEdBLG', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='jGoepcQb86kPjBUtdfxuQK', embedding=None, score=0.5062624400117308) 
 
 
 
@@ -454,13 +454,13 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any special plans you have together?
+    Friday: That's great! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any special plans you have together? Or is there something I can help you with related to your friendship?
 
 
     The second response: 
     Friday: {
         "type": "tool_use",
-        "id": "call_90db07609502486585b35c",
+        "id": "call_14ca5f4e4dfa4aac950e4f",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
@@ -470,32 +470,32 @@ and providing a proper description for the tool.
     }
     system: {
         "type": "tool_result",
-        "id": "call_90db07609502486585b35c",
+        "id": "call_14ca5f4e4dfa4aac950e4f",
         "name": "retrieve_knowledge",
         "output": [
             {
                 "type": "text",
-                "text": "Score: 0.5653893900693138, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
+                "text": "Score: 0.5653893900693137, Content: My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."
             },
             {
                 "type": "text",
-                "text": "Score: 0.4790107771624694, Content: I'm John Doe, 28 years old."
+                "text": "Score: 0.4790107771624693, Content: I'm John Doe, 28 years old."
             },
             {
                 "type": "text",
-                "text": "Score: 0.2473851245249162, Content: My best friend is James Smith."
+                "text": "Score: 0.24738512452491615, Content: My best friend is James Smith."
             },
             {
                 "type": "text",
-                "text": "Score: 0.15979023413058244, Content: I live in San Francisco. I work at OpenAI as a software engineer. I love hiking and photography."
+                "text": "Score: 0.15979024744900833, Content: I live in San Francisco. I work at OpenAI as a software engineer. I love hiking and photography."
             },
             {
                 "type": "text",
-                "text": "Score: 0.15195164753879928, Content: I'm now a PhD student at Stanford University, majoring in Computer Science. My advisor is Prof. Jane Williams, who is a leading expert in artificial intelligence. I have published several papers in top conferences, such as NeurIPS and ICML."
+                "text": "Score: 0.15195164753879925, Content: I'm now a PhD student at Stanford University, majoring in Computer Science. My advisor is Prof. Jane Williams, who is a leading expert in artificial intelligence. I have published several papers in top conferences, such as NeurIPS and ICML."
             }
         ]
     }
-    Friday: According to the information I found, John Doe's father is Michael Doe, and he is a doctor. If this isn't the John Doe you're asking about, or if you need more details, please let me know!
+    Friday: According to the information I found, John Doe's father is Michael Doe, who is a doctor. It seems that John is very proud of his father. If you need more details or have other questions about John, feel free to ask!
 
 
 
@@ -562,7 +562,7 @@ will automatically retrieve knowledge at the beginning of each reply.
 
  .. code-block:: none
 
-    Friday: John Doe's father is Michael Doe, who is a doctor.
+    Friday: According to the information provided, John Doe's father is Michael Doe, who is a doctor.
     Take a look at the agent's memory:
     [
       {
@@ -711,7 +711,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='nPinxmBDhkWFeS9tiXPpmB', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-01-26 10:01:34.340', invocation_id='None')
+    Msg(id='UTdcpgg4KgLf4hcDC3fVvT', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-01-27 08:10:22.192', invocation_id='None')
 
 
 
@@ -724,7 +724,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 31.260 seconds)
+   **Total running time of the script:** (0 minutes 28.772 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:
