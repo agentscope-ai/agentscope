@@ -54,14 +54,13 @@ class OceanBaseStore(VDBStoreBase):
         self,
         collection_name: str,
         dimensions: int,
+        uri: str = "127.0.0.1:2881",
+        user: str = "root@test",
+        password: str = "",
+        db_name: str = "test",
         distance: Literal["COSINE", "L2", "IP"] = "COSINE",
         client_kwargs: dict[str, Any] | None = None,
         collection_kwargs: dict[str, Any] | None = None,
-        *,
-        uri: str | None = None,
-        user: str | None = None,
-        password: str | None = None,
-        db_name: str | None = None,
     ) -> None:
         """Initialize the OceanBase vector store.
 
@@ -70,17 +69,17 @@ class OceanBaseStore(VDBStoreBase):
                 The name of the collection to store the embeddings.
             dimensions (`int`):
                 The dimension of the embeddings.
-            distance (`Literal["COSINE", "L2", "IP"]`, default to "COSINE"):
-                The distance metric to use for the collection. Can be one of
-                "COSINE", "L2", or "IP". Defaults to "COSINE".
-            uri (`str | None`, optional):
+            uri (`str`, defaults to `"127.0.0.1:2881"`):
                 The OceanBase server URI, such as "127.0.0.1:2881".
-            user (`str | None`, optional):
+            user (`str`, defaults to `"root@test"`):
                 The username for authentication.
-            password (`str | None`, optional):
+            password (`str`, defaults to `""`):
                 The password for authentication.
-            db_name (`str | None`, optional):
+            db_name (`str`, defaults to `"test"`):
                 The database name to connect to.
+            distance (`Literal["COSINE", "L2", "IP"]`, defaults to `"COSINE"`):
+                The distance metric to use for the collection. Can be one of
+                "COSINE", "L2", or "IP".
             client_kwargs (`dict[str, Any] | None`, optional):
                 Keyword arguments passed to `pyobvector.MilvusLikeClient`.
                 Explicit connection arguments override matching keys here.
@@ -97,16 +96,14 @@ class OceanBaseStore(VDBStoreBase):
 
         self._pyobvector = pyobvector
         client_kwargs = dict(client_kwargs or {})
-        if uri is not None:
-            client_kwargs["uri"] = uri
-        if user is not None:
-            client_kwargs["user"] = user
-        if password is not None:
-            client_kwargs["password"] = password
-        if db_name is not None:
-            client_kwargs["db_name"] = db_name
 
-        self._client = pyobvector.MilvusLikeClient(**client_kwargs)
+        self._client = pyobvector.MilvusLikeClient(
+            uri=uri,
+            user=user,
+            password=password,
+            db_name=db_name,
+            **client_kwargs,
+        )
 
         self.collection_name = collection_name
         self.dimensions = dimensions
@@ -238,13 +235,16 @@ class OceanBaseStore(VDBStoreBase):
         """Convert a Document to a dictionary for insertion.
 
         Args:
-            doc: Document to convert
+            doc (`Document`):
+                Document to convert
 
         Returns:
-            Dictionary with fields ready for database insertion
+            `dict[str, Any]`:
+                Dictionary with fields ready for database insertion
 
         Raises:
-            ValueError: If document embedding is None
+            `ValueError`:
+                If document embedding is None
         """
         if doc.embedding is None:
             raise ValueError(
@@ -308,11 +308,14 @@ class OceanBaseStore(VDBStoreBase):
         """Create a Document from a search result row.
 
         Args:
-            row: Search result row containing document data
-            output_fields: List of fields requested in output
+            row (`dict[str, Any]`):
+                Search result row containing document data
+            output_fields (`list[str]`):
+                List of fields requested in output
 
         Returns:
-            Tuple of (Document, score)
+            `tuple[Document, float | None]`:
+                Tuple of (Document, score)
         """
         distance = self._extract_distance(row, output_fields)
         score = self._convert_distance_to_score(distance)
@@ -344,10 +347,12 @@ class OceanBaseStore(VDBStoreBase):
         """Convert distance value to score based on metric type.
 
         Args:
-            distance: Raw distance value from database
+            distance (`float | None`):
+                Raw distance value from database
 
         Returns:
-            Converted score (similarity for COSINE, raw value for others)
+            `float | None`:
+                Converted score (similarity for COSINE, raw value for others)
 
         """
         if distance is None:
@@ -422,10 +427,12 @@ class OceanBaseStore(VDBStoreBase):
         """Prepare output fields ensuring all required fields are included.
 
         Args:
-            output_fields: User-specified output fields or None
+            output_fields (`list[str] | None`):
+                User-specified output fields or None
 
         Returns:
-            List of output fields with required fields included
+            `list[str]`:
+                List of output fields with required fields included
         """
         required_fields = [
             self.DOC_ID_FIELD,
@@ -446,10 +453,12 @@ class OceanBaseStore(VDBStoreBase):
         """Prepare search parameters with appropriate metric type.
 
         Args:
-            search_params: User-specified search parameters or None
+            search_params (`dict[str, Any] | None`):
+                User-specified search parameters or None
 
         Returns:
-            Search parameters dict with metric_type set
+            `dict[str, Any]`:
+                Search parameters dict with metric_type set
         """
         search_params = dict(search_params or {})  # Create a copy
         search_params.setdefault("metric_type", self._get_search_metric_type())
@@ -464,12 +473,16 @@ class OceanBaseStore(VDBStoreBase):
         """Filter search results by score threshold.
 
         Args:
-            results: Raw search results from database
-            output_fields: List of output fields
-            score_threshold: Minimum score threshold or None
+            results (`list[dict[str, Any]]`):
+                Raw search results from database
+            output_fields (`list[str]`):
+                List of output fields
+            score_threshold (`float | None`):
+                Minimum score threshold or None
 
         Returns:
-            List of filtered Document objects
+            `list[Document]`:
+                List of filtered Document objects
         """
         documents = []
         for row in results:
