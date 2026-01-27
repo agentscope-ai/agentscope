@@ -122,11 +122,7 @@ class RedisSession(SessionBase):
         key = self._get_session_key(session_id, user_id=user_id)
         value = json.dumps(state_dicts, ensure_ascii=False)
 
-        await self._client.set(key, value)
-
-        # Set expiration if TTL is specified
-        if self.key_ttl is not None:
-            await self._client.expire(key, self.key_ttl)
+        await self._client.set(key, value, ex=self.key_ttl)
 
         logger.info("Save session state to redis key %s successfully.", key)
 
