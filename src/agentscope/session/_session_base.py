@@ -12,7 +12,7 @@ class SessionBase:
     async def save_session_state(
         self,
         session_id: str,
-        user_id: str = "default_user",
+        user_id: str = "",
         **state_modules_mapping: StateModule,
     ) -> None:
         """Save the session state
@@ -20,7 +20,7 @@ class SessionBase:
         Args:
             session_id (`str`):
                 The session id.
-            user_id (`str`, default to `"default_user"`):
+            user_id (`str`, default to `""`):
                 The user ID for the storage.
             **state_modules_mapping (`dict[str, StateModule]`):
                 A dictionary mapping of state module names to their instances.
@@ -30,7 +30,7 @@ class SessionBase:
     async def load_session_state(
         self,
         session_id: str,
-        user_id: str = "default_user",
+        user_id: str = "",
         allow_not_exist: bool = True,
         **state_modules_mapping: StateModule,
     ) -> None:
@@ -39,7 +39,7 @@ class SessionBase:
         Args:
             session_id (`str`):
                 The session id.
-            user_id (`str`, default to `"default_user"`):
+            user_id (`str`, default to `""`):
                 The user ID for the storage.
             allow_not_exist (`bool`, defaults to `True`):
                 Whether to allow the session to not exist.
