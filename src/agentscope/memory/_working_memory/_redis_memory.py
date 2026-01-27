@@ -33,6 +33,10 @@ class RedisMemory(MemoryBase):
     a specific session.
     """
 
+    SESSION_PATTERN = "user_id:{user_id}:session:{session_id}:*"
+    """Redis key pattern (without prefix) for scanning all keys belong to
+    a specific user and session."""
+
     MARK_KEY = "user_id:{user_id}:session:{session_id}:mark:{mark}"
     """Redis key pattern (without prefix) for storing message IDs that belong
     to a specific mark.
@@ -130,6 +134,18 @@ class RedisMemory(MemoryBase):
             session_id=self.session_id,
         )
 
+    def _get_session_pattern(self) -> str:
+        """Get the Redis key pattern for all keys in the current session.
+
+        Returns:
+            `str`:
+                The Redis key pattern for all keys in the current session.
+        """
+        return self.key_prefix + self.SESSION_PATTERN.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
+
     def _get_mark_key(self, mark: str) -> str:
         """Get the Redis key for a specific mark.
 
@@ -177,24 +193,13 @@ class RedisMemory(MemoryBase):
             msg_id=msg_id,
         )
 
-    async def _refresh_keys_ttl(
+    async def _refresh_session_ttl(
         self,
-        session: bool = False,
-        mark_keys: Sequence[str | None] | None = None,
-        msg_ids: list[str] | None = None,
         pipe: Any | None = None,
     ) -> None:
-        """Refresh the TTL for the specified key categories.
+        """Refresh the TTL for the session keys (if `key_ttl` is set).
 
         Args:
-            session (`bool`, default to `False`):
-                Whether to refresh the session key.
-            mark_keys (`Sequence[str | None] | None`, optional):
-                The list of mark names to refresh. If provided, will refresh
-                the corresponding mark keys.
-            msg_ids (`list[str] | None`, optional):
-                The list of message IDs to refresh. If provided, will refresh
-                the corresponding message keys.
             pipe (`Any | None`, optional):
                 An optional Redis pipeline to use. If `None`, a new pipeline
                 will be created and executed immediately. If provided, the
@@ -204,36 +209,23 @@ class RedisMemory(MemoryBase):
         if self.key_ttl is None:
             return
 
-        # Collect all keys to refresh
-        keys = []
-
-        # Add session key if needed
-        if session:
-            keys.append(self._get_session_key())
-
-        # Add mark keys if provided
-        if mark_keys:
-            keys.extend(
-                [self._get_mark_key(mark) for mark in mark_keys if mark],
-            )
-
-        # Add message keys if provided
-        if msg_ids:
-            keys.extend([self._get_message_key(msg_id) for msg_id in msg_ids])
-
-        if not keys:
-            return
-
         # Create a new pipeline if not provided
         should_execute = pipe is None
         if pipe is None:
             pipe = self._client.pipeline()
 
-        # Add expire commands for all keys
-        for key in keys:
-            await pipe.expire(key, self.key_ttl)
+        cursor = 0
+        while True:
+            cursor, keys = await self._client.scan(
+                cursor,
+                match=self._get_session_pattern(),
+                count=100,
+            )
+            for key in keys:
+                await pipe.expire(key, self.key_ttl)
+            if cursor == 0:
+                break
 
-        # Execute the pipeline if we created it
         if should_execute:
             await pipe.execute()
 
@@ -311,6 +303,9 @@ class RedisMemory(MemoryBase):
                     msg_dict = json.loads(msg_data)
                     messages.append(Msg.from_dict(msg_dict))
 
+        # Refresh TTLs
+        await self._refresh_session_ttl()
+
         if prepend_summary and self._compressed_summary:
             return [
                 Msg(
@@ -320,13 +315,6 @@ class RedisMemory(MemoryBase):
                 ),
                 *messages,
             ]
-
-        # Refresh TTLs
-        await self._refresh_keys_ttl(
-            session=False,
-            mark_keys=[mark, exclude_mark],
-            msg_ids=[m.id for m in messages],
-        )
 
         return messages
 
@@ -408,12 +396,7 @@ class RedisMemory(MemoryBase):
                 await pipe.rpush(self._get_mark_key(mark), m.id)
 
         # Refresh TTLs
-        await self._refresh_keys_ttl(
-            session=True,
-            mark_keys=mark_list,
-            msg_ids=[m.id for m in messages_to_add],
-            pipe=pipe,
-        )
+        await self._refresh_session_ttl(pipe=pipe)
 
         await pipe.execute()
 
@@ -459,6 +442,9 @@ class RedisMemory(MemoryBase):
             # Remove from all marks
             for mark_key in mark_keys:
                 await pipe.lrem(mark_key, 0, msg_id)
+
+        # Refresh TTLs
+        await self._refresh_session_ttl(pipe=pipe)
 
         results = await pipe.execute()
 
@@ -512,6 +498,9 @@ class RedisMemory(MemoryBase):
             # Delete the mark list
             await self._client.delete(mark_key)
 
+        # Refresh TTLs
+        await self._refresh_session_ttl()
+
         return total_removed
 
     async def clear(self) -> None:
@@ -553,7 +542,9 @@ class RedisMemory(MemoryBase):
             `int`:
                 The number of messages in the storage.
         """
-        return await self._client.llen(self._get_session_key())
+        size = await self._client.llen(self._get_session_key())
+        await self._refresh_session_ttl()
+        return size
 
     async def update_messages_mark(
         self,
@@ -648,12 +639,7 @@ class RedisMemory(MemoryBase):
 
                 updated_count += 1
 
-        await self._refresh_keys_ttl(
-            session=False,
-            mark_keys=[old_mark, new_mark],
-            msg_ids=mark_msg_ids,
-            pipe=pipe,
-        )
+        await self._refresh_session_ttl(pipe=pipe)
 
         await pipe.execute()
         return updated_count
