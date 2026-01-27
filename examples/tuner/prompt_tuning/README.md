@@ -320,7 +320,7 @@ if __name__ == "__main__":
 
 > Note:
 > Above code is a simplified example for illustration purposes only.
-> For a complete implementation, please refer to [example.py](./example.py), which tunes a ReAct agent to solve math problems on the GSM8K dataset.
+> For a complete implementation, please refer to [example.py](./example.py), which tunes a ReAct agent to solve math problems on the GSM8K subset dataset.
 
 ---
 
