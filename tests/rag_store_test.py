@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Test the RAG store implementations."""
 import os
+import types
 import uuid
 from unittest import IsolatedAsyncioTestCase
 
@@ -131,7 +132,29 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         )
 
     async def test_oceanbase_store(self) -> None:
-        """Test the OceanBaseStore implementation."""
+        """Use real OceanBase when env is provided, otherwise use a mock."""
+        def _make_mock_pyobvector(
+            search_rows: list[dict],
+        ) -> tuple[types.SimpleNamespace, MagicMock]:
+            """Create a minimal pyobvector mock aligned with existing mock style."""
+            mock_client = MagicMock()
+            mock_client.has_collection.return_value = False
+            mock_client.create_schema.return_value = MagicMock()
+            mock_client.prepare_index_params.return_value = MagicMock()
+            mock_client.search.return_value = search_rows
+
+            mock_pyobvector = types.SimpleNamespace(
+                MilvusLikeClient=MagicMock(return_value=mock_client),
+                DataType=types.SimpleNamespace(
+                    VARCHAR="VARCHAR",
+                    FLOAT_VECTOR="FLOAT_VECTOR",
+                    STRING="STRING",
+                    INT64="INT64",
+                    JSON="JSON",
+                ),
+            )
+            return mock_pyobvector, mock_client
+
         required_vars = [
             "OCEANBASE_URI",
             "OCEANBASE_USER",
@@ -139,9 +162,66 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
         ]
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         if missing_vars:
-            self.skipTest(
-                "OceanBase env vars not set: " f"{', '.join(missing_vars)}",
-            )
+            # COSINE distance = 1 - similarity
+            mock_rows = [
+                {
+                    "doc_id": "doc1",
+                    "chunk_id": 0,
+                    "total_chunks": 2,
+                    "content": {
+                        "type": "text",
+                        "text": "This is a test document.",
+                    },
+                    "distance": 1.0 - 0.9974,
+                },
+            ]
+            mock_pyobvector, mock_client = _make_mock_pyobvector(mock_rows)
+
+            with patch.dict("sys.modules", {"pyobvector": mock_pyobvector}):
+                store = OceanBaseStore(
+                    collection_name=f"test_ob_{uuid.uuid4().hex[:8]}",
+                    dimensions=3,
+                    uri="127.0.0.1:2881",
+                    user="root@test",
+                    password="",
+                    db_name="test",
+                )
+
+                await store.add(
+                    [
+                        Document(
+                            embedding=[0.1, 0.2, 0.3],
+                            metadata=DocMetadata(
+                                content=TextBlock(
+                                    type="text",
+                                    text="This is a test document.",
+                                ),
+                                doc_id="doc1",
+                                chunk_id=0,
+                                total_chunks=2,
+                            ),
+                        ),
+                    ],
+                )
+
+                self.assertTrue(mock_client.insert.called)
+                self.assertTrue(mock_client.create_collection.called)
+
+                res = await store.search(
+                    query_embedding=[0.15, 0.25, 0.35],
+                    limit=3,
+                    score_threshold=0.8,
+                )
+                self.assertEqual(len(res), 1)
+                self.assertEqual(round(res[0].score, 4), 0.9974)
+                self.assertEqual(
+                    res[0].metadata.content["text"],
+                    "This is a test document.",
+                )
+
+                await store.delete(ids=["dummy-id"])
+                self.assertTrue(mock_client.delete.called)
+            return
 
         collection_name = f"test_ob_{uuid.uuid4().hex[:8]}"
         store = OceanBaseStore(
