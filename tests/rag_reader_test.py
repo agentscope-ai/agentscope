@@ -3,7 +3,7 @@
 import os
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader, WordReader
+from agentscope.rag import TextReader, PDFReader, WordReader, ExcelReader
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -115,16 +115,6 @@ class RAGReaderText(IsolatedAsyncioTestCase):
             ["text"] * 4 + ["image"] * 2 + ["text", "image", "text", "text"],
         )
 
-        import json
-
-        print(
-            json.dumps(
-                [_.metadata.content.get("text") for _ in docs],
-                indent=4,
-                ensure_ascii=False,
-            ),
-        )
-
         self.assertEqual(
             [_.metadata.content.get("text") for _ in docs],
             [
@@ -153,4 +143,107 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 if _.metadata.content["type"] == "image"
             ],
             ["image/png", "image/png", "image/png"],
+        )
+
+    async def test_excel_reader_with_images_and_tables(self) -> None:
+        """Test the ExcelReader implementation with images and table
+        separation."""
+        # Test with images and table separation enabled
+        reader = ExcelReader(
+            chunk_size=200,
+            split_by="sentence",
+            include_image=True,
+            separate_table=True,
+            include_cell_coordinates=True,
+            table_format="markdown",
+        )
+        excel_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "test.xlsx",
+        )
+        docs = await reader(excel_path=excel_path)
+
+        # Verify document types match expected sequence
+        # Expected: table blocks from first sheet, then image (row 9),
+        # then table blocks from second sheet
+        # Order is based on row positions: table (row 0-5) → image (row 9)
+        # → table (row 0-4)
+        # Note: with include_cell_coordinates=True, cell coordinates are added
+        # to each cell (e.g., [A1], [B1], etc.), which increases text length
+        # and results in more chunks
+        self.assertListEqual(
+            [_.metadata.content["type"] for _ in docs],
+            ["text"] * 3 + ["image"] * 1 + ["text"] * 5,
+        )
+
+        # Verify exact document content
+        doc_texts = [_.metadata.content.get("text") for _ in docs]
+
+        # Verify sheet headers and table content with cell coordinates
+        # First text block should contain Employee Info sheet header and table
+        # Note: Due to chunk_size=200, the rows are truncated
+        # Order: table (row 0-5) → image (row 9) → table (row 0-4)
+        self.assertEqual(
+            doc_texts[0],
+            "Sheet: Employee Info\n"
+            "| [A1] John Smith | [B1] 25 | [C1] Engineering | "
+            "[D1] 8000 | [E1] 2020-01-15 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| [A2] Jane Doe | [B2] 30 | [C2] Sales | "
+            "[D2] 12000 | [E2] 2019-03-2",
+        )
+        # Second text block continues the employee table
+        self.assertEqual(
+            doc_texts[1],
+            "0 |\n"
+            "| [A3] Mike \\| Johnson | [B3] 35 | [C3] HR | "
+            "[D3] 9000 | [E3] 2021-06-10 |\n"
+            "| [A4] Sarah Wilson | [B4] 28 | [C4] Finance | "
+            "[D4] 10000 | [E4] 2020-09-05 |\n"
+            "| [A5] David Brown | [B5] 32 | [C5] Marketi",
+        )
+        # Third text block continues the employee table
+        self.assertEqual(
+            doc_texts[2],
+            "ng | [D5] 11000 | [E5] 2018-12-01 |",
+        )
+        # Image block (text is None)
+        self.assertIsNone(doc_texts[3])
+        # Fourth text block should contain Product Info sheet header and
+        # start of table
+        self.assertEqual(
+            doc_texts[4],
+            "Sheet: Product Info\n"
+            "| [A1] Product A | [B1] 100 | [C1] 50 | "
+            "[D1] High-quality Product A, suitable for various scenarios.",
+        )
+        # Remaining blocks continue the product table
+        self.assertEqual(
+            doc_texts[5],
+            "|\n"
+            "| --- | --- | --- | --- |\n"
+            "| [A2] Product B | [B2] 200 | [C2] 30 | "
+            "[D2] Product B offers excellent performance.",
+        )
+        self.assertEqual(
+            doc_texts[6],
+            "|\n"
+            "| [A3] Product C | [B3] 300 | [C3] 20 | "
+            "[D3] Product C is a market-leading solution.",
+        )
+        self.assertEqual(
+            doc_texts[7],
+            "|\n"
+            "| [A4] Product D | [B4] 400 | [C4] 40 | "
+            "[D4] Product D provides comprehensive functionality.",
+        )
+
+        # Verify image media types
+        self.assertEqual(
+            [
+                _.metadata.content["source"]["media_type"]
+                for _ in docs
+                if _.metadata.content["type"] == "image"
+            ],
+            ["image/png"],
         )
