@@ -45,103 +45,254 @@ MULTIPLE_SELECTION_CARDS_EXAMPLE = """
 Use this template to display multiple selection cards in a vertical list. Each card represents a separate question with checkboxes for each option.
 
 [
-  {{ "beginRendering": {{ "surfaceId": "multi-quiz", "root": "root-column", "styles": {{ "primaryColor": "#673AB7", "font": "Roboto" }} }} }},
-  {{ "surfaceUpdate": {{
-    "surfaceId": "multi-quiz",
-    "components": [
-      {{ "id": "root-column", "component": {{ "Column": {{ "children": {{ "explicitList": ["page-title", "quiz-list"] }} }} }} }},
-      {{ "id": "page-title", "component": {{ "Text": {{ "usageHint": "h1", "text": {{ "path": "pageTitle" }} }} }} }},
-      {{ "id": "quiz-list", "component": {{ "List": {{ "direction": "vertical", "children": {{ "template": {{ "componentId": "quiz-card-template", "dataBinding": "/questions" }} }} }} }} }},
-      {{ "id": "quiz-card-template", "component": {{ "Card": {{ "child": "quiz-card-content" }} }} }},
-      {{ "id": "quiz-card-content", "component": {{ "Column": {{ "children": {{ "explicitList": ["quiz-title", "quiz-question", "quiz-options", "quiz-submit-button"] }} }} }} }},
-      {{ "id": "quiz-title", "component": {{ "Text": {{ "usageHint": "h2", "text": {{ "path": "title" }} }} }} }},
-      {{ "id": "quiz-question", "component": {{ "Text": {{ "usageHint": "h3", "text": {{ "path": "question" }} }} }} }},
-      {{ "id": "quiz-options", "component": {{ "Column": {{ "children": {{ "template": {{ "componentId": "option-row", "dataBinding": "options" }} }} }} }} }},
-      {{ "id": "option-row", "component": {{ "Row": {{ "children": {{ "explicitList": ["option-checkbox", "option-label"] }}, "alignment": "center" }} }} }},
-      {{ "id": "option-checkbox", "component": {{ "CheckBox": {{ "label": {{ "literalString": "" }}, "value": {{ "path": "selected" }} }} }} }},
-      {{ "id": "option-label", "component": {{ "Text": {{ "text": {{ "path": "text" }} }} }} }},
-      {{ "id": "quiz-submit-button", "component": {{ "Button": {{ "child": "submit-text", "primary": true, "action": {{ "name": "submit_answer", "context": [ {{ "key": "questionId", "value": {{ "path": "questionId" }} }}, {{ "key": "selectedOptions", "value": {{ "path": "selectedOptions" }} }} ] }} }} }},
-      {{ "id": "submit-text", "component": {{ "Text": {{ "text": {{ "literalString": "Submit Answer" }} }} }} }}
-    ]
-  }} }},
-  {{ "dataModelUpdate": {{
-    "surfaceId": "multi-quiz",
-    "path": "/",
-    "contents": [
-      {{ "key": "pageTitle", "valueString": "[Page Title]" }},
-      {{ "key": "questions", "valueMap": [
-        {{ "key": "question1", "valueMap": [
-          {{ "key": "questionId", "valueString": "q1" }},
-          {{ "key": "title", "valueString": "[Question 1 Title]" }},
-          {{ "key": "question", "valueString": "[Question 1 Content]" }},
-          {{ "key": "selectedOptions", "valueMap": [] }},
-          {{ "key": "options", "valueMap": [
-            {{ "key": "option1", "valueMap": [
-              {{ "key": "id", "valueString": "A" }},
-              {{ "key": "text", "valueString": "[Option A]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option2", "valueMap": [
-              {{ "key": "id", "valueString": "B" }},
-              {{ "key": "text", "valueString": "[Option B]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option3", "valueMap": [
-              {{ "key": "id", "valueString": "C" }},
-              {{ "key": "text", "valueString": "[Option C]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }}
-          ] }}
-        ] }},
-        {{ "key": "question2", "valueMap": [
-          {{ "key": "questionId", "valueString": "q2" }},
-          {{ "key": "title", "valueString": "[Question 2 Title]" }},
-          {{ "key": "question", "valueString": "[Question 2 Content]" }},
-          {{ "key": "selectedOptions", "valueMap": [] }},
-          {{ "key": "options", "valueMap": [
-            {{ "key": "option1", "valueMap": [
-              {{ "key": "id", "valueString": "A" }},
-              {{ "key": "text", "valueString": "[Option A]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option2", "valueMap": [
-              {{ "key": "id", "valueString": "B" }},
-              {{ "key": "text", "valueString": "[Option B]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option3", "valueMap": [
-              {{ "key": "id", "valueString": "C" }},
-              {{ "key": "text", "valueString": "[Option C]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option4", "valueMap": [
-              {{ "key": "id", "valueString": "D" }},
-              {{ "key": "text", "valueString": "[Option D]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }}
-          ] }}
-        ] }},
-        {{ "key": "question3", "valueMap": [
-          {{ "key": "questionId", "valueString": "q3" }},
-          {{ "key": "title", "valueString": "[Question 3 Title]" }},
-          {{ "key": "question", "valueString": "[Question 3 Content]" }},
-          {{ "key": "selectedOptions", "valueMap": [] }},
-          {{ "key": "options", "valueMap": [
-            {{ "key": "option1", "valueMap": [
-              {{ "key": "id", "valueString": "A" }},
-              {{ "key": "text", "valueString": "[Option A]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }},
-            {{ "key": "option2", "valueMap": [
-              {{ "key": "id", "valueString": "B" }},
-              {{ "key": "text", "valueString": "[Option B]" }},
-              {{ "key": "selected", "valueBoolean": false }}
-            ] }}
-          ] }}
-        ] }}
-      ] }}
-    ]
-  }} }}
+  {
+    "beginRendering": {
+      "surfaceId": "multi-quiz",
+      "root": "root-column",
+      "styles": {
+        "primaryColor": "#673AB7",
+        "font": "Roboto"
+      }
+    }
+  },
+  {
+    "surfaceUpdate": {
+      "surfaceId": "multi-quiz",
+      "components": [
+        {
+          "id": "root-column",
+          "component": {
+            "Column": {
+              "children": {
+                "explicitList": ["page-title", "quiz-list"]
+              }
+            }
+          }
+        },
+        {
+          "id": "page-title",
+          "component": {
+            "Text": {
+              "usageHint": "h1",
+              "text": {
+                "path": "pageTitle"
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-list",
+          "component": {
+            "List": {
+              "direction": "vertical",
+              "children": {
+                "template": {
+                  "componentId": "quiz-card-template",
+                  "dataBinding": "/questions"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-card-template",
+          "component": {
+            "Card": {
+              "child": "quiz-card-content"
+            }
+          }
+        },
+        {
+          "id": "quiz-card-content",
+          "component": {
+            "Column": {
+              "children": {
+                "explicitList": ["quiz-title", "quiz-question", "quiz-multiple-choice", "quiz-submit-button"]
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-title",
+          "component": {
+            "Text": {
+              "usageHint": "h2",
+              "text": {
+                "path": "title"
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-question",
+          "component": {
+            "Text": {
+              "usageHint": "h3",
+              "text": {
+                "path": "question"
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-multiple-choice",
+          "component": {
+            "MultipleChoice": {
+              "selections": {
+                "path": "selectedOptions"
+              },
+              "options": {
+                "template": {
+                  "componentId": "option-template",
+                  "dataBinding": "options"
+                }
+              },
+              "maxAllowedSelections": 3
+            }
+          }
+        },
+        {
+          "id": "option-template",
+          "component": {
+            "MultipleChoiceOption": {
+              "label": {
+                "path": "text"
+              },
+              "value": {
+                "path": "id"
+              }
+            }
+          }
+        },
+        {
+          "id": "quiz-submit-button",
+          "component": {
+            "Button": {
+              "child": "submit-text",
+              "primary": true,
+              "action": {
+                "name": "submit_answer",
+                "context": [
+                  {
+                    "key": "questionId",
+                    "value": {
+                      "path": "questionId"
+                    }
+                  },
+                  {
+                    "key": "questionTitle",
+                    "value": {
+                      "path": "title"
+                    }
+                  },
+                  {
+                    "key": "selectedOptions",
+                    "value": {
+                      "path": "selectedOptions"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "submit-text",
+          "component": {
+            "Text": {
+              "text": {
+                "literalString": "Submit Answer"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "dataModelUpdate": {
+      "surfaceId": "multi-quiz",
+      "path": "/",
+      "contents": [
+        {
+          "key": "pageTitle",
+          "valueString": "[Page Title]"
+        },
+        {
+          "key": "questions",
+          "valueMap": [
+            {
+              "key": "question1",
+              "valueMap": [
+                {
+                  "key": "questionId",
+                  "valueString": "q1"
+                },
+                {
+                  "key": "title",
+                  "valueString": "[Question 1 Title]"
+                },
+                {
+                  "key": "question",
+                  "valueString": "[Question 1 Content]"
+                },
+                {
+                  "key": "selectedOptions",
+                  "valueList": []
+                },
+                {
+                  "key": "options",
+                  "valueMap": [
+                    {
+                      "key": "option1",
+                      "valueMap": [
+                        {
+                          "key": "id",
+                          "valueString": "A"
+                        },
+                        {
+                          "key": "text",
+                          "valueString": "[Option A]"
+                        }
+                      ]
+                    },
+                    {
+                      "key": "option2",
+                      "valueMap": [
+                        {
+                          "key": "id",
+                          "valueString": "B"
+                        },
+                        {
+                          "key": "text",
+                          "valueString": "[Option B]"
+                        }
+                      ]
+                    },
+                    {
+                      "key": "option3",
+                      "valueMap": [
+                        {
+                          "key": "id",
+                          "valueString": "C"
+                        },
+                        {
+                          "key": "text",
+                          "valueString": "[Option C]"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
 ]
+
+
 ---END MULTIPLE_SELECTION_CARDS_EXAMPLE---
 """

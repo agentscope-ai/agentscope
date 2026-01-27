@@ -250,7 +250,6 @@ def check_a2ui_json_in_message(
 
 def post_process_a2a_message_for_ui(
     message: Message,
-    is_final: bool,
 ) -> Message:
     """Post-process the transferred A2A message.
 
@@ -261,57 +260,55 @@ def post_process_a2a_message_for_ui(
         The post-processed A2A message.
     """
     new_parts = []
+    # pylint: disable=too-many-nested-blocks
     for part in message.parts:
-        has_a2ui_json, a2ui_json_string = check_a2ui_json_in_message(
-            part,
-            is_final=is_final,
-        )
-        logger.info(
-            "message: %s --- has_a2ui_json: %s ---",
-            message,
-            has_a2ui_json,
-        )
-        if has_a2ui_json and a2ui_json_string is not None:
-            text_content, json_data = extract_ui_json_from_text(
-                a2ui_json_string,
-            )
-            if json_data:
-                # Replace the part with a TextPart and multiple DataParts
-                # with the same metadata for a2ui
-                try:
-                    new_parts.append(
-                        Part(
-                            root=TextPart(
-                                text=text_content,
-                            ),
-                        ),
-                    )
-
-                    for item in json_data:
+        # Check if it's a text block and contains the A2UI JSON marker
+        if isinstance(part.root, TextPart):
+            text_content_str = part.root.text
+            if "---a2ui_JSON---" in text_content_str:
+                # Extract and process A2UI JSON
+                text_content, json_data = extract_ui_json_from_text(
+                    text_content_str,
+                )
+                if json_data:
+                    # Replace the part with a TextPart and multiple DataParts
+                    # with the same metadata for a2ui
+                    try:
                         new_parts.append(
                             Part(
-                                root=DataPart(
-                                    data=item,
-                                    metadata={MIME_TYPE_KEY: A2UI_MIME_TYPE},
+                                root=TextPart(
+                                    text=text_content,
                                 ),
                             ),
                         )
 
-                except Exception as e:
-                    logger.error(
-                        "Error processing a2ui JSON parts: %s",
-                        e,
-                        exc_info=True,
-                    )
-                    raise
+                        for item in json_data:
+                            new_parts.append(
+                                Part(
+                                    root=DataPart(
+                                        data=item,
+                                        metadata={
+                                            MIME_TYPE_KEY: A2UI_MIME_TYPE,
+                                        },
+                                    ),
+                                ),
+                            )
+
+                    except Exception as e:
+                        logger.error(
+                            "Error processing a2ui JSON parts: %s",
+                            e,
+                            exc_info=True,
+                        )
+                        raise
+                else:
+                    # If JSON extraction failed, keep the original text block
+                    new_parts.append(part)
+            else:
+                # Keep the original text block if it doesn't contain the marker
+                new_parts.append(part)
         else:
-            # Keep the original part if it doesn't contain the marker
-            if isinstance(part.root, DataPart):
-                if (
-                    part.root.data.get("name") == "generate_response"
-                    and part.root.data.get("type") == "tool_result"
-                ):
-                    continue
+            # For non-text parts, keep the original logic
             new_parts.append(part)
 
     message.parts = new_parts
