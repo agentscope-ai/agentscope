@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The redis based memory storage implementation."""
 import json
-from typing import Any, TYPE_CHECKING, Sequence
+from typing import Any, TYPE_CHECKING
 
 from ._base import MemoryBase
 from ...message import Msg
@@ -85,7 +85,9 @@ class RedisMemory(MemoryBase):
             key_ttl (`int | None`, default to `None`):
                 The expired time in seconds for each key. If provided, the
                 expiration will be refreshed on every access (sliding TTL). If
-                `None`, the keys will not expire.
+                `None`, the keys will not expire. **Note** the ttl will update
+                all session related keys, so it's not recommended to set for
+                large sessions.
             **kwargs (`Any`):
                 Additional keyword arguments to pass to the Redis client.
         """
