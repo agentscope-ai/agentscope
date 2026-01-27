@@ -46,11 +46,11 @@ export const config: AppConfig = {
     light-dark(#f0f4f8, #0f172a) 0%,
     light-dark(#e2e8f0, #1e293b) 100%
   )`,
-  placeholder: "Help me test my MBTI.",
+  placeholder: "Help me test my English.",
   loadingText: [
-    "Finding the infor for you...",
+    "A2UI Agent is working on your request...",
     "Analyzing your information...",
-    "Almost there...",
+    "Working...",
   ],
   serverUrl: "http://localhost:10002",
 };
