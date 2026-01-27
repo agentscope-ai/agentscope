@@ -148,6 +148,24 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
     """The DashScope formatter class for chatbot scenario, where only a user
     and an agent are involved. We use the `role` field to identify different
     entities in the conversation.
+
+    .. warning::
+        Known Issues with DashScope API:
+
+        1. **Missing content field**: When messages lack the 'content' field,
+           qwen-vl-max models will raise ``KeyError: 'content'``.
+
+        2. **None content value**: When content is ``None``, qwen-vl-max models
+           will raise ``TypeError: 'NoneType' object is not iterable``.
+
+        3. **Empty text in content**: When content contains
+           ``[{"text": None}]``, qwen3-max may repeatedly invoke tools
+           multiple times. Note that when qwen3-max initiates tool calls,
+           the returned message contains ``"content": ""``.
+
+        To avoid these issues, this formatter assigns content as an empty
+        list ``[]`` for messages without valid content blocks.
+
     """
 
     support_tools_api: bool = True
@@ -377,17 +395,13 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
 
             msg_dashscope = {
                 "role": msg.role,
-                "content": content_blocks or [{"text": None}],
+                "content": content_blocks,
             }
 
             if tool_calls:
                 msg_dashscope["tool_calls"] = tool_calls
 
-            if msg_dashscope["content"] != [
-                {"text": None},
-            ] or msg_dashscope.get(
-                "tool_calls",
-            ):
+            if msg_dashscope["content"] or msg_dashscope.get("tool_calls"):
                 formatted_msgs.append(msg_dashscope)
 
             # Move to next message

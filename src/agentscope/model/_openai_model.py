@@ -376,7 +376,9 @@ class OpenAIChatModel(ChatModelBase):
                 ):
                     text += choice.delta.audio["transcript"]
 
-                for tool_call in choice.delta.tool_calls or []:
+                for tool_call in (
+                    getattr(choice.delta, "tool_calls", None) or []
+                ):
                     if tool_call.index in tool_calls:
                         if tool_call.function.arguments is not None:
                             tool_calls[tool_call.index][
