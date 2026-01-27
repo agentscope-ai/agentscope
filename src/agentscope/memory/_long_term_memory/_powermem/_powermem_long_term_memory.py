@@ -34,6 +34,7 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         agent_id: str | None = None,
         user_id: str | None = None,
         run_id: str | None = None,
+        default_memory_type: str | None = None,
         infer: bool = True,
         auto_config: bool = True,
     ) -> None:
@@ -58,11 +59,32 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 Alias for user_name.
             run_id (`str | None`, optional):
                 Alias for run_name.
+            default_memory_type (`str | None`, optional):
+                Default memory type passed to the backend when the caller
+                does not provide ``memory_type``.
             infer (`bool`, optional):
                 Whether to enable intelligent inference when recording.
             auto_config (`bool`, optional):
                 Whether to auto-load configuration from environment when
                 config is not provided.
+
+        .. note::
+            Parameter precedence is explicit:
+            1) If ``memory`` is provided, ``config`` and ``auto_config`` are
+               ignored.
+            2) Otherwise, ``config`` is used as-is, or ``powermem.auto_config()``
+               is used when ``config`` is None and ``auto_config`` is True.
+
+        .. note::
+            Scope identifiers (``agent_id``, ``user_id``, ``run_id``) are
+            always passed to backend calls when supported by the backend
+            signature. This keeps the scoping path consistent across record
+            and retrieve operations.
+
+        .. note::
+            ``memory_type`` precedence is explicit:
+            constructor ``default_memory_type`` < kwargs ``memory_type`` <
+            method argument ``memory_type``.
         """
         super().__init__()
 
@@ -82,6 +104,11 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         resolved_user_id = self._resolve_identifier("user", user_name, user_id)
         resolved_run_id = self._resolve_identifier("run", run_name, run_id)
 
+        # When a prebuilt memory is provided, prefer its agent_id if the
+        # caller does not override it. This keeps the scoping path consistent.
+        if memory is not None and resolved_agent_id is None:
+            resolved_agent_id = getattr(memory, "agent_id", None)
+
         if memory is None:
             if config is None and auto_config:
                 config = powermem.auto_config()
@@ -94,6 +121,7 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         self._agent_id = resolved_agent_id
         self._user_id = resolved_user_id
         self._run_id = resolved_run_id
+        self._default_memory_type = default_memory_type
         self._infer = infer
         self._init_lock = asyncio.Lock()
         self._initialized = False
@@ -123,23 +151,11 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             payload = self._join_record_content(thinking, content)
             infer = kwargs.pop("infer", self._infer)
             await self._add_messages(payload, infer=infer, **kwargs)
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="Successfully recorded content to memory.",
-                    ),
-                ],
+            return self._tool_response(
+                "Successfully recorded content to memory.",
             )
         except Exception as e:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error recording memory: {str(e)}",
-                    ),
-                ],
-            )
+            return self._tool_error_response("Error recording memory", e)
 
     async def retrieve_from_memory(
         self,
@@ -164,23 +180,9 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         try:
             await self._ensure_initialized()
             results = await self._search_keywords(keywords, limit, **kwargs)
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="\n".join(results),
-                    ),
-                ],
-            )
+            return self._tool_response("\n".join(results))
         except Exception as e:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error retrieving memory: {str(e)}",
-                    ),
-                ],
-            )
+            return self._tool_error_response("Error retrieving memory", e)
 
     async def record(
         self,
@@ -201,28 +203,22 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             **kwargs (`Any`):
                 Extra keyword arguments passed to the backend.
         """
-        if isinstance(msgs, Msg):
-            msgs = [msgs]
-
-        msg_list = [_ for _ in msgs if _]
+        msg_list = self._normalize_msg_list(msgs)
         if not msg_list:
             return
 
-        if not all(isinstance(_, Msg) for _ in msg_list):
-            raise TypeError(
-                "The input messages must be a list of Msg objects.",
-            )
-
         await self._ensure_initialized()
         messages = self._to_powermem_messages(msg_list)
+        resolved_memory_type = self._resolve_memory_type(
+            memory_type,
+            kwargs,
+        )
         await self._call_memory(
             self._memory.add,
             messages=messages,
-            user_id=self._user_id,
-            agent_id=self._agent_id,
-            run_id=self._run_id,
-            memory_type=memory_type,
+            memory_type=resolved_memory_type,
             infer=self._infer if infer is None else infer,
+            **self._scoped_kwargs(),
             **kwargs,
         )
 
@@ -246,20 +242,11 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             `str`:
                 Concatenated memory results.
         """
-        if msg is None:
+        msg_list = self._normalize_msg_input(msg)
+        if not msg_list:
             return ""
 
-        if isinstance(msg, Msg):
-            msg = [msg]
-
-        if not isinstance(msg, list) or not all(
-            isinstance(_, Msg) for _ in msg
-        ):
-            raise TypeError(
-                "The input message must be a Msg or a list of Msg objects.",
-            )
-
-        queries = [self._message_to_query(item) for item in msg]
+        queries = [self._message_to_query(item) for item in msg_list]
         queries = [query for query in queries if query]
         if not queries:
             return ""
@@ -281,10 +268,8 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             if self._initialized:
                 return
             initialize = getattr(self._memory, "initialize", None)
-            if initialize is not None:
-                result = initialize()
-                if inspect.isawaitable(result):
-                    await result
+            if callable(initialize):
+                await self._call_memory(initialize)
             self._initialized = True
 
     async def _add_messages(self, payload: str, **kwargs: Any) -> None:
@@ -300,12 +285,12 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             `None`:
                 This method returns nothing.
         """
+        resolved_memory_type = self._resolve_memory_type(None, kwargs)
         await self._call_memory(
             self._memory.add,
             messages=payload,
-            user_id=self._user_id,
-            agent_id=self._agent_id,
-            run_id=self._run_id,
+            memory_type=resolved_memory_type,
+            **self._scoped_kwargs(),
             **kwargs,
         )
 
@@ -334,14 +319,53 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             response = await self._call_memory(
                 self._memory.search,
                 query=query,
-                user_id=self._user_id,
-                agent_id=self._agent_id,
-                run_id=self._run_id,
                 limit=limit,
+                **self._scoped_kwargs(),
                 **kwargs,
             )
             results.extend(self._extract_search_results(response))
         return results
+
+    def _scoped_kwargs(self) -> dict[str, str | None]:
+        """Build scoped identifiers for backend calls.
+
+        Returns:
+            `dict[str, str | None]`:
+                Scoped identifiers for user, agent, and run.
+        """
+        return {
+            "user_id": self._user_id,
+            "agent_id": self._agent_id,
+            "run_id": self._run_id,
+        }
+
+    def _resolve_memory_type(
+        self,
+        memory_type: str | None,
+        kwargs: dict[str, Any],
+    ) -> str | None:
+        """Resolve memory type with explicit precedence.
+
+        Precedence:
+        1) Explicit ``memory_type`` argument
+        2) ``memory_type`` in ``kwargs``
+        3) ``default_memory_type`` from constructor
+
+        Args:
+            memory_type (`str | None`):
+                The explicit memory type argument.
+            kwargs (`dict[str, Any]`):
+                Keyword arguments that may contain ``memory_type``.
+
+        Returns:
+            `str | None`:
+                The resolved memory type.
+        """
+        if memory_type is not None:
+            return memory_type
+        if "memory_type" in kwargs:
+            return kwargs["memory_type"]
+        return self._default_memory_type
 
     async def _search_keywords(
         self,
@@ -383,12 +407,42 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             `Any`:
                 Backend result or awaited coroutine result.
         """
+        call_kwargs = self._filter_supported_kwargs(func, kwargs)
         if inspect.iscoroutinefunction(func):
-            return await func(*args, **kwargs)
-        result = await asyncio.to_thread(func, *args, **kwargs)
+            return await func(*args, **call_kwargs)
+        result = await asyncio.to_thread(func, *args, **call_kwargs)
         if inspect.isawaitable(result):
             return await result
         return result
+
+    @staticmethod
+    def _filter_supported_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Filter kwargs based on the callable signature when possible.
+
+        This avoids passing unsupported parameters to custom backends while
+        keeping full kwargs for functions that accept ``**kwargs``.
+
+        Args:
+            func (`Any`):
+                The target callable.
+            kwargs (`dict[str, Any]`):
+                The keyword arguments to filter.
+
+        Returns:
+            `dict[str, Any]`:
+                Filtered keyword arguments.
+        """
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            return kwargs
+
+        params = signature.parameters.values()
+        if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in params):
+            return kwargs
+
+        supported = set(signature.parameters.keys())
+        return {key: value for key, value in kwargs.items() if key in supported}
 
     @staticmethod
     def _join_record_content(thinking: str, content: list[str]) -> str:
@@ -406,6 +460,101 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         """
         parts = [item for item in [thinking, *content] if item]
         return "\n".join(parts)
+
+    @staticmethod
+    def _tool_response(text: str) -> ToolResponse:
+        """Create a standard tool response with text content.
+
+        Args:
+            text (`str`):
+                The text content to return.
+
+        Returns:
+            `ToolResponse`:
+                A tool response containing a single text block.
+        """
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=text,
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _tool_error_response(prefix: str, error: Exception) -> ToolResponse:
+        """Create a standard tool error response.
+
+        Args:
+            prefix (`str`):
+                The error message prefix.
+            error (`Exception`):
+                The captured exception.
+
+        Returns:
+            `ToolResponse`:
+                A tool response containing the formatted error.
+        """
+        return PowerMemLongTermMemory._tool_response(f"{prefix}: {error}")
+
+    @staticmethod
+    def _normalize_msg_list(msgs: list[Msg | None] | Msg) -> list[Msg]:
+        """Normalize record input into a validated message list.
+
+        Args:
+            msgs (`list[Msg | None] | Msg`):
+                The input messages to normalize.
+
+        Returns:
+            `list[Msg]`:
+                A validated list of messages.
+
+        Raises:
+            `TypeError`:
+                If the input is not a message or list of messages.
+        """
+        if isinstance(msgs, Msg):
+            msgs = [msgs]
+        if not isinstance(msgs, list):
+            raise TypeError(
+                "The input messages must be a Msg or a list of Msg objects.",
+            )
+        msg_list = [msg for msg in msgs if msg is not None]
+        if not all(isinstance(msg, Msg) for msg in msg_list):
+            raise TypeError(
+                "The input messages must be a list of Msg objects.",
+            )
+        return msg_list
+
+    @staticmethod
+    def _normalize_msg_input(msg: Msg | list[Msg] | None) -> list[Msg]:
+        """Normalize retrieve input into a validated message list.
+
+        Args:
+            msg (`Msg | list[Msg] | None`):
+                The input message(s).
+
+        Returns:
+            `list[Msg]`:
+                A validated list of messages, or an empty list when input
+                is None.
+
+        Raises:
+            `TypeError`:
+                If the input is not a message or list of messages.
+        """
+        if msg is None:
+            return []
+        if isinstance(msg, Msg):
+            msg = [msg]
+        if not isinstance(msg, list) or not all(
+            isinstance(item, Msg) for item in msg
+        ):
+            raise TypeError(
+                "The input message must be a Msg or a list of Msg objects.",
+            )
+        return msg
 
     @staticmethod
     def _message_to_query(msg: Msg) -> str:

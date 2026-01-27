@@ -134,3 +134,24 @@ class PowerMemLongTermMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(memory.coro_awaited)
+
+    async def test_default_memory_type_is_forwarded(self) -> None:
+        """Ensure default_memory_type is passed to backend add calls."""
+        memory = AsyncMemoryStub()
+        long_term_memory = PowerMemLongTermMemory(
+            memory=memory,
+            agent_name="agent",
+            user_name="user",
+            run_name="run",
+            default_memory_type="semantic_memory",
+        )
+
+        await long_term_memory.record_to_memory(
+            thinking="capture preference",
+            content=["prefers tea"],
+        )
+
+        self.assertEqual(
+            memory.add_calls[0]["memory_type"],
+            "semantic_memory",
+        )
