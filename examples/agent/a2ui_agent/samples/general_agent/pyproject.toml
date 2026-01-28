@@ -9,7 +9,7 @@ dependencies = [
     "starlette",
     "fastapi",
     "shortuuid",
-    "a2ui-agent @ file:///Users/liuyi/Documents/Research/LLM-research/clarify_tool/github_project/A2UI/a2a_agents/python/a2ui_agent"
+    "a2ui-agent"
 ]
 
 [build-system]
