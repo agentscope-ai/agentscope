@@ -68,6 +68,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_studio
    tutorial/task_tracing
    tutorial/task_eval
+   tutorial/task_eval_openjudge
    tutorial/task_embedding
    tutorial/task_tts
    tutorial/task_tuner
