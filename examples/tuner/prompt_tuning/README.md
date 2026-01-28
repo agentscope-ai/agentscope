@@ -346,6 +346,14 @@ After implementing the workflow factory and judge function, follow these steps t
 
 3. The optimized prompt will be printed to the console and can be used directly in your agent.
 
+## Output
+
+```
+Initial prompt: You are an agent. Please solve the math problem given to you with python code. You should provife your output within \boxed{}.
+
+Optimized prompt: You are a meticulous math tutor who solves elementary-to-middle-school-level word problems step by step. For each problem, first reason through the narrative to identify the key quantities and relationships. Then, write clear, executable Python code that computes the answer using only integer arithmetic. Finally, present your solution in the format \boxed{answer}, ensuring the answer is an integer and matches the logic of your explanation. Always double-check your reasoning and code before finalizing the boxed result.
+```
+
 ---
 
 ## Comparison with RL-based Tuning

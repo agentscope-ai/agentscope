@@ -1,10 +1,10 @@
+# -*- coding: utf-8 -*-
 """Prompt tuning functionality using DSPy's MIPROv2 optimizer."""
 
 import os
 from pathlib import Path
 from agentscope.tuner import (
     DatasetConfig,
-    TunerModelConfig,
 )
 import asyncio
 from typing import Any, Callable, Optional, cast
@@ -29,11 +29,20 @@ def wrap_judge_fn(judge_fn: JudgeType):
     Returns:
         A synchronous wrapper function that returns only the reward value.
     """
-    async def inner(task: dict, response: Any, auxiliary_models: dict[str, ChatModelBase]):
+
+    async def inner(
+        task: dict,
+        response: Any,
+        auxiliary_models: dict[str, ChatModelBase],
+    ):
         output = await judge_fn(task, response, auxiliary_models)
         return output.reward
 
-    def _sync_wrapper(task: dict, response: Any, auxiliary_models: dict[str, ChatModelBase]):
+    def _sync_wrapper(
+        task: dict,
+        response: Any,
+        auxiliary_models: dict[str, ChatModelBase],
+    ):
         return asyncio.run(inner(task, response, auxiliary_models))
 
     return _sync_wrapper
@@ -53,6 +62,7 @@ def _guess_by_ext(p: str) -> Optional[str]:
     if ext in {".txt"}:
         return "text"
     return None
+
 
 def tune_prompt(
     *,
@@ -81,7 +91,8 @@ def tune_prompt(
         model: The chat model used in the workflow.
         auxiliary_models: Optional dictionary of additional chat models for
             LLM-as-a-Judge usage.
-        config: Configuration for prompt tuning. Defaults to PromptTuneConfig().
+        config: Configuration for prompt tuning. Defaults to
+            PromptTuneConfig().
 
     Returns:
         The optimized system prompt string.
@@ -91,12 +102,14 @@ def tune_prompt(
     logger.warning("Model will not be optimized during prompt tuning.")
     check_judge_function(judge_func)
 
-    if os.path.exists(train_dataset.path) and _guess_by_ext(train_dataset.path):
+    if os.path.exists(train_dataset.path) and _guess_by_ext(
+        train_dataset.path,
+    ):
         logger.info(f"loading dataset from file: {train_dataset.path}")
         trainset = load_dataset(
             cast(str, _guess_by_ext(train_dataset.path)),
             data_files=train_dataset.path,
-        )['train']
+        )["train"]
     else:
         logger.info("loading training dataset from remote...")
         trainset = load_dataset(
@@ -106,9 +119,7 @@ def tune_prompt(
         )
     logger.info("training dataset loaded")
 
-    dspy_trainset = [
-        dspy.Example(inp=x).with_inputs("inp") for x in trainset
-    ]
+    dspy_trainset = [dspy.Example(inp=x).with_inputs("inp") for x in trainset]
 
     module = WorkflowWrapperModule(workflow_func, init_system_prompt)
     # model and auxiliary_models are not necessary for prompt tuning.
@@ -141,12 +152,16 @@ def tune_prompt(
 
     # evaluate if eval_dataset is provided
     if eval_dataset is not None:
-        if os.path.exists(eval_dataset.path) and _guess_by_ext(eval_dataset.path):
-            logger.info(f"loading evaluation dataset from file: {eval_dataset.path}")
+        if os.path.exists(eval_dataset.path) and _guess_by_ext(
+            eval_dataset.path,
+        ):
+            logger.info(
+                f"loading evaluation dataset from file: {eval_dataset.path}",
+            )
             evalset = load_dataset(
                 cast(str, _guess_by_ext(eval_dataset.path)),
                 data_files=eval_dataset.path,
-            )['train']
+            )["train"]
         else:
             logger.info("loading evaluation dataset from remote...")
             evalset = load_dataset(
