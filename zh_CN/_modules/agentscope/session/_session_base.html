@@ -360,6 +360,7 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">save_session_state</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
         <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Save the session state</span>
@@ -367,6 +368,8 @@
 <span class="sd">        Args:</span>
 <span class="sd">            session_id (`str`):</span>
 <span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
 <span class="sd">            **state_modules_mapping (`dict[str, StateModule]`):</span>
 <span class="sd">                A dictionary mapping of state module names to their instances.</span>
 <span class="sd">        &quot;&quot;&quot;</span></div>
@@ -378,10 +381,22 @@
     <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">load_session_state</span><span class="p">(</span>
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
         <span class="n">allow_not_exist</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
         <span class="o">**</span><span class="n">state_modules_mapping</span><span class="p">:</span> <span class="n">StateModule</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load the session state&quot;&quot;&quot;</span></div>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load the session state</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            session_id (`str`):</span>
+<span class="sd">                The session id.</span>
+<span class="sd">            user_id (`str`, default to `&quot;&quot;`):</span>
+<span class="sd">                The user ID for the storage.</span>
+<span class="sd">            allow_not_exist (`bool`, defaults to `True`):</span>
+<span class="sd">                Whether to allow the session to not exist.</span>
+<span class="sd">            **state_modules_mapping (`dict[str, StateModule]`):</span>
+<span class="sd">                The mapping of state modules to be loaded.</span>
+<span class="sd">        &quot;&quot;&quot;</span></div>
 </div>
 
 </pre></div>

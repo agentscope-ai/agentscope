@@ -772,28 +772,41 @@ or cross-user operations are not supported. For example, the
 <cite>remove_messages</cite> method will only remove messages that belong to the
 specified <cite>session_id</cite> and <cite>user_id</cite>.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>All Redis keys used by this class will be prefixed by <cite>prefix</cite></p>
+</div>
+<p>(if provided) to support multi-tenant / multi-app isolation.</p>
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.memory.RedisMemory.SESSION_KEY">
 <span class="sig-name descname"><span class="pre">SESSION_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:messages'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.SESSION_KEY" title="Link to this definition">¶</a></dt>
-<dd><p>The Redis key pattern to store messages for a specific session.</p>
+<dd><p>Redis key pattern (without prefix) for storing message IDs (ordered) for
+a specific session.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="agentscope.memory.RedisMemory.SESSION_PATTERN">
+<span class="sig-name descname"><span class="pre">SESSION_PATTERN</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:*'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.SESSION_PATTERN" title="Link to this definition">¶</a></dt>
+<dd><p>Redis key pattern (without prefix) for scanning all keys belong to
+a specific user and session.</p>
 </dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.memory.RedisMemory.MARK_KEY">
 <span class="sig-name descname"><span class="pre">MARK_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:mark:{mark}'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.MARK_KEY" title="Link to this definition">¶</a></dt>
-<dd><p>The Redis key pattern to store message ids that belong to a specific
-mark.</p>
+<dd><p>Redis key pattern (without prefix) for storing message IDs that belong
+to a specific mark.</p>
 </dd></dl>
 
 <dl class="py attribute">
 <dt class="sig sig-object py" id="agentscope.memory.RedisMemory.MESSAGE_KEY">
 <span class="sig-name descname"><span class="pre">MESSAGE_KEY</span></span><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'user_id:{user_id}:session:{session_id}:msg:{msg_id}'</span></em><a class="headerlink" href="#agentscope.memory.RedisMemory.MESSAGE_KEY" title="Link to this definition">¶</a></dt>
-<dd><p>The Redis key pattern for storing message data.</p>
+<dd><p>Redis key pattern (without prefix) for storing message payload data.</p>
 </dd></dl>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.memory.RedisMemory.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_session'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_user'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">6379</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">password</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">connection_pool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">session_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_session'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'default_user'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">host</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'localhost'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">port</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">6379</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">db</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">password</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">connection_pool</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">key_prefix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">key_ttl</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/memory/_working_memory/_redis_memory.html#RedisMemory.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.memory.RedisMemory.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the Redis based storage by connecting to the Redis
 server. You can provide either the connection parameters or an
 existing connection pool.</p>
@@ -808,6 +821,14 @@ existing connection pool.</p>
 <li><p><strong>password</strong> (<cite>str | None</cite>, optional) -- The password for the Redis server, if required.</p></li>
 <li><p><strong>connection_pool</strong> (<cite>ConnectionPool | None</cite>, optional) -- An optional Redis connection pool. If provided, it will be used
 instead of creating a new connection.</p></li>
+<li><p><strong>key_prefix</strong> (<cite>str</cite>, default to <cite>&quot;&quot;</cite>) -- Optional Redis key prefix prepended to every key generated by
+this storage. Useful for isolating keys across
+apps/environments (e.g. <cite>&quot;prod&quot;</cite>, <cite>&quot;staging&quot;</cite>, <cite>&quot;myapp&quot;</cite>).</p></li>
+<li><p><strong>key_ttl</strong> (<cite>int | None</cite>, default to <cite>None</cite>) -- The expired time in seconds for each key. If provided, the
+expiration will be refreshed on every access (sliding TTL). If
+<cite>None</cite>, the keys will not expire. <strong>Note</strong> the ttl will update
+all session related keys, so it's not recommended to set for
+large sessions.</p></li>
 <li><p><strong>**kwargs</strong> (<cite>Any</cite>) -- Additional keyword arguments to pass to the Redis client.</p></li>
 </ul>
 </dd>
@@ -2264,6 +2285,7 @@ to 5.</p></li>
 </li>
 <li><a class="reference internal" href="#agentscope.memory.RedisMemory"><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></a><ul>
 <li><a class="reference internal" href="#agentscope.memory.RedisMemory.SESSION_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.SESSION_KEY</span></code></a></li>
+<li><a class="reference internal" href="#agentscope.memory.RedisMemory.SESSION_PATTERN"><code class="docutils literal notranslate"><span class="pre">RedisMemory.SESSION_PATTERN</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.RedisMemory.MARK_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.MARK_KEY</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.RedisMemory.MESSAGE_KEY"><code class="docutils literal notranslate"><span class="pre">RedisMemory.MESSAGE_KEY</span></code></a></li>
 <li><a class="reference internal" href="#agentscope.memory.RedisMemory.__init__"><code class="docutils literal notranslate"><span class="pre">RedisMemory.__init__()</span></code></a></li>

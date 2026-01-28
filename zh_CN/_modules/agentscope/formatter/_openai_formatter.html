@@ -674,6 +674,11 @@
                     <span class="p">)</span>
 
                 <span class="k">elif</span> <span class="n">typ</span> <span class="o">==</span> <span class="s2">&quot;audio&quot;</span><span class="p">:</span>
+                    <span class="c1"># Filter out audio content when the multimodal model</span>
+                    <span class="c1"># outputs both text and audio, to prevent errors in</span>
+                    <span class="c1"># subsequent model calls</span>
+                    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">role</span> <span class="o">==</span> <span class="s2">&quot;assistant&quot;</span><span class="p">:</span>
+                        <span class="k">continue</span>
                     <span class="n">input_audio</span> <span class="o">=</span> <span class="n">_to_openai_audio_data</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>
                     <span class="n">content_blocks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="p">{</span>
@@ -819,6 +824,11 @@
                 <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;image&quot;</span><span class="p">:</span>
                     <span class="n">images</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_format_openai_image_block</span><span class="p">(</span><span class="n">block</span><span class="p">))</span>
                 <span class="k">elif</span> <span class="n">block</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;audio&quot;</span><span class="p">:</span>
+                    <span class="c1"># Filter out audio content when the multimodal model</span>
+                    <span class="c1"># outputs both text and audio, to prevent errors in</span>
+                    <span class="c1"># subsequent model calls</span>
+                    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">role</span> <span class="o">==</span> <span class="s2">&quot;assistant&quot;</span><span class="p">:</span>
+                        <span class="k">continue</span>
                     <span class="n">input_audio</span> <span class="o">=</span> <span class="n">_to_openai_audio_data</span><span class="p">(</span><span class="n">block</span><span class="p">[</span><span class="s2">&quot;source&quot;</span><span class="p">])</span>
                     <span class="n">audios</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
                         <span class="p">{</span>

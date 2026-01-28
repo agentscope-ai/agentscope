@@ -569,6 +569,8 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.__init__">__init__() （RedisMemory 方法）</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.__init__">__init__() （RedisSession 方法）</a>
+</li>
         <li><a href="api/agentscope.pipeline.html#agentscope.pipeline.SequentialPipeline.__init__">__init__() （SequentialPipeline 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.__init__">__init__() （SolutionOutput 方法）</a>
@@ -992,6 +994,8 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.close">close() （RedisMemory 方法）</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.close">close() （RedisSession 方法）</a>
+</li>
         <li><a href="api/agentscope.mcp.html#agentscope.mcp.StatefulClientBase.close">close() （StatefulClientBase 方法）</a>
 </li>
     </ul></td>
@@ -1316,14 +1320,16 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.get_client">get_client() （RedisMemory 方法）</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.get_client">get_client() （RedisSession 方法）</a>
+</li>
         <li><a href="api/agentscope.rag.html#agentscope.rag.VDBStoreBase.get_client">get_client() （VDBStoreBase 方法）</a>
 </li>
         <li><a href="api/agentscope.tuner.html#agentscope.tuner.TunerModelConfig.get_config">get_config() （TunerModelConfig 方法）</a>
 </li>
-        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() （Msg 方法）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.message.html#agentscope.message.Msg.get_content_blocks">get_content_blocks() （Msg 方法）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.get_current_hint">get_current_hint() （PlanNotebook 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.get_current_state">get_current_state() （ACEPhone 方法）</a>
@@ -1527,6 +1533,8 @@
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.ACEPhone.load_initial_config">load_initial_config() （ACEPhone 方法）</a>
 </li>
         <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.load_session_state">load_session_state() （JSONSession 方法）</a>
+</li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.load_session_state">load_session_state() （RedisSession 方法）</a>
 </li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
@@ -1873,6 +1881,8 @@
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory">RedisMemory（agentscope.memory 中的类）</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession">RedisSession（agentscope.session 中的类）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.refresh_plan_state">refresh_plan_state() （Plan 方法）</a>
 </li>
         <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.register_agent_skill">register_agent_skill() （Toolkit 方法）</a>
@@ -1905,10 +1915,10 @@
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_instance_hook">remove_instance_hook() （AgentBase 方法）</a>
 </li>
-        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() （Toolkit 方法）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.tool.html#agentscope.tool.Toolkit.remove_mcp_clients">remove_mcp_clients() （Toolkit 方法）</a>
+</li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.PlanNotebook.remove_plan_change_hook">remove_plan_change_hook() （PlanNotebook 方法）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.AgentBase.remove_subscribers">remove_subscribers() （AgentBase 方法）</a>
@@ -2003,6 +2013,8 @@
 </li>
         <li><a href="api/agentscope.session.html#agentscope.session.JSONSession.save_session_state">save_session_state() （JSONSession 方法）</a>
 </li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.save_session_state">save_session_state() （RedisSession 方法）</a>
+</li>
         <li><a href="api/agentscope.session.html#agentscope.session.SessionBase.save_session_state">save_session_state() （SessionBase 方法）</a>
 </li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.EvaluatorStorageBase.save_solution_result">save_solution_result() （EvaluatorStorageBase 方法）</a>
@@ -2036,6 +2048,10 @@
         <li><a href="api/agentscope.memory.html#agentscope.memory.AsyncSQLAlchemyMemory.MessageTable.session_id">session_id（AsyncSQLAlchemyMemory.MessageTable 属性）</a>
 </li>
         <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.SESSION_KEY">SESSION_KEY（RedisMemory 属性）</a>
+</li>
+        <li><a href="api/agentscope.session.html#agentscope.session.RedisSession.SESSION_KEY">SESSION_KEY（RedisSession 属性）</a>
+</li>
+        <li><a href="api/agentscope.memory.html#agentscope.memory.RedisMemory.SESSION_PATTERN">SESSION_PATTERN（RedisMemory 属性）</a>
 </li>
         <li><a href="api/agentscope.session.html#agentscope.session.SessionBase">SessionBase（agentscope.session 中的类）</a>
 </li>
@@ -2125,10 +2141,10 @@
 </li>
         <li><a href="api/agentscope.plan.html#agentscope.plan.Plan.subtasks">subtasks（Plan 属性）</a>
 </li>
-        <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask">SubTask（agentscope.plan 中的类）</a>
-</li>
     </ul></td>
     <td style="width: 33%; vertical-align: top;"><ul>
+        <li><a href="api/agentscope.plan.html#agentscope.plan.SubTask">SubTask（agentscope.plan 中的类）</a>
+</li>
         <li><a href="api/agentscope.evaluate.html#agentscope.evaluate.SolutionOutput.success">success（SolutionOutput 属性）</a>
 </li>
         <li><a href="api/agentscope.agent.html#agentscope.agent.ReActAgent.CompressionConfig.summary_schema">summary_schema（ReActAgent.CompressionConfig 属性）</a>
