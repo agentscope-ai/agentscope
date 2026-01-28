@@ -73,6 +73,7 @@ class OpenAIChatModel(ChatModelBase):
         stream: bool = True,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         organization: str = None,
+        intermediate_tool_parsing: bool = True,
         client_type: Literal["openai", "azure"] = "openai",
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
@@ -97,6 +98,8 @@ class OpenAIChatModel(ChatModelBase):
             organization (`str`, default `None`):
                 The organization ID for OpenAI API. If not specified, it will
                 be read from the environment variable `OPENAI_ORGANIZATION`.
+            intermediate_tool_parsing (`bool`, default to `True`):
+                Whether to allow parsing intermediate results of tool calls.
             client_type (`Literal["openai", "azure"]`, default `openai`):
                 Selects which OpenAI-compatible client to initialize.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
@@ -156,6 +159,7 @@ class OpenAIChatModel(ChatModelBase):
             )
 
         self.reasoning_effort = reasoning_effort
+        self.intermediate_tool_parsing = intermediate_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
@@ -294,6 +298,7 @@ class OpenAIChatModel(ChatModelBase):
 
         return parsed_response
 
+    # pylint: disable=too-many-statements
     async def _parse_openai_stream_response(
         self,
         start_datetime: datetime,
@@ -431,20 +436,51 @@ class OpenAIChatModel(ChatModelBase):
                         metadata = _json_loads_with_repair(text)
 
                 for tool_call in tool_calls.values():
+                    input_str = tool_call["input"]
+                    # Only add intermediate tool use blocks if
+                    # intermediate_tool_parsing is True
+                    if self.intermediate_tool_parsing:
+                        input_obj = _json_loads_with_repair(input_str)
+                    else:
+                        input_obj = {}
+
                     contents.append(
                         ToolUseBlock(
                             type=tool_call["type"],
                             id=tool_call["id"],
                             name=tool_call["name"],
-                            input=_json_loads_with_repair(
-                                tool_call["input"] or "{}",
-                            ),
+                            input=input_obj,
+                            raw_input=input_str,
                         ),
                     )
 
-                if not contents:
-                    continue
+                if contents:
+                    res = ChatResponse(
+                        content=contents,
+                        usage=usage,
+                        metadata=metadata,
+                    )
+                    yield res
 
+        # If intermediate_tool_parsing is False, yield final tool use blocks
+        if not self.intermediate_tool_parsing and tool_calls:
+            contents = []
+
+            for tool_call in tool_calls.values():
+                input_str = tool_call["input"]
+                input_obj = _json_loads_with_repair(input_str or "{}")
+
+                contents.append(
+                    ToolUseBlock(
+                        type=tool_call["type"],
+                        id=tool_call["id"],
+                        name=tool_call["name"],
+                        input=input_obj,
+                        raw_input=input_str,
+                    ),
+                )
+
+            if contents:
                 res = ChatResponse(
                     content=contents,
                     usage=usage,

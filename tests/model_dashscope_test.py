@@ -322,6 +322,7 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
                     name="greet",
                     input={"name": "user"},
                     type="tool_use",
+                    raw_input='{"name": "user"}',
                 ),
             ]
             self.assertEqual(final_response.content, expected_content)
