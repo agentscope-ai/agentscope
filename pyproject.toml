@@ -110,15 +110,16 @@ readers = [
 # the version to 1.15.1 here.
 qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
+oceanbase = ["pyobvector>=0.2.0,<0.3.0"]
 ali_mysql = ["mysql-connector-python"]
 mongodb = ["pymongo"]
 vdbs = [
     "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
+    "agentscope[oceanbase]",
     "agentscope[mongodb]",
 ]
-
 
 rag = [
     "agentscope[readers]",
