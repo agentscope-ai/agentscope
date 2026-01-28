@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """Test the RAG reader implementations."""
 import os
+import json
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.rag import TextReader, PDFReader, WordReader, ExcelReader
+from agentscope.rag import (
+    TextReader,
+    PDFReader,
+    WordReader,
+    ExcelReader,
+    PowerPointReader,
+)
 
 
 class RAGReaderText(IsolatedAsyncioTestCase):
@@ -246,4 +253,219 @@ class RAGReaderText(IsolatedAsyncioTestCase):
                 if _.metadata.content["type"] == "image"
             ],
             ["image/png"],
+        )
+
+    async def test_ppt_reader_with_images_and_tables(self) -> None:
+        """Test the PowerPointReader implementation with images and table
+        separation."""
+        # Test with images and table separation enabled (using defaults)
+        reader = PowerPointReader(
+            chunk_size=200,
+            split_by="sentence",
+            separate_table=True,
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Verify document types match expected sequence
+        # Expected: text blocks from slides, then table, then image
+        self.assertListEqual(
+            [_.metadata.content["type"] for _ in docs],
+            ["text"] * 5 + ["image"] * 1 + ["text"],
+        )
+
+        # Verify exact document content
+        doc_texts = [_.metadata.content.get("text") for _ in docs]
+
+        # Verify slide content (with slide tags by default)
+        self.assertEqual(
+            doc_texts[0],
+            "<slide index=1>\nAgentScope\nText content in slide 1\n</slide>",
+        )
+        self.assertEqual(
+            doc_texts[1],
+            "<slide index=2>\nTitle 2\nText content above table",
+        )
+        # Table should be extracted as a separate block with Markdown format
+        self.assertEqual(
+            doc_texts[2],
+            "| Name | Age | Career |\n"
+            "| --- | --- | --- |\n"
+            "| Alice | 25 | Teacher |\n"
+            "| Bob | 26 | Doctor |",
+        )
+        self.assertEqual(
+            doc_texts[3],
+            "Text content below table\n</slide>",
+        )
+        self.assertEqual(
+            doc_texts[4],
+            "<slide index=3>\nTitle 3\ntext content above image",
+        )
+        # Image block
+        self.assertIsNone(doc_texts[5])
+        self.assertEqual(
+            doc_texts[6],
+            "text content below image\n</slide>",
+        )
+
+        # Verify image media types
+        self.assertEqual(
+            [
+                _.metadata.content["source"]["media_type"]
+                for _ in docs
+                if _.metadata.content["type"] == "image"
+            ],
+            ["image/png"],
+        )
+
+    async def test_ppt_reader_with_json_table_format(self) -> None:
+        """Test the PowerPointReader with JSON table format."""
+
+        reader = PowerPointReader(
+            chunk_size=500,
+            split_by="sentence",
+            include_image=False,
+            separate_table=True,
+            table_format="json",
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Find the table block
+        table_texts = [
+            _.metadata.content.get("text")
+            for _ in docs
+            if _.metadata.content.get("text")
+            and "JSON array" in _.metadata.content.get("text", "")
+        ]
+
+        # Verify we have a table in JSON format
+        self.assertEqual(len(table_texts), 1)
+
+        # Extract JSON part (after the system-info tag)
+        table_text = table_texts[0]
+        json_part = table_text.split("\n", 1)[1]
+
+        # Verify it's valid JSON and matches expected table content
+        parsed = json.loads(json_part)
+        self.assertEqual(
+            parsed,
+            [
+                ["Name", "Age", "Career"],
+                ["Alice", "25", "Teacher"],
+                ["Bob", "26", "Doctor"],
+            ],
+        )
+
+    async def test_ppt_reader_without_image(self) -> None:
+        """Test the PowerPointReader without image extraction."""
+        reader = PowerPointReader(
+            chunk_size=200,
+            split_by="sentence",
+            include_image=False,
+            separate_table=True,
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Verify no image blocks are present
+        image_blocks = [
+            _ for _ in docs if _.metadata.content["type"] == "image"
+        ]
+        self.assertEqual(len(image_blocks), 0)
+
+        # All blocks should be text type
+        self.assertTrue(
+            all(_.metadata.content["type"] == "text" for _ in docs),
+        )
+
+    async def test_ppt_reader_merged_table(self) -> None:
+        """Test the PowerPointReader with merged table
+        (separate_table=False)."""
+        reader = PowerPointReader(
+            chunk_size=500,
+            split_by="sentence",
+            include_image=False,
+            separate_table=False,
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # When separate_table=False, table should be merged with adjacent text
+        # Find the document that contains the table
+        table_doc = None
+        for doc in docs:
+            text = doc.metadata.content.get("text", "")
+            if "Name" in text and "Age" in text and "Career" in text:
+                table_doc = doc
+                break
+
+        self.assertIsNotNone(table_doc)
+        # The table should be merged with surrounding text (with slide tags)
+        table_text = table_doc.metadata.content.get("text", "")
+        self.assertEqual(
+            table_text,
+            "<slide index=2>\n"
+            "Title 2\n"
+            "Text content above table\n"
+            "| Name | Age | Career |\n"
+            "| --- | --- | --- |\n"
+            "| Alice | 25 | Teacher |\n"
+            "| Bob | 26 | Doctor |\n"
+            "\n"
+            "Text content below table\n"
+            "</slide>",
+        )
+
+    async def test_ppt_reader_without_slide_tags(self) -> None:
+        """Test the PowerPointReader without slide prefix/suffix XML tags."""
+        reader = PowerPointReader(
+            chunk_size=500,
+            split_by="sentence",
+            include_image=False,
+            separate_table=False,
+            slide_prefix=None,
+            slide_suffix=None,
+        )
+        ppt_path = os.path.join(
+            os.path.abspath(os.path.dirname(__file__)),
+            "../tests/test.pptx",
+        )
+        docs = await reader(ppt_path=ppt_path)
+
+        # Without slide_prefix/suffix, content should not have XML tags
+        doc_texts = [_.metadata.content.get("text") for _ in docs]
+
+        # Verify exact content without slide tags
+        self.assertEqual(
+            doc_texts[0],
+            "AgentScope\nText content in slide 1",
+        )
+        self.assertEqual(
+            doc_texts[1],
+            "Title 2\n"
+            "Text content above table\n"
+            "| Name | Age | Career |\n"
+            "| --- | --- | --- |\n"
+            "| Alice | 25 | Teacher |\n"
+            "| Bob | 26 | Doctor |\n"
+            "\n"
+            "Text content below table",
+        )
+        self.assertEqual(
+            doc_texts[2],
+            "Title 3\ntext content above image\ntext content below image",
         )

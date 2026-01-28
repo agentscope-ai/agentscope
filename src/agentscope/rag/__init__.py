@@ -12,6 +12,7 @@ from ._reader import (
     ImageReader,
     WordReader,
     ExcelReader,
+    PowerPointReader,
 )
 from ._store import (
     VDBStoreBase,
@@ -31,6 +32,7 @@ __all__ = [
     "ImageReader",
     "WordReader",
     "ExcelReader",
+    "PowerPointReader",
     "DocMetadata",
     "Document",
     "VDBStoreBase",
