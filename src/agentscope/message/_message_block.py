@@ -14,6 +14,9 @@ class TextBlock(TypedDict, total=False):
     text: str
     """The text content"""
 
+    finish_reason: str
+    """The finish reason """
+
 
 class ThinkingBlock(TypedDict, total=False):
     """The thinking block."""
