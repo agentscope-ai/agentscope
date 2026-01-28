@@ -149,8 +149,14 @@ class AgentSkill(TypedDict):
     """The agent skill typed dict class"""
 
     name: str
-    """The name of the skill."""
+    """The name of the skill (unique identifier in skills dict)."""
     description: str
     """The description of the skill."""
     dir: str
-    """The directory of the agent skill."""
+    """The directory path of the agent skill."""
+    source: Literal["manual", "monitored"]
+    """The source of the skill: 'manual' for register_agent_skill(),
+    'monitored' for auto-discovered skills."""
+    monitored_root: str | None
+    """The monitored root directory path if source='monitored',
+    None if source='manual'."""
