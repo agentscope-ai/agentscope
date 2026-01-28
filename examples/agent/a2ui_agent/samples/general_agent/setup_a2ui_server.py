@@ -197,7 +197,7 @@ class SimpleStreamHandler:
             name="Friday",
             sys_prompt=get_ui_prompt(),
             model=DashScopeChatModel(
-                model_name="qwen-plus",
+                model_name="qwen3-max",
                 api_key=os.getenv("DASHSCOPE_API_KEY"),
             ),
             formatter=DashScopeChatFormatter(),
