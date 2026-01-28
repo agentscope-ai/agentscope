@@ -15,7 +15,7 @@ Use this template for compact lists without images.
       {{ "id": "title-heading", "component": {{ "Text": {{ "usageHint": "h1", "text": {{ "path": "title" }} }} }} }},
       {{ "id": "item-list", "component": {{ "List": {{ "direction": "vertical", "children": {{ "template": {{ "componentId": "list-item-template", "dataBinding": "/items" }} }} }} }} }},
 
-      # 将 Row 改为 Button，使整行可点击
+      # Change Row to Button to make the entire row clickable
       {{ "id": "list-item-template", "component": {{ "Button": {{
         "usageHint": "listItem",
         "action": {{ "path": "action" }},
