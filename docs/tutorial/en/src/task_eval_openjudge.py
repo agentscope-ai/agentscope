@@ -182,7 +182,7 @@ class OpenJudgeMetric(MetricBase):
 #    for the full list of available graders.
 # 
 # .. note::
-#    Ensure you have set your ``DASH_API_KRY`` environment variable before running the example below.
+#    Ensure you have set your ``DASHSCOPE_API_KEY`` environment variable before running the example below.
 
 # %%
 import os
@@ -221,7 +221,7 @@ class QABenchmark(BenchmarkBase):
                 "response": "solution.output",
                 "context": "data.ground_truth",
                 "reference_response": "data.reference_output",
-            },
+            }
 
             # Instantiate Metrics via Wrapper
             metrics = [

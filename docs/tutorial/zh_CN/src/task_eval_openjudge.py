@@ -95,7 +95,23 @@ class OpenJudgeMetric(MetricBase):
         description: str | None = None,
         **grader_kwargs,
     ):
-        # Initialize the OpenJudge grader
+        """Initializes the OpenJudgeMetric.
+
+        Args:
+            grader_cls (`type[BaseGrader]`):
+                The OpenJudge grader class to be wrapped.
+            data (`dict`):
+                The static data for the task.
+            mapper (`dict`):
+                The mapper to extract grader inputs from combined data.
+            name (`str | None`, optional):
+                The name of the metric. Defaults to the grader's name.
+            description (`str | None`, optional):
+                The description of the metric. Defaults to the grader's
+                description.
+            **grader_kwargs:
+                Additional keyword arguments for the grader initialization.
+        """
         self.grader = grader_cls(**grader_kwargs)
 
         super().__init__(
@@ -175,7 +191,7 @@ class OpenJudgeMetric(MetricBase):
 #    请查阅 `OpenJudge 官方文档 <https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/>`_ 获取完整列表。
 #
 # .. note::
-#    在运行以下示例之前，请确保您已设置 ``DASHSCPOE_API_KEY`` 环境变量。
+#    在运行以下示例之前，请确保您已设置 ``DASHSCOPE_API_KEY`` 环境变量。
 
 # %%
 import os
@@ -212,7 +228,7 @@ class QABenchmark(BenchmarkBase):
                 "response": "solution.output",
                 "context": "data.ground_truth",
                 "reference_response": "data.reference_output",
-            },
+            }
 
             # 通过 Adapter 实例化 Metrics
             metrics = [
