@@ -60,6 +60,16 @@ models = [
     "agentscope[gemini]",
 ]
 
+# ------------ Voice Agent ------------
+voice = [
+    "websockets>=14.0",
+]
+voice_server = [
+    "agentscope[voice]",
+    "fastapi",
+    "uvicorn",
+]
+
 # ------------ Tokenizers ------------
 tokens = [
     "Pillow",
@@ -136,6 +146,7 @@ full = [
     "agentscope[memory]",
     "agentscope[rag]",
     "agentscope[evaluate]",
+    "agentscope[voice]",
 ]
 
 # ------------ Development ------------
