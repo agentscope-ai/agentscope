@@ -1,22 +1,13 @@
+# -*- coding: utf-8 -*-
 """Wrapper modules for integrating AgentScope agents."""
 
 import asyncio
-from copy import deepcopy
-import os
-import random
-from types import SimpleNamespace
 from typing import Callable
-from datasets import load_dataset
 from dspy import Module
 import dspy
-from dspy.datasets import DataLoader
 from agentscope import logger
-from agentscope.formatter._openai_formatter import OpenAIChatFormatter
-from agentscope.message._message_base import Msg
-from agentscope.model._dashscope_model import DashScopeChatModel
 from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
-from agentscope.agent import ReActAgent
+from agentscope.tuner._workflow import WorkflowType
 
 from dspy.predict.predict import Predict
 
@@ -53,9 +44,10 @@ class OptimizablePrompt(Predict):
             NotImplementedError: Always raised as this is a wrapper class.
         """
         raise NotImplementedError(
-            "OptimizableAgent is a wrapper, not callable")
+            "OptimizableAgent is a wrapper, not callable",
+        )
 
-    def _sync_instruction(self):
+    def _sync_instruction(self) -> None:
         """Sync instruction from DSPy signature to internal state."""
         self.instructions = self.signature.instructions
         self._sys_prompt = self.instructions
@@ -76,7 +68,11 @@ class WorkflowWrapperModule(Module):
         predictor: The OptimizableAgent wrapping the system prompt.
     """
 
-    def __init__(self, workflow: Callable[[str], WorkflowType], init_prompt: str):
+    def __init__(
+        self,
+        workflow: Callable[[str], WorkflowType],
+        init_prompt: str,
+    ):
         """Initialize the WorkflowWrapperModule.
 
         Args:
@@ -90,7 +86,11 @@ class WorkflowWrapperModule(Module):
 
         self.predictor = OptimizablePrompt(self._init_prompt)
 
-    def _set_chatmodel(self, model: ChatModelBase, auxiliary_models: dict[str, ChatModelBase]):
+    def _set_chatmodel(
+        self,
+        model: ChatModelBase,
+        auxiliary_models: dict[str, ChatModelBase],
+    ):
         """Set the chat models for workflow execution.
 
         Args:
@@ -113,12 +113,20 @@ class WorkflowWrapperModule(Module):
         current_prompt = self.predictor.get_current_prompt()
 
         async def _workflow():
-            return await self._workflow(current_prompt)(inp, self._model, self._auxiliary_models)
+            return await self._workflow(current_prompt)(
+                inp,
+                self._model,
+                self._auxiliary_models,
+            )
 
         result = asyncio.run(_workflow())
 
         if result.reward:
             logger.warning(
-                "reward in workflow output will be ignored, use separate judge function")
+                (
+                    "reward in workflow output will be ignored,"
+                    "use separate judge function"
+                ),
+            )
 
         return result.response

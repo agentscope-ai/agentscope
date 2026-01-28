@@ -1,6 +1,7 @@
+# -*- coding: utf-8 -*-
 """Configuration module for prompt tuning."""
 
-from typing import Any, Optional, Literal
+from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -17,6 +18,7 @@ class PromptTuneConfig(BaseModel):
         compare_performance: Whether to compare performance before and after
             tuning.
     """
+
     lm_model_name: str = Field(
         default="dashscope/qwen-plus",
         description="The model name for prompt proposer.",
@@ -24,7 +26,7 @@ class PromptTuneConfig(BaseModel):
 
     optimization_level: Optional[Literal["light", "medium", "heavy"]] = Field(
         default="light",
-        description="Optimization level, can be 'light', 'medium', or 'heavy'.",
+        description="Optimization level, can be light, medium, or heavy.",
     )
 
     eval_display_progress: bool = Field(

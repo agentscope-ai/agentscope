@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Example of tuning a ReAct agent on GSM8K with Prompt Tuning."""
 
 import os
@@ -8,12 +9,24 @@ from agentscope.model._dashscope_model import DashScopeChatModel
 from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._dataset import DatasetConfig
 from agentscope.tuner._judge import JudgeOutput
-from agentscope.tuner._workflow import WorkflowOutput
+from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
 from agentscope.tuner.prompt_tune.config import PromptTuneConfig
 from agentscope.tuner.prompt_tune.tune_prompt import tune_prompt
 
 
-def workflow(sys_prompt: str):
+def workflow(sys_prompt: str) -> WorkflowType:
+    """
+    Create a workflow function that uses the ReAct agent with a given
+    system prompt.
+
+    Args:
+        sys_prompt (str): The system prompt to use for the ReAct agent.
+
+    Returns:
+        WorkflowType: A workflow function that takes task, model,
+            and auxiliary_models as arguments and returns a WorkflowOutput.
+    """
+
     async def run_react_agent(
         task: dict,
         model: ChatModelBase,
@@ -34,13 +47,13 @@ def workflow(sys_prompt: str):
         assert (
             len(auxiliary_models) == 0
         ), "No auxiliary models are used in this workflow."
-        
+
         from agentscope.tool import (
             Toolkit,
             execute_python_code,
         )
-        
-        toolkit=Toolkit()
+
+        toolkit = Toolkit()
         toolkit.register_tool_function(execute_python_code)
         agent = ReActAgent(
             name="react_agent",
@@ -106,7 +119,6 @@ async def gsm8k_judge(
 
 
 if __name__ == "__main__":
-
     init_prompt = (
         "You are an agent."
         "Please solve the math problem given to you with python code."
@@ -128,21 +140,14 @@ if __name__ == "__main__":
             split="",
         ),
         model=DashScopeChatModel(
-            "qwen-flash", api_key=os.environ['DASHSCOPE_API_KEY'], max_tokens=512),
+            "qwen-flash",
+            api_key=os.environ["DASHSCOPE_API_KEY"],
+            max_tokens=512,
+        ),
         config=PromptTuneConfig(
             lm_model_name="dashscope/qwen3-max",
-            optimization_level='medium',
-        )
+            optimization_level="medium",
+        ),
     )
 
     print(f"Optimized prompt: {optimized_prompt}")
-
-
-"""
-2026-01-23 17:58:37,562 | INFO    | tune_prompt:tune_prompt:183 - optimized score: 96.88
-2026-01-23 17:58:37,563 | INFO    | tune_prompt:tune_prompt:191 - improvement: 4.21%
-2026-01-23 17:58:37,563 | INFO    | tune_prompt:tune_prompt:194 - ---------- Optimized Prompt ----------
-2026-01-23 17:58:37,563 | INFO    | tune_prompt:tune_prompt:195 - You are a meticulous math tutor who solves elementary-to-middle-school-level word problems step by step. For each problem, first reason through the narrative to identify the key quantities and relationships. Then, write clear, executable Python code that computes the answer using only integer arithmetic. Finally, present your solution in the format \boxed{answer}, ensuring the answer is an integer and matches the logic of your explanation. Always double-check your reasoning and code before finalizing the boxed result.
-2026-01-23 17:58:37,563 | INFO    | tune_prompt:tune_prompt:196 - --------------------------------------
-Optimized prompt: You are a meticulous math tutor who solves elementary-to-middle-school-level word problems step by step. For each problem, first reason through the narrative to identify the key quantities and relationships. Then, write clear, executable Python code that computes the answer using only integer arithmetic. Finally, present your solution in the format \boxed{answer}, ensuring the answer is an integer and matches the logic of your explanation. Always double-check your reasoning and code before finalizing the boxed result.
-"""
