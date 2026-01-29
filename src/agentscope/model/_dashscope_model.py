@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The dashscope API model classes."""
 import collections
+import json
+import os
 import warnings
 from datetime import datetime
 from http import HTTPStatus
@@ -100,6 +102,25 @@ class DashScopeChatModel(ChatModelBase):
 
             dashscope.base_http_api_url = base_http_api_url
 
+        # Load headers from environment variable if exists
+        headers = os.getenv("DASHSCOPE_API_HEADERS")
+        if headers:
+            try:
+                headers = json.loads(str(headers))
+                if not isinstance(headers, dict):
+                    raise json.JSONDecodeError("", "", 0)
+
+                if self.generate_kwargs.get("headers"):
+                    headers.update(self.generate_kwargs["headers"])
+
+                self.generate_kwargs["headers"] = headers
+
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Failed to parse DASHSCOPE_API_HEADERS environment "
+                    "variable as JSON. It should be a JSON object.",
+                )
+
     @trace_llm
     async def __call__(
         self,
@@ -151,15 +172,6 @@ class DashScopeChatModel(ChatModelBase):
                 for more detailed arguments.
         """
         import dashscope
-
-        # For qvq and qwen-vl models, the content field cannot be `None` or
-        # `[{"text": None}]`, so we need to convert it to an empty list.
-        if self.model_name.startswith("qvq") or "-vl" in self.model_name:
-            for msg in messages:
-                if msg["content"] is None or msg["content"] == [
-                    {"text": None},
-                ]:
-                    msg["content"] = []
 
         kwargs = {
             "messages": messages,

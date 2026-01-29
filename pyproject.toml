@@ -98,10 +98,15 @@ docx-reader = [
     "agentscope[text-reader]",
     "python-docx"
 ]
+excel-reader = [
+    "pandas",
+    "openpyxl",
+]
 readers = [
     "agentscope[text-reader]",
     "agentscope[pdf-reader]",
     "agentscope[docx-reader]",
+    "agentscope[excel-reader]",
 ]
 
 # vdb
