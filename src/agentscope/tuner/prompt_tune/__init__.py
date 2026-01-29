@@ -4,8 +4,8 @@
 This module provides functionality for automatic prompt optimization.
 """
 
-from .config import PromptTuneConfig
-from .tune_prompt import tune_prompt
+from ._config import PromptTuneConfig
+from ._tune_prompt import tune_prompt
 
 __all__ = [
     "PromptTuneConfig",

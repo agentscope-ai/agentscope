@@ -16,8 +16,8 @@ from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import check_judge_function
 from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
-from agentscope.tuner.prompt_tune.config import PromptTuneConfig
-from agentscope.tuner.prompt_tune.wrapper import WorkflowWrapperModule
+from agentscope.tuner.prompt_tune._config import PromptTuneConfig
+from agentscope.tuner.prompt_tune._wrapper import WorkflowWrapperModule
 
 
 def wrap_judge_fn(judge_fn: JudgeType):
