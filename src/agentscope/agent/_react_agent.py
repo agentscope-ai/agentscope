@@ -528,7 +528,7 @@ class ReActAgent(ReActAgentBase):
         if self._static_control:
             await self.long_term_memory.record(
                 [
-                    await self.memory.get_memory(
+                    *await self.memory.get_memory(
                         exclude_mark=_MemoryMark.COMPRESSED,
                     ),
                 ],
