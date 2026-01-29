@@ -527,11 +527,9 @@ class ReActAgent(ReActAgentBase):
         # Post-process the memory, long-term memory
         if self._static_control:
             await self.long_term_memory.record(
-                [
-                    *await self.memory.get_memory(
-                        exclude_mark=_MemoryMark.COMPRESSED,
-                    ),
-                ],
+                await self.memory.get_memory(
+                    exclude_mark=_MemoryMark.COMPRESSED,
+                ),
             )
 
         return reply_msg
