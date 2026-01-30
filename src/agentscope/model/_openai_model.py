@@ -549,11 +549,12 @@ class OpenAIChatModel(ChatModelBase):
                     ),
                 )
 
-            if choice.message.content:
+            if choice.message.content is not None:
                 content_blocks.append(
                     TextBlock(
                         type="text",
                         text=response.choices[0].message.content,
+                        finish_reason=response.choices[0].finish_reason,
                     ),
                 )
             if choice.message.audio:
