@@ -407,7 +407,6 @@ Taking OpenAIFormatter as an example, we first calculate the total number of tok
  .. code-block:: none
 
     PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
-    Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
     The tokens in the formatted messages are:  154
 
 
@@ -506,7 +505,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.676 seconds)
+   **Total running time of the script:** (0 minutes 2.806 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_prompt.py:

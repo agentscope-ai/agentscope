@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student currently trying to navigate my way through college. I love reading, and I'm really into science fiction and fantasy. When I'm not studying, you can usually find me with a book in hand or exploring new places around the city. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, also a student. I'm pretty into technology and coding, and I spend a lot of my free time working on little projects or learning new programming languages. I also enjoy playing video games and occasionally getting out to hike. It's great to meet you!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm also a student. I have a passion for music and play the guitar in a local band. When I'm not jamming with my friends or studying, I like to get involved in community service projects. It's cool to meet you both!
+    Alice: Hi there! I'm Alice, a student who's really into literature and art. I love spending my free time reading or trying to paint something new. How about you?
+    Bob: Hey Alice, nice to meet you! I'm Bob. I'm also a student, and I'm pretty into sports and technology. When I'm not studying, you'll probably find me on the basketball court or tinkering with some gadgets. It's cool that you're into literature and art; those are such creative fields!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I have a bit of a mixed bag of interests; I love both playing video games and exploring the outdoors. It's great to meet you both! Alice, your art and literature sound fascinating, and Bob, your tech and sports hobbies are really cool. What are some of your favorite books or gadgets?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student currently trying to navigate my way through college. I love reading, and I'm really into science fiction and fantasy. When I'm not studying, you can usually find me with a book in hand or exploring new places around the city. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, also a student. I'm pretty into technology and coding, and I spend a lot of my free time working on little projects or learning new programming languages. I also enjoy playing video games and occasionally getting out to hike. It's great to meet you!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm also a student. I have a passion for music and play the guitar in a local band. When I'm not jamming with my friends or studying, I like to get involved in community service projects. It's cool to meet you both!
+    Alice: Hi there! I'm Alice, a student who's really into literature and art. I love spending my free time reading or trying to paint something new. How about you?
+    Bob: Hey Alice, nice to meet you! I'm Bob. I'm also a student, and I'm pretty into sports and technology. When I'm not studying, you'll probably find me on the basketball court or tinkering with some gadgets. It's cool that you're into literature and art; those are such creative fields!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I have a bit of a mixed bag of interests; I love both playing video games and exploring the outdoors. It's great to meet you both! Alice, your art and literature sound fascinating, and Bob, your tech and sports hobbies are really cool. What are some of your favorite books or gadgets?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 20.235 seconds)
+   **Total running time of the script:** (0 minutes 9.448 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

@@ -192,9 +192,11 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personal experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy a more personalized stay, and even connect with friendly hosts who can provide insider tips about the city.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and get insider tips from your hosts about hidden gems in the city.
 
-    If you're planning another trip to Hangzhou and looking for recommendations or tips on finding great homestays, I'd be happy to help. Would you like suggestions on popular neighborhoods, booking platforms, or what to look for in a homestay?
+    If you're looking for recommendations or tips on finding great homestays in Hangzhou, I can help with that. For example, many travelers love staying near **West Lake (Xi Hu)**, as it’s close to the city's main attractions and offers beautiful scenery. Alternatively, areas like **Hefang Street** or **Lingyin Temple** also provide unique experiences with access to historical sites and traditional tea houses.
+
+    Would you like suggestions on specific homestay options, neighborhoods, or things to do while staying in a homestay?
 
 
 
@@ -230,7 +232,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You prefer staying in homestays, especially enjoying the experience of living in民宿 (homestays) in Hangzhou.
+    Friday: You prefer staying in homestays when traveling to Hangzhou.
 
 
 
@@ -532,7 +534,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 33.612 seconds)
+   **Total running time of the script:** (0 minutes 37.270 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

@@ -347,12 +347,12 @@
 <span class="sd">&quot;&quot;&quot;The Word reader to read and chunk Word documents.&quot;&quot;&quot;</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">base64</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">TYPE_CHECKING</span>
 
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">._reader_base</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReaderBase</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">._text_reader</span><span class="w"> </span><span class="kn">import</span> <span class="n">TextReader</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">._utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">_table_to_json</span><span class="p">,</span> <span class="n">_table_to_markdown</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">.._document</span><span class="w"> </span><span class="kn">import</span> <span class="n">Document</span><span class="p">,</span> <span class="n">DocMetadata</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">..._logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">...message</span><span class="w"> </span><span class="kn">import</span> <span class="n">ImageBlock</span><span class="p">,</span> <span class="n">Base64Source</span><span class="p">,</span> <span class="n">TextBlock</span>
@@ -553,7 +553,7 @@
 <span class="sd">    Word documents (.docx files), and chunking the text content into smaller</span>
 <span class="sd">    pieces.</span>
 
-<span class="sd">    .. note:: The table content is extracted in Markdown format.</span>
+<span class="sd">    .. note:: The table content can be extracted in Markdown or JSON format.</span>
 
 <span class="sd">    &quot;&quot;&quot;</span>
 
@@ -765,9 +765,9 @@
                 <span class="n">table_data</span> <span class="o">=</span> <span class="n">_extract_table_data</span><span class="p">(</span><span class="n">Table</span><span class="p">(</span><span class="n">element</span><span class="p">,</span> <span class="n">doc</span><span class="p">))</span>
 
                 <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">table_format</span> <span class="o">==</span> <span class="s2">&quot;markdown&quot;</span><span class="p">:</span>
-                    <span class="n">text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_table_to_markdown</span><span class="p">(</span><span class="n">table_data</span><span class="p">)</span>
+                    <span class="n">text</span> <span class="o">=</span> <span class="n">_table_to_markdown</span><span class="p">(</span><span class="n">table_data</span><span class="p">)</span>
                 <span class="k">else</span><span class="p">:</span>
-                    <span class="n">text</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_table_to_json</span><span class="p">(</span><span class="n">table_data</span><span class="p">)</span>
+                    <span class="n">text</span> <span class="o">=</span> <span class="n">_table_to_json</span><span class="p">(</span><span class="n">table_data</span><span class="p">)</span>
 
                 <span class="c1"># For current table block:</span>
                 <span class="c1"># |   separate_table   |  True  | False  |</span>
@@ -789,62 +789,6 @@
                 <span class="n">last_type</span> <span class="o">=</span> <span class="s2">&quot;table&quot;</span>
 
         <span class="k">return</span> <span class="n">blocks</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_table_to_markdown</span><span class="p">(</span><span class="n">table_data</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert table data to Markdown format.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            table_data (`list[list[str]]`):</span>
-<span class="sd">                Table data represented as a 2D list.</span>
-
-<span class="sd">        Returns:</span>
-<span class="sd">            `str`:</span>
-<span class="sd">                Table in Markdown format.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">if</span> <span class="ow">not</span> <span class="n">table_data</span><span class="p">:</span>
-            <span class="k">return</span> <span class="s2">&quot;&quot;</span>
-
-        <span class="n">num_cols</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">table_data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-        <span class="n">md_table</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-
-        <span class="c1"># Header row</span>
-        <span class="n">header_row</span> <span class="o">=</span> <span class="s2">&quot;| &quot;</span> <span class="o">+</span> <span class="s2">&quot; | &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">table_data</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">+</span> <span class="s2">&quot; |</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="n">md_table</span> <span class="o">+=</span> <span class="n">header_row</span>
-
-        <span class="c1"># Separator row</span>
-        <span class="n">separator_row</span> <span class="o">=</span> <span class="s2">&quot;| &quot;</span> <span class="o">+</span> <span class="s2">&quot; | &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s2">&quot;---&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">num_cols</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; |</span><span class="se">\n</span><span class="s2">&quot;</span>
-        <span class="n">md_table</span> <span class="o">+=</span> <span class="n">separator_row</span>
-
-        <span class="c1"># Data rows</span>
-        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">table_data</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
-            <span class="n">data_row</span> <span class="o">=</span> <span class="s2">&quot;| &quot;</span> <span class="o">+</span> <span class="s2">&quot; | &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">row</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; |</span><span class="se">\n</span><span class="s2">&quot;</span>
-            <span class="n">md_table</span> <span class="o">+=</span> <span class="n">data_row</span>
-
-        <span class="k">return</span> <span class="n">md_table</span>
-
-    <span class="nd">@staticmethod</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">_table_to_json</span><span class="p">(</span><span class="n">table_data</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert table data to JSON string.</span>
-
-<span class="sd">        Args:</span>
-<span class="sd">            table_data (`list[list[str]]`):</span>
-<span class="sd">                Table data represented as a 2D list.</span>
-
-<span class="sd">        Returns:</span>
-<span class="sd">            `str`:</span>
-<span class="sd">                Table in JSON string format.</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="n">json_strs</span> <span class="o">=</span> <span class="p">[</span>
-            <span class="s2">&quot;&lt;system-info&gt;A table loaded as a JSON array:&lt;/system-info&gt;&quot;</span><span class="p">,</span>
-        <span class="p">]</span>
-
-        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">table_data</span><span class="p">:</span>
-            <span class="n">json_strs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
-                <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">row</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">),</span>
-            <span class="p">)</span>
-
-        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">json_strs</span><span class="p">)</span>
 
 <div class="viewcode-block" id="WordReader.get_doc_id">
 <a class="viewcode-back" href="../../../../api/agentscope.rag.html#agentscope.rag.WordReader.get_doc_id">[docs]</a>
