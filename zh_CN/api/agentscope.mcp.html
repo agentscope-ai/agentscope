@@ -359,7 +359,7 @@ the MCP servers.</p>
 <p>An MCP tool function class that can be called directly.</p>
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.mcp.MCPToolFunction.__init__">
-<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mcp_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_gen</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_mcp_function.html#MCPToolFunction.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.MCPToolFunction.__init__" title="Link to this definition">¶</a></dt>
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mcp_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tool</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">client_gen</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">session</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_mcp_function.html#MCPToolFunction.__init__"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.MCPToolFunction.__init__" title="Link to this definition">¶</a></dt>
 <dd><p>Initialize the MCP function.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -369,6 +369,7 @@ the MCP servers.</p>
 <li><p><strong>wrap_tool_result</strong> (<em>bool</em>)</p></li>
 <li><p><strong>client_gen</strong> (<em>Callable</em><em>[</em><em>[</em><em>...</em><em>]</em><em>, </em><em>_AsyncGeneratorContextManager</em><em>[</em><em>Any</em><em>]</em><em>] </em><em>| </em><em>None</em>)</p></li>
 <li><p><strong>session</strong> (<em>ClientSession</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>float</em><em> | </em><em>None</em>)</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回类型<span class="colon">:</span></dt>
@@ -522,7 +523,7 @@ your application is done.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.mcp.StatefulClientBase.get_callable_function">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_callable_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">func_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_stateful_client_base.html#StatefulClientBase.get_callable_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.StatefulClientBase.get_callable_function" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_callable_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">func_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">execution_timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_stateful_client_base.html#StatefulClientBase.get_callable_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.StatefulClientBase.get_callable_function" title="Link to this definition">¶</a></dt>
 <dd><p>Get an async tool function from the MCP server by its name, so
 that you can call it directly, wrap it into your own function, or
 anyway you like.</p>
@@ -538,6 +539,7 @@ supported in this function.</p>
 <li><p><strong>wrap_tool_result</strong> (<cite>bool</cite>) -- Whether to wrap the tool result into agentscope's
 <cite>ToolResponse</cite> object. If <cite>False</cite>, the raw result type
 <cite>mcp.types.CallToolResult</cite> will be returned.</p></li>
+<li><p><strong>execution_timeout</strong> (<cite>float | None</cite>, optional) -- The preset timeout in seconds for calling the tool function.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回<span class="colon">:</span></dt>
@@ -663,7 +665,7 @@ HTTP client.</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="agentscope.mcp.HttpStatelessClient.get_callable_function">
-<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_callable_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">func_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_http_stateless_client.html#HttpStatelessClient.get_callable_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.HttpStatelessClient.get_callable_function" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="pre">async</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">get_callable_function</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">func_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_tool_result</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">execution_timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/agentscope/mcp/_http_stateless_client.html#HttpStatelessClient.get_callable_function"><span class="viewcode-link"><span class="pre">[源代码]</span></span></a><a class="headerlink" href="#agentscope.mcp.HttpStatelessClient.get_callable_function" title="Link to this definition">¶</a></dt>
 <dd><p>Get a tool function by its name.</p>
 <dl class="field-list simple">
 <dt class="field-odd">参数<span class="colon">:</span></dt>
@@ -672,6 +674,7 @@ HTTP client.</p></li>
 <li><p><strong>wrap_tool_result</strong> (<cite>bool</cite>, defaults to <cite>True</cite>) -- Whether to wrap the tool result into agentscope's
 <cite>ToolResponse</cite> object. If <cite>False</cite>, the raw result type
 <cite>mcp.types.CallToolResult</cite> will be returned.</p></li>
+<li><p><strong>execution_timeout</strong> (<cite>float | None</cite>, optional) -- The preset timeout in seconds for calling the tool function.</p></li>
 </ul>
 </dd>
 <dt class="field-even">返回<span class="colon">:</span></dt>

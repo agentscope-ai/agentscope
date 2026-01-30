@@ -363,6 +363,7 @@
     <span class="n">Awaitable</span><span class="p">,</span>
 <span class="p">)</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">mcp</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">shortuuid</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">BaseModel</span><span class="p">,</span>
@@ -1085,6 +1086,16 @@
                 <span class="c1"># When `tool_func.original_func` is Async generator function or</span>
                 <span class="c1"># Sync function</span>
                 <span class="n">res</span> <span class="o">=</span> <span class="n">tool_func</span><span class="o">.</span><span class="n">original_func</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="n">mcp</span><span class="o">.</span><span class="n">shared</span><span class="o">.</span><span class="n">exceptions</span><span class="o">.</span><span class="n">McpError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="n">ToolResponse</span><span class="p">(</span>
+                <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+                    <span class="n">TextBlock</span><span class="p">(</span>
+                        <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                        <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Error occurred when calling MCP tool: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                    <span class="p">),</span>
+                <span class="p">],</span>
+            <span class="p">)</span>
 
         <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
             <span class="n">res</span> <span class="o">=</span> <span class="n">ToolResponse</span><span class="p">(</span>
