@@ -40,7 +40,11 @@ class MCPToolFunction:
         self.description = tool.description
         self.json_schema = _extract_json_schema_from_mcp_tool(tool)
         self.wrap_tool_result = wrap_tool_result
-        self.timeout = timeout
+
+        if timeout:
+            self.timeout = timedelta(timeout)
+        else:
+            self.timeout = None
 
         # Cannot be None at the same time
         if (
@@ -76,7 +80,7 @@ class MCPToolFunction:
             res = await self.session.call_tool(
                 self.name,
                 arguments=kwargs,
-                read_timeout_seconds=timedelta(seconds=self.timeout),
+                read_timeout_seconds=self.timeout,
             )
 
         if self.wrap_tool_result:
