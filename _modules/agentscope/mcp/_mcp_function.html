@@ -345,6 +345,7 @@
 <span></span><span class="c1"># -*- coding: utf-8 -*-</span>
 <span class="sd">&quot;&quot;&quot;The MCP tool function class in AgentScope.&quot;&quot;&quot;</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">_AsyncGeneratorContextManager</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">mcp</span>
@@ -379,6 +380,7 @@
         <span class="n">client_gen</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">_AsyncGeneratorContextManager</span><span class="p">[</span><span class="n">Any</span><span class="p">]]</span>
         <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
         <span class="n">session</span><span class="p">:</span> <span class="n">ClientSession</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize the MCP function.&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">mcp_name</span> <span class="o">=</span> <span class="n">mcp_name</span>
@@ -386,6 +388,11 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">tool</span><span class="o">.</span><span class="n">description</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">json_schema</span> <span class="o">=</span> <span class="n">_extract_json_schema_from_mcp_tool</span><span class="p">(</span><span class="n">tool</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">wrap_tool_result</span> <span class="o">=</span> <span class="n">wrap_tool_result</span>
+
+        <span class="k">if</span> <span class="n">timeout</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timeout</span> <span class="o">=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">timeout</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timeout</span> <span class="o">=</span> <span class="kc">None</span>
 
         <span class="c1"># Cannot be None at the same time</span>
         <span class="k">if</span> <span class="p">(</span>
@@ -417,12 +424,14 @@
                     <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">call_tool</span><span class="p">(</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
                         <span class="n">arguments</span><span class="o">=</span><span class="n">kwargs</span><span class="p">,</span>
+                        <span class="n">read_timeout_seconds</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">timeout</span><span class="p">,</span>
                     <span class="p">)</span>
 
         <span class="k">else</span><span class="p">:</span>
             <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">call_tool</span><span class="p">(</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
                 <span class="n">arguments</span><span class="o">=</span><span class="n">kwargs</span><span class="p">,</span>
+                <span class="n">read_timeout_seconds</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">timeout</span><span class="p">,</span>
             <span class="p">)</span>
 
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">wrap_tool_result</span><span class="p">:</span>

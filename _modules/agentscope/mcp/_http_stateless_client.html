@@ -447,6 +447,7 @@
         <span class="bp">self</span><span class="p">,</span>
         <span class="n">func_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
         <span class="n">wrap_tool_result</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">execution_timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Awaitable</span><span class="p">[</span><span class="n">mcp</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">CallToolResult</span> <span class="o">|</span> <span class="n">ToolResponse</span><span class="p">]]:</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;Get a tool function by its name.</span>
 
@@ -457,6 +458,8 @@
 <span class="sd">                Whether to wrap the tool result into agentscope&#39;s</span>
 <span class="sd">                `ToolResponse` object. If `False`, the raw result type</span>
 <span class="sd">                `mcp.types.CallToolResult` will be returned.</span>
+<span class="sd">            execution_timeout (`float | None`, optional):</span>
+<span class="sd">                The preset timeout in seconds for calling the tool function.</span>
 
 <span class="sd">        Returns:</span>
 <span class="sd">            `Callable[..., Awaitable[mcp.types.CallToolResult | \</span>
@@ -484,6 +487,7 @@
             <span class="n">tool</span><span class="o">=</span><span class="n">target_tool</span><span class="p">,</span>
             <span class="n">wrap_tool_result</span><span class="o">=</span><span class="n">wrap_tool_result</span><span class="p">,</span>
             <span class="n">client_gen</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">get_client</span><span class="p">,</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="n">execution_timeout</span><span class="p">,</span>
         <span class="p">)</span></div>
 
 
