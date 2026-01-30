@@ -546,19 +546,19 @@ class RedisMemoryTest(ShortTermMemoryTest):
         self.memory = RedisMemory(
             user_id="user_1",
             session_id="session_1",
-            connection_pool=fake_redis.connection_pool,
+            redis_client=fake_redis,
         )
 
         self.memory_session = RedisMemory(
             user_id="user_1",
             session_id="session_2",
-            connection_pool=fake_redis.connection_pool,
+            redis_client=fake_redis,
         )
 
         self.memory_user = RedisMemory(
             user_id="user_2",
             session_id="session_2",
-            connection_pool=fake_redis.connection_pool,
+            redis_client=fake_redis,
         )
 
     async def test_memory(self) -> None:
