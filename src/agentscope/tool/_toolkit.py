@@ -33,7 +33,7 @@ from ._async_wrapper import (
 )
 from ._response import ToolResponse
 from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
-from .._utils._common import _parse_tool_function
+from .._utils._common import _parse_tool_function, _validate_function_schema
 from ..mcp import (
     MCPToolFunction,
     MCPClientBase,
@@ -202,6 +202,116 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             if self.tools[tool_name].group in group_names:
                 self.tools.pop(tool_name)
 
+    def is_external_tool_function(self, name: str) -> bool:
+        """Check if a tool function is an external tool function.
+
+        Args:
+            name (`str`):
+                The tool function name.
+        """
+        if name in self.tools:
+            return self.tools[name].original_func is None
+
+        return False
+
+    def register_external_tool_function(
+        self,
+        json_schema: dict,
+        group_name: str | Literal["basic"] = "basic",
+        preset_kwargs: dict[str, JSONSerializableObject] | None = None,
+    ) -> None:
+        """Register an external function that doesn't execute on the agent side.
+        For example, the frontend tool function or user-side tool function.
+        In such case, the agent only needs to know the function schema, and
+        within the ReActAgent class, the tool call will be returned from the
+        reply directly without execution.
+
+        Args:
+            json_schema (`dict`):
+                The function JSON schema.
+            group_name (`str | Literal["basic"]`, defaults to `"basic"`):
+                The belonging group of the tool function. Tools in "basic"
+                group is always included in the JSON schema, while the others
+                are only included when their group is active.
+            preset_kwargs (`dict[str, JSONSerializableObject] | None`, \
+            optional):
+                Preset arguments by the user, which will not be included in
+                the JSON schema, nor exposed to the agent.
+
+        Example:
+
+            .. code-block:: python
+                :caption: Example of registering an external tool function
+
+                from agentscope.tool import Toolkit
+
+                toolkit = Toolkit()
+                toolkit.register_external_tool_function(
+                    json_schema={
+                        "type": "function",
+                        "function": {
+                            "name": "open_website",
+                            "description": "Open a website in the browser.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {
+                                        "type": "string",
+                                        "description": "The URL of the website to open."
+                                    }
+                                },
+                                "required": ["url"]
+                            }
+                        }
+                    }
+                )
+
+        """
+        # Arguments checking
+        _validate_function_schema(json_schema)
+
+        name = json_schema["function"]["name"]
+
+        func_obj = RegisteredToolFunction(
+            name=name,
+            group=group_name,
+            source="function",
+            original_function=None,
+            json_schema=json_schema,
+            preset_kwargs=preset_kwargs,
+        )
+
+        self.tools[name] = func_obj
+
+    def is_external_tool_function(self, tool_call: str | ToolUseBlock) -> bool:
+        """Check if a tool function is an external tool function.
+
+        Args:
+            tool_call (`str | ToolUseBlock`):
+                The tool function name or tool call block.
+
+        Returns:
+            `bool`:
+                Whether the tool function is an external tool function. Note
+                that if the tool function is not found in the toolkit, it
+                will also return `False`.
+        """
+        if isinstance(tool_call, str):
+            tool_name = tool_call
+        elif isinstance(tool_call, dict) and "name" in tool_call:
+            tool_name = tool_call["name"]
+        else:
+            raise ValueError(
+                f"Invalid tool_call: {tool_call}. It must be a string "
+                "or a ToolUseBlock.",
+            )
+
+        if tool_name in self.tools:
+            return self.tools[tool_name].original_func is None
+
+        return False
+
+
     # pylint: disable=too-many-branches, too-many-statements
     def register_tool_function(
         self,
@@ -296,13 +406,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         # Check the manually provided JSON schema if provided
         if json_schema:
-            assert (
-                isinstance(json_schema, dict)
-                and "type" in json_schema
-                and json_schema["type"] == "function"
-                and "function" in json_schema
-                and isinstance(json_schema["function"], dict)
-            ), "Invalid JSON schema for the tool function."
+            _validate_function_schema(json_schema)
 
         # Handle MCP tool function and regular function respectively
         mcp_name = None

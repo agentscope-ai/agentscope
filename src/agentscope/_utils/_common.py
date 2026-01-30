@@ -429,3 +429,36 @@ def _parse_tool_function(
         func_json_schema["function"]["description"] = func_description
 
     return func_json_schema
+
+
+def _validate_function_schema(schema: dict) -> None:
+    """Validate the function schema to ensure it conforms to the expected
+    structure.
+
+    Args:
+        schema (`dict`):
+            The function schema to validate.
+
+    Raises:
+        ValueError: If the schema is invalid.
+    """
+    if isinstance(schema, dict):
+        raise ValueError(
+            f"The schema must be a dictionary, got {type(schema)}."
+        )
+
+    if schema.get("type") != "function":
+        raise ValueError("The schema type must be 'function'.")
+
+    if not isinstance(schema.get("function"), dict):
+        raise ValueError(
+            "The 'function' field must be a dictionary, got "
+            f"{type(schema.get('function'))}."
+        )
+
+    # name field
+    if "name" not in schema["function"]:
+        raise ValueError(
+            "The function schema must have a 'name' field."
+        )
+
