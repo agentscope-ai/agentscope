@@ -2,14 +2,14 @@
 """Wrapper modules for integrating AgentScope agents."""
 
 import asyncio
-from typing import Callable
-from dspy import Module
+from typing import Any, Callable, Optional
+from dspy import Module, Prediction
 import dspy
+from dspy.predict.predict import Predict
+
 from agentscope import logger
 from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._workflow import WorkflowType
-
-from dspy.predict.predict import Predict
+from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
 
 
 class OptimizablePrompt(Predict):
@@ -37,7 +37,7 @@ class OptimizablePrompt(Predict):
         self.instructions = self._sys_prompt
         self.signature.instructions = self.instructions
 
-    def forward(self, **kwargs):
+    def forward(self, **kwargs: Any) -> Prediction:
         """Forward pass is not implemented.
 
         Raises:
@@ -47,7 +47,7 @@ class OptimizablePrompt(Predict):
             "OptimizableAgent is a wrapper, not callable",
         )
 
-    def _sync_instruction(self) -> None:
+    def sync_instruction(self) -> None:
         """Sync instruction from DSPy signature to internal state."""
         self.instructions = self.signature.instructions
         self._sys_prompt = self.instructions
@@ -86,11 +86,14 @@ class WorkflowWrapperModule(Module):
 
         self.predictor = OptimizablePrompt(self._init_prompt)
 
-    def _set_chatmodel(
+        self._model: Optional[ChatModelBase] = None
+        self._auxiliary_models: Optional[dict[str, ChatModelBase]] = None
+
+    def set_chatmodel(
         self,
         model: ChatModelBase,
         auxiliary_models: dict[str, ChatModelBase],
-    ):
+    ) -> None:
         """Set the chat models for workflow execution.
 
         Args:
@@ -100,7 +103,7 @@ class WorkflowWrapperModule(Module):
         self._model = model
         self._auxiliary_models = auxiliary_models
 
-    def forward(self, inp):
+    def forward(self, inp: Any) -> Any:
         """Execute the workflow with the given input.
 
         Args:
@@ -109,10 +112,15 @@ class WorkflowWrapperModule(Module):
         Returns:
             The response message from the workflow execution.
         """
-        self.predictor._sync_instruction()
+        self.predictor.sync_instruction()
         current_prompt = self.predictor.get_current_prompt()
 
-        async def _workflow():
+        if self._model is None or self._auxiliary_models is None:
+            raise ValueError(
+                "Chat models not set. Call set_chatmodel() first.",
+            )
+
+        async def _workflow() -> WorkflowOutput:
             return await self._workflow(current_prompt)(
                 inp,
                 self._model,

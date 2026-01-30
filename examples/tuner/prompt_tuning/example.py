@@ -2,16 +2,16 @@
 """Example of tuning a ReAct agent on GSM8K with Prompt Tuning."""
 
 import os
-from agentscope.agent._react_agent import ReActAgent
-from agentscope.formatter._openai_formatter import OpenAIChatFormatter
-from agentscope.message._message_base import Msg
-from agentscope.model._dashscope_model import DashScopeChatModel
-from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._dataset import DatasetConfig
-from agentscope.tuner._judge import JudgeOutput
-from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
-from agentscope.tuner.prompt_tune.config import PromptTuneConfig
-from agentscope.tuner.prompt_tune.tune_prompt import tune_prompt
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.message import Msg
+from agentscope.model import DashScopeChatModel
+from agentscope.model import ChatModelBase
+from agentscope.tuner import DatasetConfig
+from agentscope.tuner import JudgeOutput
+from agentscope.tuner import WorkflowOutput, WorkflowType
+from agentscope.tuner import PromptTuneConfig
+from agentscope.tuner import tune_prompt
 
 
 def workflow(sys_prompt: str) -> WorkflowType:
