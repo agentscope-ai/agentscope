@@ -2,15 +2,15 @@
 """Prompt tuning functionality using DSPy's MIPROv2 optimizer."""
 
 import os
+import asyncio
 from pathlib import Path
+from typing import Any, Callable, Optional, cast
+import dspy
+from datasets import load_dataset
+
 from agentscope.tuner import (
     DatasetConfig,
 )
-import asyncio
-from typing import Any, Callable, Optional, cast
-
-from datasets import load_dataset
-import dspy
 from agentscope import logger
 from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import check_judge_function
@@ -20,7 +20,7 @@ from agentscope.tuner.prompt_tune._config import PromptTuneConfig
 from agentscope.tuner.prompt_tune._wrapper import WorkflowWrapperModule
 
 
-def wrap_judge_fn(judge_fn: JudgeType):
+def wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
     """Wrap an async judge function into a synchronous callable.
 
     Args:
@@ -34,7 +34,7 @@ def wrap_judge_fn(judge_fn: JudgeType):
         task: dict,
         response: Any,
         auxiliary_models: dict[str, ChatModelBase],
-    ):
+    ) -> float:
         output = await judge_fn(task, response, auxiliary_models)
         return output.reward
 
@@ -42,7 +42,7 @@ def wrap_judge_fn(judge_fn: JudgeType):
         task: dict,
         response: Any,
         auxiliary_models: dict[str, ChatModelBase],
-    ):
+    ) -> float:
         return asyncio.run(inner(task, response, auxiliary_models))
 
     return _sync_wrapper
@@ -105,7 +105,7 @@ def tune_prompt(
     if os.path.exists(train_dataset.path) and _guess_by_ext(
         train_dataset.path,
     ):
-        logger.info(f"loading dataset from file: {train_dataset.path}")
+        logger.info("loading dataset from file: %s", train_dataset.path)
         trainset = load_dataset(
             cast(str, _guess_by_ext(train_dataset.path)),
             data_files=train_dataset.path,
@@ -124,7 +124,7 @@ def tune_prompt(
     module = WorkflowWrapperModule(workflow_func, init_system_prompt)
     # model and auxiliary_models are not necessary for prompt tuning.
     # what about providing a new interface?
-    module._set_chatmodel(model, auxiliary_models)
+    module.set_chatmodel(model, auxiliary_models)
 
     # teacher lm
     lm = dspy.LM(config.lm_model_name)
@@ -156,7 +156,8 @@ def tune_prompt(
             eval_dataset.path,
         ):
             logger.info(
-                f"loading evaluation dataset from file: {eval_dataset.path}",
+                "loading evaluation dataset from file: %s",
+                eval_dataset.path,
             )
             evalset = load_dataset(
                 cast(str, _guess_by_ext(eval_dataset.path)),
@@ -190,12 +191,12 @@ def tune_prompt(
             logger.info("evaluating baseline performance...")
             baseline_res = evaluate(module)
             baseline_score = baseline_res.score
-            logger.info(f"baseline score: {baseline_score}")
+            logger.info("baseline score: %s", baseline_score)
 
         logger.info("evaluating optimized results...")
         eval_res = evaluate(result)
         score = eval_res.score
-        logger.info(f"optimized score: {score}")
+        logger.info("optimized score: %s", score)
 
         if baseline_score is not None:
             improvement = (
@@ -203,7 +204,7 @@ def tune_prompt(
                 if baseline_score != 0
                 else 0
             )
-            logger.info(f"improvement: {improvement:.2f}%")
+            logger.info("improvement: %.2f%%", improvement)
 
     optimized_prompt = result.predictor.get_current_prompt()
     logger.info("---------- Optimized Prompt ----------")
