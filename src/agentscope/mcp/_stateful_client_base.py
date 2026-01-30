@@ -113,6 +113,7 @@ class StatefulClientBase(MCPClientBase, ABC):
         self,
         func_name: str,
         wrap_tool_result: bool = True,
+        execution_timeout: float | None = None,
     ) -> MCPToolFunction:
         """Get an async tool function from the MCP server by its name, so
         that you can call it directly, wrap it into your own function, or
@@ -128,6 +129,8 @@ class StatefulClientBase(MCPClientBase, ABC):
                 Whether to wrap the tool result into agentscope's
                 `ToolResponse` object. If `False`, the raw result type
                 `mcp.types.CallToolResult` will be returned.
+            execution_timeout (`float | None`, optional):
+                The preset timeout in seconds for calling the tool function.
 
         Returns:
             `MCPToolFunction`:
@@ -155,6 +158,7 @@ class StatefulClientBase(MCPClientBase, ABC):
             tool=target_tool,
             wrap_tool_result=wrap_tool_result,
             session=self.session,
+            timeout=execution_timeout,
         )
 
     def _validate_connection(self) -> None:
