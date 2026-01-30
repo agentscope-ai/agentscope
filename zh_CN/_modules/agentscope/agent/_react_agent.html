@@ -882,11 +882,9 @@
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_static_control</span><span class="p">:</span>
             <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">long_term_memory</span><span class="o">.</span><span class="n">record</span><span class="p">(</span>
                 <span class="p">[</span>
-                    <span class="o">*</span><span class="p">([</span><span class="o">*</span><span class="n">msg</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">msg</span><span class="p">]),</span>
                     <span class="o">*</span><span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span>
                         <span class="n">exclude_mark</span><span class="o">=</span><span class="n">_MemoryMark</span><span class="o">.</span><span class="n">COMPRESSED</span><span class="p">,</span>
                     <span class="p">),</span>
-                    <span class="n">reply_msg</span><span class="p">,</span>
                 <span class="p">],</span>
             <span class="p">)</span>
 
