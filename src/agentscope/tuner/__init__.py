@@ -8,6 +8,7 @@ from ._workflow import WorkflowType, WorkflowOutput
 from ._algorithm import AlgorithmConfig
 from ._model import TunerModelConfig
 from ._config import check_judge_function, check_workflow_function
+from .prompt_tune import tune_prompt, PromptTuneConfig
 
 
 __all__ = [
@@ -21,4 +22,6 @@ __all__ = [
     "TunerModelConfig",
     "check_workflow_function",
     "check_judge_function",
+    "tune_prompt",
+    "PromptTuneConfig",
 ]
