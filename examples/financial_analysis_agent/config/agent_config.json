@@ -1,0 +1,66 @@
+{
+  "model": {
+    "config_name": "gpt-4",
+    "model": "gpt-4",
+    "api_key": "${OPENAI_API_KEY}",
+    "stream": true,
+    "temperature": 0.7,
+    "max_tokens": 4000
+  },
+  "tools": {
+    "enable_builtin": true,
+    "enable_mcp": true,
+    "enable_skills": true,
+    "enable_a2a": true
+  },
+  "a2a": {
+    "enabled": true,
+    "auto_register": true,
+    "agent_id": "financial_analyst",
+    "group": "financial_services",
+    "capabilities": [
+      "financial_analysis",
+      "risk_assessment", 
+      "report_generation",
+      "data_collection"
+    ]
+  },
+  "mcp": {
+    "enabled": true,
+    "auto_register_tools": true,
+    "timeout": 30,
+    "retry_count": 3
+  },
+  "skills": {
+    "enabled": true,
+    "auto_load": true,
+    "skill_timeout": 60
+  },
+  "prompts": {
+    "enabled": true,
+    "template_dir": "prompts",
+    "default_language": "zh",
+    "cache_templates": true
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/financial_agent.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "max_file_size": "10MB",
+    "backup_count": 5
+  },
+  "performance": {
+    "enable_monitoring": true,
+    "cache_results": true,
+    "cache_duration": 1800,
+    "enable_profiling": false
+  },
+  "security": {
+    "enable_validation": true,
+    "max_concurrent_requests": 10,
+    "rate_limit": {
+      "enabled": false,
+      "requests_per_minute": 100
+    }
+  }
+}
