@@ -40,7 +40,6 @@ _config = _ConfigCls(
     ),
 )
 
-
 from . import exception
 from . import module
 from . import message
@@ -57,6 +56,7 @@ from . import pipeline
 from . import tracing
 from . import rag
 from . import a2a
+from . import realtime
 
 from ._logging import (
     logger,

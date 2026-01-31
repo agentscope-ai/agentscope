@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Agent - Protocol Client</title>
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: #12121a;
+            --border: #1e1e2e;
+            --text: #e0e0e0;
+            --text-muted: #888;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.connected { background: var(--success); }
+        .status-dot.recording { background: var(--danger); animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            padding: 24px;
+            gap: 24px;
+        }
+
+        .messages {
+            flex: 1;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 60vh;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            padding: 12px 16px;
+            border-radius: 12px;
+            max-width: 80%;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .message.user {
+            background: var(--accent);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant {
+            background: #1a1a2e;
+            border: 1px solid var(--border);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.system {
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 12px;
+            text-align: center;
+            align-self: center;
+        }
+
+        .message.error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            border-radius: 12px;
+            border: none;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .btn-outline:hover:not(:disabled) {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .events-log {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px;
+        }
+
+        .event-item {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+        }
+
+        .event-item:last-child {
+            border-bottom: none;
+        }
+
+        .event-type {
+            color: var(--accent);
+            font-weight: 500;
+            min-width: 200px;
+        }
+
+        .event-data {
+            color: var(--text-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 16px;
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        /* Text input styles */
+        .text-input-container {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .text-input {
+            flex: 1;
+            padding: 14px 18px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--bg-card);
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .text-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .text-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .text-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-send {
+            padding: 14px 24px;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-send:hover:not(:disabled) {
+            background: var(--accent-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎙️ Voice Agent</h1>
+        <div class="status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="messages" id="messages">
+            <div class="message system">Click "Connect" to start</div>
+        </div>
+
+        <!-- Text Input -->
+        <div class="text-input-container">
+            <input type="text" class="text-input" id="textInput"
+                   placeholder="Type a message..."
+                   onkeypress="handleTextKeypress(event)" disabled>
+            <button class="btn-send" id="sendBtn" onclick="sendText()" disabled>
+                Send
+            </button>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-primary" id="connectBtn" onclick="connect()">
+                🔌 Connect
+            </button>
+            <button class="btn btn-danger" id="recordBtn" onclick="toggleRecording()" disabled>
+                🎤 Start Recording
+            </button>
+            <button class="btn btn-outline" id="cameraBtn" onclick="toggleCamera()" disabled>
+                📷 Start Camera
+            </button>
+            <button class="btn btn-outline" id="cancelBtn" onclick="cancelResponse()" disabled>
+                ⏹️ Cancel
+            </button>
+        </div>
+
+        <!-- Camera Preview -->
+        <div id="cameraContainer" style="display: none; margin-top: 16px; text-align: center;">
+            <video id="cameraPreview" autoplay muted playsinline style="
+                max-width: 320px;
+                border-radius: 12px;
+                border: 2px solid var(--border);
+            "></video>
+            <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">
+                📸 Sending 1 frame per second
+            </div>
+        </div>
+
+        <!-- Session Config Panel -->
+        <details style="margin-top: 16px;">
+            <summary style="color: var(--text-muted); cursor: pointer; margin-bottom: 8px;">
+                ⚙️ Session Config
+            </summary>
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 8px;">
+                <div>
+                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Voice</label>
+                    <select id="configVoice" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-dark); color: var(--text);">
+                        <option value="">-- Keep Current --</option>
+                        <option value="Cherry">Cherry</option>
+                        <option value="Serena">Serena</option>
+                        <option value="Ethan">Ethan</option>
+                        <option value="Chelsie">Chelsie</option>
+                    </select>
+                </div>
+                <div style="margin-top: 12px;">
+                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 4px;">Instructions</label>
+                    <textarea id="configInstructions" rows="2" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-dark); color: var(--text); resize: vertical;" placeholder="Custom instructions for the assistant..."></textarea>
+                </div>
+                <button onclick="updateSessionConfig()" style="margin-top: 12px; padding: 10px 20px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px;" id="updateConfigBtn" disabled>
+                    🔄 Update Config
+                </button>
+            </div>
+        </details>
+
+        <details>
+            <summary style="color: var(--text-muted); cursor: pointer; margin-bottom: 8px;">
+                📋 Event Log
+            </summary>
+            <div class="events-log" id="eventsLog"></div>
+        </details>
+    </div>
+
+    <div class="footer">
+        Protocol: client.* / server.* events | WebSocket | PCM 16kHz
+    </div>
+
+    <script>
+        // State
+        let ws = null;
+        let isConnected = false;
+        let isRecording = false;
+        let recordingContext = null;  // For recording
+        let playbackContext = null;   // For playback
+        let mediaStream = null;
+        let workletNode = null;
+        let sessionId = 'session_' + Date.now();
+
+        // Audio playback
+        let audioQueue = [];
+        let isPlaying = false;
+        let responseComplete = false;  // Response complete (but audio may still be playing)
+
+        // Camera state
+        let isCameraActive = false;
+        let cameraStream = null;
+        let frameInterval = null;
+        let hasAudioSent = false;  // Audio must be sent before images
+
+        // Elements
+        const messagesEl = document.getElementById('messages');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const connectBtn = document.getElementById('connectBtn');
+        const recordBtn = document.getElementById('recordBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const eventsLog = document.getElementById('eventsLog');
+
+        function updateStatus(status, recording = false) {
+            statusDot.className = 'status-dot';
+            if (status === 'connected') {
+                statusDot.classList.add('connected');
+                if (recording) statusDot.classList.add('recording');
+                statusText.textContent = recording ? 'Recording...' : 'Connected';
+            } else {
+                statusText.textContent = status;
+            }
+        }
+
+        function addMessage(text, type = 'system') {
+            const msg = document.createElement('div');
+            msg.className = `message ${type}`;
+            msg.textContent = text;
+            messagesEl.appendChild(msg);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function logEvent(type, data) {
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            item.innerHTML = `
+                <span class="event-type">${type}</span>
+                <span class="event-data">${JSON.stringify(data).slice(0, 100)}</span>
+            `;
+            eventsLog.appendChild(item);
+            eventsLog.scrollTop = eventsLog.scrollHeight;
+        }
+
+        // Generate event ID
+        function generateEventId() {
+            return 'evt_' + Math.random().toString(36).substr(2, 12);
+        }
+
+        // Check if a character is CJK (Chinese, Japanese, Korean)
+        function isCJKChar(char) {
+            if (!char) return false;
+            const code = char.charCodeAt(0);
+            return (
+                (code >= 0x4E00 && code <= 0x9FFF) ||  // CJK Unified Ideographs
+                (code >= 0x3400 && code <= 0x4DBF) ||  // CJK Extension A
+                (code >= 0x3000 && code <= 0x303F) ||  // CJK Symbols and Punctuation
+                (code >= 0xFF00 && code <= 0xFFEF) ||  // Halfwidth and Fullwidth Forms
+                (code >= 0x3040 && code <= 0x309F) ||  // Hiragana
+                (code >= 0x30A0 && code <= 0x30FF) ||  // Katakana
+                (code >= 0xAC00 && code <= 0xD7AF)     // Hangul Syllables
+            );
+        }
+
+        // Send client event
+        function sendEvent(type, data = {}) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const event = {
+                type: type,
+                event_id: generateEventId(),
+                timestamp: Date.now(),
+                ...data
+            };
+
+            ws.send(JSON.stringify(event));
+            logEvent(`→ ${type}`, data);
+        }
+
+        // Connect to WebSocket
+        async function connect() {
+            // If already connected, disconnect
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                sendEvent('client.session.end');
+                ws.close();
+                return;
+            }
+
+            const wsUrl = `ws://${window.location.host}/ws/voice/${sessionId}`;
+            addMessage(`Connecting to ${wsUrl}...`, 'system');
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    isConnected = true;
+                    updateStatus('connected');
+                    addMessage('Connected! Waiting for session...', 'system');
+                    connectBtn.textContent = '🔌 Disconnect';
+                    recordBtn.disabled = false;
+                    document.getElementById('cameraBtn').disabled = false;
+                    document.getElementById('textInput').disabled = false;
+                    document.getElementById('sendBtn').disabled = false;
+                    document.getElementById('updateConfigBtn').disabled = false;
+                };
+
+                ws.onmessage = async (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        await handleServerEvent(data);
+                    } catch (e) {
+                        console.error('Error parsing message:', e);
+                    }
+                };
+
+                ws.onclose = () => {
+                    isConnected = false;
+                    isRecording = false;
+                    updateStatus('Disconnected');
+                    addMessage('Disconnected', 'system');
+                    connectBtn.textContent = '🔌 Connect';
+                    recordBtn.disabled = true;
+                    cancelBtn.disabled = true;
+                    document.getElementById('cameraBtn').disabled = true;
+                    document.getElementById('textInput').disabled = true;
+                    document.getElementById('sendBtn').disabled = true;
+                    document.getElementById('updateConfigBtn').disabled = true;
+                    stopRecording();
+                    stopCamera();  // Stop camera on disconnect
+                    hasAudioSent = false;  // Reset audio sent state
+                };
+
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    addMessage('Connection error', 'error');
+                };
+
+            } catch (error) {
+                addMessage(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Handle server events
+        async function handleServerEvent(event) {
+            const type = event.type;
+            logEvent(`← ${type}`, event);
+
+            switch (type) {
+                case 'server.session.created':
+                    addMessage(`Session created: ${event.session_id}`, 'system');
+                    // Send session update to configure
+                    sendEvent('client.session.update', {
+                        config: {
+                            vad_mode: 'server',
+                            voice: 'Cherry'
+                        }
+                    });
+                    break;
+
+                case 'server.session.updated':
+                    addMessage('Session configured', 'system');
+                    break;
+
+                case 'server.speech.started':
+                    addMessage('🎤 Listening...', 'system');
+                    break;
+
+                case 'server.speech.stopped':
+                    addMessage('Processing...', 'system');
+                    break;
+
+                case 'server.response.started':
+                    cancelBtn.disabled = false;
+                    responseComplete = false;  // New response started
+                    addMessage('🤖 Agent is responding...', 'system');
+                    break;
+
+                case 'server.audio.delta':
+                    // Enable cancel button when receiving audio
+                    cancelBtn.disabled = false;
+                    // Queue audio for playback
+                    if (event.data) {
+                        audioQueue.push(event.data);
+                        if (!isPlaying) {
+                            playAudioQueue();
+                        }
+                    }
+                    break;
+
+                case 'server.text.delta':
+                    // Enable cancel button when receiving text
+                    cancelBtn.disabled = false;
+                    // Update or create assistant message
+                    let lastMsg = messagesEl.querySelector('.message.assistant.streaming');
+                    if (!lastMsg) {
+                        lastMsg = document.createElement('div');
+                        lastMsg.className = 'message assistant streaming';
+                        messagesEl.appendChild(lastMsg);
+                    }
+                    // Strip leading space if previous char is CJK
+                    let textDelta = event.text || '';
+                    const currentText = lastMsg.textContent;
+                    if (currentText && textDelta.startsWith(' ') && isCJKChar(currentText[currentText.length - 1])) {
+                        textDelta = textDelta.trimStart();
+                    }
+                    lastMsg.textContent += textDelta;
+                    messagesEl.scrollTop = messagesEl.scrollHeight;
+                    break;
+
+                case 'server.text.done':
+                case 'server.response.done':
+                    // Finalize streaming message
+                    const streamingMsg = messagesEl.querySelector('.message.assistant.streaming');
+                    if (streamingMsg) {
+                        streamingMsg.classList.remove('streaming');
+                    }
+                    // Mark response complete, but don't disable button yet (audio may still be playing)
+                    responseComplete = true;
+                    // If audio queue is empty, disable immediately
+                    if (audioQueue.length === 0 && !isPlaying) {
+                        cancelBtn.disabled = true;
+                    }
+                    break;
+
+                case 'server.transcript.user':
+                    addMessage(event.text, 'user');
+                    break;
+
+                case 'server.tool.call':
+                    addMessage(`🔧 Tool: ${event.tool_name}`, 'system');
+                    // In real app, execute tool and send result
+                    sendEvent('client.tool.result', {
+                        tool_call_id: event.tool_call_id,
+                        result: { status: 'success' }
+                    });
+                    break;
+
+                case 'server.pong':
+                    // Heartbeat response
+                    break;
+
+                case 'server.error':
+                    addMessage(`Error: ${event.message}`, 'error');
+                    break;
+            }
+        }
+
+        // Audio playback
+        async function playAudioQueue() {
+            if (isPlaying || audioQueue.length === 0) return;
+
+            isPlaying = true;
+
+            try {
+                if (!playbackContext) {
+                    playbackContext = new AudioContext({ sampleRate: 24000 });
+                }
+
+                while (audioQueue.length > 0) {
+                    const base64Data = audioQueue.shift();
+                    const audioBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+
+                    // Convert to Float32 for Web Audio
+                    const int16Data = new Int16Array(audioBytes.buffer);
+                    const float32Data = new Float32Array(int16Data.length);
+                    for (let i = 0; i < int16Data.length; i++) {
+                        float32Data[i] = int16Data[i] / 32768;
+                    }
+
+                    // Create and play buffer
+                    const buffer = playbackContext.createBuffer(1, float32Data.length, 24000);
+                    buffer.getChannelData(0).set(float32Data);
+
+                    const source = playbackContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(playbackContext.destination);
+                    source.start();
+
+                    // Wait for playback
+                    await new Promise(resolve => {
+                        source.onended = resolve;
+                    });
+                }
+            } catch (e) {
+                console.error('Audio playback error:', e);
+            }
+
+            isPlaying = false;
+
+            // Disable Cancel button if response complete and audio finished
+            if (responseComplete && audioQueue.length === 0) {
+                cancelBtn.disabled = true;
+            }
+        }
+
+        // Recording
+        async function toggleRecording() {
+            if (isRecording) {
+                await stopRecording();
+            } else {
+                await startRecording();
+            }
+        }
+
+        async function startRecording() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                recordingContext = new AudioContext({ sampleRate: 16000 });
+                const source = recordingContext.createMediaStreamSource(mediaStream);
+
+                // Load worklet for audio processing
+                await recordingContext.audioWorklet.addModule(
+                    URL.createObjectURL(new Blob([`
+                        class AudioProcessor extends AudioWorkletProcessor {
+                            process(inputs) {
+                                const input = inputs[0][0];
+                                if (input) {
+                                    this.port.postMessage(input);
+                                }
+                                return true;
+                            }
+                        }
+                        registerProcessor('audio-processor', AudioProcessor);
+                    `], { type: 'application/javascript' }))
+                );
+
+                workletNode = new AudioWorkletNode(recordingContext, 'audio-processor');
+                workletNode.port.onmessage = (e) => {
+                    const float32Data = e.data;
+                    // Convert to Int16
+                    const int16Data = new Int16Array(float32Data.length);
+                    for (let i = 0; i < float32Data.length; i++) {
+                        int16Data[i] = Math.max(-32768, Math.min(32767, float32Data[i] * 32768));
+                    }
+                    // Send as base64 with sample rate
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(int16Data.buffer)));
+                    sendEvent('client.audio.append', { data: base64, sample_rate: 16000 });
+                    hasAudioSent = true;  // Mark audio as sent
+                };
+
+                source.connect(workletNode);
+                workletNode.connect(recordingContext.destination);
+
+                isRecording = true;
+                updateStatus('connected', true);
+                recordBtn.textContent = '⏹️ Stop Recording';
+                recordBtn.classList.remove('btn-danger');
+                recordBtn.classList.add('btn-primary');
+
+            } catch (error) {
+                addMessage(`Microphone error: ${error.message}`, 'error');
+            }
+        }
+
+        async function stopRecording() {
+            if (workletNode) {
+                workletNode.disconnect();
+                workletNode = null;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            isRecording = false;
+            updateStatus('connected');
+            recordBtn.textContent = '🎤 Start Recording';
+            recordBtn.classList.remove('btn-primary');
+            recordBtn.classList.add('btn-danger');
+        }
+
+        function cancelResponse() {
+            sendEvent('client.response.cancel');
+            audioQueue = [];
+            cancelBtn.disabled = true;
+
+            // Finalize current streaming message to prevent it from being updated
+            const streamingMsg = messagesEl.querySelector('.message.assistant.streaming');
+            if (streamingMsg) {
+                streamingMsg.classList.remove('streaming');
+            }
+        }
+
+        // =====================
+        // Text Input Functions
+        // =====================
+
+        function sendText() {
+            const textInput = document.getElementById('textInput');
+            const text = textInput.value.trim();
+            if (!text || !isConnected) return;
+
+            // Send text event
+            sendEvent('client.text.send', { text: text });
+
+            // Add to chat display
+            addMessage(text, 'user');
+
+            // Clear input
+            textInput.value = '';
+        }
+
+        function handleTextKeypress(event) {
+            if (event.key === 'Enter') {
+                sendText();
+            }
+        }
+
+        // =====================
+        // Session Config Update
+        // =====================
+
+        function updateSessionConfig() {
+            if (!isConnected) return;
+
+            const config = {};
+
+            // Get voice (only if selected)
+            const voice = document.getElementById('configVoice').value;
+            if (voice) {
+                config.voice = voice;
+            }
+
+            // Get instructions (only if not empty)
+            const instructions = document.getElementById('configInstructions').value.trim();
+            if (instructions) {
+                config.instructions = instructions;
+            }
+
+            // Send update event
+            if (Object.keys(config).length > 0) {
+                sendEvent('client.session.update', { config: config });
+                addMessage(`Config updated: ${Object.keys(config).join(', ')}`, 'system');
+            } else {
+                addMessage('No config changes to apply', 'system');
+            }
+        }
+
+        // =====================
+        // Camera Functions
+        // =====================
+
+        async function toggleCamera() {
+            if (isCameraActive) {
+                await stopCamera();
+            } else {
+                await startCamera();
+            }
+        }
+
+        async function startCamera() {
+            try {
+                // Get camera access
+                cameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    }
+                });
+
+                // Show preview
+                const preview = document.getElementById('cameraPreview');
+                preview.srcObject = cameraStream;
+                document.getElementById('cameraContainer').style.display = 'block';
+
+                isCameraActive = true;
+                document.getElementById('cameraBtn').textContent = '📷 Stop Camera';
+                document.getElementById('cameraBtn').classList.remove('btn-outline');
+                document.getElementById('cameraBtn').classList.add('btn-danger');
+
+                addMessage('📷 Camera enabled, sending 1 frame per second', 'system');
+
+                // Send one frame per second
+                frameInterval = setInterval(captureAndSendFrame, 1000);
+
+            } catch (error) {
+                console.error('Camera error:', error);
+                addMessage(`Camera error: ${error.message}`, 'error');
+            }
+        }
+
+        async function stopCamera() {
+            // Stop timer
+            if (frameInterval) {
+                clearInterval(frameInterval);
+                frameInterval = null;
+            }
+
+            // Stop camera stream
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+
+            // Hide preview
+            const preview = document.getElementById('cameraPreview');
+            preview.srcObject = null;
+            document.getElementById('cameraContainer').style.display = 'none';
+
+            isCameraActive = false;
+            document.getElementById('cameraBtn').textContent = '📷 Start Camera';
+            document.getElementById('cameraBtn').classList.remove('btn-danger');
+            document.getElementById('cameraBtn').classList.add('btn-outline');
+
+            addMessage('📷 Camera disabled', 'system');
+        }
+
+        function captureAndSendFrame() {
+            if (!isCameraActive || !ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            // Audio must be sent before images
+            if (!hasAudioSent) {
+                console.log('Waiting for audio before sending image...');
+                return;
+            }
+
+            const preview = document.getElementById('cameraPreview');
+            const canvas = document.createElement('canvas');
+
+            // Use lower resolution to reduce data size (480P recommended)
+            const maxWidth = 640;
+            const maxHeight = 480;
+
+            let width = preview.videoWidth;
+            let height = preview.videoHeight;
+
+            // Scale proportionally
+            if (width > maxWidth) {
+                height = height * (maxWidth / width);
+                width = maxWidth;
+            }
+            if (height > maxHeight) {
+                width = width * (maxHeight / height);
+                height = maxHeight;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(preview, 0, 0, width, height);
+
+            // Convert to JPEG base64
+            canvas.toBlob((blob) => {
+                if (!blob) return;
+
+                // Check size (limit 500KB)
+                if (blob.size > 500 * 1024) {
+                    console.warn('Image too large:', blob.size, 'bytes');
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    // Remove data:image/jpeg;base64, prefix
+                    const base64 = reader.result.split(',')[1];
+                    sendEvent('client.image.append', {
+                        image: base64,
+                        mime_type: 'image/jpeg'
+                    });
+                };
+                reader.readAsDataURL(blob);
+
+            }, 'image/jpeg', 0.7);  // JPEG quality 0.7
+        }
+
+        // Heartbeat
+        setInterval(() => {
+            if (isConnected) {
+                sendEvent('client.ping');
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
