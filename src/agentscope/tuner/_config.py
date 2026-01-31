@@ -36,6 +36,7 @@ def _to_trinity_config(
         Config,
         TasksetConfig,
         InferenceModelConfig,
+        TinkerConfig,
     )
 
     config, auto_config = _load_config_from_path_or_default(config_path)
@@ -85,6 +86,11 @@ def _to_trinity_config(
             **model.get_config(),
         )
         config.explorer.rollout_model.enable_history = True
+        if model.tinker_config is not None:
+            config.model.tinker = TinkerConfig(
+                **model.tinker_config.get_config(),
+            )
+            config.model.tinker.enable = True
     if auxiliary_models is not None:
         for name, aux_chat_model in auxiliary_models.items():
             model_config = InferenceModelConfig(
@@ -184,7 +190,7 @@ def check_workflow_function(
         func (Callable): The function to check.
     """
     essential_params = ["task", "model"]
-    optional_params = ["auxiliary_models"]
+    optional_params = ["auxiliary_models", "logger"]
     _check_function_signature(
         func,
         essential_params,
@@ -201,7 +207,7 @@ def check_judge_function(
         func (Callable): The function to check.
     """
     essential_params = ["task", "response"]
-    optional_params = ["auxiliary_models"]
+    optional_params = ["auxiliary_models", "logger"]
     _check_function_signature(
         func,
         essential_params,
