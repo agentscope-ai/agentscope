@@ -116,9 +116,11 @@ readers = [
 # the version to 1.15.1 here.
 qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
+ali_adb_mysql = ["pymysql"]
 ali_mysql = ["mysql-connector-python"]
 mongodb = ["pymongo"]
 vdbs = [
+    "agentscope[ali_adb_mysql]",
     "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
