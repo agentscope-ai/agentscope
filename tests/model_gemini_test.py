@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for Google Gemini API model class."""
+import json
 from typing import AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock
@@ -201,6 +202,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                     id="call_123",
                     name="get_weather",
                     input={"location": "Beijing"},
+                    raw_input=json.dumps({"location": "Beijing"}),
                 ),
             ]
             self.assertEqual(result.content, expected_content)

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The short-term memory tests."""
+import asyncio
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -568,3 +569,25 @@ class RedisMemoryTest(ShortTermMemoryTest):
         await self._test_delete_nonexistent_msg()
         await self._multi_tenant_tests()
         await self._multi_session_tests()
+
+    async def test_ttl(self) -> None:
+        """Test the TTL functionality of the Redis memory."""
+        # Set a short TTL for testing
+        self.memory.key_ttl = 2  # 2 seconds
+
+        # Add messages and verify they exist
+        await self.memory.add(self.msgs[:5])
+        msgs = await self.memory.get_memory()
+        self.assertEqual(
+            len(msgs),
+            5,
+        )
+
+        # Wait for TTL to expire
+        await asyncio.sleep(3)
+
+        msgs = await self.memory.get_memory()
+        self.assertEqual(
+            len(msgs),
+            0,
+        )
