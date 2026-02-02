@@ -296,7 +296,7 @@ class RedisMemory(MemoryBase):
         # Use mget for batch retrieval to avoid N+1 queries
         messages: list[Msg] = []
         if msg_ids:
-            msg_keys = [self._get_message_key(msg_id) for msg_id in msg_ids]
+            msg_keys = [self._get_message_key(msg_id.decode('utf-8')) for msg_id in msg_ids]
             msg_data_list = await self._client.mget(msg_keys)
 
             for msg_data in msg_data_list:
