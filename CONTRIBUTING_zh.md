@@ -182,14 +182,32 @@ examples/
 
 ### 添加新的示例
 
+欢迎开源社区贡献新的示例来展示 AgentScope 的各种功能！
 
-请将它们添加到 `examples/` 目录，并附上清晰的 README 说明示例的目的和用法。
+**📝 关于示例目录：**
 
-目前我们的示例根据类型组织到子目录中：
-- `examples/functionality/` 用于展示 AgentScope 的特定基础功能
-- `examples/evaluation/` 用于评估
+为了避免仓库变得过于臃肿，我们将 AgentScope 仓库中的 `examples/` 目录设计为专注于**展示 AgentScope 的功能性**。可以把这些示例看作是指导性的参考和功能展示，帮助开发者快速理解 AgentScope 能做什么。
+
+**什么样的示例适合放在这里：**
+- 清晰地展示 AgentScope 的特定功能或能力
+- 易于理解和跟随学习
+- 作为学习材料或参考实现
+- 专注且简洁
+
+**对于更复杂的应用：**
+
+对于更加复杂，生产就绪的应用，我们非常期待在 **[agentscope-samples](https://github.com/agentscope-ai/agentscope-samples)** 仓库中看到您的作品。这个仓库专门用于展示、分享基于 AgentScope 生态搭建的完整的、真实世界的应用。
+
+**示例组织方式：**
+
+主仓库中的示例根据类型组织到子目录中：
+
+- `examples/agent/` 用于专门的智能体
+- `examples/functionality/` 用于展示 AgentScope 的特定功能
+- `examples/game/` 用于游戏相关示例
+- `examples/evaluation/` 用于评估脚本
 - `examples/workflows/` 用于工作流演示
-- `examples/training/` 用于训练相关示例
+- `examples/tuner/` 用于微调相关示例
 
 示例结构如下：
 
@@ -201,6 +219,30 @@ examples/
         ├── README.md  # 解释示例的目的和用法
         └── ... # 其他脚本
 ```
+
+### 添加新的记忆数据库
+
+AgentScope 的记忆模块目前支持：
+
+- **内存存储**：用于轻量级的临时记忆需求
+- **通过 SQLAlchemy 支持关系型数据库**：用于持久化的结构化数据存储
+- **NoSQL 数据库**：用于灵活的模式需求（例如 Redis）
+
+**⚠️ 请注意：**
+
+对于**关系型数据库**，我们使用 **SQLAlchemy** 作为统一的抽象层。SQLAlchemy 已经支持多种 SQL 数据库，包括 PostgreSQL、MySQL、SQLite、Oracle、Microsoft SQL Server 等。
+
+**因此，为了保持 AgentScope 代码的整洁，目前不接受为 SQLAlchemy 已经支持的关系型数据库单独实现新的支持。**
+如果您需要支持特定的关系型数据库，请确保通过现有的 SQLAlchemy 集成来实现。
+
+**如果您希望贡献新的记忆数据库实现**，请考虑以下几点：
+
+1. **对于关系型数据库**：使用现有的 SQLAlchemy 集成。
+
+2. **对于 NoSQL 数据库**：如果您要添加对新 NoSQL 数据库的支持（例如 MongoDB、Cassandra），请：
+   - 实现一个扩展适当基类的新记忆类
+   - 添加全面的单元测试
+   - 相应地更新文档
 
 
 ## Do's and Don'ts

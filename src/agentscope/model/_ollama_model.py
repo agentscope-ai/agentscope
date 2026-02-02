@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Model wrapper for Ollama models."""
+import json
 from datetime import datetime
 from typing import (
     Any,
@@ -219,6 +220,7 @@ class OllamaChatModel(ChatModelBase):
                     "id": tool_id,
                     "name": function.name,
                     "input": function.arguments,
+                    "raw_input": json.dumps(function.arguments),
                 }
             # Calculate usage statistics
             current_time = (datetime.now() - start_datetime).total_seconds()
@@ -261,7 +263,7 @@ class OllamaChatModel(ChatModelBase):
                     print(f"Error parsing tool call input: {e}")
 
             # Generate response when there's new content or at final chunk
-            if chunk.done and contents:
+            if chunk.done or contents:
                 res = ChatResponse(
                     content=contents,
                     usage=usage,
@@ -325,6 +327,7 @@ class OllamaChatModel(ChatModelBase):
                     id=f"{idx}_{tool_call.function.name}",
                     name=tool_call.function.name,
                     input=tool_call.function.arguments,
+                    raw_input=json.dumps(tool_call.function.arguments),
                 ),
             )
 

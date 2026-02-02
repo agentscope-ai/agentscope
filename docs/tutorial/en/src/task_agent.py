@@ -20,6 +20,8 @@ In AgentScope, the ``ReActAgent`` class integrates various features into a final
       - Reference
     * - Support realtime steering
       -
+    * - Support memory compression
+      -
     * - Support parallel tool calls
       -
     * - Support structured output
@@ -112,6 +114,124 @@ from agentscope.tool import Toolkit, ToolResponse
 #
 # You can override it with your own implementation, for example, calling the LLM
 # to generate a simple response to the interruption.
+#
+#
+# Memory Compression
+# ----------------------------------------
+# As conversations grow longer, the token count in memory can exceed model context
+# limits or slow down inference. ``ReActAgent`` provides an automatic memory compression
+# feature to address this issue.
+#
+# **Basic Usage**
+#
+# To enable memory compression, provide a ``CompressionConfig`` instance when initializing
+# the ``ReActAgent``:
+#
+# .. code-block:: python
+#
+#     from agentscope.agent import ReActAgent
+#     from agentscope.token import CharTokenCounter
+#
+#     agent = ReActAgent(
+#         name="Assistant",
+#         sys_prompt="You are a helpful assistant.",
+#         model=model,
+#         formatter=formatter,
+#         compression_config=ReActAgent.CompressionConfig(
+#             enable=True,
+#             agent_token_counter=CharTokenCounter(),  # The token counter for the agent
+#             trigger_threshold=10000,  # Trigger compression when exceeding 10000 tokens
+#             keep_recent=3,            # Keep the most recent 3 messages uncompressed
+#         ),
+#     )
+#
+# When memory compression is enabled, the agent monitors the token count in its memory.
+# Once it exceeds the ``trigger_threshold``, the agent automatically:
+#
+# 1. Identifies messages that haven't been compressed yet (via ``exclude_mark``)
+# 2. Keeps the most recent ``keep_recent`` messages uncompressed (to preserve recent context)
+# 3. Sends older messages to an LLM to generate a structured summary
+# 4. Marks the compressed messages with ``MemoryMark.COMPRESSED`` (via ``update_messages_mark``)
+# 5. Stores the summary in memory (via ``update_compressed_summary``)
+#
+# .. important:: The compression uses a **marking mechanism** rather than replacing messages. Old messages are marked as compressed and excluded from future retrievals via ``exclude_mark=MemoryMark.COMPRESSED``, while the generated summary is stored separately and retrieved when needed. This approach preserves the original messages and allows flexible memory management. For more details about the mark functionality, please refer to :ref:`memory`.
+#
+# By default, the compressed summary is structured into five key fields:
+#
+# - **task_overview**: The user's core request and success criteria
+# - **current_state**: What has been completed so far, including files and outputs
+# - **important_discoveries**: Technical constraints, decisions, errors, and failed approaches
+# - **next_steps**: Specific actions needed to complete the task
+# - **context_to_preserve**: User preferences, domain details, and promises made
+#
+# **Customizing Compression**
+#
+# You can customize how compression works by specifying ``summary_schema``,
+# ``summary_template``, and ``compression_prompt`` parameters.
+#
+# - **compression_prompt**: Guides the LLM on how to generate the summary
+# - **summary_schema**: Defines the structure of the compressed summary using a Pydantic model
+# - **summary_template**: Formats how the compressed summary is presented back to the agent
+#
+# Here's an example of customizing the compression:
+#
+# .. code-block:: python
+#
+#     from pydantic import BaseModel, Field
+#
+#     # Define a custom summary structure
+#     class CustomSummary(BaseModel):
+#         main_topic: str = Field(
+#             max_length=200,
+#             description="The main topic of the conversation"
+#         )
+#         key_points: str = Field(
+#             max_length=400,
+#             description="Important points discussed"
+#         )
+#         pending_tasks: str = Field(
+#             max_length=200,
+#             description="Tasks that remain to be done"
+#         )
+#
+#     # Create agent with custom compression configuration
+#     agent = ReActAgent(
+#         name="Assistant",
+#         sys_prompt="You are a helpful assistant.",
+#         model=model,
+#         formatter=formatter,
+#         compression_config=ReActAgent.CompressionConfig(
+#             enable=True,
+#             agent_token_counter=CharTokenCounter(),
+#             trigger_threshold=10000,
+#             keep_recent=3,
+#             # Custom schema for structured summary
+#             summary_schema=CustomSummary,
+#             # Custom prompt to guide compression
+#             compression_prompt=(
+#                 "<system-hint>Please summarize the above conversation "
+#                 "focusing on the main topic, key discussion points, "
+#                 "and any pending tasks.</system-hint>"
+#             ),
+#             # Custom template to format the summary
+#             summary_template=(
+#                 "<system-info>Conversation Summary:\n"
+#                 "Main Topic: {main_topic}\n\n"
+#                 "Key Points:\n{key_points}\n\n"
+#                 "Pending Tasks:\n{pending_tasks}"
+#                 "</system-info>"
+#             ),
+#         ),
+#     )
+#
+# The ``summary_template`` uses the fields defined in ``summary_schema`` as placeholders
+# (e.g., ``{main_topic}``, ``{key_points}``). After the LLM generates the structured summary,
+# these placeholders will be replaced with the actual values.
+#
+# .. note:: The agent ensures that tool use and tool result pairs are kept together during compression to maintain the integrity of the conversation flow.
+#
+# .. tip:: You can use a smaller, faster model for compression by specifying a different ``compression_model`` and ``compression_formatter`` to reduce costs and latency.
+#
 #
 #
 # Parallel Tool Calls

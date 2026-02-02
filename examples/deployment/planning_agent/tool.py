@@ -150,7 +150,7 @@ Your target is to finish the given task with your tools.
 
 ## IMPORTANT
 You MUST use the `{ReActAgent.finish_function_name}` to generate the final answer after finishing the task.
-""",  # noqa: E501
+""",  # noqa: E501  # pylint: disable=C0301
         model=DashScopeChatModel(
             model_name="qwen3-max",
             api_key=os.environ["DASHSCOPE_API_KEY"],

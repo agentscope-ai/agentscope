@@ -41,7 +41,7 @@ The built-in formatters are listed below
     * - Ollama
       - ``OllamaChatFormatter``
       - ``OllamaMultiAgentFormatter``
-    * - DeedSeek
+    * - DeepSeek
       - ``DeepSeekChatFormatter``
       - ``DeepSeekMultiAgentFormatter``
     * - vLLM
@@ -221,8 +221,8 @@ input_msgs = [
     ),
     # Conversation history continues
     Msg("Friday", "The nearest library is ...", "assistant"),
-    Msg("Bob", "Thanks, Friday!", "user"),
-    Msg("Alice", "Let's go together.", "user"),
+    Msg("Bob", "Thanks, Friday!", "assistant"),
+    Msg("Alice", "Let's go together.", "assistant"),
 ]
 
 
