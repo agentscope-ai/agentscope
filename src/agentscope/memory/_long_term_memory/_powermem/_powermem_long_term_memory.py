@@ -72,8 +72,9 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             Parameter precedence is explicit:
             1) If ``memory`` is provided, ``config`` and ``auto_config`` are
                ignored.
-            2) Otherwise, ``config`` is used as-is, or ``powermem.auto_config()``
-               is used when ``config`` is None and ``auto_config`` is True.
+            2) Otherwise, ``config`` is used as-is, or
+               ``powermem.auto_config()`` is used when ``config`` is None and
+               ``auto_config`` is True.
 
         .. note::
             Scope identifiers (``agent_id``, ``user_id``, ``run_id``) are
@@ -416,7 +417,10 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         return result
 
     @staticmethod
-    def _filter_supported_kwargs(func: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _filter_supported_kwargs(
+        func: Any,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
         """Filter kwargs based on the callable signature when possible.
 
         This avoids passing unsupported parameters to custom backends while
@@ -438,11 +442,15 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             return kwargs
 
         params = signature.parameters.values()
-        if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in params):
+        if any(
+            param.kind is inspect.Parameter.VAR_KEYWORD for param in params
+        ):
             return kwargs
 
         supported = set(signature.parameters.keys())
-        return {key: value for key, value in kwargs.items() if key in supported}
+        return {
+            key: value for key, value in kwargs.items() if key in supported
+        }
 
     @staticmethod
     def _join_record_content(thinking: str, content: list[str]) -> str:

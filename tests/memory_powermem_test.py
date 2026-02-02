@@ -2,6 +2,7 @@
 """Unit tests for PowerMemLongTermMemory."""
 from __future__ import annotations
 
+from typing import Awaitable
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.message import Msg
@@ -55,8 +56,9 @@ class SyncAddCoroutineStub:
         """Initialize the stub backend."""
         return None
 
-    def add(self, **kwargs: object):
+    def add(self, **_kwargs: object) -> Awaitable[dict]:
         """Return a coroutine to validate await handling."""
+
         async def _inner() -> dict:
             self.coro_awaited = True
             return {"results": []}
