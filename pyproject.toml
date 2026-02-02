@@ -126,7 +126,7 @@ rag = [
 ]
 
 # ------------ Evaluation ------------
-evaluate = ["ray", "py-openjudge"]
+evaluate = ["ray"]
 
 # ------------ Full ------------
 full = [
