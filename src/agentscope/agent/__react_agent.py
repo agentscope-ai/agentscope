@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """ReAct agent class in agentscope."""
 import asyncio
+from dataclasses import dataclass
 from enum import Enum
 from typing import Type, Any, AsyncGenerator, Literal, Sequence
 
+from anthropic.types import ImageBlockParam, ToolUseBlockParam
 from pydantic import BaseModel, ValidationError, Field
 
 from ._utils import _AsyncNullContext
@@ -25,6 +27,8 @@ from ..token import TokenCounterBase
 from ..tool import Toolkit, ToolResponse
 from ..tracing import trace_reply
 from ..tts import TTSModelBase
+
+ToolUseBlockParam
 
 
 class _QueryRewriteModel(BaseModel):
@@ -91,6 +95,10 @@ class _MemoryMark(str, Enum):
     COMPRESSED = "compressed"
     """Used to mark the compressed messages in the memory."""
 
+@dataclass
+class _Intent:
+    phase: Literal["reasoning", "acting"]
+    reasoning_msg: Msg | None = None
 
 class ReActAgent(ReActAgentBase):
     """A ReAct agent implementation in AgentScope, which supports
@@ -355,10 +363,16 @@ class ReActAgent(ReActAgentBase):
         # If required structured output model is provided
         self._required_structured_model: Type[BaseModel] | None = None
 
+        # The tool calls that require user confirmation before execution
+        self._require_user_confirmation: list[ToolUseBlock] = []
+        self._require_external_tool_execution: list[ToolUseBlock] = []
+
         # -------------- State registration and hooks --------------
         # Register the status variables
         self.register_state("name")
         self.register_state("_sys_prompt")
+        self.register_state("_require_user_confirmation")
+        self.register_state("_require_external_tool_execution")
 
     @property
     def sys_prompt(self) -> str:
@@ -407,6 +421,87 @@ class ReActAgent(ReActAgentBase):
 
         return None
 
+    async def _identify_input_intent(
+        self,
+        msg: Msg | list[Msg] | None
+    ) -> _Intent:
+        """Decide which phase to enter, reasoning or acting. Such function is
+        designed for the human-in-the-loop scenario, where users can confirm
+        or change the tool calls of the agent before executing them.
+
+        Args:
+            msg (`Msg | list[Msg] | None`):
+                The input message(s) to the agent.
+        """
+        if msg is None:
+            return _Intent(phase="reasoning")
+
+        if isinstance(msg, Msg):
+            msgs = [msg]
+        elif isinstance(msg, list) and all(isinstance(_, Msg) for _ in msg):
+            msgs = msg
+        else:
+            raise ValueError(
+                f"Invalid msg type: {type(msg)}"
+            )
+
+        # Filter the msgs
+        msgs_confirmed: list[Msg] = []
+        msgs_executed: list[Msg] = []
+        msgs_others: list[Msg] = []
+        for msg in msgs:
+            match msg.generate_reason:
+                case GenerateReason.USER_CONFIRMATION_RESULT:
+                    msgs_confirmed.append(msg)
+                case GenerateReason.TOOL_EXECUTION_RESULT:
+                    msgs_executed.append(msg)
+                case _:
+                    msgs_others.append(msg)
+
+        # Update the internal state and memory for external tool execution
+        if self._require_external_tool_execution and msgs_executed:
+            if msgs_executed:
+                executed_tool_results = []
+                for msg_executed in msgs_executed:
+                    # Extract executed tool ids
+                    executed_tool_results.extend(
+                        msg_executed.get_content_blocks("tool_result")
+                    )
+                executed_tool_call_ids = {
+                    _["id"] for _ in executed_tool_results
+                }
+                # Remove the external tool result requirements from the state
+                self._require_external_tool_execution = [
+                    _ for _ in self._require_external_tool_execution
+                    if _.get("id") not in executed_tool_call_ids
+                ]
+
+                # Add execution results to the memory
+                await self.memory.add(
+                    Msg("system", executed_tool_results, "system")
+                )
+
+        # Update the internal state and memory for user confirmation
+        if self._require_user_confirmation and msgs_confirmed:
+            if msgs_confirmed:
+                confirmed_tool_calls = []
+                for msg_confirmed in msgs_confirmed:
+                    confirmed_tool_calls.extend(
+                        msg_confirmed.get_content_blocks("tool_use")
+                    )
+                # Update the state with confirmed tool calls
+                confirmed_tool_call_ids = {
+                    _["id"] for _ in confirmed_tool_calls
+                }
+                self._require_user_confirmation = [
+                    _ for _ in self._require_user_confirmation
+                    if _.get("id") not in confirmed_tool_call_ids
+                ]
+
+        # Judge what should the agent do next
+        if
+
+
     @trace_reply
     async def reply(
         self,
@@ -429,7 +524,7 @@ class ReActAgent(ReActAgentBase):
         """
 
         # Sometimes
-        enter_phase = self._decide_enter_phase(msg)
+        enter_phase = await self._identify_input_intent(msg)
 
         n_iter = 0
         reasoning_msg = None

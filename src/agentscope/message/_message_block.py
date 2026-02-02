@@ -102,6 +102,8 @@ class ToolResultBlock(TypedDict, total=False):
     """The output of the tool function"""
     name: Required[str]
     """The name of the tool function"""
+    is_error: bool
+    """Whether the tool call results in an error"""
 
 
 # The content block

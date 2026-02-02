@@ -84,7 +84,7 @@ class Msg:
                 The created timestamp of the message. If not given, the
                 timestamp will be set automatically.
             generate_reason (`GenerateReason | None`, optional):
-                The reason for the agent generating the reply message.
+                The reason for generating this message.
         """
 
         self.name = name
