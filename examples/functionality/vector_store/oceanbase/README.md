@@ -86,6 +86,9 @@ results = await store.search(
 )
 ```
 
+> Note: The parameter name is `flter` (missing the "i") to avoid clashing with
+> Python's built-in `filter` and follows the underlying library's convention.
+
 ### Delete
 
 ```python
