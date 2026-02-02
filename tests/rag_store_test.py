@@ -133,10 +133,12 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
 
     async def test_oceanbase_store(self) -> None:
         """Use real OceanBase when env is provided, otherwise use a mock."""
+
         def _make_mock_pyobvector(
             search_rows: list[dict],
         ) -> tuple[types.SimpleNamespace, MagicMock]:
-            """Create a minimal pyobvector mock aligned with existing mock style."""
+            """Create a minimal pyobvector mock aligned with the
+            existing style."""
             mock_client = MagicMock()
             mock_client.has_collection.return_value = False
             mock_client.create_schema.return_value = MagicMock()
