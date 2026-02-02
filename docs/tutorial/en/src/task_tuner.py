@@ -188,7 +188,7 @@ print(f"Judge reward: {judge_output.reward}")
 # Configuration and Running
 # ~~~~~~~~~~~~~~~
 # Finally, you can configure and run the tuning process using the ``tuner`` module.
-# Before starting, ensure that `Trinity-RFT <https://github.com/modelscope/Trinity-RFT>`_ is installed in your environment, as it is required for tuning.
+# Before starting, ensure that `Trinity-RFT <https://github.com/agentscope-ai/Trinity-RFT>`_ is installed in your environment, as it is required for tuning.
 #
 # Below is an example of configuring and starting the tuning process:
 #
@@ -220,9 +220,9 @@ print(f"Judge reward: {judge_output.reward}")
 # Here, ``DatasetConfig`` configures the training dataset, ``TunerModelConfig`` sets the parameters for the trainable model, and ``AlgorithmConfig`` specifies the reinforcement learning algorithm and its hyperparameters.
 #
 # .. tip::
-#    The ``tune`` function is based on `Trinity-RFT <https://github.com/modelscope/Trinity-RFT>`_ and internally converts input parameters to a YAML configuration.
+#    The ``tune`` function is based on `Trinity-RFT <https://github.com/agentscope-ai/Trinity-RFT>`_ and internally converts input parameters to a YAML configuration.
 #    Advanced users can skip the ``model``, ``train_dataset``, and ``algorithm`` arguments and instead provide a YAML config file path via the ``config_path`` argument.
-#    Using a configuration file is recommended for fine-grained control and to leverage advanced Trinity-RFT features. See the Trinity-RFT `Configuration Guide <https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html>`_ for more options.
+#    Using a configuration file is recommended for fine-grained control and to leverage advanced Trinity-RFT features. See the Trinity-RFT `Configuration Guide <https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html>`_ for more options.
 #
 # Save the above code as ``main.py`` and run it with:
 #

@@ -2,6 +2,7 @@
 # mypy: disable-error-code="dict-item"
 """The Google Gemini model in agentscope."""
 import copy
+import json
 import warnings
 from datetime import datetime
 from typing import (
@@ -362,6 +363,7 @@ class GeminiChatModel(ChatModelBase):
                             id=function_call.id,
                             name=function_call.name,
                             input=function_call.args or {},
+                            raw_input=json.dumps(function_call.args or {}),
                         ),
                     )
 
@@ -460,6 +462,7 @@ class GeminiChatModel(ChatModelBase):
                         id=tool_call.id,
                         name=tool_call.name,
                         input=tool_call.args or {},
+                        raw_input=json.dumps(tool_call.args or {}),
                     ),
                 )
 

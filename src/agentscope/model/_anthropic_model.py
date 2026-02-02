@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches, too-many-statements
 """The Anthropic API model classes."""
+import copy
+import json
 import warnings
 from datetime import datetime
 from typing import (
@@ -45,6 +47,7 @@ class AnthropicChatModel(ChatModelBase):
         max_tokens: int = 2048,
         stream: bool = True,
         thinking: dict | None = None,
+        stream_tool_parsing: bool = True,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
@@ -71,6 +74,12 @@ class AnthropicChatModel(ChatModelBase):
                         "budget_tokens": 1024
                     }
 
+            stream_tool_parsing (`bool`, default to `True`):
+                Whether to parse incomplete tool use JSON during streaming
+                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
+                is repaired to valid dicts ({"a": "x"}) in real-time for
+                immediate tool function input. Otherwise, the input field
+                remains {} until the final chunk arrives.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the Anthropic client.
@@ -121,6 +130,7 @@ class AnthropicChatModel(ChatModelBase):
         )
         self.max_tokens = max_tokens
         self.thinking = thinking
+        self.stream_tool_parsing = stream_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
@@ -381,8 +391,12 @@ class AnthropicChatModel(ChatModelBase):
         thinking_signature = ""
         tool_calls = OrderedDict()
         tool_call_buffers = {}
+        last_input_objs = {}  # Store last input_obj for each tool_call
         res = None
         metadata = None
+
+        # Record the last yielded content to parse the tools' input
+        last_content = None
 
         async for event in response:
             content_changed = False
@@ -457,24 +471,38 @@ class AnthropicChatModel(ChatModelBase):
                     )
                 for block_index, tool_call in tool_calls.items():
                     input_str = tool_call["input"]
-                    try:
-                        input_obj = _json_loads_with_repair(input_str or "{}")
-                        if not isinstance(input_obj, dict):
-                            input_obj = {}
+                    tool_id = tool_call["id"]
 
-                    except Exception:
-                        input_obj = {}
+                    # If parsing the tool input in streaming mode
+                    if self.stream_tool_parsing:
+                        repaired_input = _json_loads_with_repair(
+                            input_str or "{}",
+                        )
+                        # If the new repaired input is shorter than one in the
+                        # last chunk, use the last one to avoid regression
+                        last_input = last_input_objs.get(tool_id, {})
+                        if len(json.dumps(last_input)) > len(
+                            json.dumps(repaired_input),
+                        ):
+                            repaired_input = last_input
+                        last_input_objs[tool_id] = repaired_input
+
+                    else:
+                        repaired_input = {}
 
                     contents.append(
                         ToolUseBlock(
                             type=tool_call["type"],
                             id=tool_call["id"],
                             name=tool_call["name"],
-                            input=input_obj,
+                            input=repaired_input,
+                            raw_input=input_str,
                         ),
                     )
+
                     if structured_model:
-                        metadata = input_obj
+                        metadata = repaired_input
+
                 if contents:
                     res = ChatResponse(
                         content=contents,
@@ -482,6 +510,26 @@ class AnthropicChatModel(ChatModelBase):
                         metadata=metadata,
                     )
                     yield res
+                    last_content = copy.deepcopy(contents)
+
+        # If stream_tool_parsing is False, yield last contents
+        if not self.stream_tool_parsing and last_content and tool_calls:
+            metadata = None
+            # Update tool use blocks in last_contents inplace
+            for block in last_content:
+                if block.get("type") == "tool_use":
+                    block["input"] = input_obj = _json_loads_with_repair(
+                        block.get("raw_input") or "{}",
+                    )
+
+                    if structured_model:
+                        metadata = input_obj
+
+            yield ChatResponse(
+                content=last_content,
+                usage=usage,
+                metadata=metadata,
+            )
 
     def _format_tools_json_schemas(
         self,

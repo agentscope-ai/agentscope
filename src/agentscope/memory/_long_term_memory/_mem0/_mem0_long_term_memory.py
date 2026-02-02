@@ -152,18 +152,21 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
             # Register the agentscope providers with mem0
 
-            EmbedderFactory.provider_to_class[
-                "agentscope"
-            ] = "agentscope.memory._mem0_utils.AgentScopeEmbedding"
+            EmbedderFactory.provider_to_class["agentscope"] = (
+                "agentscope.memory._long_term_memory._mem0."
+                "_mem0_utils.AgentScopeEmbedding"
+            )
             if is_mem0_version_low:
                 # For mem0 version <= 0.1.115, use the old style
-                LlmFactory.provider_to_class[
-                    "agentscope"
-                ] = "agentscope.memory._mem0_utils.AgentScopeLLM"
+                LlmFactory.provider_to_class["agentscope"] = (
+                    "agentscope.memory._long_term_memory._mem0."
+                    "_mem0_utils.AgentScopeLLM"
+                )
             else:
                 # For mem0 version > 0.1.115, use the new style
                 LlmFactory.provider_to_class["agentscope"] = (
-                    "agentscope.memory._mem0_utils.AgentScopeLLM",
+                    "agentscope.memory._long_term_memory._mem0."
+                    "_mem0_utils.AgentScopeLLM",
                     BaseLlmConfig,
                 )
 

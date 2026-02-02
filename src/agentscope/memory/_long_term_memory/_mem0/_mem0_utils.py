@@ -5,7 +5,9 @@ This module provides wrapper classes that allow AgentScope models to be used
 with the mem0 library for long-term memory functionality.
 """
 import asyncio
-from typing import Any, Dict, List, Literal
+import atexit
+import threading
+from typing import Any, Coroutine, Dict, List, Literal
 
 from mem0.configs.embeddings.base import BaseEmbedderConfig
 from mem0.configs.llms.base import BaseLlmConfig
@@ -14,6 +16,118 @@ from mem0.llms.base import LLMBase
 
 from ....embedding import EmbeddingModelBase
 from ....model import ChatModelBase, ChatResponse
+
+
+class _EventLoopManager:
+    """Global event loop manager for running async operations in sync context.
+
+    This manager creates and maintains a persistent background event loop
+    that runs in a separate daemon thread. This ensures that async model
+    clients (like Ollama AsyncClient) remain bound to the same event loop
+    across multiple calls, avoiding "Event loop is closed" errors.
+    """
+
+    _DEFAULT_TIMEOUT = 5.0  # Default timeout in seconds
+
+    def __init__(self) -> None:
+        """Initialize the event loop manager."""
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.thread: threading.Thread | None = None
+        self.lock = threading.Lock()
+        self.loop_started = threading.Event()
+
+        # Register cleanup function to be called on program exit
+        atexit.register(self.cleanup)
+
+    def get_loop(self) -> asyncio.AbstractEventLoop:
+        """Get or create the persistent background event loop.
+
+        Returns:
+            `asyncio.AbstractEventLoop`:
+                The persistent event loop running in a background thread.
+
+        Raises:
+            `RuntimeError`: If the event loop fails to start within the
+            timeout.
+        """
+        with self.lock:
+            if self.loop is None or self.loop.is_closed():
+
+                def run_loop() -> None:
+                    """Run the event loop in the background thread."""
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    # Store the loop reference before starting
+                    self.loop = loop
+                    self.loop_started.set()
+                    loop.run_forever()
+
+                # Clear the event before starting the thread
+                self.loop_started.clear()
+
+                # Create and start the background thread
+                self.thread = threading.Thread(
+                    target=run_loop,
+                    daemon=True,
+                    name="AgentScope-AsyncLoop",
+                )
+                self.thread.start()
+
+                # Wait for the loop to be ready
+                if not self.loop_started.wait(timeout=self._DEFAULT_TIMEOUT):
+                    raise RuntimeError(
+                        "Timeout waiting for event loop to start",
+                    )
+
+            # After waiting, self.loop should be set by the background thread
+            assert (
+                self.loop is not None
+            ), "Event loop was not initialized properly"
+            return self.loop
+
+    def cleanup(self) -> None:
+        """Cleanup the event loop and thread on program exit."""
+        with self.lock:
+            if self.loop is not None and not self.loop.is_closed():
+                # Stop the event loop gracefully
+                self.loop.call_soon_threadsafe(self.loop.stop)
+
+                # Wait for the thread to finish
+                if self.thread is not None and self.thread.is_alive():
+                    self.thread.join(timeout=self._DEFAULT_TIMEOUT)
+
+                # Close the loop
+                self.loop.close()
+                self.loop = None
+                self.thread = None
+
+
+# Global event loop manager instance
+_event_loop_manager = _EventLoopManager()
+
+
+def _run_async_in_persistent_loop(coro: Coroutine) -> Any:
+    """Run an async coroutine in the persistent background event loop.
+
+    This function uses a global event loop manager to ensure that all
+    async operations run in the same event loop, which is crucial for
+    async clients like Ollama that bind to a specific event loop.
+
+    Args:
+        coro (`Coroutine`):
+            The coroutine to run.
+
+    Returns:
+        `Any`:
+            The result of the coroutine.
+
+    Raises:
+        `RuntimeError`:
+            If there's an error running the coroutine.
+    """
+    loop = _event_loop_manager.get_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
 
 
 class AgentScopeLLM(LLMBase):
@@ -141,7 +255,12 @@ class AgentScopeLLM(LLMBase):
                     tools=tools,
                 )
 
-            response = asyncio.run(_async_call())
+            # Run in the persistent event loop
+            # This ensures the model client (e.g., Ollama AsyncClient)
+            # always runs in the same event loop, avoiding binding issues
+            response = _run_async_in_persistent_loop(
+                _async_call(),
+            )
             has_tool = tools is not None
 
             # Extract text from the response content blocks
@@ -221,7 +340,12 @@ class AgentScopeEmbedding(EmbeddingBase):
                 response = await self.agentscope_model(text_list)
                 return response
 
-            response = asyncio.run(_async_call())
+            # Run in the persistent event loop
+            # This ensures the model client (e.g., Ollama AsyncClient)
+            # always runs in the same event loop, avoiding binding issues
+            response = _run_async_in_persistent_loop(
+                _async_call(),
+            )
 
             # Extract the embedding vector from the first Embedding object
             # response.embeddings is a list of Embedding objects

@@ -1,4 +1,4 @@
-# Please refer to https://modelscope.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html for detailed explanation of each field.
+# Please refer to https://agentscope-ai.github.io/Trinity-RFT/en/main/tutorial/trinity_configs.html for detailed explanation of each field.
 project: AgentScope
 name: GSM8K-Qwen3-0.6B
 # directory to save checkpoints, default to ./checkpoints if TRINITY_CHECKPOINT_ROOT_DIR not set
