@@ -157,3 +157,25 @@ class PowerMemLongTermMemoryTest(IsolatedAsyncioTestCase):
             memory.add_calls[0]["memory_type"],
             "semantic_memory",
         )
+
+    async def test_record_to_memory_overrides_memory_type(self) -> None:
+        """Ensure record_to_memory memory_type overrides defaults."""
+        memory = AsyncMemoryStub()
+        long_term_memory = PowerMemLongTermMemory(
+            memory=memory,
+            agent_name="agent",
+            user_name="user",
+            run_name="run",
+            default_memory_type="semantic_memory",
+        )
+
+        await long_term_memory.record_to_memory(
+            thinking="capture preference",
+            content=["prefers tea"],
+            memory_type="procedural_memory",
+        )
+
+        self.assertEqual(
+            memory.add_calls[0]["memory_type"],
+            "procedural_memory",
+        )

@@ -27,7 +27,6 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         self,
         config: dict | MemoryConfig | None = None,
         memory: AsyncMemory | Memory | None = None,
-        *,
         agent_name: str | None = None,
         user_name: str | None = None,
         run_name: str | None = None,
@@ -131,6 +130,8 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         self,
         thinking: str,
         content: list[str],
+        memory_type: str | None = None,
+        infer: bool | None = None,
         **kwargs: Any,
     ) -> ToolResponse:
         """Record important information to long-term memory.
@@ -140,6 +141,10 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 Your reasoning about what to record.
             content (`list[str]`):
                 The content to remember.
+            memory_type (`str | None`, optional):
+                Memory type passed to the backend.
+            infer (`bool | None`, optional):
+                Override inference behavior.
             **kwargs (`Any`):
                 Extra keyword arguments passed to the memory backend.
 
@@ -150,8 +155,12 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
         try:
             await self._ensure_initialized()
             payload = self._join_record_content(thinking, content)
-            infer = kwargs.pop("infer", self._infer)
-            await self._add_messages(payload, infer=infer, **kwargs)
+            await self._add_messages(
+                payload,
+                memory_type=memory_type,
+                infer=infer,
+                **kwargs,
+            )
             return self._tool_response(
                 "Successfully recorded content to memory.",
             )
@@ -214,11 +223,19 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             memory_type,
             kwargs,
         )
+        if infer is None:
+            infer = kwargs.pop("infer", self._infer)
+        else:
+            kwargs.pop("infer", None)
+        kwargs.pop("messages", None)
+        kwargs.pop("agent_id", None)
+        kwargs.pop("user_id", None)
+        kwargs.pop("run_id", None)
         await self._call_memory(
             self._memory.add,
             messages=messages,
             memory_type=resolved_memory_type,
-            infer=self._infer if infer is None else infer,
+            infer=infer,
             **self._scoped_kwargs(),
             **kwargs,
         )
@@ -273,12 +290,22 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 await self._call_memory(initialize)
             self._initialized = True
 
-    async def _add_messages(self, payload: str, **kwargs: Any) -> None:
+    async def _add_messages(
+        self,
+        payload: str,
+        memory_type: str | None = None,
+        infer: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Add messages to the memory backend.
 
         Args:
             payload (`str`):
                 Serialized message payload to store.
+            memory_type (`str | None`, optional):
+                Memory type passed to the backend.
+            infer (`bool | None`, optional):
+                Override inference behavior.
             **kwargs (`Any`):
                 Extra keyword arguments passed to the backend.
 
@@ -286,11 +313,23 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             `None`:
                 This method returns nothing.
         """
-        resolved_memory_type = self._resolve_memory_type(None, kwargs)
+        resolved_memory_type = self._resolve_memory_type(
+            memory_type,
+            kwargs,
+        )
+        if infer is None:
+            infer = kwargs.pop("infer", self._infer)
+        else:
+            kwargs.pop("infer", None)
+        kwargs.pop("messages", None)
+        kwargs.pop("agent_id", None)
+        kwargs.pop("user_id", None)
+        kwargs.pop("run_id", None)
         await self._call_memory(
             self._memory.add,
             messages=payload,
             memory_type=resolved_memory_type,
+            infer=infer,
             **self._scoped_kwargs(),
             **kwargs,
         )
@@ -315,6 +354,11 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
             `list[str]`:
                 Flattened memory results.
         """
+        kwargs.pop("query", None)
+        kwargs.pop("limit", None)
+        kwargs.pop("agent_id", None)
+        kwargs.pop("user_id", None)
+        kwargs.pop("run_id", None)
         results: list[str] = []
         for query in queries:
             response = await self._call_memory(
@@ -363,9 +407,10 @@ class PowerMemLongTermMemory(LongTermMemoryBase):
                 The resolved memory type.
         """
         if memory_type is not None:
+            kwargs.pop("memory_type", None)
             return memory_type
         if "memory_type" in kwargs:
-            return kwargs["memory_type"]
+            return kwargs.pop("memory_type")
         return self._default_memory_type
 
     async def _search_keywords(
