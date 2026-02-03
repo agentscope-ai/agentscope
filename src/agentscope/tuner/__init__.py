@@ -9,6 +9,7 @@ from ._algorithm import AlgorithmConfig
 from ._model import TunerModelConfig, TinkerConfig
 from ._config import check_judge_function, check_workflow_function
 from .prompt_tune import tune_prompt, PromptTuneConfig
+from .model_selection._model_selection import select_model
 
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "check_judge_function",
     "tune_prompt",
     "PromptTuneConfig",
+    "select_model",
 ]
