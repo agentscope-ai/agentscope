@@ -1,0 +1,623 @@
+:orphan:
+
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="About AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ What is AgentScope?     AgentScope is a multi-agent framework, aiming to provide a simple yet efficient way to build LLM-empowered agent applications.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
+    :alt:
+
+  :doc:`/tutorial/faq`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">FAQ</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope implements OpenTelemetry-based tracing to monitor and debug the execution of agent applications, which features">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tracing_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tracing`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tracing</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This chapter establishes key concepts from an engineering perspective to introduce AgentScope&#x27;s design.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_key_concept_thumb.png
+    :alt:
+
+  :doc:`/tutorial/quickstart_key_concept`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Key Concepts</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope Studio is a local-deployed web application that">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_studio_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_studio`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">AgentScope Studio</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope requires Python 3.10 or higher. You can install from source or pypi.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_installation_thumb.png
+    :alt:
+
+  :doc:`/tutorial/quickstart_installation`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Installation</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides a token counter module under agentscope.token to calculate the number of tokens in the given messages, allowing developers to estimate the number of tokens in a prompt before sending it to an API.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_token_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_token`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Token</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="A simple example is shown below, where two agents are created and executed concurrently.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_concurrent_agents_thumb.png
+    :alt:
+
+  :doc:`/tutorial/workflow_concurrent_agents`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Concurrent Agents</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Agent skill is an approach proposed by Anthropic to improve agent capabilities on specific tasks.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_agent_skill_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_agent_skill`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Agent Skill</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Hooks are extension points in AgentScope that allow developers to customize agent behaviors at specific execution points, providing a flexible way to modify or extend the agent&#x27;s functionality without changing its core implementation.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_hook_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_hook`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Agent Hooks</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="   Handoffs example">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_handoffs_thumb.png
+    :alt:
+
+  :doc:`/tutorial/workflow_handoffs`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Handoffs</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="For multi-agent orchestration, AgentScope provides the agentscope.pipeline module as syntax sugar for chaining agents together, including">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_pipeline_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_pipeline`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Pipeline</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In AgentScope, we provide a basic class for long-term memory (``LongTermMemoryBase``) and an implementation based on the mem0 library (``Mem0LongTermMemory``). Together with the design of ReActAgent class in agent section, we provide two long-term memory modes:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_long_term_memory_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_long_term_memory`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Long-Term Memory</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Message is the core concept in AgentScope, used to support multimodal data, tools API, information storage/exchange and prompt construction.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_message_thumb.png
+    :alt:
+
+  :doc:`/tutorial/quickstart_message`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Create Message</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The realtime agent is designed to handle real-time interactions, such as voice conversations or live chat sessions. The realtime agent in AgentScope features:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_realtime_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_realtime`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Realtime Agent</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides the tuner module for training agent applications using reinforcement learning (RL). This tutorial will guide you through how to leverage the tuner module to improve agent performance on specific tasks, including:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tuner_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tuner`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tuner</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The tutorial covers the following features of AgentScope in support of the MCP (Model Context Protocol):">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_mcp_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_mcp`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">MCP</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In AgentScope, the embedding module provides a unified interface for vector representation generation, which features:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_embedding_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_embedding`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Embedding</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Conversation is a design pattern that agents exchange and share information between each other, most commonly in game playing, chatbot, and multi-agent discussion scenarios.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_conversation_thumb.png
+    :alt:
+
+  :doc:`/tutorial/workflow_conversation`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Conversation</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides a unified interface for Text-to-Speech (TTS) models across multiple API providers. This tutorial demonstrates how to use TTS models in AgentScope.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tts_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tts`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">TTS</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In this tutorial, we introduce the model APIs integrated in AgentScope, how to use them and how to integrate new model APIs. The supported model APIs and providers include:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_model_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_model`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Model</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="A2A (Agent-to-Agent) is an open standard protocol for enabling interoperable communication between different AI agents.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_a2a_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_a2a`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">A2A Agent</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides out-of-the-box ReAct agent ReActAgent under agentscope.agent that can be used directly.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_quickstart_agent_thumb.png
+    :alt:
+
+  :doc:`/tutorial/quickstart_agent`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Create ReAct Agent</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In AgentScope, the &quot;state&quot; refers to the agent status in the running application, including its current system prompt, memory, context, equipped tools, and other information that change over time.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_state_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_state`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">State/Session Management</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="In this tutorial, we first focus on introducing the ReAct agent in AgentScope, then we briefly introduce how to customize your own agent from scratch.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_agent_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_agent`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Agent</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The formatter module in AgentScope is responsible for">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_prompt_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_prompt`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Prompt Formatter</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="- Routing by structured output - Routing by tool calls">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_routing_thumb.png
+    :alt:
+
+  :doc:`/tutorial/workflow_routing`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Routing</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="Debate workflow simulates a multi-turn discussion between different agents, mostly several solvers and an aggregator. Typically, the solvers generate and exchange their answers, while the aggregator collects and summarizes the answers.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_workflow_multiagent_debate_thumb.png
+    :alt:
+
+  :doc:`/tutorial/workflow_multiagent_debate`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Multi-Agent Debate</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The Plan Module enables agents to formally break down complex tasks into manageable sub-tasks and execute them systematically. Key features include:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_plan_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_plan`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Plan</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides a built-in evaluation framework for assessing agent performance across different tasks and benchmarks, featuring:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_eval_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_eval`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Evaluation</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="The memory module in AgentScope is responsible for">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_memory_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_memory`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Memory</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides built-in support for Retrieval-Augmented Generation (RAG) tasks. This tutorial demonstrates">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_rag_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_rag`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">RAG</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="To ensure accurate and reliable tool parsing, AgentScope fully embraces the use of tools API with the following features:">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_tool_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_tool`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Tool</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This guide introduces how to use [OpenJudge](https://github.com/agentscope-ai/OpenJudge) graders as AgentScope metrics to evaluate your multi-agent applications. OpenJudge is a comprehensive evaluation system designed to assess the quality of LLM applications. By integrating OpenJudge into AgentScope, you can extend AgentScope&#x27;s native evaluation capabilities from basic execution checks to deep, semantic quality analysis.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_eval_openjudge_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_eval_openjudge`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Evaluation with OpenJudge</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /tutorial/faq
+   /tutorial/task_tracing
+   /tutorial/quickstart_key_concept
+   /tutorial/task_studio
+   /tutorial/quickstart_installation
+   /tutorial/task_token
+   /tutorial/workflow_concurrent_agents
+   /tutorial/task_agent_skill
+   /tutorial/task_hook
+   /tutorial/workflow_handoffs
+   /tutorial/task_pipeline
+   /tutorial/task_long_term_memory
+   /tutorial/quickstart_message
+   /tutorial/task_realtime
+   /tutorial/task_tuner
+   /tutorial/task_mcp
+   /tutorial/task_embedding
+   /tutorial/workflow_conversation
+   /tutorial/task_tts
+   /tutorial/task_model
+   /tutorial/task_a2a
+   /tutorial/quickstart_agent
+   /tutorial/task_state
+   /tutorial/task_agent
+   /tutorial/task_prompt
+   /tutorial/workflow_routing
+   /tutorial/workflow_multiagent_debate
+   /tutorial/task_plan
+   /tutorial/task_eval
+   /tutorial/task_memory
+   /tutorial/task_rag
+   /tutorial/task_tool
+   /tutorial/task_eval_openjudge
+
+
+
+.. only:: html
+
+ .. rst-class:: sphx-glr-signature
+
+    `Gallery generated by Sphinx-Gallery <https://sphinx-gallery.github.io>`_

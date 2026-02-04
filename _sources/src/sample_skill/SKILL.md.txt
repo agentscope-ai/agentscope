@@ -1,0 +1,7 @@
+---
+name: sample_skill
+description: A sample agent skill for demonstration.
+---
+
+# Sample Skill
+...
