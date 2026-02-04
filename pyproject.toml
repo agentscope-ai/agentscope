@@ -118,11 +118,13 @@ qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
 ali_mysql = ["mysql-connector-python"]
 mongodb = ["pymongo"]
+oceanbase = ["pyobvector>=0.2.0,<0.3.0"]
 vdbs = [
     "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
     "agentscope[mongodb]",
+    "agentscope[oceanbase]",
 ]
 
 rag = [

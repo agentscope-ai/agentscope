@@ -6,7 +6,7 @@ from ._dataset import DatasetConfig
 from ._judge import JudgeType, JudgeOutput
 from ._workflow import WorkflowType, WorkflowOutput
 from ._algorithm import AlgorithmConfig
-from ._model import TunerModelConfig
+from ._model import TunerModelConfig, TinkerConfig
 from ._config import check_judge_function, check_workflow_function
 
 
@@ -19,6 +19,7 @@ __all__ = [
     "JudgeOutput",
     "DatasetConfig",
     "TunerModelConfig",
+    "TinkerConfig",
     "check_workflow_function",
     "check_judge_function",
 ]
