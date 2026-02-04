@@ -266,10 +266,6 @@ async def run_token_counter() -> int:
     return await token_counter.count(formatted_message)
 
 
-n_tokens = asyncio.run(run_token_counter())
-print("The tokens in the formatted messages are: ", n_tokens)
-
-
 # %%
 # Then we set the maximum token limit to 20 tokens less than the total number of tokens and run the formatter.
 #
