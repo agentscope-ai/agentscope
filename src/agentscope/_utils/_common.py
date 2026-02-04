@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable, Type, Dict
 
+import numpy as np
 import requests
 from docstring_parser import parse
 from json_repair import repair_json
@@ -48,28 +49,23 @@ def _json_loads_with_repair(
             Returns an empty dict if all repair attempts fail.
     """
     try:
-        repaired = repair_json(json_str)
+        repaired = repair_json(json_str, stream_stable=True)
         result = json.loads(repaired)
         if isinstance(result, dict):
             return result
+
     except Exception:
-        pass
+        if len(json_str) > 100:
+            log_str = json_str[:100] + "..."
+        else:
+            log_str = json_str
 
-    for i in range(len(json_str) - 1, 0, -1):
-        try:
-            repaired = repair_json(json_str[:i])
-            result = json.loads(repaired)
-            if isinstance(result, dict):
-                return result
-        except Exception:
-            continue
+        logger.warning(
+            "Failed to load JSON dict from string: %s. Returning empty dict "
+            "instead.",
+            log_str,
+        )
 
-    logger.warning(
-        "Failed to parse JSON string `%s`. "
-        "All repair attempts (original + truncation) failed. "
-        "Returning empty dict.",
-        json_str,
-    )
     return {}
 
 
@@ -431,6 +427,53 @@ def _parse_tool_function(
     return func_json_schema
 
 
+def _resample_pcm_delta(
+    pcm_base64: str,
+    sample_rate: int,
+    target_rate: int,
+) -> str:
+    """Resampling the input pcm base64 data into the target rate.
+
+    Args:
+        pcm_base64 (`str`):
+            The input base64 audio data in pcm format.
+        sample_rate (`int`):
+            The sampling rate of the input data.
+        target_rate (`int`):
+            The target rate of the input data.
+
+    Returns:
+        `str`:
+            The resampling base64 audio data in the required sampling
+            rate.
+    """
+    pcm_data = base64.b64decode(pcm_base64)
+
+    # Into numpy array first
+    audio_array = np.frombuffer(pcm_data, dtype=np.int16)
+
+    # return directly if the same
+    if sample_rate == target_rate:
+        return pcm_base64
+
+    # compute the number of samples
+    num_samples = int(len(audio_array) * target_rate / sample_rate)
+
+    from scipy import signal
+
+    # Use scipy to resample
+    resampled_audio = signal.resample(audio_array, num_samples)
+
+    # Turn it back into bytes
+    resampled_audio = np.clip(resampled_audio, -32768, 32767).astype(np.int16)
+
+    # into base64
+    resampled_bytes = resampled_audio.tobytes()
+    resampled_base64 = base64.b64encode(resampled_bytes).decode("utf-8")
+
+    return resampled_base64
+
+
 def _validate_function_schema(schema: dict) -> None:
     """Validate the function schema to ensure it conforms to the expected
     structure.
@@ -461,4 +504,3 @@ def _validate_function_schema(schema: dict) -> None:
         raise ValueError(
             "The function schema must have a 'name' field."
         )
-

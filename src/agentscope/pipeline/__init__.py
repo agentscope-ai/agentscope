@@ -9,6 +9,7 @@ from ._functional import (
     fanout_pipeline,
     stream_printing_messages,
 )
+from ._chat_room import ChatRoom
 
 __all__ = [
     "MsgHub",
@@ -17,4 +18,5 @@ __all__ = [
     "FanoutPipeline",
     "fanout_pipeline",
     "stream_printing_messages",
+    "ChatRoom",
 ]

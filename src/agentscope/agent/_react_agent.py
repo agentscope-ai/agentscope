@@ -519,11 +519,9 @@ class ReActAgent(ReActAgentBase):
         if self._static_control:
             await self.long_term_memory.record(
                 [
-                    *([*msg] if isinstance(msg, list) else [msg]),
                     *await self.memory.get_memory(
                         exclude_mark=_MemoryMark.COMPRESSED,
                     ),
-                    reply_msg,
                 ],
             )
 

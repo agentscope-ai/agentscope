@@ -87,6 +87,8 @@ class ToolUseBlock(TypedDict, total=False):
     """The name of the tool"""
     input: Required[dict[str, object]]
     """The input of the tool"""
+    raw_input: str
+    """The raw string input of the tool from the model API"""
 
 
 class ToolResultBlock(TypedDict, total=False):

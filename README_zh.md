@@ -77,6 +77,7 @@ AgentScope 生态
 
 ## 📢 新闻
 <!-- BEGIN NEWS -->
+- **[2026-02] `功能`:** 支持实时语音交互。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent) | [多智能体实时交互](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime) | [文档](https://doc.agentscope.io/tutorial/task_realtime.html)
 - **[2026-01] `社区`:** AgentScope 双周会议启动，分享生态更新和开发计划 - 欢迎加入！[详情与安排](https://github.com/agentscope-ai/agentscope/discussions/1126)
 - **[2026-01] `功能`:** 记忆模块新增数据库支持和记忆压缩。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) | [教程](https://doc.agentscope.io/tutorial/task_memory.html)
 - **[2025-12] `集成`:** A2A（智能体间通信）协议支持。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent) | [教程](https://doc.agentscope.io/zh_CN/tutorial/task_a2a.html)
@@ -86,7 +87,6 @@ AgentScope 生态
 - **[2025-11] `集成`:** 通过 Trinity-RFT 库实现智能体强化学习。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent) | [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT)
 - **[2025-11] `集成`:** ReMe 增强长期记忆。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme)
 - **[2025-11] `发布`:** agentscope-samples 样例库上线，agentscope-runtime 升级支持 Docker/K8s 部署和 VNC 图形沙盒。[样例库](https://github.com/agentscope-ai/agentscope-samples) | [Runtime](https://github.com/agentscope-ai/agentscope-runtime)
-- **[2025-11] `文档`:** 贡献指南上线 - 欢迎参与贡献！[指南](./CONTRIBUTING_zh.md)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)
@@ -110,6 +110,7 @@ AgentScope 生态
 - [样例](#%E6%A0%B7%E4%BE%8B)
   - [Hello AgentScope！](#hello-agentscope)
   - [语音智能体](#%E8%AF%AD%E9%9F%B3%E6%99%BA%E8%83%BD%E4%BD%93)
+  - [实时语音智能体](#%E5%AE%9E%E6%97%B6%E8%AF%AD%E9%9F%B3%E6%99%BA%E8%83%BD%E4%BD%93)
   - [人机协作](#%E4%BA%BA%E6%9C%BA%E5%8D%8F%E4%BD%9C)
   - [灵活的 MCP 控制](#%E7%81%B5%E6%B4%BB%E7%9A%84-mcp-%E6%8E%A7%E5%88%B6)
   - [智能体强化学习](#%E6%99%BA%E8%83%BD%E4%BD%93%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0)
@@ -210,8 +211,17 @@ asyncio.run(main())
 
 创建支持语音的 ReAct 智能体，能够理解语音并进行语音回复，还可以使用语音交互玩多智能体狼人杀游戏。
 
-
 https://github.com/user-attachments/assets/559af387-fd6f-4f0c-b882-cd4778214801
+
+
+### 实时语音智能体
+
+使用 AgentScope 轻松构建实时交互的智能体应用，提供统一的事件接口和工具调用支持。
+
+[实时语音智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent) | [多智能体实时交互](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime)
+
+https://github.com/user-attachments/assets/d9674ad5-f71d-43d5-a341-5bada318aee0
+
 
 
 ### 人机协作
@@ -327,6 +337,7 @@ asyncio.run(multi_agent_conversation())
 - [Browser-use 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/browser_agent)
 - [Meta Planner 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/meta_planner_agent)
 - [A2A 智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/a2a_agent)
+- [实时语音交互智能体](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent)
 
 ### 游戏
 
@@ -337,6 +348,7 @@ asyncio.run(multi_agent_conversation())
 - [多智能体辩论](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_debate)
 - [多智能体对话](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_conversation)
 - [多智能体并发](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_concurrent)
+- [多智能体实时语音交互](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime)
 
 ### 评估
 

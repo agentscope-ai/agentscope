@@ -11,6 +11,7 @@ from ._user_input import (
 )
 from ._user_agent import UserAgent
 from ._a2a_agent import A2AAgent
+from ._realtime_agent import RealtimeAgent
 
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "StudioUserInput",
     "UserAgent",
     "A2AAgent",
+    "RealtimeAgent",
 ]

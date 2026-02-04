@@ -58,6 +58,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_state
    tutorial/task_hook
    tutorial/task_a2a
+   tutorial/task_realtime
 
 .. toctree::
    :maxdepth: 1

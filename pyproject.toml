@@ -51,6 +51,8 @@ a2a = [
     "nacos-sdk-python>=3.0.0",
 ]
 
+# ------------ Realtime -------------
+realtime = ["websockets>=14.0", "scipy"]
 
 # ------------ Model APIs ------------
 gemini = ["google-genai"]
@@ -95,14 +97,20 @@ docx-reader = [
     "python-docx"
 ]
 excel-reader = [
+    "agentscope[text-reader]",
     "pandas",
     "openpyxl",
+]
+ppt-reader = [
+    "agentscope[text-reader]",
+    "python-pptx"
 ]
 readers = [
     "agentscope[text-reader]",
     "agentscope[pdf-reader]",
     "agentscope[docx-reader]",
     "agentscope[excel-reader]",
+    "agentscope[ppt-reader]",
 ]
 
 # vdb
@@ -112,13 +120,14 @@ qdrant = ["qdrant-client==1.15.1"]
 milvus = ["pymilvus[milvus_lite]"]
 ali_mysql = ["mysql-connector-python"]
 mongodb = ["pymongo"]
+oceanbase = ["pyobvector>=0.2.0,<0.3.0"]
 vdbs = [
     "agentscope[ali_mysql]",
     "agentscope[qdrant]",
     "agentscope[milvus]",
     "agentscope[mongodb]",
+    "agentscope[oceanbase]",
 ]
-
 
 rag = [
     "agentscope[readers]",
@@ -136,6 +145,7 @@ full = [
     "agentscope[memory]",
     "agentscope[rag]",
     "agentscope[evaluate]",
+    "agentscope[realtime]",
 ]
 
 # ------------ Development ------------

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """TunerModelConfig definition."""
+from __future__ import annotations
 from typing import Dict, Any
 from pydantic import BaseModel, Field
 
@@ -67,6 +68,13 @@ class TunerModelConfig(BaseModel):
         default="deepseek_r1",
     )
 
+    tinker_config: TinkerConfig | None = Field(
+        description=(
+            "The configuration for Tinker. " "If None, Tinker is not used."
+        ),
+        default=None,
+    )
+
     def get_config(self) -> Dict[str, Any]:
         """Get the model configuration.
 
@@ -82,4 +90,59 @@ class TunerModelConfig(BaseModel):
             "reasoning_parser": self.reasoning_parser,
             "enable_openai_api": True,
             "enable_auto_tool_choice": True,
+        }
+
+
+class TinkerConfig(BaseModel):
+    """Model configuration for Tinker."""
+
+    rank: int = Field(
+        description="The LoRA rank of the Tinker model.",
+        default=16,
+    )
+
+    seed: int | None = Field(
+        description=(
+            "The seed for initializing LoRA weights in the model. "
+            "If None, weights are initialized randomly."
+        ),
+        default=None,
+    )
+
+    train_mlp: bool = Field(
+        description="Whether to add LoRA to the MLP layers.",
+        default=True,
+    )
+
+    train_attn: bool = Field(
+        description="Whether to add LoRA to the attention layers.",
+        default=True,
+    )
+
+    train_unembed: bool = Field(
+        description="Whether to add LoRA to the unembedding layer.",
+        default=True,
+    )
+
+    base_url: str | None = Field(
+        description=(
+            "The base URL for Tinker services. If None, the default "
+            "service URL is used."
+        ),
+        default=None,
+    )
+
+    def get_config(self) -> Dict[str, Any]:
+        """Get the Tinker model configuration.
+
+        Returns:
+            `Dict[str, Any]`: The Tinker model configuration dictionary.
+        """
+        return {
+            "rank": self.rank,
+            "seed": self.seed,
+            "train_mlp": self.train_mlp,
+            "train_attn": self.train_attn,
+            "train_unembed": self.train_unembed,
+            "base_url": self.base_url,
         }
