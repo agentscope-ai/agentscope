@@ -354,7 +354,7 @@ class ReMeToolLongTermMemory(ReMeLongTermMemoryBase):
         self,
         msgs: list[Msg | None],
         **kwargs: Any,
-    ) -> Any:
+    ) -> None:
         """Record the content to the tool memory.
 
         This method extracts content from messages and treats them as
