@@ -1,20 +1,16 @@
 # -*- coding: utf-8 -*-
 """Built-in judge functions for model selection."""
 
-import time
-from typing import Dict, Any, Dict as DictType
-import asyncio
+from typing import Dict, Any
 from agentscope.model import ChatModelBase
-from agentscope.model._model_response import ChatResponse
-from agentscope.model._model_usage import ChatUsage
-from .._judge import JudgeType, JudgeOutput
+from .._judge import JudgeOutput
 from .._workflow import WorkflowOutput
 
 
 async def avg_time_judge(
-    task: Dict[str, Any],
+    _task: Dict[str, Any],
     response: Any,
-    auxiliary_models: DictType[str, ChatModelBase],
+    _auxiliary_models: Dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average time consumption of a model.
@@ -42,6 +38,8 @@ async def avg_time_judge(
     # Check if this is an enhanced response with workflow metrics
     if not isinstance(response, WorkflowOutput):
         raise ValueError("Response is not a WorkflowOutput")
+    if response.metrics is None:
+        response.metrics = {}
     if "execution_time" not in response.metrics:
         raise ValueError("Missing 'execution' field in workflow_metrics")
     time_taken = response.metrics["execution_time"]
@@ -54,14 +52,15 @@ async def avg_time_judge(
 
 
 async def avg_token_consumption_judge(
-    task: Dict[str, Any],
+    _task: Dict[str, Any],
     response: Any,
-    auxiliary_models: DictType[str, ChatModelBase],
+    _auxiliary_models: Dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average token consumption of a model.
     For this built-in function, smaller reward is better.
-    NOTE: The response parameter must include a 'usage' field containing token information.
+    NOTE: The response parameter must include a 'usage' field containing token
+    information.
 
     Args:
         task (`Dict[str, Any]`):
@@ -76,7 +75,7 @@ async def avg_token_consumption_judge(
     Returns:
         `JudgeOutput`:
             The total token consumption (since lower usage is better,
-            and we want smaller reward to be better for this built-in function).
+            and we want smaller reward to be better for built-in function).
     """
     # Check if response has a usage attribute/field
     if isinstance(response, WorkflowOutput):
@@ -92,7 +91,7 @@ async def avg_token_consumption_judge(
         reward = float(usage["output_tokens"])
     else:
         raise ValueError(
-            "Neither 'total_tokens' nor 'output_tokens' found in usage field"
+            "Neither 'total_tokens' nor 'output_tokens' found in usage field",
         )
 
     # For token consumption judge, smaller token usage is better,
