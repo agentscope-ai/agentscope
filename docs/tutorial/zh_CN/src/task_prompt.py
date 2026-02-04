@@ -266,10 +266,6 @@ async def run_token_counter() -> int:
     return await token_counter.count(formatted_message)
 
 
-n_tokens = asyncio.run(run_token_counter())
-print("格式化消息中的 token 数量为：", n_tokens)
-
-
 # %%
 # 然后我们将最大 token 限制设置为比总 token 数少 20 个，并运行格式化器。
 #
