@@ -5,8 +5,6 @@ import os
 import asyncio
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
-import dspy
-from datasets import load_dataset
 
 from agentscope.tuner import (
     DatasetConfig,
@@ -17,10 +15,10 @@ from agentscope.tuner._config import check_judge_function
 from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
 from agentscope.tuner.prompt_tune._config import PromptTuneConfig
-from agentscope.tuner.prompt_tune._wrapper import WorkflowWrapperModule
+from agentscope.tuner.prompt_tune._wrapper import _WorkflowWrapperModule
 
 
-def wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
+def _wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
     """Wrap an async judge function into a synchronous callable.
 
     Args:
@@ -49,6 +47,15 @@ def wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
 
 
 def _guess_by_ext(p: str) -> Optional[str]:
+    """Guess the dataset format by file extension.
+
+    Args:
+        p (`str`): The file path.
+
+    Returns:
+        `Optional[str]`: The format string (e.g., 'json', 'csv') or None if
+            the extension is not recognized.
+    """
     pp = Path(p)
     ext = pp.suffix.lower()
     if ext in {".jsonl", ".jl"}:
@@ -97,6 +104,9 @@ def tune_prompt(
     Returns:
         The optimized system prompt string.
     """
+    import dspy
+    from datasets import load_dataset
+
     config = config or PromptTuneConfig()
     auxiliary_models = auxiliary_models or {}
     logger.warning("Model will not be optimized during prompt tuning.")
@@ -121,7 +131,7 @@ def tune_prompt(
 
     dspy_trainset = [dspy.Example(inp=x).with_inputs("inp") for x in trainset]
 
-    module = WorkflowWrapperModule(workflow_func, init_system_prompt)
+    module = _WorkflowWrapperModule(workflow_func, init_system_prompt)
     # model and auxiliary_models are not necessary for prompt tuning.
     # what about providing a new interface?
     module.set_chatmodel(model, auxiliary_models)
@@ -131,7 +141,7 @@ def tune_prompt(
 
     optimizer = dspy.MIPROv2(
         metric=(
-            lambda data, output, trace=None: wrap_judge_fn(judge_func)(
+            lambda data, output, trace=None: _wrap_judge_fn(judge_func)(
                 data.inp,
                 output,
                 auxiliary_models,
@@ -178,7 +188,7 @@ def tune_prompt(
 
         evaluate = dspy.Evaluate(
             devset=dspy_evalset,
-            metric=lambda data, output, trace=None: wrap_judge_fn(
+            metric=lambda data, output, trace=None: _wrap_judge_fn(
                 judge_func,
             )(data.inp, output, auxiliary_models),
             display_progress=config.eval_display_progress,
