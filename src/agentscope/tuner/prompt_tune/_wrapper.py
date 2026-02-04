@@ -12,7 +12,7 @@ from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
 
 
-class OptimizablePrompt(Predict):
+class _OptimizablePrompt(Predict):
     """A DSPy Predict wrapper that makes a system prompt optimizable.
 
     This class bridges AgentScope's ReActAgent with DSPy's optimization
@@ -57,7 +57,7 @@ class OptimizablePrompt(Predict):
         return self._sys_prompt
 
 
-class WorkflowWrapperModule(Module):
+class _WorkflowWrapperModule(Module):
     """A DSPy Module that wraps an AgentScope workflow for optimization.
 
     This module enables DSPy to optimize the system prompt by wrapping
@@ -73,7 +73,7 @@ class WorkflowWrapperModule(Module):
         workflow: Callable[[str], WorkflowType],
         init_prompt: str,
     ):
-        """Initialize the WorkflowWrapperModule.
+        """Initialize the _WorkflowWrapperModule.
 
         Args:
             workflow: A factory function that takes a system prompt and returns
@@ -84,7 +84,7 @@ class WorkflowWrapperModule(Module):
         self._workflow = workflow
         self._init_prompt = init_prompt
 
-        self.predictor = OptimizablePrompt(self._init_prompt)
+        self.predictor = _OptimizablePrompt(self._init_prompt)
 
         self._model: Optional[ChatModelBase] = None
         self._auxiliary_models: Optional[dict[str, ChatModelBase]] = None
@@ -121,6 +121,9 @@ class WorkflowWrapperModule(Module):
             )
 
         async def _workflow() -> WorkflowOutput:
+            assert (
+                self._model is not None and self._auxiliary_models is not None
+            )
             return await self._workflow(current_prompt)(
                 inp,
                 self._model,

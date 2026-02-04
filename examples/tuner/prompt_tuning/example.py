@@ -35,14 +35,15 @@ def workflow(sys_prompt: str) -> WorkflowType:
         """A simple workflow function using the ReAct agent to solve tasks.
 
         Args:
-            task (Dict): The task to be solved.
-            model (TunerChatModel): The language model to use.
-            auxiliary_models (Dict[str, TunerChatModel]):
+            task (dict): The task to be solved.
+            model (ChatModelBase): The language model to use.
+            auxiliary_models (dict[str, ChatModelBase]):
                 A dictionary of additional chat models available for
                 LLM-as-a-Judge. Not used in this workflow.
 
         Returns:
-            float: The reward obtained by solving the task.
+            WorkflowOutput: The workflow output containing the agent's
+                            response.
         """
         assert (
             len(auxiliary_models) == 0
