@@ -1,4 +1,4 @@
 # -*- coding: utf-8 -*-
 """The version of agentscope."""
 
-__version__ = "1.0.14"
+__version__ = "1.0.15dev"

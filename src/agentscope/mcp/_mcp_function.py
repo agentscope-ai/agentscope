@@ -34,7 +34,27 @@ class MCPToolFunction:
         session: ClientSession | None = None,
         timeout: float | None = None,
     ) -> None:
-        """Initialize the MCP function."""
+        """Initialize the MCP function.
+
+        Args:
+            mcp_name (`str`):
+                The name of the MCP instance.
+            tool (`mcp.types.Tool`):
+                The MCP tool definition.
+            wrap_tool_result (`bool`):
+                Whether to wrap the tool result into `ToolResponse` in
+                AgentScope.
+            client_gen (`Callable[..., _AsyncGeneratorContextManager[Any]] | \
+            None`, *optional*):
+                The MCP client generator function. Either this or `session`
+                must be provided.
+            session (`ClientSession`):
+                The MCP client session. Either this or `client_gen` must be
+                provided.
+            timeout (`float | None`, *optional*):
+                The timeout in seconds for tool execution. If not provided,
+                no timeout will be set.
+        """
         self.mcp_name = mcp_name
         self.name = tool.name
         self.description = tool.description
@@ -42,7 +62,7 @@ class MCPToolFunction:
         self.wrap_tool_result = wrap_tool_result
 
         if timeout:
-            self.timeout = timedelta(timeout)
+            self.timeout = timedelta(seconds=timeout)
         else:
             self.timeout = None
 

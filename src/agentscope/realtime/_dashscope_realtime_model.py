@@ -20,7 +20,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
      - Support update session config during the session
     """
 
-    support_input_modalities: list[str] = ["audio", "image"]
+    support_input_modalities: list[str] = ["text", "audio", "image"]
     """The supported input modalities of the DashScope realtime model."""
 
     support_tools: bool = False
