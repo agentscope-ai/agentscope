@@ -7,7 +7,7 @@ This guide walks you through the steps to optimize your agent's system prompt wi
 
 Prompt tuning is a lightweight alternative to model fine-tuning that optimizes the system prompt to improve agent performance. To use prompt tuning, you need to understand three components:
 
-1. **Workflow function factory**: A factory function that takes a system prompt and returns a workflow function.
+1. **Workflow function**: An async function that takes a task and system prompt, returns a workflow output.
 2. **Judge function**: A function that evaluates the agent's response and returns a reward.
 3. **Task dataset**: A dataset containing training samples for optimization.
 
@@ -15,24 +15,13 @@ The following diagram illustrates the relationship between these components:
 
 ```mermaid
 flowchart TD
-    InitPrompt[Initial Prompt] --> WorkflowFactory[Workflow Factory]
-    WorkflowFactory --> WorkflowFunction[Workflow Function]
-    Model[Model] --> WorkflowFunction
-    WorkflowFunction --> JudgeFunction[Judge Function]
+    InitPrompt[Initial Prompt] --> WorkflowFunction[Workflow Function]
     Task[Task] --> WorkflowFunction
-    Task[Task] --> JudgeFunction
+    WorkflowFunction --> JudgeFunction[Judge Function]
+    Task --> JudgeFunction
     JudgeFunction --> Reward[Reward]
     Reward --> Optimizer
     Optimizer --> OptimizedPrompt[Optimized Prompt]
-
-    classDef wfcolor fill:#e67e22,stroke:#333,color:#111;
-    classDef judgecolor fill:#1abc9c,stroke:#333,color:#111,stroke-dasharray: 5 5;
-    classDef taskcolor fill:#3498db,stroke:#333,color:#111;
-    classDef optcolor fill:#9b59b6,stroke:#333,color:#111;
-    class WorkflowFactory,WorkflowFunction wfcolor;
-    class JudgeFunction judgecolor;
-    class Task taskcolor;
-    class Optimizer,OptimizedPrompt optcolor;
 ```
 
 ## How to implement
@@ -100,37 +89,32 @@ DatasetConfig(path="train.parquet").preview()
 # ]
 ```
 
-### Step 2: Define a workflow function factory
+### Step 2: Define a workflow function
 
-Unlike RL-based tuning, prompt tuning requires a **workflow function factory** that takes a system prompt as input and returns a workflow function. This allows the optimizer to test different prompts during optimization.
+The workflow function takes a task dictionary and system prompt as input, and returns a `WorkflowOutput`. The optimizer will call this function with different prompts during optimization.
 
 ```python
-def workflow_factory(sys_prompt: str) -> WorkflowType:
-    """Factory function that creates a workflow with the given system prompt."""
-
-    async def workflow_function(
-        task: Dict,
-        model: ChatModelBase,
-        auxiliary_models: Optional[Dict[str, ChatModelBase]]=None,
-    ) -> WorkflowOutput:
-        """Run the agent workflow on a single task."""
-        ...
-
-    return workflow_function
+async def workflow(
+    task: Dict,
+    system_prompt: str,
+) -> WorkflowOutput:
+    """Run the agent workflow on a single task with the given system prompt."""
+    ...
 ```
 
 - Inputs:
-    - `sys_prompt`: The system prompt to be used in the workflow. This will be optimized by the tuner.
+    - `task`: A dictionary representing a single training task from the dataset.
+    - `system_prompt`: The system prompt to be used in the workflow. This will be optimized by the tuner.
 
 - Returns:
-    - A workflow function with the same signature as in RL-based tuning.
+    - `WorkflowOutput`: An object containing the agent's response.
 
-Below is a refactored version of the original `run_react_agent` function to fit the workflow factory pattern.
+Below is a refactored version of the original `run_react_agent` function to fit the workflow function pattern.
 
 **Key changes from the original function**:
 
-1. Wrap the workflow function inside a factory function that accepts `sys_prompt`.
-2. Use the input `sys_prompt` to initialize the agent.
+1. Add `system_prompt` as a parameter to the workflow function.
+2. Use the input `system_prompt` to initialize the agent.
 3. Use the `question` field from the `task` dictionary as the user query.
 4. Return a `WorkflowOutput` object containing the agent's response.
 
@@ -140,28 +124,27 @@ from agentscope.formatter import OpenAIChatFormatter
 from agentscope.tuner import WorkflowOutput
 from agentscope.message import Msg
 
-def workflow(sys_prompt: str):
-    async def run_react_agent(
-        task: Dict,
-        model: ChatModelBase,
-        auxiliary_models: Optional[Dict[str, ChatModelBase]]=None,
-    ) -> WorkflowOutput:
-        agent = ReActAgent(
-            name="react_agent",
-            sys_prompt=sys_prompt,  # use the optimizable system prompt
-            model=model,
-            formatter=OpenAIChatFormatter(),
-        )
+# Initialize the model (can be module-level or passed in via closure)
+model = DashScopeChatModel("qwen-turbo", api_key="YOUR_API_KEY")
 
-        response = await agent.reply(
-            msg=Msg("user", task["question"], role="user"),
-        )
+async def workflow(
+    task: Dict,
+    system_prompt: str,
+) -> WorkflowOutput:
+    agent = ReActAgent(
+        name="react_agent",
+        sys_prompt=system_prompt,  # use the optimizable system prompt
+        model=model,
+        formatter=OpenAIChatFormatter(),
+    )
 
-        return WorkflowOutput(
-            response=response,
-        )
+    response = await agent.reply(
+        msg=Msg("user", task["question"], role="user"),
+    )
 
-    return run_react_agent
+    return WorkflowOutput(
+        response=response,
+    )
 ```
 
 ### Step 3: Implement the judge function
@@ -208,20 +191,18 @@ Use the `tune_prompt` interface to optimize your system prompt.
 ```python
 from agentscope.tuner import DatasetConfig
 from agentscope.tuner.prompt_tune import tune_prompt, PromptTuneConfig
-from agentscope.model import DashScopeChatModel
 
-# your workflow factory / judge function here...
+# your workflow / judge function here...
 
 if __name__ == "__main__":
     init_prompt = "You are an agent. Please solve the math problem given to you."
 
     optimized_prompt = tune_prompt(
-        workflow_func=workflow,
+        workflow=workflow,
         init_system_prompt=init_prompt,
         judge_func=judge_function,
         train_dataset=DatasetConfig(path="train.parquet"),
         eval_dataset=DatasetConfig(path="test.parquet"),
-        model=DashScopeChatModel("qwen-turbo", api_key="YOUR_API_KEY"),
         config=PromptTuneConfig(
             lm_model_name="dashscope/qwen-plus",
             optimization_level="light",
@@ -233,7 +214,6 @@ if __name__ == "__main__":
 
 Here, we use:
 - `DatasetConfig` to specify the training and evaluation datasets.
-- `DashScopeChatModel` as the model used in the workflow.
 - `PromptTuneConfig` to configure the optimization process.
 
 #### PromptTuneConfig Options
@@ -253,7 +233,7 @@ Here, we use:
 
 ```python
 import os
-from typing import Dict, Optional
+from typing import Dict
 
 from agentscope.tuner import DatasetConfig, WorkflowOutput, JudgeOutput
 from agentscope.tuner.prompt_tune import tune_prompt, PromptTuneConfig
@@ -263,28 +243,31 @@ from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 
 
-def workflow(sys_prompt: str):
-    async def run_react_agent(
-        task: Dict,
-        model: ChatModelBase,
-        auxiliary_models: Optional[Dict[str, ChatModelBase]] = None,
-    ) -> WorkflowOutput:
-        agent = ReActAgent(
-            name="react_agent",
-            sys_prompt=sys_prompt,
-            model=model,
-            formatter=OpenAIChatFormatter(),
-        )
+# Initialize the model for the workflow
+model = DashScopeChatModel(
+    "qwen-turbo",
+    api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+)
 
-        response = await agent.reply(
-            msg=Msg("user", task["question"], role="user"),
-        )
 
-        return WorkflowOutput(
-            response=response,
-        )
+async def workflow(
+    task: Dict,
+    system_prompt: str,
+) -> WorkflowOutput:
+    agent = ReActAgent(
+        name="react_agent",
+        sys_prompt=system_prompt,
+        model=model,
+        formatter=OpenAIChatFormatter(),
+    )
 
-    return run_react_agent
+    response = await agent.reply(
+        msg=Msg("user", task["question"], role="user"),
+    )
+
+    return WorkflowOutput(
+        response=response,
+    )
 
 
 async def judge_function(
@@ -304,15 +287,11 @@ if __name__ == "__main__":
     )
 
     optimized_prompt = tune_prompt(
-        workflow_func=workflow,
+        workflow=workflow,
         init_system_prompt=init_prompt,
         judge_func=judge_function,
         train_dataset=DatasetConfig(path="train.parquet"),
         eval_dataset=DatasetConfig(path="test.parquet"),
-        model=DashScopeChatModel(
-            "qwen-turbo",
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-        ),
     )
 
     print(f"Optimized prompt: {optimized_prompt}")
@@ -326,7 +305,7 @@ if __name__ == "__main__":
 
 ## How to run
 
-After implementing the workflow factory and judge function, follow these steps to run prompt tuning:
+After implementing the workflow and judge function, follow these steps to run prompt tuning:
 
 1. Prerequisites
 

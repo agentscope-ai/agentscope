@@ -9,71 +9,55 @@ from agentscope.model import DashScopeChatModel
 from agentscope.model import ChatModelBase
 from agentscope.tuner import DatasetConfig
 from agentscope.tuner import JudgeOutput
-from agentscope.tuner import WorkflowOutput, WorkflowType
+from agentscope.tuner import WorkflowOutput
 from agentscope.tuner import PromptTuneConfig
 from agentscope.tuner import tune_prompt
 
 
-def workflow(sys_prompt: str) -> WorkflowType:
-    """
-    Create a workflow function that uses the ReAct agent with a given
-    system prompt.
+# Initialize the model for the workflow
+model = DashScopeChatModel(
+    "qwen-flash",
+    api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
+    max_tokens=512,
+)
+
+
+async def workflow(
+    task: dict,
+    system_prompt: str,
+) -> WorkflowOutput:
+    """A workflow function using the ReAct agent to solve tasks.
 
     Args:
-        sys_prompt (str): The system prompt to use for the ReAct agent.
+        task (dict): The task to be solved.
+        system_prompt (str): The system prompt to use for the agent.
 
     Returns:
-        WorkflowType: A workflow function that takes task, model,
-            and auxiliary_models as arguments and returns a WorkflowOutput.
+        WorkflowOutput: The workflow output containing the agent's response.
     """
+    from agentscope.tool import (
+        Toolkit,
+        execute_python_code,
+    )
 
-    async def run_react_agent(
-        task: dict,
-        model: ChatModelBase,
-        auxiliary_models: dict[str, ChatModelBase],
-    ) -> WorkflowOutput:
-        """A simple workflow function using the ReAct agent to solve tasks.
+    toolkit = Toolkit()
+    toolkit.register_tool_function(execute_python_code)
+    agent = ReActAgent(
+        name="react_agent",
+        sys_prompt=system_prompt,
+        model=model,
+        formatter=OpenAIChatFormatter(),
+        toolkit=toolkit,
+        print_hint_msg=False,
+    )
+    agent.set_console_output_enabled(False)
 
-        Args:
-            task (dict): The task to be solved.
-            model (ChatModelBase): The language model to use.
-            auxiliary_models (dict[str, ChatModelBase]):
-                A dictionary of additional chat models available for
-                LLM-as-a-Judge. Not used in this workflow.
-
-        Returns:
-            WorkflowOutput: The workflow output containing the agent's
-                            response.
-        """
-        assert (
-            len(auxiliary_models) == 0
-        ), "No auxiliary models are used in this workflow."
-
-        from agentscope.tool import (
-            Toolkit,
-            execute_python_code,
-        )
-
-        toolkit = Toolkit()
-        toolkit.register_tool_function(execute_python_code)
-        agent = ReActAgent(
-            name="react_agent",
-            sys_prompt=sys_prompt,
-            model=model,
-            formatter=OpenAIChatFormatter(),
-            toolkit=toolkit,
-            print_hint_msg=False,
-        )
-        agent.set_console_output_enabled(False)
-
-        response = await agent.reply(
-            msg=Msg("user", task["question"], role="user"),
-        )
-        return WorkflowOutput(
-            response=response,
-        )
-
-    return run_react_agent
+    response = await agent.reply(
+        msg=Msg("user", task["question"], role="user"),
+    )
+    return WorkflowOutput(
+        response=response,
+    )
 
 
 async def gsm8k_judge(
@@ -127,7 +111,7 @@ if __name__ == "__main__":
     )
 
     optimized_prompt = tune_prompt(
-        workflow_func=workflow,
+        workflow=workflow,
         init_system_prompt=init_prompt,
         judge_func=gsm8k_judge,
         train_dataset=DatasetConfig(
@@ -139,11 +123,6 @@ if __name__ == "__main__":
             path="test.parquet",
             name="",
             split="",
-        ),
-        model=DashScopeChatModel(
-            "qwen-flash",
-            api_key=os.environ["DASHSCOPE_API_KEY"],
-            max_tokens=512,
         ),
         config=PromptTuneConfig(
             lm_model_name="dashscope/qwen3-max",

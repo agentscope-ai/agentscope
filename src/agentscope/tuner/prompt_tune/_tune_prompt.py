@@ -11,8 +11,8 @@ from agentscope.tuner import (
 )
 from agentscope import logger
 from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._config import check_judge_function
-from agentscope.tuner._workflow import WorkflowType
+from agentscope.tuner._config import check_judge_function, _check_function_signature
+from agentscope.tuner._workflow import PromptTuneWorkflowType
 from agentscope.tuner._judge import JudgeType
 from agentscope.tuner.prompt_tune._config import PromptTuneConfig
 from agentscope.tuner.prompt_tune._wrapper import _WorkflowWrapperModule
@@ -71,14 +71,28 @@ def _guess_by_ext(p: str) -> Optional[str]:
     return None
 
 
+def check_workflow_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "system_prompt"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
+
+
 def tune_prompt(
     *,
-    workflow_func: Callable[[str], WorkflowType],
+    workflow: PromptTuneWorkflowType,
     init_system_prompt: str,
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     eval_dataset: DatasetConfig | None = None,
-    model: ChatModelBase,
     auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
 ) -> str:
@@ -88,14 +102,13 @@ def tune_prompt(
     automatic prompt optimization capabilities.
 
     Args:
-        workflow_func: A factory function that takes a system prompt (str) and
-            returns an async workflow function.
+        workflow: An async workflow function that takes a task dict and system
+            prompt string, returns a WorkflowOutput.
         init_system_prompt: The initial system prompt to be optimized.
         judge_func: An async function that evaluates the agent's response and
             returns a JudgeOutput.
         train_dataset: The dataset used for training/optimization.
         eval_dataset: Optional dataset for evaluation after optimization.
-        model: The chat model used in the workflow.
         auxiliary_models: Optional dictionary of additional chat models for
             LLM-as-a-Judge usage.
         config: Configuration for prompt tuning. Defaults to
@@ -109,7 +122,7 @@ def tune_prompt(
 
     config = config or PromptTuneConfig()
     auxiliary_models = auxiliary_models or {}
-    logger.warning("Model will not be optimized during prompt tuning.")
+    check_workflow_function(workflow)
     check_judge_function(judge_func)
 
     if os.path.exists(train_dataset.path) and _guess_by_ext(
@@ -131,10 +144,7 @@ def tune_prompt(
 
     dspy_trainset = [dspy.Example(inp=x).with_inputs("inp") for x in trainset]
 
-    module = _WorkflowWrapperModule(workflow_func, init_system_prompt)
-    # model and auxiliary_models are not necessary for prompt tuning.
-    # what about providing a new interface?
-    module.set_chatmodel(model, auxiliary_models)
+    module = _WorkflowWrapperModule(workflow, init_system_prompt)
 
     # teacher lm
     lm = dspy.LM(config.lm_model_name)
