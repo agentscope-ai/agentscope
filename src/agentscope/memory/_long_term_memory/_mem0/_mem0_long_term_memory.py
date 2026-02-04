@@ -72,85 +72,15 @@ def _create_agentscope_config_classes() -> tuple:
 class Mem0LongTermMemory(LongTermMemoryBase):
     """A class that implements the LongTermMemoryBase interface using mem0."""
 
-    def __init__(  # pylint: disable=too-many-branches
-        self,
-        agent_name: str | None = None,
-        user_name: str | None = None,
-        run_name: str | None = None,
-        model: ChatModelBase | None = None,
-        embedding_model: EmbeddingModelBase | None = None,
-        vector_store_config: VectorStoreConfig | None = None,
-        mem0_config: MemoryConfig | None = None,
-        default_memory_type: str | None = None,
-        suppress_mem0_logging: bool = True,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize the Mem0LongTermMemory instance
+    @staticmethod
+    def _setup_mem0_logging(suppress_mem0_logging: bool) -> None:
+        """Suppress mem0 logging if requested.
 
         Args:
-            agent_name (`str | None`, optional):
-                The name of the agent. Default is None.
-            user_name (`str | None`, optional):
-                The name of the user. Default is None.
-            run_name (`str | None`, optional):
-                The name of the run/session. Default is None.
-
-        .. note::
-            1. At least one of `agent_name`, `user_name`, or `run_name` is
-               required.
-            2. During memory recording, these parameters become metadata
-               for the stored memories.
-            3. **Important**: mem0 will extract memories from messages
-               containing role of "user" by default. If you want to
-               extract memories from messages containing role of
-               "assistant", you need to provide `agent_name`.
-            4. During memory retrieval, only memories with matching
-               metadata values will be returned.
-
-
-            model (`ChatModelBase | None`, optional):
-                The chat model to use for the long-term memory. If
-                mem0_config is provided, this will override the LLM
-                configuration. If mem0_config is None, this is required.
-            embedding_model (`EmbeddingModelBase | None`, optional):
-                The embedding model to use for the long-term memory. If
-                mem0_config is provided, this will override the embedder
-                configuration. If mem0_config is None, this is required.
-            vector_store_config (`VectorStoreConfig | None`, optional):
-                The vector store config to use for the long-term memory.
-                If mem0_config is provided, this will override the vector store
-                configuration. If mem0_config is None and this is not
-                provided, defaults to Qdrant with on_disk=True.
-            mem0_config (`MemoryConfig | None`, optional):
-                The mem0 config to use for the long-term memory.
-                If provided, individual
-                model/embedding_model/vector_store_config parameters will
-                override the corresponding configurations in mem0_config. If
-                None, a new MemoryConfig will be created using the provided
-                parameters.
-            default_memory_type (`str | None`, optional):
-                The type of memory to use. Default is None, to create a
-                semantic memory.
-            suppress_mem0_logging (`bool`, optional):
-                Whether to suppress mem0 logging. Default is True.
-                When using vector database QDRANT with mem0 1.0.3, you may
-                encounter validation errors:
-                "Error awaiting memory task (async): 6 validation errors for
-                PointStruct vector.list[float] Input should be a valid list
-                [type=list_type, ...]"
-                According to the mem0 community
-                (see https://github.com/mem0ai/mem0/issues/3780),
-                these error messages are harmless and can be safely ignored.
-
-        Raises:
-            `ValueError`:
-                If `mem0_config` is None and either `model` or
-                `embedding_model` is None.
+            suppress_mem0_logging (`bool`):
+                Whether to suppress mem0 logging. See class docstring for
+                details on QDRANT validation errors when using mem0 1.0.3.
         """
-        super().__init__()
-
-        # Suppress mem0 logging (see docstring for details on QDRANT
-        # validation errors when using mem0 1.0.3 with QDRANT).
         if suppress_mem0_logging:
             import logging
 
@@ -158,8 +88,15 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             logging.getLogger("mem0.memory").setLevel(logging.CRITICAL)
             logging.getLogger("mem0.memory.main").setLevel(logging.CRITICAL)
 
+    @staticmethod
+    def _register_agentscope_providers() -> None:
+        """Register the agentscope providers with mem0.
+
+        Raises:
+            `ImportError`:
+                If the mem0 library is not installed.
+        """
         try:
-            import mem0
             from mem0.configs.llms.base import BaseLlmConfig
             from mem0.utils.factory import LlmFactory, EmbedderFactory
             from packaging import version
@@ -171,7 +108,6 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             ) <= version.parse("0.1.115")
 
             # Register the agentscope providers with mem0
-
             EmbedderFactory.provider_to_class["agentscope"] = (
                 "agentscope.memory._long_term_memory._mem0."
                 "_mem0_utils.AgentScopeEmbedding"
@@ -195,21 +131,72 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 "Please install the mem0 library by `pip install mem0ai`",
             ) from e
 
-        # Create the custom config classes for agentscope providers dynamically
-        _ASLlmConfig, _ASEmbedderConfig = _create_agentscope_config_classes()
+    @staticmethod
+    def _validate_identifiers(
+        agent_name: str | None,
+        user_name: str | None,
+        run_name: str | None,
+    ) -> None:
+        """Validate that at least one identifier is provided.
 
+        Args:
+            agent_name (`str | None`):
+                The name of the agent.
+            user_name (`str | None`):
+                The name of the user.
+            run_name (`str | None`):
+                The name of the run/session.
+
+        Raises:
+            `ValueError`:
+                If all identifiers are None.
+        """
         if agent_name is None and user_name is None and run_name is None:
             raise ValueError(
                 "at least one of agent_name, user_name, and run_name is "
                 "required",
             )
 
-        # Store agent and user identifiers for memory management
-        self.agent_id = agent_name
-        self.user_id = user_name
-        self.run_id = run_name
+    @staticmethod
+    def _configure_mem0_config(
+        mem0_config: MemoryConfig | None,
+        model: ChatModelBase | None,
+        embedding_model: EmbeddingModelBase | None,
+        vector_store_config: VectorStoreConfig | None,
+        _ASLlmConfig: type,
+        _ASEmbedderConfig: type,
+        **kwargs: Any,
+    ) -> MemoryConfig:
+        """Configure the mem0 MemoryConfig object.
 
-        # Configuration logic: Handle mem0_config parameter
+        Args:
+            mem0_config (`MemoryConfig | None`):
+                The existing mem0 config, if any.
+            model (`ChatModelBase | None`):
+                The chat model to use.
+            embedding_model (`EmbeddingModelBase | None`):
+                The embedding model to use.
+            vector_store_config (`VectorStoreConfig | None`):
+                The vector store config to use.
+            _ASLlmConfig (`type`):
+                The custom LLM config class for agentscope.
+            _ASEmbedderConfig (`type`):
+                The custom embedder config class for agentscope.
+            **kwargs (`Any`):
+                Additional keyword arguments, including 'on_disk' for
+                vector store configuration.
+
+        Returns:
+            `MemoryConfig`:
+                The configured MemoryConfig object.
+
+        Raises:
+            `ValueError`:
+                If `mem0_config` is None and either `model` or
+                `embedding_model` is None.
+        """
+        import mem0
+
         if mem0_config is not None:
             # Case 1: mem0_config is provided - override specific
             # configurations if individual params are given
@@ -270,6 +257,119 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                         config={"on_disk": on_disk},
                     )
                 )
+
+        return mem0_config
+
+    def __init__(
+        self,
+        agent_name: str | None = None,
+        user_name: str | None = None,
+        run_name: str | None = None,
+        model: ChatModelBase | None = None,
+        embedding_model: EmbeddingModelBase | None = None,
+        vector_store_config: VectorStoreConfig | None = None,
+        mem0_config: MemoryConfig | None = None,
+        default_memory_type: str | None = None,
+        suppress_mem0_logging: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the Mem0LongTermMemory instance
+
+        Args:
+            agent_name (`str | None`, optional):
+                The name of the agent. Default is None.
+            user_name (`str | None`, optional):
+                The name of the user. Default is None.
+            run_name (`str | None`, optional):
+                The name of the run/session. Default is None.
+
+        .. note::
+            1. At least one of `agent_name`, `user_name`, or `run_name` is
+               required.
+            2. During memory recording, these parameters become metadata
+               for the stored memories.
+            3. **Important**: mem0 will extract memories from messages
+               containing role of "user" by default. If you want to
+               extract memories from messages containing role of
+               "assistant", you need to provide `agent_name`.
+            4. During memory retrieval, only memories with matching
+               metadata values will be returned.
+
+
+            model (`ChatModelBase | None`, optional):
+                The chat model to use for the long-term memory. If
+                mem0_config is provided, this will override the LLM
+                configuration. If mem0_config is None, this is required.
+            embedding_model (`EmbeddingModelBase | None`, optional):
+                The embedding model to use for the long-term memory. If
+                mem0_config is provided, this will override the embedder
+                configuration. If mem0_config is None, this is required.
+            vector_store_config (`VectorStoreConfig | None`, optional):
+                The vector store config to use for the long-term memory.
+                If mem0_config is provided, this will override the vector store
+                configuration. If mem0_config is None and this is not
+                provided, defaults to Qdrant with on_disk=True.
+            mem0_config (`MemoryConfig | None`, optional):
+                The mem0 config to use for the long-term memory.
+                If provided, individual
+                model/embedding_model/vector_store_config parameters will
+                override the corresponding configurations in mem0_config. If
+                None, a new MemoryConfig will be created using the provided
+                parameters.
+            default_memory_type (`str | None`, optional):
+                The type of memory to use. Default is None, to create a
+                semantic memory.
+            suppress_mem0_logging (`bool`, optional):
+                Whether to suppress mem0 logging. Default is True.
+
+            .. note::
+                When using vector database QDRANT with mem0 1.0.3, you may
+                encounter validation errors:
+                "Error awaiting memory task (async): 6 validation errors for
+                PointStruct vector.list[float] Input should be a valid list
+                [type=list_type, ...]"
+                According to the mem0 community
+                (see https://github.com/mem0ai/mem0/issues/3780),
+                these error messages are harmless and can be safely ignored.
+                Setting `suppress_mem0_logging=True` (the default) will
+                suppress these error messages.
+
+        Raises:
+            `ValueError`:
+                If `mem0_config` is None and either `model` or
+                `embedding_model` is None.
+        """
+        super().__init__()
+
+        # Suppress mem0 logging if requested
+        self._setup_mem0_logging(suppress_mem0_logging)
+
+        # Register agentscope providers with mem0
+        self._register_agentscope_providers()
+
+        # Create the custom config classes for agentscope providers dynamically
+        _ASLlmConfig, _ASEmbedderConfig = _create_agentscope_config_classes()
+
+        # Validate identifiers
+        self._validate_identifiers(agent_name, user_name, run_name)
+
+        # Store agent and user identifiers for memory management
+        self.agent_id = agent_name
+        self.user_id = user_name
+        self.run_id = run_name
+
+        # Configure mem0_config
+        import mem0
+
+        mem0_config = self._configure_mem0_config(
+            mem0_config=mem0_config,
+            model=model,
+            embedding_model=embedding_model,
+            vector_store_config=vector_store_config,
+            _ASLlmConfig=_ASLlmConfig,
+            _ASEmbedderConfig=_ASEmbedderConfig,
+            **kwargs,
+        )
 
         # Initialize the async memory instance with the configured settings
         self.long_term_working_memory = mem0.AsyncMemory(mem0_config)
