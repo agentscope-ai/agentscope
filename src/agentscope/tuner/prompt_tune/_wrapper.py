@@ -2,14 +2,13 @@
 """Wrapper modules for integrating AgentScope agents."""
 
 import asyncio
-from typing import Any, Callable, Optional
+from typing import Any
 from dspy import Module, Prediction
 import dspy
 from dspy.predict.predict import Predict
 
 from agentscope import logger
-from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
+from agentscope.tuner._workflow import WorkflowOutput, PromptTuneWorkflowType
 
 
 class _OptimizablePrompt(Predict):
@@ -64,20 +63,20 @@ class _WorkflowWrapperModule(Module):
     the workflow execution in a DSPy-compatible interface.
 
     Attributes:
-        _workflow: The workflow factory function that takes a system prompt.
+        _workflow: The workflow function that takes task and system prompt.
         predictor: The OptimizableAgent wrapping the system prompt.
     """
 
     def __init__(
         self,
-        workflow: Callable[[str], WorkflowType],
+        workflow: PromptTuneWorkflowType,
         init_prompt: str,
     ):
         """Initialize the _WorkflowWrapperModule.
 
         Args:
-            workflow: A factory function that takes a system prompt and returns
-                an async workflow function.
+            workflow: A workflow function that takes a task dict and system
+                prompt string, returns an async WorkflowOutput.
             init_prompt: The initial system prompt to be optimized.
         """
         super().__init__()
@@ -85,23 +84,6 @@ class _WorkflowWrapperModule(Module):
         self._init_prompt = init_prompt
 
         self.predictor = _OptimizablePrompt(self._init_prompt)
-
-        self._model: Optional[ChatModelBase] = None
-        self._auxiliary_models: Optional[dict[str, ChatModelBase]] = None
-
-    def set_chatmodel(
-        self,
-        model: ChatModelBase,
-        auxiliary_models: dict[str, ChatModelBase],
-    ) -> None:
-        """Set the chat models for workflow execution.
-
-        Args:
-            model: The primary chat model.
-            auxiliary_models: Dictionary of additional chat models.
-        """
-        self._model = model
-        self._auxiliary_models = auxiliary_models
 
     def forward(self, inp: Any) -> Any:
         """Execute the workflow with the given input.
@@ -115,22 +97,10 @@ class _WorkflowWrapperModule(Module):
         self.predictor.sync_instruction()
         current_prompt = self.predictor.get_current_prompt()
 
-        if self._model is None or self._auxiliary_models is None:
-            raise ValueError(
-                "Chat models not set. Call set_chatmodel() first.",
-            )
+        async def _run_workflow() -> WorkflowOutput:
+            return await self._workflow(inp, current_prompt)
 
-        async def _workflow() -> WorkflowOutput:
-            assert (
-                self._model is not None and self._auxiliary_models is not None
-            )
-            return await self._workflow(current_prompt)(
-                inp,
-                self._model,
-                self._auxiliary_models,
-            )
-
-        result = asyncio.run(_workflow())
+        result = asyncio.run(_run_workflow())
 
         if result.reward:
             logger.warning(

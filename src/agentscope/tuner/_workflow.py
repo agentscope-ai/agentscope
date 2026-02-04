@@ -54,3 +54,21 @@ WorkflowType = Callable[
 #     `WorkflowOutput`:
 #         The workflow execution results, including optional reward, raw
 #         response and metrics.
+
+
+PromptTuneWorkflowType = Callable[
+    [Dict, str],
+    Awaitable[WorkflowOutput],
+]
+# An agent workflow function type for prompt tuning.
+
+# Args:
+#     task (`Dict`):
+#         The task information for the workflow run.
+#     system_prompt (`str`):
+#         The system prompt to use for this workflow execution.
+
+# Returns:
+#     `WorkflowOutput`:
+#         The workflow execution results, including optional reward, raw
+#         response and metrics.
