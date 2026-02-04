@@ -483,7 +483,7 @@ async def example_chat_room() -> None:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 # The realtime agent feature is currently experimental and under active
-# development. Future plans include:
+# development. The future plans include:
 #
 # - Support for more realtime model APIs
 # - Enhanced memory management for conversation history
