@@ -24,7 +24,6 @@ AgentScope 为长期记忆提供了一个基类 ``LongTermMemoryBase`` 和一个
 
 import os
 import asyncio
-import logging
 
 from agentscope.message import Msg
 from agentscope.memory import InMemoryMemory, Mem0LongTermMemory
@@ -33,17 +32,6 @@ from agentscope.embedding import DashScopeTextEmbedding
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
-
-
-# 抑制 mem0 日志输出
-# 注意：当使用向量数据库 QDRANT 配合 mem0 1.0.3 时，可能会遇到如下验证错误：
-#   "Error awaiting memory task (async): 6 validation errors for PointStruct
-#    vector.list[float] Input should be a valid list [type=list_type, ...]"
-# 根据 mem0 社区反馈（参见 https://github.com/mem0ai/mem0/issues/3780），
-# 这些错误信息是无害的，可以安全地忽略。
-logging.getLogger("mem0").setLevel(logging.CRITICAL)
-logging.getLogger("mem0.memory").setLevel(logging.CRITICAL)
-logging.getLogger("mem0.memory.main").setLevel(logging.CRITICAL)
 
 
 # 创建 mem0 长期记忆实例

@@ -72,7 +72,7 @@ def _create_agentscope_config_classes() -> tuple:
 class Mem0LongTermMemory(LongTermMemoryBase):
     """A class that implements the LongTermMemoryBase interface using mem0."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-branches
         self,
         agent_name: str | None = None,
         user_name: str | None = None,
@@ -82,6 +82,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         vector_store_config: VectorStoreConfig | None = None,
         mem0_config: MemoryConfig | None = None,
         default_memory_type: str | None = None,
+        suppress_mem0_logging: bool = True,
         **kwargs: Any,
     ) -> None:
         """Initialize the Mem0LongTermMemory instance
@@ -130,6 +131,16 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             default_memory_type (`str | None`, optional):
                 The type of memory to use. Default is None, to create a
                 semantic memory.
+            suppress_mem0_logging (`bool`, optional):
+                Whether to suppress mem0 logging. Default is True.
+                When using vector database QDRANT with mem0 1.0.3, you may
+                encounter validation errors:
+                "Error awaiting memory task (async): 6 validation errors for
+                PointStruct vector.list[float] Input should be a valid list
+                [type=list_type, ...]"
+                According to the mem0 community
+                (see https://github.com/mem0ai/mem0/issues/3780),
+                these error messages are harmless and can be safely ignored.
 
         Raises:
             `ValueError`:
@@ -137,6 +148,15 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 `embedding_model` is None.
         """
         super().__init__()
+
+        # Suppress mem0 logging (see docstring for details on QDRANT
+        # validation errors when using mem0 1.0.3 with QDRANT).
+        if suppress_mem0_logging:
+            import logging
+
+            logging.getLogger("mem0").setLevel(logging.CRITICAL)
+            logging.getLogger("mem0.memory").setLevel(logging.CRITICAL)
+            logging.getLogger("mem0.memory.main").setLevel(logging.CRITICAL)
 
         try:
             import mem0
