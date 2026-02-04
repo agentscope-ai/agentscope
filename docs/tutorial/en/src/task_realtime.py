@@ -62,32 +62,32 @@ from agentscope.realtime import (
 #
 #
 # Here are examples of initializing different realtime models:
-
-# DashScope realtime model
-dashscope_model = DashScopeRealtimeModel(
-    model_name="qwen3-omni-flash-realtime",
-    api_key=os.getenv("DASHSCOPE_API_KEY"),
-    voice="Cherry",  # Options: "Cherry", "Serena", "Ethan", "Chelsie"
-    enable_input_audio_transcription=True,
-)
-
-# OpenAI realtime model
-openai_model = OpenAIRealtimeModel(
-    model_name="gpt-4o-realtime-preview",
-    api_key=os.getenv("OPENAI_API_KEY"),
-    voice="alloy",  # Options: "alloy", "echo", "marin", "cedar"
-    enable_input_audio_transcription=True,
-)
-
-# Gemini realtime model
-gemini_model = GeminiRealtimeModel(
-    model_name="gemini-2.5-flash-native-audio-preview-09-2025",
-    api_key=os.getenv("GEMINI_API_KEY"),
-    voice="Puck",  # Options: "Puck", "Charon", "Kore", "Fenrir"
-    enable_input_audio_transcription=True,
-)
-
-# %%
+#
+# .. code-block:: python
+#     :caption: Example of initializing different realtime models
+#     # DashScope realtime model
+#     dashscope_model = DashScopeRealtimeModel(
+#         model_name="qwen3-omni-flash-realtime",
+#         api_key=os.getenv("DASHSCOPE_API_KEY"),
+#         voice="Cherry",  # Options: "Cherry", "Serena", "Ethan", "Chelsie"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # OpenAI realtime model
+#     openai_model = OpenAIRealtimeModel(
+#         model_name="gpt-4o-realtime-preview",
+#         api_key=os.getenv("OPENAI_API_KEY"),
+#         voice="alloy",  # Options: "alloy", "echo", "marin", "cedar"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # Gemini realtime model
+#     gemini_model = GeminiRealtimeModel(
+#         model_name="gemini-2.5-flash-native-audio-preview-09-2025",
+#         api_key=os.getenv("GEMINI_API_KEY"),
+#         voice="Puck",  # Options: "Puck", "Charon", "Kore", "Fenrir"
+#         enable_input_audio_transcription=True,
+#     )
 #
 # The realtime model provides the following key methods:
 #
