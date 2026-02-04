@@ -456,7 +456,7 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         memory_type: str | None = None,
         infer: bool = True,
         **kwargs: Any,
-    ) -> None:
+    ) -> dict:
         """Record the content to the long-term memory.
 
         Args:
@@ -489,12 +489,13 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             },
         ]
 
-        await self._mem0_record(
+        results = await self._mem0_record(
             messages,
             memory_type=memory_type,
             infer=infer,
             **kwargs,
         )
+        return results
 
     def _format_relations(self, result: dict) -> list:
         """Format relations from search result.

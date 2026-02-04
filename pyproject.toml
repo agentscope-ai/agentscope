@@ -71,7 +71,7 @@ tokens = [
 redis_memory = ["redis"]
 
 mem0ai = [
-    "mem0ai<=0.1.116",
+    "mem0ai<=1.0.3",
     "packaging"
 ]
 reme = ["reme-ai>=0.2.0.3"]

@@ -24,6 +24,7 @@ Using mem0 Long-Term Memory
 
 import os
 import asyncio
+import logging
 
 from agentscope.message import Msg
 from agentscope.memory import InMemoryMemory
@@ -31,6 +32,17 @@ from agentscope.agent import ReActAgent
 from agentscope.formatter import DashScopeChatFormatter
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import Toolkit
+
+
+# Suppress mem0 logging.
+# Note: When using vector database QDRANT with mem0 1.0.3, you may encounter validation errors such as:
+#   "Error awaiting memory task (async): 6 validation errors for PointStruct
+#    vector.list[float] Input should be a valid list [type=list_type, ...]"
+# According to the mem0 community (see https://github.com/mem0ai/mem0/issues/3780),
+# these error messages are harmless and can be safely ignored.
+logging.getLogger("mem0").setLevel(logging.CRITICAL)
+logging.getLogger("mem0.memory").setLevel(logging.CRITICAL)
+logging.getLogger("mem0.memory.main").setLevel(logging.CRITICAL)
 
 
 # Create mem0 long-term memory instance
