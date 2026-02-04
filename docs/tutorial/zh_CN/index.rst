@@ -58,6 +58,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_state
    tutorial/task_hook
    tutorial/task_a2a
+   tutorial/task_realtime
 
 .. toctree::
    :maxdepth: 1
@@ -69,6 +70,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_studio
    tutorial/task_tracing
    tutorial/task_eval
+   tutorial/task_eval_openjudge
    tutorial/task_embedding
    tutorial/task_tts
    tutorial/task_tuner

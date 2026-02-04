@@ -104,7 +104,11 @@ def transfer_ui_event_to_query(ui_event_part: dict) -> str:
             f"The image URL is {image_url}"
         )
     else:
-        query = f"User submitted an event: {action} with data: {ctx}"
+        # Note: The A2UI original example uses `ctx` as the data source.
+        # However, in generated UI components, the `ctx` field may be empty
+        # when the databinding path cannot be resolved. To ensure we capture
+        # all available event data, we use the entire `ui_event_part` instead.
+        query = f"User submitted an event: {action} with data: {ui_event_part}"
 
     return query
 

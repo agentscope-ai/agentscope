@@ -19,6 +19,7 @@ from typing import (
     Awaitable,
 )
 
+import mcp
 import shortuuid
 from pydantic import (
     BaseModel,
@@ -710,6 +711,16 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 # When `tool_func.original_func` is Async generator function or
                 # Sync function
                 res = tool_func.original_func(**kwargs)
+
+        except mcp.shared.exceptions.McpError as e:
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error occurred when calling MCP tool: {e}",
+                    ),
+                ],
+            )
 
         except Exception as e:
             res = ToolResponse(

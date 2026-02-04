@@ -5,6 +5,8 @@
 from unittest.async_case import IsolatedAsyncioTestCase
 from typing import Dict, Any
 
+from logging import Logger
+
 from agentscope.tuner import TunerModelConfig, WorkflowOutput, JudgeOutput
 from agentscope.tuner._config import (
     check_judge_function,
@@ -16,6 +18,7 @@ async def correct_workflow_func(
     task: Dict,
     model: TunerModelConfig,
     auxiliary_models: Dict[str, TunerModelConfig],
+    logger: Logger,
 ) -> WorkflowOutput:
     """Correct interface matching the workflow type."""
     return WorkflowOutput(
@@ -56,6 +59,7 @@ async def correct_judge_func(
     task: Dict,
     response: Any,
     auxiliary_models: Dict[str, TunerModelConfig],
+    logger: Logger,
 ) -> JudgeOutput:
     """Correct interface matching the judge type."""
     return JudgeOutput(

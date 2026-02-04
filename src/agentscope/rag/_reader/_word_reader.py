@@ -3,12 +3,12 @@
 """The Word reader to read and chunk Word documents."""
 import base64
 import hashlib
-import json
 from typing import Literal, TYPE_CHECKING
 
 
 from ._reader_base import ReaderBase
 from ._text_reader import TextReader
+from ._utils import _table_to_json, _table_to_markdown
 from .._document import Document, DocMetadata
 from ..._logging import logger
 from ...message import ImageBlock, Base64Source, TextBlock
@@ -207,7 +207,7 @@ class WordReader(ReaderBase):
     Word documents (.docx files), and chunking the text content into smaller
     pieces.
 
-    .. note:: The table content is extracted in Markdown format.
+    .. note:: The table content can be extracted in Markdown or JSON format.
 
     """
 
@@ -413,9 +413,9 @@ class WordReader(ReaderBase):
                 table_data = _extract_table_data(Table(element, doc))
 
                 if self.table_format == "markdown":
-                    text = self._table_to_markdown(table_data)
+                    text = _table_to_markdown(table_data)
                 else:
-                    text = self._table_to_json(table_data)
+                    text = _table_to_json(table_data)
 
                 # For current table block:
                 # |   separate_table   |  True  | False  |
@@ -437,62 +437,6 @@ class WordReader(ReaderBase):
                 last_type = "table"
 
         return blocks
-
-    @staticmethod
-    def _table_to_markdown(table_data: list[list[str]]) -> str:
-        """Convert table data to Markdown format.
-
-        Args:
-            table_data (`list[list[str]]`):
-                Table data represented as a 2D list.
-
-        Returns:
-            `str`:
-                Table in Markdown format.
-        """
-        if not table_data:
-            return ""
-
-        num_cols = len(table_data[0])
-        md_table = ""
-
-        # Header row
-        header_row = "| " + " | ".join(table_data[0]) + " |\n"
-        md_table += header_row
-
-        # Separator row
-        separator_row = "| " + " | ".join(["---"] * num_cols) + " |\n"
-        md_table += separator_row
-
-        # Data rows
-        for row in table_data[1:]:
-            data_row = "| " + " | ".join(row) + " |\n"
-            md_table += data_row
-
-        return md_table
-
-    @staticmethod
-    def _table_to_json(table_data: list[list[str]]) -> str:
-        """Convert table data to JSON string.
-
-        Args:
-            table_data (`list[list[str]]`):
-                Table data represented as a 2D list.
-
-        Returns:
-            `str`:
-                Table in JSON string format.
-        """
-        json_strs = [
-            "<system-info>A table loaded as a JSON array:</system-info>",
-        ]
-
-        for row in table_data:
-            json_strs.append(
-                json.dumps(row, ensure_ascii=False),
-            )
-
-        return "\n".join(json_strs)
 
     def get_doc_id(self, word_path: str) -> str:
         """Generate a document ID based on the Word file path.

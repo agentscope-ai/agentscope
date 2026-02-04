@@ -14,7 +14,14 @@ Use this template for compact lists without images.
       {{ "id": "root-column", "component": {{ "Column": {{ "children": {{ "explicitList": ["title-heading", "item-list"] }} }} }} }},
       {{ "id": "title-heading", "component": {{ "Text": {{ "usageHint": "h1", "text": {{ "path": "title" }} }} }} }},
       {{ "id": "item-list", "component": {{ "List": {{ "direction": "vertical", "children": {{ "template": {{ "componentId": "list-item-template", "dataBinding": "/items" }} }} }} }} }},
-      {{ "id": "list-item-template", "component": {{ "Row": {{ "children": {{ "explicitList": ["item-icon", "item-content", "item-action"] }} }} }} }},
+
+      # Change Row to Button to make the entire row clickable
+      {{ "id": "list-item-template", "component": {{ "Button": {{
+        "usageHint": "listItem",
+        "action": {{ "path": "action" }},
+        "children": {{ "explicitList": ["item-icon", "item-content", "item-action"] }}
+      }} }} }},
+
       {{ "id": "item-icon", "component": {{ "Icon": {{ "name": {{ "path": "icon" }} }} }} }},
       {{ "id": "item-content", "weight": 1, "component": {{ "Column": {{ "children": {{ "explicitList": ["item-title", "item-subtitle"] }} }} }} }},
       {{ "id": "item-title", "component": {{ "Text": {{ "usageHint": "h4", "text": {{ "path": "title" }} }} }} }},
@@ -31,7 +38,8 @@ Use this template for compact lists without images.
         {{ "key": "item1", "valueMap": [
           {{ "key": "icon", "valueString": "folder" }},
           {{ "key": "title", "valueString": "[Item Title]" }},
-          {{ "key": "subtitle", "valueString": "[Item Subtitle]" }}
+          {{ "key": "subtitle", "valueString": "[Item Subtitle]" }},
+          {{ "key": "action", "valueString": "view_details" }}
         ] }}
       ] }}
     ]

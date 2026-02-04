@@ -93,6 +93,7 @@ class HttpStatelessClient(MCPClientBase):
         self,
         func_name: str,
         wrap_tool_result: bool = True,
+        execution_timeout: float | None = None,
     ) -> Callable[..., Awaitable[mcp.types.CallToolResult | ToolResponse]]:
         """Get a tool function by its name.
 
@@ -103,6 +104,8 @@ class HttpStatelessClient(MCPClientBase):
                 Whether to wrap the tool result into agentscope's
                 `ToolResponse` object. If `False`, the raw result type
                 `mcp.types.CallToolResult` will be returned.
+            execution_timeout (`float | None`, optional):
+                The preset timeout in seconds for calling the tool function.
 
         Returns:
             `Callable[..., Awaitable[mcp.types.CallToolResult | \
@@ -130,6 +133,7 @@ class HttpStatelessClient(MCPClientBase):
             tool=target_tool,
             wrap_tool_result=wrap_tool_result,
             client_gen=self.get_client,
+            timeout=execution_timeout,
         )
 
     async def list_tools(self) -> List[mcp.types.Tool]:

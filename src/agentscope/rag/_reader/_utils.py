@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""The image reader to read and chunk image files."""
+"""Utility functions for RAG readers."""
+import json
 
 
 def _get_media_type_from_data(data: bytes) -> str:
@@ -33,3 +34,61 @@ def _get_media_type_from_data(data: bytes) -> str:
 
     # Default to JPEG
     return "image/jpeg"
+
+
+def _table_to_json(table_data: list[list[str]]) -> str:
+    """Convert table data to JSON string.
+
+    Args:
+        table_data (`list[list[str]]`):
+            Table data represented as a 2D list.
+
+    Returns:
+        `str`:
+            A JSON string representing the table as a 2D array,
+            prefixed with a system-info tag.
+    """
+    json_str = json.dumps(table_data, ensure_ascii=False)
+    return (
+        "<system-info>A table loaded as a JSON array:</system-info>\n"
+        + json_str
+    )
+
+
+def _table_to_markdown(table_data: list[list[str]]) -> str:
+    """Convert table data to Markdown format.
+
+    Args:
+        table_data (`list[list[str]]`):
+            Table data represented as a 2D list.
+
+    Returns:
+        `str`:
+            Table in Markdown format.
+    """
+    if not table_data:
+        return ""
+
+    num_cols = len(table_data[0]) if table_data else 0
+    if num_cols == 0:
+        return ""
+
+    md_table = ""
+
+    # Header row
+    header_row = "| " + " | ".join(table_data[0]) + " |\n"
+    md_table += header_row
+
+    # Separator row
+    separator_row = "| " + " | ".join(["---"] * num_cols) + " |\n"
+    md_table += separator_row
+
+    # Data rows
+    for row in table_data[1:]:
+        # Ensure row has same number of columns as header
+        while len(row) < num_cols:
+            row.append("")
+        data_row = "| " + " | ".join(row[:num_cols]) + " |\n"
+        md_table += data_row
+
+    return md_table
