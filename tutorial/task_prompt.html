@@ -690,14 +690,6 @@ Alice: Let&#39;s go together.
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="k">await</span> <span class="n">token_counter</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="n">formatted_message</span><span class="p">)</span>
-
-
-<span class="n">n_tokens</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_token_counter</span><span class="p">())</span>
-<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;The tokens in the formatted messages are: &quot;</span><span class="p">,</span> <span class="n">n_tokens</span><span class="p">)</span>
-</pre></div>
-</div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PyTorch was not found. Models won&#39;t be available and only tokenizers, configuration and file/data utilities can be used.
-The tokens in the formatted messages are:  154
 </pre></div>
 </div>
 <p>Then we set the maximum token limit to 20 tokens less than the total number of tokens and run the formatter.</p>
@@ -717,19 +709,6 @@ The tokens in the formatted messages are:  154
 
     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">The conversation history after truncation:&quot;</span><span class="p">)</span>
     <span class="nb">print</span><span class="p">(</span><span class="n">truncated_formatted_message</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="s2">&quot;content&quot;</span><span class="p">])</span>
-
-
-<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_truncated_formatter</span><span class="p">())</span>
-</pre></div>
-</div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The tokens after truncation:  124
-
-The conversation history after truncation:
-# Conversation History
-The content between &lt;history&gt;&lt;/history&gt; tags contains your conversation history
-&lt;history&gt;
-Charlie: No, let&#39;s ask Friday. Friday, get me the nearest library.
-&lt;/history&gt;
 </pre></div>
 </div>
 <p>We can see the first two messages from Bob and Alice are removed to fit within the context length limits.</p>
@@ -781,7 +760,7 @@ The <code class="docutils literal notranslate"><span class="pre">TruncatedFormat
 <li><p><a class="reference internal" href="task_token.html#token"><span class="std std-ref">Token</span></a></p></li>
 <li><p><a class="reference internal" href="task_model.html#model"><span class="std std-ref">Model</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.544 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.004 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-prompt-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dfe7448b311839d65e0e1c6dc9aeb195/task_prompt.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_prompt.ipynb</span></code></a></p>

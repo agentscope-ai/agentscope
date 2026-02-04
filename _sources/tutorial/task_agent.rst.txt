@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_681ec7bd8e6444a0851d11",
+        "id": "call_9f0bdc36902c40de82cae9",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_42bd77acdbd943ff8466be",
+        "id": "call_d23c682edfef4ef1aa9be2",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,30 +363,31 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_681ec7bd8e6444a0851d11",
+        "id": "call_9f0bdc36902c40de82cae9",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 11:24:59.190347 and ended at 11:25:02.193623. "
+                "text": "Tag tag1 started at 14:51:47.432660 and ended at 14:51:50.435891. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_42bd77acdbd943ff8466be",
+        "id": "call_d23c682edfef4ef1aa9be2",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 11:24:59.190450 and ended at 11:25:02.194279. "
+                "text": "Tag tag2 started at 14:51:47.432752 and ended at 14:51:50.436557. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called with two tags, 'tag1' and 'tag2', and they executed in parallel. Here are the details:
+    Jarvis: The 'example_tool_function' was called in parallel with two different tags. 
 
-    - For 'tag1', the function started at 11:24:59.190347 and ended at 11:25:02.193623.
-    - For 'tag2', the function started at 11:24:59.190450 and ended at 11:25:02.194279.
+    For the tag 'tag1', the function started at 14:51:47.432660 and ended at 14:51:50.435891.
+
+    For the tag 'tag2', the function started at 14:51:47.432752 and ended at 14:51:50.436557.
 
 
 
@@ -465,7 +466,7 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_4911f8ee08564e42bf9479",
+        "id": "call_3994e904ee38483b9761cc",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
@@ -481,7 +482,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_4911f8ee08564e42bf9479",
+        "id": "call_3994e904ee38483b9761cc",
         "name": "generate_response",
         "output": [
             {
@@ -490,7 +491,7 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Allow me to introduce Albert Einstein, a renowned physicist celebrated for developing the theory of relativity. Born in 1879, Einstein's profound contributions to science have left an indelible mark on our understanding of the universe. He was awarded the Nobel Prize in Physics in 1921, and his illustrious career was further honored with the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away at the age of 76, but his legacy as one of the most influential scientists in history continues to inspire and guide new generations.
+    Jarvis: Allow me to introduce Albert Einstein, a renowned physicist celebrated for developing the theory of relativity. Born in 1879, Einstein's work fundamentally changed our understanding of space, time, and gravity. He was awarded the Nobel Prize in Physics in 1921, primarily for his discovery of the law of the photoelectric effect, which was a pivotal step in the evolution of quantum theory. Among his many accolades are the Copley Medal from 1925 and the Max Planck Medal in 1929. Einstein passed away at the age of 76, leaving behind a legacy that continues to influence science and inspire generations.
 
     The structured output:
     {
@@ -579,7 +580,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 16.932 seconds)
+   **Total running time of the script:** (0 minutes 17.108 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

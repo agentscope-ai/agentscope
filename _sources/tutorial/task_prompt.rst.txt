@@ -377,7 +377,7 @@ With the token module in AgentScope, the built-in formatters support to truncate
 Taking OpenAIFormatter as an example, we first calculate the total number of tokens of the input messages.
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 256-273
+.. GENERATED FROM PYTHON SOURCE LINES 256-269
 
 .. code-block:: Python
 
@@ -394,30 +394,19 @@ Taking OpenAIFormatter as an example, we first calculate the total number of tok
         return await token_counter.count(formatted_message)
 
 
-    n_tokens = asyncio.run(run_token_counter())
-    print("The tokens in the formatted messages are: ", n_tokens)
 
 
 
 
 
 
-.. rst-class:: sphx-glr-script-out
 
- .. code-block:: none
-
-    PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
-    The tokens in the formatted messages are:  154
-
-
-
-
-.. GENERATED FROM PYTHON SOURCE LINES 274-276
+.. GENERATED FROM PYTHON SOURCE LINES 270-272
 
 Then we set the maximum token limit to 20 tokens less than the total number of tokens and run the formatter.
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 276-298
+.. GENERATED FROM PYTHON SOURCE LINES 272-292
 
 .. code-block:: Python
 
@@ -441,29 +430,14 @@ Then we set the maximum token limit to 20 tokens less than the total number of t
         print(truncated_formatted_message[1]["content"])
 
 
-    asyncio.run(run_truncated_formatter())
 
 
 
 
 
-.. rst-class:: sphx-glr-script-out
-
- .. code-block:: none
-
-    The tokens after truncation:  124
-
-    The conversation history after truncation:
-    # Conversation History
-    The content between <history></history> tags contains your conversation history
-    <history>
-    Charlie: No, let's ask Friday. Friday, get me the nearest library.
-    </history>
 
 
-
-
-.. GENERATED FROM PYTHON SOURCE LINES 299-335
+.. GENERATED FROM PYTHON SOURCE LINES 293-329
 
 We can see the first two messages from Bob and Alice are removed to fit within the context length limits.
 
@@ -505,7 +479,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 2.544 seconds)
+   **Total running time of the script:** (0 minutes 0.004 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_prompt.py:
