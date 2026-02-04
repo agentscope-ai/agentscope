@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 OpenJudge 评估器
 =======================
@@ -81,7 +82,7 @@ from agentscope.evaluate import (
     MetricBase,
     MetricType,
     MetricResult,
-    SolutionOutput
+    SolutionOutput,
 )
 
 
@@ -127,7 +128,9 @@ class OpenJudgeMetric(MetricBase):
         """针对 Agent 的输出执行封装好的 OpenJudge Grader。"""
         if not solution.success:
             return MetricResult(
-                name=self.name, result=0.0, message="Solution failed"
+                name=self.name,
+                result=0.0,
+                message="Solution failed",
             )
 
         try:
@@ -145,7 +148,8 @@ class OpenJudgeMetric(MetricBase):
             # 2. 数据映射
             # 使用 mapper 从组合数据中提取Grader需要的 'query', 'response', 'context' 等参数
             grader_inputs = parse_data_with_mapper(
-                combined_data, self.mapper
+                combined_data,
+                self.mapper,
             )
 
             ## 3. 执行评估
@@ -174,7 +178,9 @@ class OpenJudgeMetric(MetricBase):
 
         except Exception as e:
             return MetricResult(
-                name=self.name, result=0.0, message=f"Exception: {str(e)}"
+                name=self.name,
+                result=0.0,
+                message=f"Exception: {str(e)}",
             )
 
 
@@ -207,7 +213,8 @@ from agentscope.evaluate import (
 class QABenchmark(BenchmarkBase):
     def __init__(self):
         super().__init__(
-            name="QA Quality Benchmark", description="Benchmark to evaluate QA systems using OpenJudge grader classes"
+            name="QA Quality Benchmark",
+            description="Benchmark to evaluate QA systems using OpenJudge grader classes",
         )
         self.dataset = self._load_data()
 
@@ -218,7 +225,7 @@ class QABenchmark(BenchmarkBase):
         model_config = {
             "model": "qwen3-32b",
             "api_key": os.environ.get("DASHSCOPE_API_KEY"),
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         }
 
         for data in QA_BENCHMARK_DATASET:
@@ -259,7 +266,7 @@ class QABenchmark(BenchmarkBase):
             tasks.append(task)
 
         return tasks
-    
+
     def __iter__(self) -> Generator[Task, None, None]:
         yield from self.dataset
 
@@ -268,6 +275,7 @@ class QABenchmark(BenchmarkBase):
 
     def __len__(self) -> int:
         return len(self.dataset)
+
 
 # %% [markdown]
 # 运行评估
@@ -280,19 +288,18 @@ class QABenchmark(BenchmarkBase):
 import asyncio
 from typing import Callable
 
-from agentscope.agent._react_agent import ReActAgent
-from agentscope.evaluate._evaluator._general_evaluator import GeneralEvaluator
-from agentscope.evaluate._evaluator_storage._file_evaluator_storage import FileEvaluatorStorage
-from agentscope.formatter._dashscope_formatter import DashScopeChatFormatter
-from agentscope.message._message_base import Msg
-from agentscope.model._openai_model import OpenAIChatModel
+from agentscope.agent import ReActAgent
+from agentscope.evaluate import GeneralEvaluator
+from agentscope.evaluate import FileEvaluatorStorage
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import OpenAIChatModel
 
 
 async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
-
     model = OpenAIChatModel(
         model_name="qwen3-32b",
-        api_key=os.getenv("DASHSCOPE_API_KEY")
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
     )
     agent = ReActAgent(
         name="QAAgent",
@@ -307,11 +314,16 @@ async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
     response_text = response.content
 
     return SolutionOutput(
-        success=True, output=response_text, trajectory=[task.input, response_text]  # Store the interaction trajectory
+        success=True,
+        output=response_text,
+        trajectory=[
+            task.input,
+            response_text,
+        ],  # Store the interaction trajectory
     )
 
-async def main() -> None:
 
+async def main() -> None:
     evaluator = GeneralEvaluator(
         name="OpenJudge Integration Demo",
         benchmark=QABenchmark(),
@@ -326,10 +338,11 @@ async def main() -> None:
 
     await evaluator.run(qa_agent)
 
+
 asyncio.run(main())
 
 # %% [markdown]
-# 
+#
 # ~~~~~~~~~~
 # 最后，使用 AgentScope 的 ``GeneralEvaluator`` 对一个简单的QA Agent进行评估测试。
 # 我们将收集到来自 OpenJudge Grader 的 **量化分数 (Score)** 和 **定性理由 (Reasoning)**。

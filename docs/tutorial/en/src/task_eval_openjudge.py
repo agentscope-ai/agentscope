@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Evaluation with OpenJudge
 =========================
@@ -16,7 +17,7 @@ OpenJudge is a comprehensive evaluation system designed to assess the quality of
 
 Overview
 --------
-While AgentScope provides a robust `MetricBase` for defining evaluation logic, implementing complex, semantic-level metrics (like "Hallucination Detection" or "Response Relevance") often requires 
+While AgentScope provides a robust `MetricBase` for defining evaluation logic, implementing complex, semantic-level metrics (like "Hallucination Detection" or "Response Relevance") often requires
 significant effort in prompt engineering and pipeline construction.
 
 Integrating OpenJudge brings three dimensions of capability extension to AgentScope:
@@ -69,12 +70,12 @@ QA_BENCHMARK_DATASET = [
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # To make OpenJudge compatible with AgentScope, we need an adapter that inherits from
 # AgentScope's ``MetricBase`` and acts as a bridge to OpenJudge's ``BaseGrader``.
-# 
+#
 # * **AgentScope Metric**: A generic unit of evaluation that accepts a ``SolutionOutput`` and returns a ``MetricResult``.
 # * **OpenJudge Grader**: A specialized evaluation unit (e.g., ``RelevanceGrader``) that requires specific, semantic inputs (like ``query``, ``response``, ``context``), and returns a ``GraderResult``.
-# 
+#
 # This "Adapter" allows you to plug *any* OpenJudge grader into your AgentScope benchmark seamlessly.
-# 
+#
 
 # %%
 from openjudge.graders.base_grader import BaseGrader
@@ -84,8 +85,9 @@ from agentscope.evaluate import (
     MetricBase,
     MetricType,
     MetricResult,
-    SolutionOutput
+    SolutionOutput,
 )
+
 
 class OpenJudgeMetric(MetricBase):
     """
@@ -117,7 +119,9 @@ class OpenJudgeMetric(MetricBase):
         """Execute the wrapped OpenJudge grader against the agent solution."""
         if not solution.success:
             return MetricResult(
-                name=self.name, result=0.0, message="Solution failed"
+                name=self.name,
+                result=0.0,
+                message="Solution failed",
             )
 
         try:
@@ -135,7 +139,8 @@ class OpenJudgeMetric(MetricBase):
             # 2. Data Mapping
             # Use the mapper to extract 'query', 'response', 'context' from the combined data
             grader_inputs = parse_data_with_mapper(
-                combined_data, self.mapper
+                combined_data,
+                self.mapper,
             )
 
             # 3. Evaluation Execution
@@ -164,7 +169,9 @@ class OpenJudgeMetric(MetricBase):
 
         except Exception as e:
             return MetricResult(
-                name=self.name, result=0.0, message=f"Exception: {str(e)}"
+                name=self.name,
+                result=0.0,
+                message=f"Exception: {str(e)}",
             )
 
 
@@ -173,15 +180,15 @@ class OpenJudgeMetric(MetricBase):
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # OpenJudge provides a rich collection of built-in graders. In this example, we select two
 # common graders suitable for Question-Answering tasks:
-# 
+#
 # * **RelevanceGrader**: Evaluates whether the agent's response directly addresses the user's query.
 # * **CorrectnessGrader**: Verifies the factual accuracy of the response against a provided ground truth.
-# 
+#
 # .. tip::
 #    OpenJudge offers 50+ built-in graders covering diverse dimensions like **Hallucination**, **Safety**, **Code Quality**,
 #    and **JSON Formatting**. Please refer to the `OpenJudge Documentation <https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/>`_
 #    for the full list of available graders.
-# 
+#
 # .. note::
 #    Ensure you have set your ``DASHSCOPE_API_KEY`` environment variable before running the example below.
 
@@ -201,7 +208,8 @@ class QABenchmark(BenchmarkBase):
 
     def __init__(self):
         super().__init__(
-            name="QA Quality Benchmark", description="Benchmark to evaluate QA systems using OpenJudge grader classes"
+            name="QA Quality Benchmark",
+            description="Benchmark to evaluate QA systems using OpenJudge grader classes",
         )
         self.dataset = self._load_data()
 
@@ -212,7 +220,7 @@ class QABenchmark(BenchmarkBase):
         model_config = {
             "model": "qwen3-32b",
             "api_key": os.environ.get("DASHSCOPE_API_KEY"),
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         }
 
         for data in QA_BENCHMARK_DATASET:
@@ -253,7 +261,7 @@ class QABenchmark(BenchmarkBase):
             tasks.append(task)
 
         return tasks
-    
+
     def __iter__(self) -> Generator[Task, None, None]:
         """Iterate over the benchmark."""
         yield from self.dataset
@@ -266,6 +274,7 @@ class QABenchmark(BenchmarkBase):
         """Get the length of the benchmark."""
         return len(self.dataset)
 
+
 # %% [markdown]
 # Run Evaluation
 # ~~~~~~~~~~
@@ -275,15 +284,14 @@ class QABenchmark(BenchmarkBase):
 
 # %%
 
-import asyncio
 from typing import Callable
 
-from agentscope.agent._react_agent import ReActAgent
-from agentscope.evaluate._evaluator._general_evaluator import GeneralEvaluator
-from agentscope.evaluate._evaluator_storage._file_evaluator_storage import FileEvaluatorStorage
-from agentscope.formatter._dashscope_formatter import DashScopeChatFormatter
-from agentscope.message._message_base import Msg
-from agentscope.model._openai_model import OpenAIChatModel
+from agentscope.agent import ReActAgent
+from agentscope.evaluate import GeneralEvaluator
+from agentscope.evaluate import FileEvaluatorStorage
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import OpenAIChatModel
 
 
 async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
@@ -291,7 +299,7 @@ async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
 
     model = OpenAIChatModel(
         model_name="qwen3-32b",
-        api_key=os.getenv("DASHSCOPE_API_KEY")
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
     )
 
     # Create a QA agent
@@ -308,11 +316,16 @@ async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
     response_text = response.content
 
     return SolutionOutput(
-        success=True, output=response_text, trajectory=[task.input, response_text]  # Store the interaction trajectory
+        success=True,
+        output=response_text,
+        trajectory=[
+            task.input,
+            response_text,
+        ],  # Store the interaction trajectory
     )
 
-async def main() -> None:
 
+async def main() -> None:
     evaluator = GeneralEvaluator(
         name="OpenJudge Integration Demo",
         benchmark=QABenchmark(),
@@ -326,7 +339,3 @@ async def main() -> None:
     )
 
     await evaluator.run(qa_agent)
-
-asyncio.run(main())
-
-
