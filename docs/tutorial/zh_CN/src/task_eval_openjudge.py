@@ -339,8 +339,6 @@ async def main() -> None:
     await evaluator.run(qa_agent)
 
 
-asyncio.run(main())
-
 # %% [markdown]
 #
 # ~~~~~~~~~~
