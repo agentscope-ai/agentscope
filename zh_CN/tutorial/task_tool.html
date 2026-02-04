@@ -1,0 +1,1129 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="MCP" href="task_mcp.html"><link rel="prev" title="长期记忆" href="task_long_term_memory.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.12.19 -->
+        <title>工具 - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=18ea14ae" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="搜索" name="q" aria-label="搜索">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_installation.html">安装</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_key_concept.html">核心概念</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_message.html">创建消息</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_agent.html">创建 ReAct 智能体</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="workflow_conversation.html">Conversation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_multiagent_debate.html">Multi-Agent Debate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_concurrent_agents.html">Concurrent Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_routing.html">Routing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_handoffs.html">Handoffs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FAQ</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="faq.html">常见问题</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_model.html">模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_prompt.html">提示词格式化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_memory.html">记忆</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">管道 (Pipeline)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_plan.html">计划</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tracing.html">追踪</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_eval_openjudge.html">OpenJudge 评估器</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV1Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/tutorial/task_tool.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">备注</p>
+<p><a class="reference internal" href="#sphx-glr-download-tutorial-task-tool-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="tool">
+<span id="sphx-glr-tutorial-task-tool-py"></span><span id="id1"></span><h1>工具<a class="headerlink" href="#tool" title="Link to this heading">¶</a></h1>
+<p>为了确保准确可靠的工具解析，AgentScope 全面支持工具 API 的使用，具有以下特性：</p>
+<ul class="simple">
+<li><p>支持从文档字符串 <strong>自动</strong> 解析工具函数</p></li>
+<li><p>支持 <strong>同步和异步</strong> 工具函数</p></li>
+<li><p>支持 <strong>流式</strong> 工具响应（同步或异步生成器）</p></li>
+<li><p>支持对工具 JSON Schema 的 <strong>动态扩展</strong></p></li>
+<li><p>支持用户实时 <strong>中断</strong> 工具的执行</p></li>
+<li><p>支持智能体的 <strong>自主工具管理</strong></p></li>
+</ul>
+<p>所有上述功能都由 AgentScope 中的 <code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 类实现，该类负责管理工具函数及其执行。</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>MCP（模型上下文协议）的支持请参考 <a class="reference internal" href="task_mcp.html#mcp"><span class="std std-ref">MCP</span></a> 部分。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">AsyncGenerator</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">agentscope</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">TextBlock</span><span class="p">,</span> <span class="n">ToolUseBlock</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.tool</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToolResponse</span><span class="p">,</span> <span class="n">Toolkit</span><span class="p">,</span> <span class="n">execute_python_code</span>
+</pre></div>
+</div>
+<section id="id2">
+<h2>工具函数<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h2>
+<p>在 AgentScope 中，工具函数是一个 Python 的可调用对象，它</p>
+<ul class="simple">
+<li><p>返回一个 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象或产生 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象的生成器（可以是异步或同步）</p></li>
+<li><p>具有描述工具功能和参数的文档字符串</p></li>
+</ul>
+<p>工具函数的模板如下：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">tool_function</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;{函数描述}</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        a (int):</span>
+<span class="sd">            {第一个参数的描述}</span>
+<span class="sd">        b (str):</span>
+<span class="sd">            {第二个参数的描述}</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+</pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>实例方法和类方法也可以用作工具函数，<code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 中将自动忽略 <code class="docutils literal notranslate"><span class="pre">self</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cls</span></code> 参数。</p>
+</div>
+<p>AgentScope 在 <code class="docutils literal notranslate"><span class="pre">agentscope.tool</span></code> 模块下提供了几个内置工具函数，如 <code class="docutils literal notranslate"><span class="pre">execute_python_code</span></code>、<code class="docutils literal notranslate"><span class="pre">execute_shell_command</span></code> 和文本文件读写函数。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;内置工具函数：&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">agentscope</span><span class="o">.</span><span class="n">tool</span><span class="o">.</span><span class="n">__all__</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">_</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">&quot;Toolkit&quot;</span><span class="p">,</span> <span class="s2">&quot;ToolResponse&quot;</span><span class="p">]:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">_</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>内置工具函数：
+execute_python_code
+execute_shell_command
+view_text_file
+write_text_file
+insert_text_file
+dashscope_text_to_image
+dashscope_text_to_audio
+dashscope_image_to_text
+openai_text_to_image
+openai_text_to_audio
+openai_edit_image
+openai_create_image_variation
+openai_image_to_text
+openai_audio_to_text
+</pre></div>
+</div>
+</section>
+<section id="toolkit">
+<h2>工具模块（Toolkit）<a class="headerlink" href="#toolkit" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 类设计用于管理工具函数，从文档字符串中提取它们的 JSON Schema，并为工具执行提供统一接口。</p>
+<section id="id3">
+<h3>基本用法<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 类的基本功能是注册工具函数并执行它们。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 准备一个自定义工具函数</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">my_search</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;一个简单的示例工具函数。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        query (str):</span>
+<span class="sd">            搜索查询。</span>
+<span class="sd">        api_key (str):</span>
+<span class="sd">            用于身份验证的 API 密钥。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
+        <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">TextBlock</span><span class="p">(</span>
+                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;正在使用 API 密钥 &#39;</span><span class="si">{</span><span class="n">api_key</span><span class="si">}</span><span class="s2">&#39; 搜索 &#39;</span><span class="si">{</span><span class="n">query</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># 在工具模块中注册工具函数</span>
+<span class="n">toolkit</span> <span class="o">=</span> <span class="n">Toolkit</span><span class="p">()</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">my_search</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>注册工具函数后，可以通过调用 <code class="docutils literal notranslate"><span class="pre">get_json_schemas</span></code> 方法获取其 JSON Schema。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;工具 JSON Schemas：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具 JSON Schemas：
+[
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;my_search&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;query&quot;: {
+                        &quot;description&quot;: &quot;搜索查询。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    },
+                    &quot;api_key&quot;: {
+                        &quot;description&quot;: &quot;用于身份验证的 API 密钥。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;query&quot;,
+                    &quot;api_key&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;一个简单的示例工具函数。&quot;
+        }
+    }
+]
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 还允许开发者为工具函数预设参数，这对于 API 密钥或其他敏感信息特别有用。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 先清空工具模块</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+<span class="c1"># 使用预设关键字参数注册工具函数</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">my_search</span><span class="p">,</span> <span class="n">preset_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;api_key&quot;</span><span class="p">:</span> <span class="s2">&quot;xxx&quot;</span><span class="p">})</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带预设参数的工具 JSON Schemas：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带预设参数的工具 JSON Schemas：
+[
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;my_search&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;query&quot;: {
+                        &quot;description&quot;: &quot;搜索查询。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;query&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;一个简单的示例工具函数。&quot;
+        }
+    }
+]
+</pre></div>
+</div>
+<p>预设参数后，该参数将从 JSON schema 中被移除，并在工具调用时自动传递给该工具函数。</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 中，<code class="docutils literal notranslate"><span class="pre">call_tool_function</span></code> 方法以 <code class="docutils literal notranslate"><span class="pre">ToolUseBlock</span></code> 作为输入执行指定的工具函数，统一返回一个 <strong>异步生成器</strong>，该生成器产生 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>AgentScope 中，流式返回的工具函数应该是 <strong>“累积的”</strong>，即当前块的内容应包含之前所有块的内容。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">example_tool_execution</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;工具调用执行示例。&quot;&quot;&quot;</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">call_tool_function</span><span class="p">(</span>
+        <span class="n">ToolUseBlock</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
+            <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;123&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;my_search&quot;</span><span class="p">,</span>
+            <span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;AgentScope&quot;</span><span class="p">},</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 非流式返回的工具函数只有一个 ToolResponse 返回</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;工具响应：&quot;</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">tool_response</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">tool_response</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_tool_execution</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-02-04 15:00:48.700_a49f78&#39;)
+</pre></div>
+</div>
+</section>
+<section id="json-schema">
+<h3>动态扩展 JSON Schema<a class="headerlink" href="#json-schema" title="Link to this heading">¶</a></h3>
+<p>Toolkit 允许通过调用 <code class="docutils literal notranslate"><span class="pre">set_extended_model</span></code> 方法动态扩展工具函数的 JSON schemas。
+这种功能允许开发者在不修改工具函数原始定义的情况下，向工具函数添加更多参数。</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>相关场景包括动态 <span class="xref std std-ref">structured-output</span> 和 CoT（思维链）推理</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>要扩展的工具函数应该接受可变关键字参数（<code class="docutils literal notranslate"><span class="pre">**kwargs</span></code>），以便附加字段可以传递给它。</p>
+</div>
+<p>以 CoT 推理为例，我们可以用 <code class="docutils literal notranslate"><span class="pre">thinking</span></code> 字段扩展所有工具函数，允许智能体总结当前状态然后决定下一步做什么。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 示例工具函数</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tool_function</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;一个工具函数&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
+        <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">TextBlock</span><span class="p">(</span>
+                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;接收到的参数：</span><span class="si">{</span><span class="n">kwargs</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># 添加一个思考字段，以便智能体在给出其他参数之前可以思考。</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ThinkingModel</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用于附加字段的 Pydantic 模型。&quot;&quot;&quot;</span>
+
+    <span class="n">thinking</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;总结当前状态并决定下一步做什么。&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># 注册</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">set_extended_model</span><span class="p">(</span><span class="s2">&quot;my_search&quot;</span><span class="p">,</span> <span class="n">ThinkingModel</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;扩展后的 JSON Schema：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>扩展后的 JSON Schema：
+[
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;my_search&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;query&quot;: {
+                        &quot;description&quot;: &quot;搜索查询。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    },
+                    &quot;thinking&quot;: {
+                        &quot;description&quot;: &quot;总结当前状态并决定下一步做什么。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;query&quot;,
+                    &quot;thinking&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;一个简单的示例工具函数。&quot;
+        }
+    }
+]
+</pre></div>
+</div>
+</section>
+<section id="id4">
+<h3>中断工具执行<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 类支持 <strong>异步工具函数</strong> 的 <strong>执行中断</strong>，并提供 <strong>面向智能体的后处理机制</strong>。
+这种中断基于 asyncio 取消机制实现，其后处理过程根据工具函数的返回类型而有所不同。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>对于同步（工具）函数，它们的执行无法通过 asyncio 取消来中断。因此其中断在智能体内而不是工具模块内处理。
+有关更多信息，请参考 <a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a> 部分。</p>
+</div>
+<p>具体来说，如果工具函数返回 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象，将产生一个带有中断消息的 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象。
+这样智能体可以观察到这一中断并相应地处理它。
+此外，该 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 对象中的 <code class="docutils literal notranslate"><span class="pre">is_interrupted</span></code> 将设置为 <code class="docutils literal notranslate"><span class="pre">True</span></code>，外部调用者可以决定是否将 <code class="docutils literal notranslate"><span class="pre">CancelledError</span></code> 异常抛出到外层。</p>
+<p>可以被中断的异步工具函数示例如下：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">non_streaming_function</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;一个可以被中断的非流式工具函数。&quot;&quot;&quot;</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># 模拟长时间运行的任务</span>
+
+    <span class="c1"># 为演示目的模拟中断</span>
+    <span class="k">raise</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">()</span>
+
+    <span class="c1"># 由于取消，以下代码不会被执行</span>
+    <span class="k">return</span> <span class="n">ToolResponse</span><span class="p">(</span>
+        <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">TextBlock</span><span class="p">(</span>
+                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="s2">&quot;运行成功！&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">example_tool_interruption</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;工具中断示例。&quot;&quot;&quot;</span>
+    <span class="n">toolkit</span> <span class="o">=</span> <span class="n">Toolkit</span><span class="p">()</span>
+    <span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">non_streaming_function</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">call_tool_function</span><span class="p">(</span>
+        <span class="n">ToolUseBlock</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
+            <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;123&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;non_streaming_function&quot;</span><span class="p">,</span>
+            <span class="nb">input</span><span class="o">=</span><span class="p">{},</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">for</span> <span class="n">tool_response</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;工具响应：&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">tool_response</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;中断标志：&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">tool_response</span><span class="o">.</span><span class="n">is_interrupted</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_tool_interruption</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-04 15:00:49.705_a32055&#39;)
+中断标志：
+True
+</pre></div>
+</div>
+<p>对于流式工具函数，<code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 将把中断消息附加到中断发生时的 <code class="docutils literal notranslate"><span class="pre">ToolResponse</span></code> 上。
+通过这种方式，智能体可以观察到工具在中断前返回的内容。</p>
+<p>中断流式工具函数的示例如下：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">streaming_function</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">ToolResponse</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;一个可以被中断的流式工具函数。&quot;&quot;&quot;</span>
+    <span class="c1"># 模拟一块响应</span>
+    <span class="k">yield</span> <span class="n">ToolResponse</span><span class="p">(</span>
+        <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">TextBlock</span><span class="p">(</span>
+                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="s2">&quot;1234&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 模拟中断</span>
+    <span class="k">raise</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">()</span>
+
+    <span class="c1"># 由于取消，以下代码不会被执行</span>
+    <span class="k">yield</span> <span class="n">ToolResponse</span><span class="p">(</span>
+        <span class="n">content</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">TextBlock</span><span class="p">(</span>
+                <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;text&quot;</span><span class="p">,</span>
+                <span class="n">text</span><span class="o">=</span><span class="s2">&quot;123456789&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">example_streaming_tool_interruption</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;流式工具中断示例。&quot;&quot;&quot;</span>
+    <span class="n">toolkit</span> <span class="o">=</span> <span class="n">Toolkit</span><span class="p">()</span>
+    <span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">streaming_function</span><span class="p">)</span>
+
+    <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">call_tool_function</span><span class="p">(</span>
+        <span class="n">ToolUseBlock</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
+            <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;xxx&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;streaming_function&quot;</span><span class="p">,</span>
+            <span class="nb">input</span><span class="o">=</span><span class="p">{},</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">tool_response</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;块 </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">：&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">tool_response</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;中断标志：&quot;</span><span class="p">,</span> <span class="n">tool_response</span><span class="o">.</span><span class="n">is_interrupted</span><span class="p">,</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_streaming_tool_interruption</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>块 0：
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2026-02-04 15:00:49.707_62869f&#39;)
+中断标志： False
+
+块 1：
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-04 15:00:49.707_62869f&#39;)
+中断标志： True
+</pre></div>
+</div>
+</section>
+<section id="id5">
+<h3>自动工具管理<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<a class="reference internal image-reference" href="https://img.alicdn.com/imgextra/i3/O1CN013cvRpO27MfesMsTeh_!!6000000007783-2-tps-840-521.png"><img alt="自动工具管理" class="align-center" src="https://img.alicdn.com/imgextra/i3/O1CN013cvRpO27MfesMsTeh_!!6000000007783-2-tps-840-521.png" style="width: 100%;" />
+</a>
+<p><code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 类通过引入 <strong>工具组</strong> （Group） 的概念，以及名为 <code class="docutils literal notranslate"><span class="pre">reset_equipped_tools</span></code> 的 <strong>元工具函数</strong> （Meta Tool） 来支持 <strong>自动工具管理</strong> 。</p>
+<p>工具组是一组相关工具函数的集合，例如浏览器使用工具、地图服务工具等，它们将被一起管理。工具组有激活和非激活两种状态，
+只有工具组被激活，其中的工具函数才对智能体可见，即可以通过 <code class="docutils literal notranslate"><span class="pre">toolkit.get_json_schemas()</span></code> 方法访问。</p>
+<p>注意有一个名为 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 的特殊组，它始终处于激活状态，注册工具时如果未指定组名，则工具函数将默认添加到此组。</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p><code class="docutils literal notranslate"><span class="pre">basic</span></code> 组确保开发者不需要“组管理”的功能时，工具的基本使用不会受到影响。</p>
+</div>
+<p>现在我们尝试创建一个名为 <code class="docutils literal notranslate"><span class="pre">browser_use</span></code> 的工具组，其中包含一些网页浏览工具。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 我们创建一些浏览器操作相关的工具</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">navigate</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;导航到网页。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        url (str):</span>
+<span class="sd">            要导航到的网页的 URL。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">click_element</span><span class="p">(</span><span class="n">element_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ToolResponse</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;点击网页上的元素。</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        element_id (str):</span>
+<span class="sd">            要点击的元素的 ID。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+
+<span class="n">toolkit</span> <span class="o">=</span> <span class="n">Toolkit</span><span class="p">()</span>
+
+<span class="c1"># 创建一个名为 browser_use 的工具组</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">create_tool_group</span><span class="p">(</span>
+    <span class="n">group_name</span><span class="o">=</span><span class="s2">&quot;browser_use&quot;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;用于网页浏览的工具函数。&quot;</span><span class="p">,</span>
+    <span class="n">active</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="c1"># 使用这些工具时的注意事项</span>
+    <span class="n">notes</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;1. 使用 ``navigate`` 打开网页。</span>
+<span class="s2">2. 当需要用户身份验证时，请向用户询问凭据</span>
+<span class="s2">3. ...&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">navigate</span><span class="p">,</span> <span class="n">group_name</span><span class="o">=</span><span class="s2">&quot;browser_use&quot;</span><span class="p">)</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">click_element</span><span class="p">,</span> <span class="n">group_name</span><span class="o">=</span><span class="s2">&quot;browser_use&quot;</span><span class="p">)</span>
+
+<span class="c1"># 我们也可以注册一些基本工具</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">execute_python_code</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>此时 <code class="docutils literal notranslate"><span class="pre">browser_use</span></code> 未被激活，如果我们检查工具 JSON schema，只能看到 <code class="docutils literal notranslate"><span class="pre">execute_python_code</span></code> 工具：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;此时对智能体可见的工具函数 JSON Schemas：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>此时对智能体可见的工具函数 JSON Schemas：
+[
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;execute_python_code&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;code&quot;: {
+                        &quot;description&quot;: &quot;The Python code to be executed.&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    },
+                    &quot;timeout&quot;: {
+                        &quot;default&quot;: 300,
+                        &quot;description&quot;: &quot;The maximum time (in seconds) allowed for the code to run.&quot;,
+                        &quot;type&quot;: &quot;number&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;code&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
+        }
+    }
+]
+</pre></div>
+</div>
+<p>使用 <code class="docutils literal notranslate"><span class="pre">update_tool_groups</span></code> 方法激活或停用工具组：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">toolkit</span><span class="o">.</span><span class="n">update_tool_groups</span><span class="p">(</span><span class="n">group_names</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;browser_use&quot;</span><span class="p">],</span> <span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;激活后对智能体可见的工具函数 JSON Schemas：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>激活后对智能体可见的工具函数 JSON Schemas：
+[
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;navigate&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;url&quot;: {
+                        &quot;description&quot;: &quot;要导航到的网页的 URL。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;url&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;导航到网页。&quot;
+        }
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;click_element&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;element_id&quot;: {
+                        &quot;description&quot;: &quot;要点击的元素的 ID。&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;element_id&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;点击网页上的元素。&quot;
+        }
+    },
+    {
+        &quot;type&quot;: &quot;function&quot;,
+        &quot;function&quot;: {
+            &quot;name&quot;: &quot;execute_python_code&quot;,
+            &quot;parameters&quot;: {
+                &quot;properties&quot;: {
+                    &quot;code&quot;: {
+                        &quot;description&quot;: &quot;The Python code to be executed.&quot;,
+                        &quot;type&quot;: &quot;string&quot;
+                    },
+                    &quot;timeout&quot;: {
+                        &quot;default&quot;: 300,
+                        &quot;description&quot;: &quot;The maximum time (in seconds) allowed for the code to run.&quot;,
+                        &quot;type&quot;: &quot;number&quot;
+                    }
+                },
+                &quot;required&quot;: [
+                    &quot;code&quot;
+                ],
+                &quot;type&quot;: &quot;object&quot;
+            },
+            &quot;description&quot;: &quot;Execute the given python code in a temp file and capture the return\ncode, standard output and error. Note you must `print` the output to get\nthe result, and the tmp file will be removed right after the execution.&quot;
+        }
+    }
+]
+</pre></div>
+</div>
+<p>此外，<code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 提供了一个名为 <code class="docutils literal notranslate"><span class="pre">reset_equipped_tools</span></code> 的元工具函数，它会将所有组名（除了 &quot;basic&quot;）作为一个 bool 型的参数，
+让智能体调用该工具来决定要激活哪些工具组：</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>在 <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> 类的实现中，只需要在构造函数中将 <code class="docutils literal notranslate"><span class="pre">enable_meta_tool</span></code> 设置为 <code class="docutils literal notranslate"><span class="pre">True</span></code> 即可启用元工具函数。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 注册元工具函数</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">register_tool_function</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">reset_equipped_tools</span><span class="p">)</span>
+
+<span class="n">reset_equipped</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+    <span class="n">tool</span>
+    <span class="k">for</span> <span class="n">tool</span> <span class="ow">in</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">get_json_schemas</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">tool</span><span class="p">[</span><span class="s2">&quot;function&quot;</span><span class="p">][</span><span class="s2">&quot;name&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;reset_equipped_tools&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;``reset_equipped_tools`` 函数的 JSON schema：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+        <span class="n">reset_equipped</span><span class="p">,</span>
+        <span class="n">indent</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>``reset_equipped_tools`` 函数的 JSON schema：
+{
+    &quot;type&quot;: &quot;function&quot;,
+    &quot;function&quot;: {
+        &quot;name&quot;: &quot;reset_equipped_tools&quot;,
+        &quot;parameters&quot;: {
+            &quot;properties&quot;: {
+                &quot;browser_use&quot;: {
+                    &quot;default&quot;: false,
+                    &quot;description&quot;: &quot;用于网页浏览的工具函数。&quot;,
+                    &quot;type&quot;: &quot;boolean&quot;
+                }
+            },
+            &quot;type&quot;: &quot;object&quot;
+        },
+        &quot;description&quot;: &quot;This function allows you to activate or deactivate tool groups\ndynamically based on your current task requirements.\n**Important: Each call sets the absolute final state of ALL tool\ngroups, not incremental changes**. Any group not explicitly set to True\nwill be deactivated, regardless of its previous state.\n\n**Best practice**: Actively manage your tool groups——activate only\nwhat you need for the current task, and promptly deactivate groups as\nsoon as they are no longer needed to conserve context space.\n\nThe function will return the usage instructions for the activated tool\ngroups, which you **MUST pay attention to and follow**. You can also\nreuse this function to check the notes of the tool groups.&quot;
+    }
+}
+</pre></div>
+</div>
+<p>当智能体调用 <code class="docutils literal notranslate"><span class="pre">reset_equipped_tools</span></code> 时，对应工具组将被激活，同时返回的结果中将包含工具的使用注意事项。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">mock_agent_reset_tools</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;模拟智能体调用 reset_equipped_tools 函数。&quot;&quot;&quot;</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="k">await</span> <span class="n">toolkit</span><span class="o">.</span><span class="n">call_tool_function</span><span class="p">(</span>
+        <span class="n">ToolUseBlock</span><span class="p">(</span>
+            <span class="nb">type</span><span class="o">=</span><span class="s2">&quot;tool_use&quot;</span><span class="p">,</span>
+            <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;456&quot;</span><span class="p">,</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;reset_equipped_tools&quot;</span><span class="p">,</span>
+            <span class="nb">input</span><span class="o">=</span><span class="p">{</span>
+                <span class="s2">&quot;browser_use&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>  <span class="c1"># 激活浏览器使用工具组</span>
+            <span class="p">},</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">for</span> <span class="n">tool_response</span> <span class="ow">in</span> <span class="n">res</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;工具响应中的文字返回：&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">tool_response</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">&quot;text&quot;</span><span class="p">])</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">mock_agent_reset_tools</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应中的文字返回：
+Now tool groups &#39;browser_use&#39; are activated. You MUST follow these notes to use these tools:
+&lt;notes&gt;## About Tool Group &#39;browser_use&#39;
+1. 使用 ``navigate`` 打开网页。
+2. 当需要用户身份验证时，请向用户询问凭据
+3. ...&lt;/notes&gt;
+</pre></div>
+</div>
+<p>此外，<code class="docutils literal notranslate"><span class="pre">Toolkit</span></code> 还通过 <code class="docutils literal notranslate"><span class="pre">get_activated_notes</span></code> 函数提供已经被激活了的工具组的 notes，开发者也可以将其组装到智能体的系统提示中，从而达到动态管理工具的作用。</p>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>自动工具管理功能已在 <code class="docutils literal notranslate"><span class="pre">ReActAgent</span></code> 类中实现，有关更多详细信息，请参考 <a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a> 部分。</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 再创建一个工具组</span>
+<span class="n">toolkit</span><span class="o">.</span><span class="n">create_tool_group</span><span class="p">(</span>
+    <span class="n">group_name</span><span class="o">=</span><span class="s2">&quot;map_service&quot;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;谷歌地图服务工具。&quot;</span><span class="p">,</span>
+    <span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">notes</span><span class="o">=</span><span class="s2">&quot;&quot;&quot;1. 使用 ``get_location`` 获取地点的位置。</span>
+<span class="s2">2. ...&quot;&quot;&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;激活工具组的汇总注意事项：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">toolkit</span><span class="o">.</span><span class="n">get_activated_notes</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>激活工具组的汇总注意事项：
+## About Tool Group &#39;browser_use&#39;
+1. 使用 ``navigate`` 打开网页。
+2. 当需要用户身份验证时，请向用户询问凭据
+3. ...
+## About Tool Group &#39;map_service&#39;
+1. 使用 ``get_location`` 获取地点的位置。
+2. ...
+</pre></div>
+</div>
+</section>
+<section id="id6">
+<h3>进一步阅读<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a></p></li>
+<li><p><a class="reference internal" href="task_state.html#state"><span class="std std-ref">状态/会话管理</span></a></p></li>
+<li><p><a class="reference internal" href="task_mcp.html#mcp"><span class="std std-ref">MCP</span></a></p></li>
+</ul>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.023 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tool-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/c814d0f0885573dcc616fd38c752cf4e/task_tool.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tool.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/6f4c306463d5cc9a71271ea912c1f13b/task_tool.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">task_tool.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/f963267f1516b18888561472e1f1380f/task_tool.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">task_tool.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="task_mcp.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">MCP</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="task_long_term_memory.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">长期记忆</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">工具</a><ul>
+<li><a class="reference internal" href="#id2">工具函数</a></li>
+<li><a class="reference internal" href="#toolkit">工具模块（Toolkit）</a><ul>
+<li><a class="reference internal" href="#id3">基本用法</a></li>
+<li><a class="reference internal" href="#json-schema">动态扩展 JSON Schema</a></li>
+<li><a class="reference internal" href="#id4">中断工具执行</a></li>
+<li><a class="reference internal" href="#id5">自动工具管理</a></li>
+<li><a class="reference internal" href="#id6">进一步阅读</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=7d86a446"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/language_switch.js?v=92e4c85c"></script>
+    </body>
+</html>

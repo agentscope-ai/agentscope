@@ -1,0 +1,919 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="索引" href="../genindex.html"><link rel="search" title="搜索" href="../search.html"><link rel="next" title="长期记忆" href="task_long_term_memory.html"><link rel="prev" title="Token 计数" href="task_token.html">
+        <link rel="prefetch" href="../_static/logo.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/logo.svg"><!-- Generated with Sphinx 8.1.3 and Furo 2025.12.19 -->
+        <title>记忆 - AgentScope</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/gallery.css?v=18ea14ae" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #2196f3;
+  --color-brand-content: #2196f3;
+  --color-admonition-background: #f8f9fa;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-link: #2196f3;
+  --color-link--hover: #2196f3;
+  --color-brand-primary: #64b5f6;
+  --color-brand-content: #64b5f6;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc">
+<label class="overlay sidebar-overlay" for="__navigation">
+  <div class="visually-hidden">Hide navigation sidebar</div>
+</label>
+<label class="overlay toc-overlay" for="__toc">
+  <div class="visually-hidden">Hide table of contents sidebar</div>
+</label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <div class="visually-hidden">Toggle site navigation sidebar</div>
+        <i class="icon"><svg><use href="#svg-menu"></use></svg></i>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle">
+          <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <div class="visually-hidden">Toggle table of contents sidebar</div>
+        <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/logo.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text"><span style='font-weight: 700; color: #2196f3;'>AgentScope</span></span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="搜索" name="q" aria-label="搜索">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+    <p class="caption" role="heading">
+        <span class="caption-text">
+            Version
+        </span>
+        <ul>
+            <li>
+                <select class="version-select" onchange="navigateToV0(this.value)">
+                    <option value="v1" selected>Stable(v1.0)</option>
+                    <option value="v0">v0.1.x</option>
+                </select>
+            </li>
+        </ul>
+    </p>
+    <p class="caption" role="heading"><span class="caption-text">Tutorial</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_installation.html">安装</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_key_concept.html">核心概念</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_message.html">创建消息</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quickstart_agent.html">创建 ReAct 智能体</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="workflow_conversation.html">Conversation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_multiagent_debate.html">Multi-Agent Debate</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_concurrent_agents.html">Concurrent Agents</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_routing.html">Routing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow_handoffs.html">Handoffs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">FAQ</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="faq.html">常见问题</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Model and Context</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="task_model.html">模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_prompt.html">提示词格式化</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_token.html">Token 计数</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">记忆</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_long_term_memory.html">长期记忆</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tool</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_tool.html">工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_mcp.html">MCP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_agent_skill.html">智能体技能</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Agent</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Features</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="task_pipeline.html">管道 (Pipeline)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_plan.html">计划</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_rag.html">RAG</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_studio.html">AgentScope Studio</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tracing.html">追踪</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_eval.html">智能体评测</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_eval_openjudge.html">OpenJudge 评估器</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_embedding.html">嵌入(Embedding)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tts.html">TTS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_tuner.html">Tuner</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          
+<button onclick="switchV1Language()" class="language-switch-button" title="Switch to Chinese">
+  <script>
+    document.write(window.location.href.includes("zh_CN") ? "En": "中");
+  </script>
+</button><div class="view-this-page">
+  <a class="muted-link" href="../_sources/tutorial/task_memory.rst.txt" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div>
+<div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle">
+              <div class="visually-hidden">Toggle Light / Dark / Auto color theme</div>
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <div class="visually-hidden">Toggle table of contents sidebar</div>
+            <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">备注</p>
+<p><a class="reference internal" href="#sphx-glr-download-tutorial-task-memory-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="memory">
+<span id="sphx-glr-tutorial-task-memory-py"></span><span id="id1"></span><h1>记忆<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h1>
+<p>AgentScope 中的记忆模块负责：</p>
+<ul class="simple">
+<li><p>存储消息对象（<code class="docutils literal notranslate"><span class="pre">Msg</span></code>）</p></li>
+<li><p>利用标记（mark）管理消息</p></li>
+</ul>
+<p><strong>标记</strong> 是与记忆中每条消息关联的字符串标签，可用于根据消息的上下文或目的对消息进行分类、过滤和检索。
+可用于实现进阶的记忆管理功能，例如在 <cite>ReActAgent</cite> 类中，使用``&quot;hint&quot;<a href="#id2"><span class="problematic" id="id3">``</span></a>标签标记一次性的提示消息，
+以便在使用完成后将其从记忆中删除。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>AgentScope 中的记忆模块仅提供消息存储和管理的原子功能，记忆压缩等算法逻辑在 <a class="reference external" href="agent">智能体</a> 中实现。</p>
+</div>
+<p>目前，AgentScope 提供以下记忆存储实现：</p>
+<div class="table-wrapper docutils container" id="id16">
+<table class="docutils align-default" id="id16">
+<caption><span class="caption-text">AgentScope 中的内置记忆类</span><a class="headerlink" href="#id16" title="Link to this table">¶</a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p>类</p></th>
+<th class="head"><p>描述</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">InMemoryMemory</span></code></p></td>
+<td><p>简单的内存记忆存储实现。</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code></p></td>
+<td><p>基于异步 SQLAlchemy 的记忆存储实现，支持如 SQLite、PostgreSQL、MySQL 等多种关系数据库。</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></p></td>
+<td><p>基于 Redis 的记忆存储实现。</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>如果您有兴趣贡献新的记忆存储实现，请参考 <a class="reference external" href="https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions">贡献指南</a>。</p>
+</div>
+<p>以上所有记忆类均继承自基类 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code>，并提供以下方法来管理记忆中的消息：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">fakeredis</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">InMemoryMemory</span><span class="p">,</span>
+    <span class="n">AsyncSQLAlchemyMemory</span><span class="p">,</span>
+    <span class="n">RedisMemory</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+</pre></div>
+</div>
+<section id="id14">
+<h2>内存记忆<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h2>
+<p>内存记忆提供了一种在内存中存储消息的简单方式。
+结合 <a class="reference internal" href="task_state.html#state"><span class="std std-ref">状态/会话管理</span></a> 模块，它可以在不同用户和会话之间持久化记忆内容。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">in_memory_example</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用InMemoryMemory在内存中存储消息的示例。&quot;&quot;&quot;</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">InMemoryMemory</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 添加一条带有标记&quot;hint&quot;的提示消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 所有存储的消息都可以通过 ``state_dict`` 和 ``load_state_dict`` 方法导出和加载。</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;记忆的状态字典：&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+
+    <span class="c1"># 通过标记删除消息</span>
+    <span class="n">deleted_count</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">delete_by_mark</span><span class="p">(</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;删除了 </span><span class="si">{</span><span class="n">deleted_count</span><span class="si">}</span><span class="s2"> 条带有标记&#39;hint&#39;的消息。&quot;</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;删除后的记忆状态字典：&quot;</span><span class="p">)</span>
+    <span class="n">state</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">in_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;GuYxz4zHwntaSrZZnBnGX5&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:11.956&#39;, invocation_id=&#39;None&#39;)
+记忆的状态字典：
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;R69wJ6Kw3nr6GMv7R58aA5&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-02-04 15:00:11.956&quot;
+      },
+      []
+    ],
+    [
+      {
+        &quot;id&quot;: &quot;GuYxz4zHwntaSrZZnBnGX5&quot;,
+        &quot;name&quot;: &quot;system&quot;,
+        &quot;role&quot;: &quot;system&quot;,
+        &quot;content&quot;: &quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-02-04 15:00:11.956&quot;
+      },
+      [
+        &quot;hint&quot;
+      ]
+    ]
+  ]
+}
+删除了 1 条带有标记&#39;hint&#39;的消息。
+删除后的记忆状态字典：
+{
+  &quot;content&quot;: [
+    [
+      {
+        &quot;id&quot;: &quot;R69wJ6Kw3nr6GMv7R58aA5&quot;,
+        &quot;name&quot;: &quot;Alice&quot;,
+        &quot;role&quot;: &quot;user&quot;,
+        &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
+        &quot;metadata&quot;: null,
+        &quot;timestamp&quot;: &quot;2026-02-04 15:00:11.956&quot;
+      },
+      []
+    ]
+  ]
+}
+</pre></div>
+</div>
+</section>
+<section id="relational-database-memory">
+<h2>关系数据库记忆（Relational Database Memory）<a class="headerlink" href="#relational-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支持：</p>
+<ul class="simple">
+<li><p>多种数据库，如 SQLite、PostgreSQL、MySQL 等</p></li>
+<li><p>用户和会话管理</p></li>
+<li><p>生产环境中的连接池</p></li>
+</ul>
+<p>具体来说，这里我们以SQLite支持的记忆为例。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 AsyncSQLAlchemyMemory 在 SQLite 数据库中存储消息的示例。&quot;&quot;&quot;</span>
+
+    <span class="c1"># 首先创建一个异步 SQLAlchemy 引擎</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 然后使用该引擎创建记忆</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="c1"># 可选传入指定user_id和session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">Msg</span><span class="p">(</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 完成后关闭引擎</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;8Ydfmt6jDDYNhPJnrbiQGU&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:11.999&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>可选地，您也可以将 <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> 用作异步上下文管理器，退出上下文时会话将自动关闭。</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">sqlalchemy_context_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 AsyncSQLAlchemyMemory 作为异步上下文管理器的示例。&quot;&quot;&quot;</span>
+    <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span><span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">)</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+        <span class="n">engine_or_session</span><span class="o">=</span><span class="n">engine</span><span class="p">,</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span> <span class="k">as</span> <span class="n">memory</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+            <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于 AgentScope 的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;记忆中的所有消息：&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">sqlalchemy_context_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>记忆中的所有消息：
+- Msg(id=&#39;fQfzJwqmXHrHGpLskeV5RL&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:11.967&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;8Ydfmt6jDDYNhPJnrbiQGU&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:11.999&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;YFrY7BjGFeGhsBGRza8muX&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:12.008&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>在生产环境中，例如使用FastAPI时，可以按如下方式启用连接池：</p>
+<div class="literal-block-wrapper docutils container" id="id17">
+<div class="code-block-caption"><span class="caption-text">FastAPI中使用连接池的SQLAlchemy记忆</span><a class="headerlink" href="#id17" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncGenerator</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">Depends</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.ext.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_async_engine</span><span class="p">,</span> <span class="n">async_sessionmaker</span><span class="p">,</span> <span class="n">AsyncSession</span>
+
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.agent</span><span class="w"> </span><span class="kn">import</span> <span class="n">ReActAgent</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">stream_printing_messages</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+ <span class="c1"># 创建带连接池的异步SQLAlchemy引擎</span>
+ <span class="n">engine</span> <span class="o">=</span> <span class="n">create_async_engine</span><span class="p">(</span>
+     <span class="s2">&quot;sqlite+aiosqlite:///./test_memory.db&quot;</span><span class="p">,</span>
+     <span class="n">pool_size</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+     <span class="n">max_overflow</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+     <span class="n">pool_timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+     <span class="c1"># ...  其他连接池设置</span>
+ <span class="p">)</span>
+
+ <span class="c1"># 创建会话制造器</span>
+ <span class="n">async_session_marker</span> <span class="o">=</span> <span class="n">async_sessionmaker</span><span class="p">(</span>
+     <span class="n">engine</span><span class="p">,</span>
+     <span class="n">expire_on_commit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autocommit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+     <span class="n">autoflush</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+ <span class="p">)</span>
+
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">get_db</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="n">AsyncSession</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+     <span class="k">async</span> <span class="k">with</span> <span class="n">async_session_marker</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+         <span class="k">try</span><span class="p">:</span>
+             <span class="k">yield</span> <span class="n">session</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+         <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+             <span class="k">raise</span>
+         <span class="k">finally</span><span class="p">:</span>
+             <span class="k">await</span> <span class="n">session</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+     <span class="n">db_session</span><span class="p">:</span> <span class="n">AsyncSession</span> <span class="o">=</span> <span class="n">Depends</span><span class="p">(</span><span class="n">get_db</span><span class="p">),</span>
+ <span class="p">):</span>
+     <span class="c1"># 智能体的一些设置</span>
+     <span class="o">...</span>
+
+     <span class="c1"># 使用SQLAlchemy记忆创建智能体</span>
+     <span class="n">agent</span> <span class="o">=</span> <span class="n">ReActAgent</span><span class="p">(</span>
+         <span class="c1"># ...</span>
+         <span class="n">memory</span><span class="o">=</span><span class="n">AsyncSQLAlchemyMemory</span><span class="p">(</span>
+             <span class="n">engine_or_session</span><span class="o">=</span><span class="n">db_session</span><span class="p">,</span>
+             <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+             <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+         <span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 处理与智能体的对话</span>
+     <span class="k">async</span> <span class="k">for</span> <span class="n">msg</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">stream_printing_messages</span><span class="p">(</span>
+         <span class="n">agents</span><span class="o">=</span><span class="p">[</span><span class="n">agent</span><span class="p">],</span>
+         <span class="n">coroutine_task</span><span class="o">=</span><span class="n">agent</span><span class="p">(</span><span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="nb">input</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">)),</span>
+     <span class="p">):</span>
+         <span class="c1"># 将消息返回给客户端</span>
+         <span class="o">...</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="nosql-nosql-database-memory">
+<h2>NoSQL数据库记忆（NoSQL Database Memory）<a class="headerlink" href="#nosql-nosql-database-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
+它也支持用户和会话管理，以及生产环境中的连接池。</p>
+<p>首先，我们可以按如下方式初始化Redis记忆：</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">redis_memory_example</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 RedisMemory 在 Redis 中存储消息的示例。&quot;&quot;&quot;</span>
+    <span class="c1"># 使用fakeredis进行内存测试，无需真实的 Redis 服务器</span>
+    <span class="n">fake_redis</span> <span class="o">=</span> <span class="n">fakeredis</span><span class="o">.</span><span class="n">aioredis</span><span class="o">.</span><span class="n">FakeRedis</span><span class="p">(</span><span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># 创建 Redis 记忆</span>
+    <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+        <span class="c1"># 使用fake redis进行演示</span>
+        <span class="n">connection_pool</span><span class="o">=</span><span class="n">fake_redis</span><span class="o">.</span><span class="n">connection_pool</span><span class="p">,</span>
+        <span class="c1"># 也可以通过指定主机和端口连接到真实的Redis服务器</span>
+        <span class="c1"># host=&quot;localhost&quot;,</span>
+        <span class="c1"># port=6379,</span>
+        <span class="c1"># 可选地指定 user_id 和 session_id</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+        <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 向记忆中添加消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;Alice&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 添加一条带有标记&quot;hint&quot;的提示消息</span>
+    <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+        <span class="n">Msg</span><span class="p">(</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+        <span class="p">),</span>
+        <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 检索带有标记&quot;hint&quot;的消息</span>
+    <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;带有标记&#39;hint&#39;的消息：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">redis_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
+- Msg(id=&#39;oLXaYuZzPRbFDidCJaFnbF&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata=None, timestamp=&#39;2026-02-04 15:00:12.026&#39;, invocation_id=&#39;None&#39;)
+</pre></div>
+</div>
+<p>同样，<cite>RedisMemory</cite> 也可以在生产环境中使用连接池，例如与FastAPI一起使用。</p>
+<div class="literal-block-wrapper docutils container" id="id18">
+<div class="code-block-caption"><span class="caption-text">FastAPI中使用连接池的Redis记忆</span><a class="headerlink" href="#id18" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">HTTPException</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">redis.asyncio</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConnectionPool</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">asynccontextmanager</span>
+
+ <span class="c1"># 全局Redis连接池</span>
+ <span class="n">redis_pool</span><span class="p">:</span> <span class="n">ConnectionPool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+ <span class="c1"># 使用lifespan事件管理Redis连接池</span>
+ <span class="nd">@asynccontextmanager</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="n">redis_pool</span> <span class="o">=</span> <span class="n">ConnectionPool</span><span class="p">(</span>
+         <span class="n">host</span><span class="o">=</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span>
+         <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">,</span>
+         <span class="n">db</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+         <span class="n">password</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+         <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+         <span class="n">max_connections</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+         <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis连接已建立&quot;</span><span class="p">)</span>
+
+     <span class="k">yield</span>
+
+     <span class="k">await</span> <span class="n">redis_pool</span><span class="o">.</span><span class="n">disconnect</span><span class="p">()</span>
+     <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✅ Redis连接已关闭&quot;</span><span class="p">)</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat_endpoint&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span>
+     <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span>
+ <span class="p">):</span>
+<span class="w">     </span><span class="sd">&quot;&quot;&quot;聊天端点&quot;&quot;&quot;</span>
+     <span class="k">global</span> <span class="n">redis_pool</span>
+     <span class="k">if</span> <span class="n">redis_pool</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+         <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span>
+             <span class="n">status_code</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+             <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;Redis连接池未初始化。&quot;</span><span class="p">,</span>
+         <span class="p">)</span>
+
+     <span class="c1"># 创建Redis记忆</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">RedisMemory</span><span class="p">(</span>
+         <span class="n">connection_pool</span><span class="o">=</span><span class="n">redis_pool</span><span class="p">,</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="o">...</span>
+
+     <span class="c1"># 完成后关闭Redis客户端连接</span>
+     <span class="n">client</span> <span class="o">=</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_client</span><span class="p">()</span>
+     <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">aclose</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
+<section id="customizing-memory">
+<h2>自定义记忆（Customizing Memory）<a class="headerlink" href="#customizing-memory" title="Link to this heading">¶</a></h2>
+<p>要自定义您自己的记忆实现，只需从 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> 继承并实现以下方法：</p>
+<div class="table-wrapper docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>方法</p></th>
+<th class="head"><p>描述</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">add</span></code></p></td>
+<td><p>向记忆中添加 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">delete</span></code></p></td>
+<td><p>从记忆中删除 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">delete_by_mark</span></code></p></td>
+<td><p>通过标记从记忆中删除 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">size</span></code></p></td>
+<td><p>记忆的大小</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">clear</span></code></p></td>
+<td><p>清空记忆内容</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">get_memory</span></code></p></td>
+<td><p>以 <code class="docutils literal notranslate"><span class="pre">Msg</span></code> 对象列表的形式获取记忆内容</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update_messages_mark</span></code></p></td>
+<td><p>更新记忆中消息的标记</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state_dict</span></code></p></td>
+<td><p>获取记忆的状态字典</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">load_state_dict</span></code></p></td>
+<td><p>加载记忆的状态字典</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="id15">
+<h2>延伸阅读<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a></p></li>
+<li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">长期记忆</span></a></p></li>
+</ul>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.095 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/9e4e6887f7f06d4fe65fac9fcfd7bba8/task_memory.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">task_memory.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../_downloads/68bd48e0543c7bd3e9bcf688f434b8e4/task_memory.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">task_memory.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="task_long_term_memory.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">长期记忆</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="task_token.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Token 计数</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; 2025, Alibaba
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            <div class="icons">
+              <a class="muted-link " href="https://github.com/agentscope-ai/agentscope" aria-label="GitHub">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 16 16">
+                    <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://discord.gg/eYMpfnkG8h" aria-label="Discord">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" t="1753331148815" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5721" width="200" height="200">
+                    <path d="M723.903423 359.138018c-69.65045-52.952793-136.256577-51.476757-136.256576-51.476757l-6.088649 7.564685c83.027027 25.738378 121.127207 62.085766 121.127207 62.085766a387.459459 387.459459 0 0 0-145.297297-46.956397 418.179459 418.179459 0 0 0-98.340901 1.752793 73.801802 73.801802 0 0 1-7.564684 1.476036 357.385225 357.385225 0 0 0-110.702703 30.258739 278.786306 278.786306 0 0 0-28.782703 13.653333S353.049369 339.488288 440.873514 313.657658l-4.612613-6.088649s-66.513874-1.476036-136.164324 51.476757A654.252973 654.252973 0 0 0 230.630631 642.167928s40.867748 71.126486 148.341621 73.801802c0 0 16.697658-22.694054 31.827027-40.867748-62.085766-18.45045-84.77982-57.565405-84.77982-57.565405a130.998198 130.998198 0 0 0 13.653334 7.564684s0 1.568288 1.476036 1.568289c1.476036 1.476036 3.044324 1.476036 4.52036 3.044324a238.748829 238.748829 0 0 0 34.779099 16.605405 513.199279 513.199279 0 0 0 71.218739 21.218018 350.558559 350.558559 0 0 0 125.555315 0 329.894054 329.894054 0 0 0 69.650451-21.218018A247.328288 247.328288 0 0 0 702.685405 618.09009s-24.262342 39.391712-87.824144 57.565405c13.653333 18.45045 31.827027 39.299459 31.827027 39.29946 107.473874-2.952072 148.341622-73.801802 146.773334-72.602523a654.990991 654.990991 0 0 0-69.558199-283.214414zM421.131532 596.77982a54.705586 54.705586 0 0 1 0-109.042162 54.705586 54.705586 0 0 1 0 109.042162z m177.124324 0a54.705586 54.705586 0 1 1 49.908468-54.521081 52.491532 52.491532 0 0 1-49.908468 54.521081z" p-id="5722"></path><path d="M512 1024A512 512 0 1 1 1024 512 512.645766 512.645766 0 0 1 512 1024z m0-972.892252a461.261261 461.261261 0 1 0 461.261261 461.261261 461.261261 461.261261 0 0 0-461.261261-461.261261z" p-id="5723"></path>
+                </svg>
+            </a>
+              <a class="muted-link " href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,OmDlBXpjW+I2vWjKDsjvI9dhcXjGZi3bQiojOq3dlDw=&_dt_no_comment=1&origin=11" aria-label="DingTalk">
+                <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+                    <path d="M512 0C229.205333 0 0 229.205333 0 512s229.205333 512 512 512 512-229.205333 512-512S794.794667 0 512 0z m237.312 480.810667c-1.109333 4.48-3.712 11.093333-7.424 18.986666h0.128l-0.426667 0.682667c-21.504 46.037333-77.610667 136.106667-77.610666 136.106667l-0.298667-0.597334-16.384 28.501334h79.018667l-150.912 200.917333 34.304-136.533333h-62.208l21.589333-90.282667c-17.493333 4.224-38.101333 10.026667-62.592 17.92 0 0-33.109333 19.370667-95.317333-37.333333 0 0-41.984-36.992-17.578667-46.165334 10.410667-3.925333 50.304-8.917333 81.706667-13.226666 42.410667-5.674667 68.48-8.789333 68.48-8.789334s-130.773333 2.005333-161.792-2.901333c-30.976-4.906667-70.4-56.704-78.805334-102.186667 0 0-12.970667-25.002667 27.904-13.226666 40.917333 11.818667 210.005333 46.08 210.005334 46.08S321.109333 411.434667 306.517333 394.922667c-14.634667-16.469333-43.093333-89.770667-39.424-134.869334 0 0 1.621333-11.221333 13.098667-8.192 0 0 162.602667 74.282667 273.792 114.986667 111.104 40.704 207.786667 61.397333 195.328 114.005333z" opacity=".65" p-id="6077"></path>
+                </svg>
+            </a>
+              
+            </div>
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">记忆</a><ul>
+<li><a class="reference internal" href="#id14">内存记忆</a></li>
+<li><a class="reference internal" href="#relational-database-memory">关系数据库记忆（Relational Database Memory）</a></li>
+<li><a class="reference internal" href="#nosql-nosql-database-memory">NoSQL数据库记忆（NoSQL Database Memory）</a></li>
+<li><a class="reference internal" href="#customizing-memory">自定义记忆（Customizing Memory）</a></li>
+<li><a class="reference internal" href="#id15">延伸阅读</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=7d86a446"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script src="../_static/language_switch.js?v=92e4c85c"></script>
+    </body>
+</html>
