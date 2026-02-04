@@ -9,7 +9,7 @@ from .._workflow import WorkflowOutput
 
 async def avg_time_judge(
     _task: Dict[str, Any],
-    response: Any,
+    response: WorkflowOutput,
     _auxiliary_models: Dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """
@@ -53,7 +53,7 @@ async def avg_time_judge(
 
 async def avg_token_consumption_judge(
     _task: Dict[str, Any],
-    response: Any,
+    response: WorkflowOutput,
     _auxiliary_models: Dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """
