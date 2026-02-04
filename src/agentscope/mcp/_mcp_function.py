@@ -48,7 +48,7 @@ class MCPToolFunction:
             None`, *optional*):
                 The MCP client generator function. Either this or `session`
                 must be provided.
-            session (`ClientSession`):
+            session (`ClientSession | None`, *optional*):
                 The MCP client session. Either this or `client_gen` must be
                 provided.
             timeout (`float | None`, *optional*):
