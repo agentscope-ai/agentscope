@@ -95,7 +95,7 @@ def tune_prompt(
     eval_dataset: DatasetConfig | None = None,
     auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
-) -> str:
+) -> tuple[str, dict[str, float]]:
     """Tune a system prompt using DSPy's MIPROv2 optimizer.
 
     This function optimizes the system prompt by leveraging DSPy's
@@ -115,7 +115,11 @@ def tune_prompt(
             PromptTuneConfig().
 
     Returns:
-        The optimized system prompt string.
+        A tuple containing:
+            - The optimized system prompt string.
+            - A dict of metrics. May include "valset_improvement" (percentage)
+              if eval_dataset is provided and config.compare_performance is
+              True.
     """
     import dspy
     from datasets import load_dataset
@@ -171,6 +175,7 @@ def tune_prompt(
     logger.info("workflow optimized")
 
     # evaluate if eval_dataset is provided
+    valset_improvement: float | None = None
     if eval_dataset is not None:
         if os.path.exists(eval_dataset.path) and _guess_by_ext(
             eval_dataset.path,
@@ -219,16 +224,21 @@ def tune_prompt(
         logger.info("optimized score: %s", score)
 
         if baseline_score is not None:
-            improvement = (
+            valset_improvement = (
                 (score - baseline_score) / baseline_score * 100
                 if baseline_score != 0
-                else 0
+                else 0.0
             )
-            logger.info("improvement: %.2f%%", improvement)
+            logger.info("improvement: %.2f%%", valset_improvement)
 
     optimized_prompt = result.predictor.get_current_prompt()
+    assert isinstance(optimized_prompt, str), f"Optimized prompt must be a string but {type(optimized_prompt)}. This should not happen."
     logger.info("---------- Optimized Prompt ----------")
     logger.info(optimized_prompt)
     logger.info("--------------------------------------")
 
-    return optimized_prompt
+    metrics: dict[str, float] = {}
+    if valset_improvement is not None:
+        metrics["valset_improvement"] = valset_improvement
+
+    return optimized_prompt, metrics
