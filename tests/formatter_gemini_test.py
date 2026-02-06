@@ -271,12 +271,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
@@ -353,12 +354,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
@@ -405,12 +407,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
@@ -490,12 +493,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
@@ -532,12 +536,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "2",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "South Korea",
                             },
                         },
+                        "thought_signature": "2",
                     },
                 ],
             },
@@ -700,12 +705,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
@@ -922,12 +928,13 @@ class TestGeminiFormatter(IsolatedAsyncioTestCase):
                 "parts": [
                     {
                         "function_call": {
-                            "id": "1",
+                            "id": None,
                             "name": "get_capital",
                             "args": {
                                 "country": "Japan",
                             },
                         },
+                        "thought_signature": "1",
                     },
                 ],
             },
