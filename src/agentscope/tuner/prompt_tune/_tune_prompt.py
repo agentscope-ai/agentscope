@@ -12,7 +12,7 @@ from agentscope.tuner import (
 from agentscope import logger
 from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import check_judge_function, _check_function_signature
-from agentscope.tuner._workflow import PromptTuneWorkflowType
+from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
 from agentscope.tuner.prompt_tune._config import PromptTuneConfig
 from agentscope.tuner.prompt_tune._wrapper import _WorkflowWrapperModule
@@ -33,7 +33,8 @@ def _wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
         response: Any,
         auxiliary_models: dict[str, ChatModelBase],
     ) -> float:
-        output = await judge_fn(task, response, auxiliary_models)
+        # set logger to None
+        output = await judge_fn(task, response, auxiliary_models, None)
         return output.reward
 
     def _sync_wrapper(
@@ -88,7 +89,7 @@ def check_workflow_function(
 
 def tune_prompt(
     *,
-    workflow: PromptTuneWorkflowType,
+    workflow: WorkflowType,
     init_system_prompt: str,
     judge_func: JudgeType,
     train_dataset: DatasetConfig,

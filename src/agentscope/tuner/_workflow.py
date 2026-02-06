@@ -30,10 +30,7 @@ class WorkflowOutput(BaseModel):
     )
 
 
-WorkflowType = Callable[
-    [Dict, ChatModelBase, Dict[str, ChatModelBase] | None, Logger | None],
-    Awaitable[WorkflowOutput],
-]
+WorkflowType = Callable[..., Awaitable[WorkflowOutput]]
 # An agent workflow function type for tuning.
 
 # Args:
@@ -42,6 +39,8 @@ WorkflowType = Callable[
 #     model (`ChatModelBase`):
 #         The primary chat model used in the workflow, this is the main model
 #         being tuned.
+#     system_prompt (`str`):
+#         The system prompt to use for this workflow execution.
 #     auxiliary_models (`Dict[str, ChatModelBase] | None`, optional):
 #         A dictionary of additional chat models available for LLM-as-a-Judge
 #         usage. The keys are model names, and the values are the corresponding
@@ -50,24 +49,6 @@ WorkflowType = Callable[
 #     logger (`Logger | None`, optional):
 #         An optional logger for logging information during the workflow
 #         execution.
-# Returns:
-#     `WorkflowOutput`:
-#         The workflow execution results, including optional reward, raw
-#         response and metrics.
-
-
-PromptTuneWorkflowType = Callable[
-    [Dict, str],
-    Awaitable[WorkflowOutput],
-]
-# An agent workflow function type for prompt tuning.
-
-# Args:
-#     task (`Dict`):
-#         The task information for the workflow run.
-#     system_prompt (`str`):
-#         The system prompt to use for this workflow execution.
-
 # Returns:
 #     `WorkflowOutput`:
 #         The workflow execution results, including optional reward, raw
