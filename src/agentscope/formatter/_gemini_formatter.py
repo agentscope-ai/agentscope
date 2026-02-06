@@ -200,10 +200,11 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                     parts.append(
                         {
                             "function_call": {
-                                "id": block["id"],
+                                "id": None,
                                 "name": block["name"],
                                 "args": block["input"],
                             },
+                            "thought_signature": block.get("id", None),
                         },
                     )
 
