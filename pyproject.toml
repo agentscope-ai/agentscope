@@ -139,9 +139,9 @@ evaluate = ["ray"]
 
 # ------------ Tuner ------------
 tuner = [
-    "trinity-rft>=0.4.1",
+    "trinity-rft>=0.5.0",
     "dspy>=3.1.0",
-    "datasets>=2.20.0",
+    "datasets>=4.0.0",
     "litellm[proxy]>=1.75.3"
 ]
 
