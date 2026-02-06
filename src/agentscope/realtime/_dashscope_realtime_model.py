@@ -32,10 +32,7 @@ class DashScopeRealtimeModel(RealtimeModelBase):
     )
     """The websocket URL of the DashScope realtime model API."""
 
-    websocket_headers: dict[str, str] = {
-        "Authorization": "Bearer {api_key}",
-        "X-DashScope-DataInspection": "disable",
-    }
+    websocket_headers: dict[str, str]
     """The websocket headers of the DashScope realtime model API."""
 
     input_sample_rate: int
@@ -88,9 +85,10 @@ class DashScopeRealtimeModel(RealtimeModelBase):
         self.websocket_url = self.websocket_url.format(model_name=model_name)
 
         # Set the API key in the websocket headers.
-        self.websocket_headers["Authorization"] = self.websocket_headers[
-            "Authorization"
-        ].format(api_key=api_key)
+        self.websocket_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "X-DashScope-DataInspection": "disable",
+        }
 
         # Record the response ID for the current session.
         self._response_id = ""

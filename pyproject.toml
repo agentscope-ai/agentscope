@@ -165,6 +165,8 @@ dev = [
     "fakeredis",
     "aiosqlite",
     "greenlet",
+    # For openjudge
+    "py-openjudge",
 ]
 
 [project.urls]

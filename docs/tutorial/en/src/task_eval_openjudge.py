@@ -1,0 +1,341 @@
+# -*- coding: utf-8 -*-
+"""
+Evaluation with OpenJudge
+=========================
+
+This guide introduces how to use [OpenJudge](https://github.com/agentscope-ai/OpenJudge) graders as AgentScope metrics to evaluate your multi-agent applications.
+OpenJudge is a comprehensive evaluation system designed to assess the quality of LLM applications. By integrating OpenJudge into AgentScope, you can extend AgentScope's native evaluation capabilities from basic execution checks to deep, semantic quality analysis.
+
+
+.. note::
+   Install dependencies before running:
+
+   .. code-block:: bash
+
+       pip install agentscope py-openjudge
+
+
+Overview
+--------
+While AgentScope provides a robust `MetricBase` for defining evaluation logic, implementing complex, semantic-level metrics (like "Hallucination Detection" or "Response Relevance") often requires
+significant effort in prompt engineering and pipeline construction.
+
+Integrating OpenJudge brings three dimensions of capability extension to AgentScope:
+
+1.  **Enhance Evaluation Depth:**: Move beyond simple success/failure checks to multi-dimensional assessments (Accuracy, Safety, Tone, etc.).
+2.  **Leverage Verified Graders**: Instantly access 50+ pre-built, expert-level graders without writing custom evaluation prompts, see the [OpenJudge documentation](https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/) for details.
+3.  **Closed-loop Iteration**: Seamlessly embed OpenJudge into AgentScope's `Benchmark`, obtaining quantitative scores and qualitative reasoning.
+
+
+How to Evaluate with OpenJudge
+--------------------
+
+We are going to build a simple QA benchmark to demonstrate how to use the AgentScope evaluation module by integrating OpenJudge's graders.
+"""
+
+# %%
+QA_BENCHMARK_DATASET = [
+    {
+        "id": "qa_task_1",
+        "question": "What are the health benefits of regular exercise?",
+        "reference_output": "Regular exercise improves cardiovascular health, strengthens muscles and bones, "
+        "helps maintain a healthy weight, and can improve mental health by reducing anxiety and depression.",
+        "ground_truth": "Answers should cover physical and mental health benefits",
+        "difficulty": "medium",
+        "category": "health",
+    },
+    {
+        "id": "qa_task_2",
+        "question": "Describe the main causes of climate change.",
+        "reference_output": "Climate change is primarily caused by increased concentrations of greenhouse gases "
+        "in the atmosphere due to human activities like burning fossil fuels, deforestation, and industrial processes.",
+        "ground_truth": "Answers should mention greenhouse gases and human activities",
+        "difficulty": "hard",
+        "category": "environment",
+    },
+    {
+        "id": "qa_task_3",
+        "question": "What is the significance of the Turing Test in AI?",
+        "reference_output": "The Turing Test, proposed by Alan Turing, is a measure of a machine's ability to exhibit"
+        " intelligent behavior equivalent to, or indistinguishable from, that of a human.",
+        "ground_truth": "Should mention Alan Turing, purpose of the test, and its implications for AI",
+        "difficulty": "hard",
+        "category": "technology",
+    },
+]
+
+
+# %% [markdown]
+# AgentScope Metric vs. OpenJudge Grader
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# To make OpenJudge compatible with AgentScope, we need an adapter that inherits from
+# AgentScope's ``MetricBase`` and acts as a bridge to OpenJudge's ``BaseGrader``.
+#
+# * **AgentScope Metric**: A generic unit of evaluation that accepts a ``SolutionOutput`` and returns a ``MetricResult``.
+# * **OpenJudge Grader**: A specialized evaluation unit (e.g., ``RelevanceGrader``) that requires specific, semantic inputs (like ``query``, ``response``, ``context``), and returns a ``GraderResult``.
+#
+# This "Adapter" allows you to plug *any* OpenJudge grader into your AgentScope benchmark seamlessly.
+#
+
+# %%
+from openjudge.graders.base_grader import BaseGrader
+from openjudge.graders.schema import GraderScore, GraderError
+from openjudge.utils.mapping import parse_data_with_mapper
+from agentscope.evaluate import (
+    MetricBase,
+    MetricType,
+    MetricResult,
+    SolutionOutput,
+)
+
+
+class OpenJudgeMetric(MetricBase):
+    """
+    A wrapper that converts an OpenJudge grader into an AgentScope Metric.
+    """
+
+    def __init__(
+        self,
+        grader_cls: type[BaseGrader],
+        data: dict,
+        mapper: dict,
+        name: str | None = None,
+        description: str | None = None,
+        **grader_kwargs,
+    ):
+        # Initialize the OpenJudge grader
+        self.grader = grader_cls(**grader_kwargs)
+
+        super().__init__(
+            name=name or self.grader.name,
+            metric_type=MetricType.NUMERICAL,
+            description=description or self.grader.description,
+        )
+
+        self.data = data
+        self.mapper = mapper
+
+    async def __call__(self, solution: SolutionOutput) -> MetricResult:
+        """Execute the wrapped OpenJudge grader against the agent solution."""
+        if not solution.success:
+            return MetricResult(
+                name=self.name,
+                result=0.0,
+                message="Solution failed",
+            )
+
+        try:
+            # 1. Context Construction
+            # Combine Static Task Context (item) and Dynamic Agent Output (solution)
+            combined_data = {
+                "data": self.data,
+                "solution": {
+                    "output": solution.output,
+                    "meta": solution.meta,
+                    "trajectory": getattr(solution, "trajectory", []),
+                },
+            }
+
+            # 2. Data Mapping
+            # Use the mapper to extract 'query', 'response', 'context' from the combined data
+            grader_inputs = parse_data_with_mapper(
+                combined_data,
+                self.mapper,
+            )
+
+            # 3. Evaluation Execution
+            result = await self.grader.aevaluate(**grader_inputs)
+
+            # 4. Result Formatting
+            if isinstance(result, GraderScore):
+                return MetricResult(
+                    name=self.name,
+                    result=result.score,
+                    # We preserve the detailed reasoning provided by OpenJudge
+                    message=result.reason or "",
+                )
+            elif isinstance(result, GraderError):
+                return MetricResult(
+                    name=self.name,
+                    result=0.0,
+                    message=f"Error: {result.error}",
+                )
+            else:
+                return MetricResult(
+                    name=self.name,
+                    result=0.0,
+                    message="Unknown result type",
+                )
+
+        except Exception as e:
+            return MetricResult(
+                name=self.name,
+                result=0.0,
+                message=f"Exception: {str(e)}",
+            )
+
+
+# %% [markdown]
+# From OpenJudge's Graders to AgentScope's Benchmark
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# OpenJudge provides a rich collection of built-in graders. In this example, we select two
+# common graders suitable for Question-Answering tasks:
+#
+# * **RelevanceGrader**: Evaluates whether the agent's response directly addresses the user's query.
+# * **CorrectnessGrader**: Verifies the factual accuracy of the response against a provided ground truth.
+#
+# .. tip::
+#    OpenJudge offers 50+ built-in graders covering diverse dimensions like **Hallucination**, **Safety**, **Code Quality**,
+#    and **JSON Formatting**. Please refer to the `OpenJudge Documentation <https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/>`_
+#    for the full list of available graders.
+#
+# .. note::
+#    Ensure you have set your ``DASHSCOPE_API_KEY`` environment variable before running the example below.
+
+# %%
+import os
+from typing import Generator
+from openjudge.graders.common.relevance import RelevanceGrader
+from openjudge.graders.common.correctness import CorrectnessGrader
+from agentscope.evaluate import (
+    Task,
+    BenchmarkBase,
+)
+
+
+class QABenchmark(BenchmarkBase):
+    """A benchmark for QA tasks using OpenJudge metrics."""
+
+    def __init__(self):
+        super().__init__(
+            name="QA Quality Benchmark",
+            description="Benchmark to evaluate QA systems using OpenJudge grader classes",
+        )
+        self.dataset = self._load_data()
+
+    def _load_data(self):
+        tasks = []
+        # Configuration for LLM-based graders
+        # Ensure OPENAI_API_KEY is set in your environment variables
+        model_config = {
+            "model": "qwen3-32b",
+            "api_key": os.environ.get("DASHSCOPE_API_KEY"),
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        }
+
+        for data in QA_BENCHMARK_DATASET:
+            # Define the Mapping: Left is OpenJudge key, Right is AgentScope path
+            mapper = {
+                "query": "data.input",
+                "response": "solution.output",
+                "context": "data.ground_truth",
+                "reference_response": "data.reference_output",
+            }
+
+            # Instantiate Metrics via Wrapper
+            metrics = [
+                OpenJudgeMetric(
+                    grader_cls=RelevanceGrader,
+                    data=data,
+                    mapper=mapper,
+                    name="Relevance",
+                    model=model_config,
+                ),
+                OpenJudgeMetric(
+                    grader_cls=CorrectnessGrader,
+                    data=data,
+                    mapper=mapper,
+                    name="Correctness",
+                    model=model_config,
+                ),
+            ]
+
+            # Create Task
+            task = Task(
+                id=data["id"],
+                input=data["question"],
+                ground_truth=data["ground_truth"],
+                metrics=metrics,
+            )
+
+            tasks.append(task)
+
+        return tasks
+
+    def __iter__(self) -> Generator[Task, None, None]:
+        """Iterate over the benchmark."""
+        yield from self.dataset
+
+    def __getitem__(self, index: int) -> Task:
+        """Get a task by index."""
+        return self.dataset[index]
+
+    def __len__(self) -> int:
+        """Get the length of the benchmark."""
+        return len(self.dataset)
+
+
+# %% [markdown]
+# Run Evaluation
+# ~~~~~~~~~~
+# Finally, use AgentScope's ``GeneralEvaluator`` to run the benchmark on a QA agent.
+# The results will include both the **Quantitative Score** and the **Qualitative Reasoning**
+# from the OpenJudge graders.
+
+# %%
+
+from typing import Callable
+
+from agentscope.agent import ReActAgent
+from agentscope.evaluate import GeneralEvaluator
+from agentscope.evaluate import FileEvaluatorStorage
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import OpenAIChatModel
+
+
+async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
+    """Solution function that generates answers to QA tasks."""
+
+    model = OpenAIChatModel(
+        model_name="qwen3-32b",
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
+    )
+
+    # Create a QA agent
+    agent = ReActAgent(
+        name="QAAgent",
+        sys_prompt="You are an expert at answering questions. Provide clear, accurate, and comprehensive answers.",
+        model=model,
+        formatter=DashScopeChatFormatter(),
+    )
+
+    # Generate response
+    msg_input = Msg(name="User", content=task.input, role="user")
+    response = await agent(msg_input)
+    response_text = response.content
+
+    return SolutionOutput(
+        success=True,
+        output=response_text,
+        trajectory=[
+            task.input,
+            response_text,
+        ],  # Store the interaction trajectory
+    )
+
+
+async def main() -> None:
+    evaluator = GeneralEvaluator(
+        name="OpenJudge Integration Demo",
+        benchmark=QABenchmark(),
+        # Repeat how many times
+        n_repeat=1,
+        storage=FileEvaluatorStorage(
+            save_dir="./results",
+        ),
+        # How many workers to use
+        n_workers=1,
+    )
+
+    await evaluator.run(qa_agent)

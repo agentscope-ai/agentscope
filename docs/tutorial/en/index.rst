@@ -69,30 +69,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_studio
    tutorial/task_tracing
    tutorial/task_eval
+   tutorial/task_eval_openjudge
    tutorial/task_embedding
    tutorial/task_tts
    tutorial/task_tuner
-
-.. toctree::
-   :maxdepth: 1
-   :caption: API Docs
-
-   api/agentscope
-   api/agentscope.message
-   api/agentscope.model
-   api/agentscope.formatter
-   api/agentscope.module
-   api/agentscope.pipeline
-   api/agentscope.agent
-   api/agentscope.memory
-   api/agentscope.tool
-   api/agentscope.mcp
-   api/agentscope.embedding
-   api/agentscope.evaluate
-   api/agentscope.plan
-   api/agentscope.rag
-   api/agentscope.token
-   api/agentscope.tracing
-   api/agentscope.session
-   api/agentscope.exception
-   api/agentscope.tts

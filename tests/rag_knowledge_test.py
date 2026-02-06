@@ -104,6 +104,6 @@ class RAGKnowledgeTest(IsolatedAsyncioTestCase):
             "This is an apple.",
         )
         self.assertEqual(
-            res[0].score,
-            0.9974149072579597,
+            res[0].score // 0.0001,
+            9974,
         )

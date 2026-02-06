@@ -28,10 +28,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
     websocket_url: str = "wss://api.openai.com/v1/realtime?model={model_name}"
     """The websocket URL of the OpenAI realtime model API."""
 
-    websocket_headers: dict[str, str] = {
-        "Authorization": "Bearer {api_key}",
-        "OpenAI-Beta": "realtime=v1",
-    }
+    websocket_headers: dict[str, str]
     """The websocket headers of the OpenAI realtime model API."""
 
     input_sample_rate: int
@@ -75,9 +72,10 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         self.websocket_url = self.websocket_url.format(model_name=model_name)
 
         # Set the API key in the websocket headers.
-        self.websocket_headers["Authorization"] = self.websocket_headers[
-            "Authorization"
-        ].format(api_key=api_key)
+        self.websocket_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "OpenAI-Beta": "realtime=v1",
+        }
 
         # Record the response ID for the current session.
         self._response_id = ""
