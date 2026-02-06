@@ -41,7 +41,7 @@ AgentScope 内置的格式化器如下所列
     * - Ollama
       - ``OllamaChatFormatter``
       - ``OllamaMultiAgentFormatter``
-    * - DeedSeek
+    * - DeepSeek
       - ``DeepSeekChatFormatter``
       - ``DeepSeekMultiAgentFormatter``
     * - vLLM
@@ -221,8 +221,8 @@ input_msgs = [
     ),
     # 对话历史继续
     Msg("Friday", "最近的图书馆是...", "assistant"),
-    Msg("Bob", "谢谢，Friday！", "user"),
-    Msg("Alice", "我们一起去吧。", "user"),
+    Msg("Bob", "谢谢，Friday！", "assistant"),
+    Msg("Alice", "我们一起去吧。", "assistant"),
 ]
 
 
@@ -266,10 +266,6 @@ async def run_token_counter() -> int:
     return await token_counter.count(formatted_message)
 
 
-n_tokens = asyncio.run(run_token_counter())
-print("格式化消息中的 token 数量为：", n_tokens)
-
-
 # %%
 # 然后我们将最大 token 限制设置为比总 token 数少 20 个，并运行格式化器。
 #
@@ -292,8 +288,6 @@ async def run_truncated_formatter() -> None:
     print("\n截断后的对话历史：")
     print(truncated_formatted_message[1]["content"])
 
-
-asyncio.run(run_truncated_formatter())
 
 # %%
 # 我们可以看到来自 Bob 和 Alice 的前两条消息被删除以适应 ``max_tokens`` 的限制。

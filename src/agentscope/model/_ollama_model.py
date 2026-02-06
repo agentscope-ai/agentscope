@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Model wrapper for Ollama models."""
+import json
 from datetime import datetime
 from typing import (
     Any,
@@ -21,7 +22,7 @@ from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..message import ToolUseBlock, TextBlock, ThinkingBlock
 from ..tracing import trace_llm
-
+from ..types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from ollama._types import ChatResponse as OllamaChatResponse
@@ -40,32 +41,40 @@ class OllamaChatModel(ChatModelBase):
         keep_alive: str = "5m",
         enable_thinking: bool | None = None,
         host: str | None = None,
+        client_kwargs: dict[str, JSONSerializableObject] | None = None,
+        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama chat model.
 
         Args:
-           model_name (`str`):
-               The name of the model.
-           stream (`bool`, default `True`):
-               Streaming mode or not.
-           options (`dict`, default `None`):
-               Additional parameters to pass to the Ollama API. These can
-               include temperature etc.
-           keep_alive (`str`, default `"5m"`):
-               Duration to keep the model loaded in memory. The format is a
-               number followed by a unit suffix (s for seconds, m for minutes
-               , h for hours).
-           enable_thinking (`bool | None`, default `None`)
-               Whether enable thinking or not, only for models such as qwen3,
-               deepseek-r1, etc. For more details, please refer to
-               https://ollama.com/search?c=thinking
-           host (`str | None`, default `None`):
-               The host address of the Ollama server. If None, uses the
-               default address (typically http://localhost:11434).
-           **kwargs (`Any`):
-               Additional keyword arguments to pass to the base chat model
-               class.
+            model_name (`str`):
+                The name of the model.
+            stream (`bool`, default `True`):
+                Streaming mode or not.
+            options (`dict`, default `None`):
+                Additional parameters to pass to the Ollama API. These can
+                include temperature etc.
+            keep_alive (`str`, default `"5m"`):
+                Duration to keep the model loaded in memory. The format is a
+                number followed by a unit suffix (s for seconds, m for minutes
+                , h for hours).
+            enable_thinking (`bool | None`, default `None`)
+                Whether enable thinking or not, only for models such as qwen3,
+                deepseek-r1, etc. For more details, please refer to
+                https://ollama.com/search?c=thinking
+            host (`str | None`, default `None`):
+                The host address of the Ollama server. If None, uses the
+                default address (typically http://localhost:11434).
+            client_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
+                The extra keyword arguments to initialize the Ollama client.
+            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
+             optional):
+                The extra keyword arguments used in Ollama API generation.
+            **kwargs (`Any`):
+                Additional keyword arguments to pass to the base chat model
+                class.
         """
 
         try:
@@ -80,20 +89,20 @@ class OllamaChatModel(ChatModelBase):
 
         self.client = ollama.AsyncClient(
             host=host,
+            **(client_kwargs or {}),
             **kwargs,
         )
         self.options = options
         self.keep_alive = keep_alive
         self.think = enable_thinking
+        self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
     async def __call__(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -106,11 +115,9 @@ class OllamaChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
                 | None`, default `None`):
-                Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
-                 name.
+                Ollama doesn't support `tool_choice` argument yet.
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
@@ -130,6 +137,7 @@ class OllamaChatModel(ChatModelBase):
             "stream": self.stream,
             "options": self.options,
             "keep_alive": self.keep_alive,
+            **self.generate_kwargs,
             **kwargs,
         }
 
@@ -212,6 +220,7 @@ class OllamaChatModel(ChatModelBase):
                     "id": tool_id,
                     "name": function.name,
                     "input": function.arguments,
+                    "raw_input": json.dumps(function.arguments),
                 }
             # Calculate usage statistics
             current_time = (datetime.now() - start_datetime).total_seconds()
@@ -254,7 +263,7 @@ class OllamaChatModel(ChatModelBase):
                     print(f"Error parsing tool call input: {e}")
 
             # Generate response when there's new content or at final chunk
-            if chunk.done and contents:
+            if chunk.done or contents:
                 res = ChatResponse(
                     content=contents,
                     usage=usage,
@@ -318,6 +327,7 @@ class OllamaChatModel(ChatModelBase):
                     id=f"{idx}_{tool_call.function.name}",
                     name=tool_call.function.name,
                     input=tool_call.function.arguments,
+                    raw_input=json.dumps(tool_call.function.arguments),
                 ),
             )
 

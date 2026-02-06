@@ -405,6 +405,12 @@ async def main() -> None:
             tool_guidelines,
         )
 
+    # Alternative way: manually call __aenter__ and __aexit__
+    # This is equivalent to using "async with tool_memory" above
+    # await tool_memory.__aenter__()
+    # tool_guidelines = await retrieve_tool_guidelines(tool_memory, tool_names)
+    # await tool_memory.__aexit__()
+
     print("=" * 70)
     print("Workflow Complete!")
     print("=" * 70)

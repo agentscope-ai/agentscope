@@ -86,7 +86,8 @@ def _to_openai_image_url(url: str) -> str:
 
     # Web url
     if not os.path.exists(url) and parsed_url.scheme != "":
-        if any(lower_url.endswith(_) for _ in support_image_extensions):
+        path_lower = parsed_url.path if parsed_url.path else parsed_url.netloc
+        if any(path_lower.endswith(_) for _ in support_image_extensions):
             return url
 
     # Check if it is a local file
@@ -322,6 +323,11 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
                     )
 
                 elif typ == "audio":
+                    # Filter out audio content when the multimodal model
+                    # outputs both text and audio, to prevent errors in
+                    # subsequent model calls
+                    if msg.role == "assistant":
+                        continue
                     input_audio = _to_openai_audio_data(block["source"])
                     content_blocks.append(
                         {
@@ -455,6 +461,11 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
                 elif block["type"] == "image":
                     images.append(_format_openai_image_block(block))
                 elif block["type"] == "audio":
+                    # Filter out audio content when the multimodal model
+                    # outputs both text and audio, to prevent errors in
+                    # subsequent model calls
+                    if msg.role == "assistant":
+                        continue
                     input_audio = _to_openai_audio_data(block["source"])
                     audios.append(
                         {

@@ -5,14 +5,14 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 from .._utils._common import _get_timestamp
-from ..message import AudioBlock, ImageBlock, TextBlock
+from ..message import AudioBlock, ImageBlock, TextBlock, VideoBlock
 
 
 @dataclass
 class ToolResponse:
     """The result chunk of a tool call."""
 
-    content: List[TextBlock | ImageBlock | AudioBlock]
+    content: List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
     """The execution output of the tool function."""
 
     metadata: Optional[dict] = None

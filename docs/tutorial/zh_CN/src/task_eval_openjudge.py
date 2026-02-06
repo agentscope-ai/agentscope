@@ -1,0 +1,346 @@
+# -*- coding: utf-8 -*-
+"""
+OpenJudge 评估器
+=======================
+
+[OpenJudge](https://github.com/agentscope-ai/OpenJudge) 是一个专为评估LLM/Agent应用质量而设计的评估框架。通过将 OpenJudge 集成到 AgentScope 中，您可以将 AgentScope 的原生评估能力从基础的执行检查扩展到深度的语义质量分析。
+
+本指南中我们将介绍如何使用 OpenJudge 的评估器(Grader)作为 AgentScope 的评估指标(Metric)来评估您的智能体应用。
+
+.. note::
+   在运行本教程之前，请安装必要的依赖：
+
+   .. code-block:: bash
+
+       pip install agentscope py-openjudge
+
+为什么选择 OpenJudge？
+----------------------
+
+虽然 AgentScope 提供了强大的评估框架用于定义评估逻辑，但实现复杂的语义级指标（如“幻觉检测”或“回复相关性”）通常需要大量的 Prompt 工程和流程构建工作。
+
+集成 OpenJudge 可以为 AgentScope 带来了三个维度的能力提升：
+
+1.  **提升评估深度**：从简单的成功/失败检查升级为多维度的质量评估（如准确性、安全性、语气等）。
+2.  **开箱即用的 Grader**：直接使用 50+ 个预置的、专家级验证过的 Grader，无需手动编写评估 Prompt，详情请参阅 [OpenJudge官方文档](https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/)。
+3.  **闭环迭代**：将 OpenJudge 无缝嵌入 AgentScope 的 ``Benchmark`` 中，同时获取量化的分数和定性的理由分析。
+
+如何使用 OpenJudge 进行评估
+---------------------------
+
+我们将构建一个简单的问答（QA）基准测试，演示如何通过集成 OpenJudge 的 Grader 来使用 AgentScope 的评估模块。
+"""
+
+# %%
+QA_BENCHMARK_DATASET = [
+    {
+        "id": "qa_task_1",
+        "question": "What are the health benefits of regular exercise?",
+        "reference_output": "Regular exercise improves cardiovascular health, strengthens muscles and bones, "
+        "helps maintain a healthy weight, and can improve mental health by reducing anxiety and depression.",
+        "ground_truth": "Answers should cover physical and mental health benefits",
+        "difficulty": "medium",
+        "category": "health",
+    },
+    {
+        "id": "qa_task_2",
+        "question": "Describe the main causes of climate change.",
+        "reference_output": "Climate change is primarily caused by increased concentrations of greenhouse gases "
+        "in the atmosphere due to human activities like burning fossil fuels, deforestation, and industrial processes.",
+        "ground_truth": "Answers should mention greenhouse gases and human activities",
+        "difficulty": "hard",
+        "category": "environment",
+    },
+    {
+        "id": "qa_task_3",
+        "question": "What is the significance of the Turing Test in AI?",
+        "reference_output": "The Turing Test, proposed by Alan Turing, is a measure of a machine's ability to exhibit"
+        " intelligent behavior equivalent to, or indistinguishable from, that of a human.",
+        "ground_truth": "Should mention Alan Turing, purpose of the test, and its implications for AI",
+        "difficulty": "hard",
+        "category": "technology",
+    },
+]
+
+
+# %% [markdown]
+# AgentScope Metric vs. OpenJudge Grader
+# ~~~~~~~~~~
+# 为了使 AgentScope 兼容 OpenJudge，我们需要一个适配器（Adapter）来完成两个框架间的转换。
+# 这个适配器继承自 AgentScope 的 ``MetricBase``，并充当通往 OpenJudge ``BaseGrader`` 的桥梁。
+#
+# * **AgentScope Metric**: 一个通用的评估单元，接收 ``SolutionOutput`` 并返回 ``MetricResult``。
+# * **OpenJudge Grader**: 一个特定的评估单元（例如 ``RelevanceGrader``），需要特定的语义输入（如 ``query``, ``response``, ``context``），返回``GraderResult``。
+#
+# 这个“适配器”允许您将 *任何* OpenJudge Grader 无缝插入到您的 AgentScope 基准测试中。
+
+# %%
+from openjudge.graders.base_grader import BaseGrader
+from openjudge.graders.schema import GraderScore, GraderError
+from openjudge.utils.mapping import parse_data_with_mapper
+from agentscope.evaluate import (
+    MetricBase,
+    MetricType,
+    MetricResult,
+    SolutionOutput,
+)
+
+
+class OpenJudgeMetric(MetricBase):
+    def __init__(
+        self,
+        grader_cls: type[BaseGrader],
+        data: dict,
+        mapper: dict,
+        name: str | None = None,
+        description: str | None = None,
+        **grader_kwargs,
+    ):
+        """Initializes the OpenJudgeMetric.
+
+        Args:
+            grader_cls (`type[BaseGrader]`):
+                The OpenJudge grader class to be wrapped.
+            data (`dict`):
+                The static data for the task.
+            mapper (`dict`):
+                The mapper to extract grader inputs from combined data.
+            name (`str | None`, optional):
+                The name of the metric. Defaults to the grader's name.
+            description (`str | None`, optional):
+                The description of the metric. Defaults to the grader's
+                description.
+            **grader_kwargs:
+                Additional keyword arguments for the grader initialization.
+        """
+        self.grader = grader_cls(**grader_kwargs)
+
+        super().__init__(
+            name=name or self.grader.name,
+            metric_type=MetricType.NUMERICAL,
+            description=description or self.grader.description,
+        )
+
+        self.data = data
+        self.mapper = mapper
+
+    async def __call__(self, solution: SolutionOutput) -> MetricResult:
+        """针对 Agent 的输出执行封装好的 OpenJudge Grader。"""
+        if not solution.success:
+            return MetricResult(
+                name=self.name,
+                result=0.0,
+                message="Solution failed",
+            )
+
+        try:
+            # 1. 构建上下文
+            # 将静态的任务上下文 (data) 和动态的 Agent 输出 (solution) 组合
+            combined_data = {
+                "data": self.data,
+                "solution": {
+                    "output": solution.output,
+                    "meta": solution.meta,
+                    "trajectory": getattr(solution, "trajectory", []),
+                },
+            }
+
+            # 2. 数据映射
+            # 使用 mapper 从组合数据中提取Grader需要的 'query', 'response', 'context' 等参数
+            grader_inputs = parse_data_with_mapper(
+                combined_data,
+                self.mapper,
+            )
+
+            ## 3. 执行评估
+            result = await self.grader.aevaluate(**grader_inputs)
+
+            # 4. 格式化结果
+            if isinstance(result, GraderScore):
+                return MetricResult(
+                    name=self.name,
+                    result=result.score,
+                    # 保留 OpenJudge 提供的详细理由
+                    message=result.reason or "",
+                )
+            elif isinstance(result, GraderError):
+                return MetricResult(
+                    name=self.name,
+                    result=0.0,
+                    message=f"Error: {result.error}",
+                )
+            else:
+                return MetricResult(
+                    name=self.name,
+                    result=0.0,
+                    message="Unknown result type",
+                )
+
+        except Exception as e:
+            return MetricResult(
+                name=self.name,
+                result=0.0,
+                message=f"Exception: {str(e)}",
+            )
+
+
+# %% [markdown]
+# 从 OpenJudge 到 AgentScope
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# OpenJudge 提供了丰富的内置 Grader 集合。在当前实例中，我们选择两个适合问答任务的常用 Grader：
+#
+# * **RelevanceGrader (相关性)**：评估 Agent 的回答是否直接回应了用户的查询（忽略事实准确性）。
+# * **CorrectnessGrader (正确性)**：根据提供的参考答案（Ground Truth）验证回答的事实准确性。
+#
+# .. tip::
+#    OpenJudge 提供了 50+ 种内置 Grader，涵盖 **幻觉检测**、**安全性**、**代码质量** 和 **JSON 格式化** 等多个维度。
+#    请查阅 `OpenJudge 官方文档 <https://agentscope-ai.github.io/OpenJudge/built_in_graders/overview/>`_ 获取完整列表。
+#
+# .. note::
+#    在运行以下示例之前，请确保您已设置 ``DASHSCOPE_API_KEY`` 环境变量。
+
+# %%
+import os
+from typing import Generator
+from openjudge.graders.common.relevance import RelevanceGrader
+from openjudge.graders.common.correctness import CorrectnessGrader
+from agentscope.evaluate import (
+    Task,
+    BenchmarkBase,
+)
+
+
+class QABenchmark(BenchmarkBase):
+    def __init__(self):
+        super().__init__(
+            name="QA Quality Benchmark",
+            description="Benchmark to evaluate QA systems using OpenJudge grader classes",
+        )
+        self.dataset = self._load_data()
+
+    def _load_data(self):
+        tasks = []
+        # 配置 LLM Grader 的模型参数
+        # 注意：如果不使用环境变量，请在此处设置 "api_key"
+        model_config = {
+            "model": "qwen3-32b",
+            "api_key": os.environ.get("DASHSCOPE_API_KEY"),
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        }
+
+        for data in QA_BENCHMARK_DATASET:
+            # 定义映射关系：左侧是 OpenJudge 的键，右侧是 AgentScope 的数据路径
+            mapper = {
+                "query": "data.input",
+                "response": "solution.output",
+                "context": "data.ground_truth",
+                "reference_response": "data.reference_output",
+            }
+
+            # 通过 Adapter 实例化 Metrics
+            metrics = [
+                OpenJudgeMetric(
+                    grader_cls=RelevanceGrader,
+                    data=data,
+                    mapper=mapper,
+                    name="Relevance",
+                    model=model_config,
+                ),
+                OpenJudgeMetric(
+                    grader_cls=CorrectnessGrader,
+                    data=data,
+                    mapper=mapper,
+                    name="Correctness",
+                    model=model_config,
+                ),
+            ]
+
+            # 创建 Task
+            task = Task(
+                id=data["id"],
+                input=data["question"],
+                ground_truth=data["ground_truth"],
+                metrics=metrics,
+            )
+
+            tasks.append(task)
+
+        return tasks
+
+    def __iter__(self) -> Generator[Task, None, None]:
+        yield from self.dataset
+
+    def __getitem__(self, index: int) -> Task:
+        return self.dataset[index]
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+
+# %% [markdown]
+# 运行评估
+# ~~~~~~~~~~
+# 最后，使用 AgentScope 的 ``GeneralEvaluator`` 对一个简单的QA Agent进行评估测试。
+# 我们将收集到来自 OpenJudge Grader 的 **量化分数 (Score)** 和 **定性理由 (Reasoning)**。
+
+# %%
+
+import asyncio
+from typing import Callable
+
+from agentscope.agent import ReActAgent
+from agentscope.evaluate import GeneralEvaluator
+from agentscope.evaluate import FileEvaluatorStorage
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import OpenAIChatModel
+
+
+async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
+    model = OpenAIChatModel(
+        model_name="qwen3-32b",
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
+    )
+    agent = ReActAgent(
+        name="QAAgent",
+        sys_prompt="You are an expert at answering questions. Provide clear, accurate, and comprehensive answers.",
+        model=model,
+        formatter=DashScopeChatFormatter(),
+    )
+
+    # Generate response
+    msg_input = Msg(name="User", content=task.input, role="user")
+    response = await agent(msg_input)
+    response_text = response.content
+
+    return SolutionOutput(
+        success=True,
+        output=response_text,
+        trajectory=[
+            task.input,
+            response_text,
+        ],  # Store the interaction trajectory
+    )
+
+
+async def main() -> None:
+    evaluator = GeneralEvaluator(
+        name="OpenJudge Integration Demo",
+        benchmark=QABenchmark(),
+        # Repeat how many times
+        n_repeat=1,
+        storage=FileEvaluatorStorage(
+            save_dir="./results",
+        ),
+        # How many workers to use
+        n_workers=1,
+    )
+
+    await evaluator.run(qa_agent)
+
+
+# %% [markdown]
+#
+# ~~~~~~~~~~
+# 最后，使用 AgentScope 的 ``GeneralEvaluator`` 对一个简单的QA Agent进行评估测试。
+# 我们将收集到来自 OpenJudge Grader 的 **量化分数 (Score)** 和 **定性理由 (Reasoning)**。

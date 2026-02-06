@@ -1,0 +1,496 @@
+# -*- coding: utf-8 -*-
+"""
+.. _realtime:
+
+Realtime Agent
+====================
+
+The **realtime** agent is designed to handle real-time interactions, such as
+voice conversations or live chat sessions.
+The realtime agent in AgentScope features:
+
+- Integration with OpenAI, DashScope, Gemini, and other realtime model APIs
+- Unified event interface to simplify interactions with different realtime models
+- Support for tool calling capabilities
+- Support for multi-agent interactions
+
+.. note:: The realtime agent is currently under active development. We welcome
+    community contributions, discussions, and feedback! If you're interested in
+    realtime agents, please join our discussion and development.
+
+"""
+
+import asyncio
+import os
+from agentscope.agent import RealtimeAgent
+from agentscope.realtime import (
+    DashScopeRealtimeModel,
+    OpenAIRealtimeModel,
+    GeminiRealtimeModel,
+)
+
+# %%
+# Creating Realtime Models
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# AgentScope currently supports the following realtime model APIs:
+#
+# .. list-table::
+#    :header-rows: 1
+#    :widths: 15 25 25 15 20
+#
+#    * - Provider
+#      - Class
+#      - Supported Models
+#      - Input Modalities
+#      - Tool Support
+#    * - DashScope
+#      - ``DashScopeRealtimeModel``
+#      - ``qwen3-omni-flash-realtime``
+#      - Text, Audio, Image
+#      - No
+#    * - OpenAI
+#      - ``OpenAIRealtimeModel``
+#      - ``gpt-4o-realtime-preview``
+#      - Text, Audio
+#      - Yes
+#    * - Gemini
+#      - ``GeminiRealtimeModel``
+#      - ``gemini-2.5-flash-native-audio-preview-09-2025``
+#      - Text, Audio, Image
+#      - Yes
+#
+#
+# Here are examples of initializing different realtime models:
+#
+# .. code-block:: python
+#     :caption: Example of initializing different realtime models
+#     # DashScope realtime model
+#     dashscope_model = DashScopeRealtimeModel(
+#         model_name="qwen3-omni-flash-realtime",
+#         api_key=os.getenv("DASHSCOPE_API_KEY"),
+#         voice="Cherry",  # Options: "Cherry", "Serena", "Ethan", "Chelsie"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # OpenAI realtime model
+#     openai_model = OpenAIRealtimeModel(
+#         model_name="gpt-4o-realtime-preview",
+#         api_key=os.getenv("OPENAI_API_KEY"),
+#         voice="alloy",  # Options: "alloy", "echo", "marin", "cedar"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # Gemini realtime model
+#     gemini_model = GeminiRealtimeModel(
+#         model_name="gemini-2.5-flash-native-audio-preview-09-2025",
+#         api_key=os.getenv("GEMINI_API_KEY"),
+#         voice="Puck",  # Options: "Puck", "Charon", "Kore", "Fenrir"
+#         enable_input_audio_transcription=True,
+#     )
+#
+# The realtime model provides the following key methods:
+#
+# .. list-table::
+#    :header-rows: 1
+#    :widths: 30 70
+#
+#    * - Method
+#      - Description
+#    * - ``connect(outgoing_queue, instructions, tools)``
+#      - Establish WebSocket connection to the realtime model API
+#    * - ``disconnect()``
+#      - Close the WebSocket connection
+#    * - ``send(data)``
+#      - Send audio/text/image data to the realtime model for processing
+#
+# The ``outgoing_queue`` parameter in ``connect()`` is an asyncio queue used to
+# forward events from the realtime model to the outside (e.g., the agent or frontend).
+#
+#
+# Model Events Interface
+# -----------------------
+#
+# AgentScope provides a unified ``agentscope.realtime.ModelEvents`` interface to simplify
+# interactions with different realtime models. The following events are
+# supported:
+#
+# .. note:: The "session" in ModelEvents refers to the WebSocket connection
+#     session between the realtime model and the model API, not the session
+#     between the frontend and backend.
+#
+# .. list-table::
+#    :header-rows: 1
+#    :widths: 40 60
+#
+#    * - Event
+#      - Description
+#    * - ``ModelEvents.ModelSessionCreatedEvent``
+#      - Session is successfully created
+#    * - ``ModelEvents.ModelSessionEndedEvent``
+#      - Session has ended
+#    * - ``ModelEvents.ModelResponseCreatedEvent``
+#      - Model begins generating a response
+#    * - ``ModelEvents.ModelResponseDoneEvent``
+#      - Model finished generating a response
+#    * - ``ModelEvents.ModelResponseAudioDeltaEvent``
+#      - Streaming audio data chunk from the model
+#    * - ``ModelEvents.ModelResponseAudioDoneEvent``
+#      - Audio response is complete
+#    * - ``ModelEvents.ModelResponseAudioTranscriptDeltaEvent``
+#      - Streaming transcription chunk of audio response
+#    * - ``ModelEvents.ModelResponseAudioTranscriptDoneEvent``
+#      - Audio transcription is complete
+#    * - ``ModelEvents.ModelResponseToolUseDeltaEvent``
+#      - Streaming tool call parameters
+#    * - ``ModelEvents.ModelResponseToolUseDoneEvent``
+#      - Tool call parameters are complete
+#    * - ``ModelEvents.ModelInputTranscriptionDeltaEvent``
+#      - Streaming transcription chunk of user input
+#    * - ``ModelEvents.ModelInputTranscriptionDoneEvent``
+#      - User input transcription is complete
+#    * - ``ModelEvents.ModelInputStartedEvent``
+#      - Detected start of user audio input (VAD)
+#    * - ``ModelEvents.ModelInputDoneEvent``
+#      - Detected end of user audio input (VAD)
+#    * - ``ModelEvents.ModelErrorEvent``
+#      - An error occurred
+#
+#
+#
+# Creating a Realtime Agent
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# The ``RealtimeAgent`` serves as a bridge layer that:
+#
+# - Converts ``ModelEvents`` from realtime models into ``ServerEvents`` for
+#   frontend and other agents
+# - Receives ``ClientEvents`` from frontend or other agents and forwards them
+#   to the realtime model API
+# - Manages the agent's lifecycle and event queues
+#
+# Server and Client Events
+# -------------------------
+#
+# AgentScope provides unified ``ServerEvents`` and ``ClientEvents`` for
+# communication between backend and frontend:
+#
+# **ServerEvents** (Backend → Frontend):
+#
+# .. list-table::
+#    :header-rows: 1
+#    :widths: 40 60
+#
+#    * - Event
+#      - Description
+#    * - ``ServerEvents.ServerSessionCreatedEvent``
+#      - Session created in backend
+#    * - ``ServerEvents.ServerSessionUpdatedEvent``
+#      - Session updated in backend
+#    * - ``ServerEvents.ServerSessionEndedEvent``
+#      - Session ended in backend
+#    * - ``ServerEvents.AgentReadyEvent``
+#      - Agent is ready to receive inputs
+#    * - ``ServerEvents.AgentEndedEvent``
+#      - Agent has ended
+#    * - ``ServerEvents.AgentResponseCreatedEvent``
+#      - Agent starts generating response
+#    * - ``ServerEvents.AgentResponseDoneEvent``
+#      - Agent finished generating response
+#    * - ``ServerEvents.AgentResponseAudioDeltaEvent``
+#      - Streaming audio chunk from agent
+#    * - ``ServerEvents.AgentResponseAudioDoneEvent``
+#      - Audio response complete
+#    * - ``ServerEvents.AgentResponseAudioTranscriptDeltaEvent``
+#      - Streaming transcription of agent response
+#    * - ``ServerEvents.AgentResponseAudioTranscriptDoneEvent``
+#      - Transcription complete
+#    * - ``ServerEvents.AgentResponseToolUseDeltaEvent``
+#      - Streaming tool call data
+#    * - ``ServerEvents.AgentResponseToolUseDoneEvent``
+#      - Tool call complete
+#    * - ``ServerEvents.AgentResponseToolResultEvent``
+#      - Tool execution result
+#    * - ``ServerEvents.AgentInputTranscriptionDeltaEvent``
+#      - Streaming transcription of user input
+#    * - ``ServerEvents.AgentInputTranscriptionDoneEvent``
+#      - Input transcription complete
+#    * - ``ServerEvents.AgentInputStartedEvent``
+#      - User audio input started
+#    * - ``ServerEvents.AgentInputDoneEvent``
+#      - User audio input ended
+#    * - ``ServerEvents.AgentErrorEvent``
+#      - An error occurred
+#
+# **ClientEvents** (Frontend → Backend):
+#
+# .. list-table::
+#    :header-rows: 1
+#    :widths: 40 60
+#
+#    * - Event
+#      - Description
+#    * - ``ClientEvents.ClientSessionCreateEvent``
+#      - Create a new session with specified configuration
+#    * - ``ClientEvents.ClientSessionEndEvent``
+#      - End current session
+#    * - ``ClientEvents.ClientResponseCreateEvent``
+#      - Request agent to generate response immediately
+#    * - ``ClientEvents.ClientResponseCancelEvent``
+#      - Interrupt agent's current response
+#    * - ``ClientEvents.ClientTextAppendEvent``
+#      - Append text input
+#    * - ``ClientEvents.ClientAudioAppendEvent``
+#      - Append audio input
+#    * - ``ClientEvents.ClientAudioCommitEvent``
+#      - Commit audio input (signal end of input)
+#    * - ``ClientEvents.ClientImageAppendEvent``
+#      - Append image input
+#    * - ``ClientEvents.ClientToolResultEvent``
+#      - Send tool execution result
+#
+# Initializing a Realtime Agent
+# ------------------------------
+#
+# Here's how to create and use a realtime agent:
+
+
+async def example_realtime_agent() -> None:
+    """Example of creating and using a realtime agent."""
+    agent = RealtimeAgent(
+        name="Friday",
+        sys_prompt="You are a helpful assistant named Friday.",
+        model=DashScopeRealtimeModel(
+            model_name="qwen3-omni-flash-realtime",
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+        ),
+    )
+
+    # Create a queue to receive messages from the agent
+    outgoing_queue = asyncio.Queue()
+
+    # The agent is now ready to handle inputs
+    # Handle outgoing messages in a separate task
+    async def handle_agent_messages():
+        while True:
+            event = await outgoing_queue.get()
+            # Process the event (e.g., send to frontend via WebSocket)
+            print(f"Agent event: {event.type}")
+
+    # Start the message handling task
+    asyncio.create_task(handle_agent_messages())
+
+    # Start the agent (establishes connection)
+    await agent.start(outgoing_queue)
+
+    # Stop the agent when done
+    await agent.stop()
+
+
+# %%
+# Starting Realtime Conversation
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# Now we can set up a realtime conversation between a user and a realtime agent.
+#
+# Here we take FastAPI as an example backend framework to demonstrate how to set up
+# a realtime conversation.
+#
+# **Backend Setup (Server-side):**
+#
+# The backend needs to:
+#
+# 1. Create a WebSocket endpoint to accept frontend connections
+# 2. Create a ``RealtimeAgent`` when the session starts
+# 3. Forward ``ClientEvents`` from frontend to the agent
+# 4. Forward ``ServerEvents`` from agent to the frontend
+#
+# .. code-block:: python
+#
+#     from fastapi import FastAPI, WebSocket
+#     from agentscope.agent import RealtimeAgent
+#     from agentscope.realtime import (
+#         DashScopeRealtimeModel,
+#         ClientEvents,
+#         ServerEvents,
+#     )
+#
+#     app = FastAPI()
+#
+#     @app.websocket("/ws/{user_id}/{session_id}")
+#     async def websocket_endpoint(
+#         websocket: WebSocket,
+#         user_id: str,
+#         session_id: str,
+#     ):
+#         await websocket.accept()
+#
+#         # Create queue for agent messages
+#         frontend_queue = asyncio.Queue()
+#
+#         # Create agent
+#         agent = RealtimeAgent(
+#             name="Assistant",
+#             sys_prompt="You are a helpful assistant.",
+#             model=DashScopeRealtimeModel(
+#                 model_name="qwen3-omni-flash-realtime",
+#                 api_key=os.getenv("DASHSCOPE_API_KEY"),
+#             ),
+#         )
+#
+#         # Start agent
+#         await agent.start(frontend_queue)
+#
+#         # Forward messages from agent to frontend
+#         async def send_to_frontend():
+#             while True:
+#                 msg = await frontend_queue.get()
+#                 await websocket.send_json(msg.model_dump())
+#
+#         asyncio.create_task(send_to_frontend())
+#
+#         # Receive messages from frontend and forward to agent
+#         while True:
+#             data = await websocket.receive_json()
+#             client_event = ClientEvents.from_json(data)
+#             await agent.handle_input(client_event)
+#
+# **Frontend Setup (Client-side):**
+#
+# The frontend needs to:
+#
+# 1. Establish WebSocket connection to the backend
+# 2. Send ``CLIENT_SESSION_CREATE`` event to initialize the session
+# 3. Capture audio from microphone and send via ``CLIENT_AUDIO_APPEND`` events
+# 4. Receive and handle ``ServerEvents`` (e.g., play audio, display transcripts)
+#
+# .. code-block:: javascript
+#
+#     // Connect to WebSocket
+#     const ws = new WebSocket('ws://localhost:8000/ws/user1/session1');
+#
+#     ws.onopen = () => {
+#         // Create session
+#         ws.send(JSON.stringify({
+#             type: 'client_session_create',
+#             config: {
+#                 instructions: 'You are a helpful assistant.',
+#                 user_name: 'User1'
+#             }
+#         }));
+#     };
+#
+#     // Handle messages from backend
+#     ws.onmessage = (event) => {
+#         const data = JSON.parse(event.data);
+#         if (data.type === 'response_audio_delta') {
+#             // Play audio chunk
+#             playAudio(data.delta);
+#         }
+#     };
+#
+#     // Send audio data
+#     function sendAudioChunk(audioData) {
+#         ws.send(JSON.stringify({
+#             type: 'client_audio_append',
+#             session_id: 'session1',
+#             audio: audioData,  // base64 encoded
+#             format: { encoding: 'pcm16', sample_rate: 16000 }
+#         }));
+#     }
+#
+# For a complete working example, see
+# ``examples/agent/realtime_voice_agent/`` in the AgentScope repository.
+
+# %%
+# Multi-Agent Realtime Conversation
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# AgentScope supports multi-agent realtime interactions through the ``ChatRoom``
+# class.
+#
+# Note currently most realtime model APIs only support single-user interactions,
+# but AgentScope's architecture is designed to support multiple agents and users
+# when API capabilities expand.
+#
+# The Realtime ChatRoom
+# ----------------------------
+#
+# AgentScope introduces the ``ChatRoom`` class to manage multiple realtime
+# agents in a shared conversation space. The ChatRoom provides:
+#
+# - Centralized management of multiple ``RealtimeAgent`` instances
+# - Automatic message broadcasting between agents
+# - Unified message queue for frontend communication
+# - Lifecycle management for all agents in the room
+#
+# Using ChatRoom
+# --------------
+#
+# The usage of ``ChatRoom`` is similar to ``RealtimeAgent``:
+#
+
+
+async def example_chat_room() -> None:
+    """Example of using ChatRoom with multiple realtime agents."""
+    from agentscope.pipeline import ChatRoom
+    from agentscope.agent import RealtimeAgent
+    from agentscope.realtime import DashScopeRealtimeModel
+
+    # Create multiple agents
+    agent1 = RealtimeAgent(
+        name="Agent1",
+        sys_prompt="You are Agent1, a helpful assistant.",
+        model=DashScopeRealtimeModel(
+            model_name="qwen3-omni-flash-realtime",
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+        ),
+    )
+
+    agent2 = RealtimeAgent(
+        name="Agent2",
+        sys_prompt="You are Agent2, a helpful assistant.",
+        model=DashScopeRealtimeModel(
+            model_name="qwen3-omni-flash-realtime",
+            api_key=os.getenv("DASHSCOPE_API_KEY"),
+        ),
+    )
+
+    # Create a chat room with multiple agents
+    chat_room = ChatRoom(agents=[agent1, agent2])
+
+    # Create queue to receive messages from all agents
+    outgoing_queue = asyncio.Queue()
+
+    # Start the chat room
+    await chat_room.start(outgoing_queue)
+
+    # Handle input from frontend
+    # The chat room will broadcast to all agents
+    from agentscope.realtime import ClientEvents
+
+    client_event = ClientEvents.ClientTextAppendEvent(
+        session_id="session1",
+        text="Hello everyone!",
+    )
+    await chat_room.handle_input(client_event)
+
+    # Stop the chat room when done
+    await chat_room.stop()
+
+
+# %%
+# Roadmap
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#
+# The realtime agent feature is currently experimental and under active
+# development. The future plans include:
+#
+# - Support for more realtime model APIs
+# - Enhanced memory management for conversation history
+# - Comprehensive tool calling support across all providers
+# - Multi-user voice interaction support
+# - Improved VAD (Voice Activity Detection) configuration
+# - Better error handling and recovery mechanisms
+#
+# We welcome contributions and feedback from the community to help shape the
+# future of realtime agents in AgentScope!

@@ -1,0 +1,24 @@
+{
+  "name": "@a2ui/lit-samples",
+  "private": true,
+  "version": "0.8.1",
+  "description": "A2UI Lit Samples",
+  "workspaces": [
+    "contact",
+    "restaurant",
+    "shell"
+  ],
+  "scripts": {
+    "serve:agent:restaurant": "cd ../../general_agent && uv run .",
+    "serve:agent:contact_example": "cd ../../agent/as/contact_example && uv run .",
+    "serve:agent:contact_multi_surface": "cd ../../agent/adk/contact_multiple_surfaces && uv run .",
+    "serve:shell": "cd shell && npm run dev",
+    "build:renderer": "cd ../../../renderers/web_core && npm install && npm run build && cd ../lit && npm install && npm run build",
+    "demo:all": "npm install && npm run build:renderer && concurrently -k -n \"SHELL,REST,CONT1\" -c \"magenta,blue,green\" \"npm run serve:shell\" \"npm run serve:agent:restaurant\" \"npm run serve:agent:contact_example\"",
+    "demo:restaurant": "npm install && npm run build:renderer && concurrently -k -n \"SHELL,REST\" -c \"magenta,blue\" \"npm run serve:shell\" \"npm run serve:agent:restaurant\"",
+    "demo:contact_example": "npm install && npm run build:renderer && concurrently -k -n \"SHELL,CONT1\" -c \"magenta,green\" \"npm run serve:shell\" \"npm run serve:agent:contact_example\""
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1"
+  }
+}

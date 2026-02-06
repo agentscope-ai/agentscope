@@ -15,6 +15,10 @@ def as_studio_forward_message_pre_print_hook(
     run_id: str,
 ) -> None:
     """The pre-speak hook to forward messages to the studio."""
+    # Disable console output if needed
+    if self._disable_console_output:  # pylint: disable=protected-access
+        return
+
     msg = kwargs["msg"]
 
     message_data = msg.to_dict()
@@ -32,8 +36,8 @@ def as_studio_forward_message_pre_print_hook(
                 json={
                     "runId": run_id,
                     "replyId": reply_id,
-                    "name": getattr(self, "name", msg.name),
-                    "role": "user"
+                    "replyName": getattr(self, "name", msg.name),
+                    "replyRole": "user"
                     if isinstance(self, UserAgent)
                     else "assistant",
                     "msg": message_data,

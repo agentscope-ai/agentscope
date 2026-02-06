@@ -11,8 +11,9 @@ import types
 import typing
 import uuid
 from datetime import datetime
-from typing import Union, Any, Callable, Type, Dict
+from typing import Any, Callable, Type, Dict
 
+import numpy as np
 import requests
 from docstring_parser import parse
 from json_repair import repair_json
@@ -29,23 +30,43 @@ else:
 
 def _json_loads_with_repair(
     json_str: str,
-) -> Union[dict, list, str, float, int, bool, None]:
+) -> dict:
     """The given json_str maybe incomplete, e.g. '{"key', so we need to
     repair and load it into a Python object.
-    """
-    repaired = json_str
-    try:
-        repaired = repair_json(json_str)
-    except Exception:
-        pass
 
+    .. note::
+        This function is currently only used for parsing the streaming output
+        of the argument field in `tool_use`, so the parsed result must be a
+        dict.
+
+    Args:
+        json_str (`str`):
+            The JSON string to parse, which may be incomplete or malformed.
+
+    Returns:
+        `dict`:
+            A dictionary parsed from the JSON string after repair attempts.
+            Returns an empty dict if all repair attempts fail.
+    """
     try:
-        return json.loads(repaired)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Failed to decode JSON string `{json_str}` after repairing it "
-            f"into `{repaired}`. Error: {e}",
-        ) from e
+        repaired = repair_json(json_str, stream_stable=True)
+        result = json.loads(repaired)
+        if isinstance(result, dict):
+            return result
+
+    except Exception:
+        if len(json_str) > 100:
+            log_str = json_str[:100] + "..."
+        else:
+            log_str = json_str
+
+        logger.warning(
+            "Failed to load JSON dict from string: %s. Returning empty dict "
+            "instead.",
+            log_str,
+        )
+
+    return {}
 
 
 def _is_accessible_local_file(url: str) -> bool:
@@ -321,7 +342,7 @@ def _parse_tool_function(
     if include_long_description and docstring.long_description is not None:
         descriptions.append(docstring.long_description)
 
-    func_description = "\n\n".join(descriptions)
+    func_description = "\n".join(descriptions)
 
     # Create a dynamic model with the function signature
     fields = {}
@@ -404,3 +425,50 @@ def _parse_tool_function(
         func_json_schema["function"]["description"] = func_description
 
     return func_json_schema
+
+
+def _resample_pcm_delta(
+    pcm_base64: str,
+    sample_rate: int,
+    target_rate: int,
+) -> str:
+    """Resampling the input pcm base64 data into the target rate.
+
+    Args:
+        pcm_base64 (`str`):
+            The input base64 audio data in pcm format.
+        sample_rate (`int`):
+            The sampling rate of the input data.
+        target_rate (`int`):
+            The target rate of the input data.
+
+    Returns:
+        `str`:
+            The resampling base64 audio data in the required sampling
+            rate.
+    """
+    pcm_data = base64.b64decode(pcm_base64)
+
+    # Into numpy array first
+    audio_array = np.frombuffer(pcm_data, dtype=np.int16)
+
+    # return directly if the same
+    if sample_rate == target_rate:
+        return pcm_base64
+
+    # compute the number of samples
+    num_samples = int(len(audio_array) * target_rate / sample_rate)
+
+    from scipy import signal
+
+    # Use scipy to resample
+    resampled_audio = signal.resample(audio_array, num_samples)
+
+    # Turn it back into bytes
+    resampled_audio = np.clip(resampled_audio, -32768, 32767).astype(np.int16)
+
+    # into base64
+    resampled_bytes = resampled_audio.tobytes()
+    resampled_base64 = base64.b64encode(resampled_bytes).decode("utf-8")
+
+    return resampled_base64

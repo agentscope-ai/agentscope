@@ -11,7 +11,7 @@ AgentScope 实现了基于 OpenTelemetry 的追踪来监控和调试
 - 为 LLM、工具、智能体、格式化器等提供内置追踪
 - 支持错误和异常追踪
 - 在 AgentScope Studio 中提供原生追踪 **可视化**
-- 支持连接到 **第三方平台**，如 `Arize-Phoenix <https://github.com/Arize-ai/phoenix>`_、`Langfuse <https://langfuse.com/>`_ 等
+- 支持连接到 **第三方平台**，如阿里云云监控、`Arize-Phoenix <https://github.com/Arize-ai/phoenix>`_、`Langfuse <https://langfuse.com/>`_ 等
 
 设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -21,7 +21,7 @@ AgentScope 实现了基于 OpenTelemetry 的追踪来监控和调试
 AgentScope Studio
 ---------------------------------------
 
-.. figure:: ../../_static/images/studio_tracing.png
+.. figure:: ../../_static/images/studio_tracing.webp
     :width: 100%
     :alt: AgentScope Studio 追踪页面
     :class: bordered-image
@@ -52,7 +52,20 @@ AgentScope Studio
     # 连接到 OpenTelemetry 兼容的后端
     agentscope.init(tracing_url="https://your-tracing-backend:port/traces")
 
-以 Arize-Phoenix 和 Langfuse 为例：
+以阿里云云监控、Arize-Phoenix 和 Langfuse 为例：
+
+**阿里云云监控（Alibaba Cloud CloudMonitor）**：全托管可观测平台。
+
+.. code-block:: python
+    :caption: 连接到阿里云云监控
+
+    agentscope.init(tracing_url="https://tracing-cn-hangzhou.arms.aliyuncs.com/adapt_xxx/api/otlp/traces")
+
+.. tip::
+    **获取 Endpoint：** 在 `ARMS 控制台 <https://arms.console.aliyun.com/>`_ 的 **接入中心** > **OpenTelemetry** 中，
+    根据实际部署地域选择对应的 **公网接入点**。可通过环境变量 ``OTEL_SERVICE_NAME`` 自定义应用名称。
+    阿里云云监控可通过 `LoongSuite <https://github.com/alibaba/loongsuite-python-agent>`_ 探针提供零侵入的自动化接入。
+    更多信息请参考 `云监控文档 <https://help.aliyun.com/zh/cms/cloudmonitor-2-0/user-guide/model-application>`_。
 
 **Arize-Phoenix**：需要在环境变量中设置 ``PHOENIX_API_KEY``。
 

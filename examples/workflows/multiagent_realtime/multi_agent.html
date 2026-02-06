@@ -1,0 +1,1273 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Agent Realtime Voice Interaction</title>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: hsl(0, 0%, 98%);
+            color: hsl(222.2, 84%, 4.9%);
+            line-height: 1.5;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: hsl(222.2, 84%, 4.9%);
+            letter-spacing: -0.025em;
+        }
+
+        .subtitle {
+            font-size: 0.875rem;
+            color: hsl(215.4, 16.3%, 46.9%);
+            margin-bottom: 1.5rem;
+        }
+
+        #messages {
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            height: 400px;
+            overflow-y: auto;
+            padding: 1rem;
+            margin: 1.5rem 0;
+            background: hsl(0, 0%, 100%);
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        }
+
+        #messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #messages::-webkit-scrollbar-track {
+            background: hsl(210, 40%, 96.1%);
+            border-radius: 4px;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: hsl(215.4, 16.3%, 56.9%);
+            border-radius: 4px;
+        }
+
+        #messages::-webkit-scrollbar-thumb:hover {
+            background: hsl(215.4, 16.3%, 46.9%);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.375rem;
+            background: hsl(0, 0%, 100%);
+            color: hsl(222.2, 84%, 4.9%);
+            transition: all 0.15s ease;
+            outline: none;
+        }
+
+        input[type="text"]:focus {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            box-shadow: 0 0 0 3px hsl(221.2, 83.2%, 53.3%, 0.1);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.375rem;
+            background: hsl(0, 0%, 100%);
+            color: hsl(222.2, 84%, 4.9%);
+            transition: all 0.15s ease;
+            outline: none;
+            resize: vertical;
+            font-family: inherit;
+            line-height: 1.5;
+        }
+
+        textarea:focus {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            box-shadow: 0 0 0 3px hsl(221.2, 83.2%, 53.3%, 0.1);
+        }
+
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.625rem 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border: none;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            background: hsl(222.2, 47.4%, 11.2%);
+            color: hsl(210, 40%, 98%);
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+
+        button:hover:not(:disabled) {
+            background: hsl(222.2, 47.4%, 15%);
+        }
+
+        button:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+
+        button:focus-visible {
+            outline: 2px solid hsl(221.2, 83.2%, 53.3%);
+            outline-offset: 2px;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: hsl(221.2, 83.2%, 53.3%);
+            color: hsl(0, 0%, 100%);
+        }
+
+        button.primary:hover:not(:disabled) {
+            background: hsl(221.2, 83.2%, 48%);
+        }
+
+        button.destructive {
+            background: hsl(0, 84.2%, 60.2%);
+            color: hsl(0, 0%, 100%);
+        }
+
+        button.destructive:hover:not(:disabled) {
+            background: hsl(0, 84.2%, 55%);
+        }
+
+        button.active {
+            background: hsl(142.1, 76.2%, 36.3%);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                box-shadow: 0 0 0 0 hsl(142.1, 76.2%, 36.3%, 0.7);
+            }
+            50% {
+                opacity: 0.9;
+                box-shadow: 0 0 0 8px hsl(142.1, 76.2%, 36.3%, 0);
+            }
+        }
+
+        .message {
+            margin: 0.75rem 0;
+            padding: 0.75rem 1rem;
+            background: hsl(210, 40%, 98%);
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            font-size: 0.875rem;
+        }
+
+        .message strong {
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin: 1.5rem 0;
+        }
+
+        .configuration-container {
+            background: hsl(0, 0%, 100%);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            margin: 1.5rem 0;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .configuration-container h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: hsl(222.2, 84%, 4.9%);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .agents-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .agent-config {
+            padding: 1rem;
+            background: hsl(210, 40%, 98%);
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+        }
+
+        .agent-config h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+        }
+
+        .config-field {
+            margin-bottom: 1rem;
+        }
+
+        .config-field:last-child {
+            margin-bottom: 0;
+        }
+
+        .config-field label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-size: 0.875rem;
+        }
+
+        .error-message {
+            padding: 0.875rem 1rem;
+            background: hsl(0, 84.2%, 95%);
+            border: 1px solid hsl(0, 84.2%, 85%);
+            border-radius: 0.5rem;
+            margin: 1rem 0;
+            display: none;
+            color: hsl(0, 84.2%, 30%);
+            font-size: 0.875rem;
+            font-weight: 500;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+
+        .model-options {
+            display: flex;
+            flex-direction: row;
+            gap: 0.75rem;
+        }
+
+        .model-option {
+            flex: 1;
+            padding: 0.75rem;
+            border: 2px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            background: hsl(0, 0%, 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .model-option:hover:not(.disabled) {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            background: hsl(221.2, 83.2%, 98%);
+        }
+
+        .model-option.selected {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            background: hsl(221.2, 83.2%, 95%);
+        }
+
+        .model-option.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: hsl(0, 0%, 98%);
+        }
+
+        .model-option-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .model-option input[type="radio"] {
+            margin: 0;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .model-option.disabled input[type="radio"] {
+            cursor: not-allowed;
+        }
+
+        .model-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+        }
+
+        .model-name-line {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-height: 1.25rem;
+        }
+
+        .model-name {
+            font-weight: 600;
+            color: hsl(222.2, 84%, 4.9%);
+        }
+
+        .model-unavailable-reason {
+            font-size: 0.625rem;
+            color: hsl(215.4, 16.3%, 56.9%);
+            font-style: italic;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 768px) {
+            .agents-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+
+
+        .audio-mode-selector {
+            margin-bottom: 1rem;
+        }
+
+        .audio-mode-selector label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-size: 0.875rem;
+        }
+
+        .preset-group {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .preset-card {
+            flex: 1;
+            min-width: 200px;
+            padding: 1rem 1.25rem;
+            background: hsl(0, 0%, 100%);
+            border: 2px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+            font-weight: 500;
+            font-size: 0.875rem;
+            color: hsl(222.2, 84%, 4.9%);
+            user-select: none;
+        }
+
+        .preset-card:hover {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            background: hsl(210, 40%, 98%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .preset-card.selected {
+            background: hsl(221.2, 83.2%, 53.3%);
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            color: hsl(0, 0%, 100%);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+        }
+
+        .preset-card.selected:hover {
+            background: hsl(221.2, 83.2%, 48%);
+            border-color: hsl(221.2, 83.2%, 48%);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <h1>🗣️ Multi-Agent Realtime Voice Interaction</h1>
+    <p class="subtitle">Two AI agents having a real-time voice conversation using AgentScope ChatRoom</p>
+
+    <div class="configuration-container">
+        <h3>⚙️ Agent Configuration</h3>
+
+
+        <div class="audio-mode-selector">
+            <label>🎭 Debate Preset</label>
+            <div class="preset-group">
+                <div class="preset-card" data-preset="ai" onclick="selectPreset('ai')">
+                    🤖 AI Threat v.s. AI Optimism (en)
+                </div>
+                <div class="preset-card" data-preset="human" onclick="selectPreset('human')">
+                    👥 人性本恶 v.s. 人性本善 (zh)
+                </div>
+            </div>
+        </div>
+
+        <div class="config-field">
+            <label>Model Provider</label>
+            <div class="model-options" id="modelOptions">
+                <label class="model-option" data-provider="dashscope">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="dashscope" checked />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">DashScope</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+                <label class="model-option" data-provider="gemini">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="gemini" />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">Gemini</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+                <label class="model-option" data-provider="openai">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="openai" />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">OpenAI</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <div class="agents-grid">
+            <div class="agent-config">
+                <h4>🤖 Agent 1</h4>
+                <div class="config-field">
+                    <label for="agent1Name">Name</label>
+                    <input type="text" id="agent1Name" placeholder="Enter agent 1 name" value="Elon Musk" />
+                </div>
+                <div class="config-field">
+                    <label for="agent1Instructions">Instructions</label>
+                    <textarea id="agent1Instructions" placeholder="Enter agent 1 instructions...">You're Elon Musk arguing with Mark Zuckerberg about whether AI is humanity's greatest threat. You believe it absolutely is - we're building superintelligence without safeguards, risking autonomous weapons, mass job loss, and losing control to machines smarter than us. Be bold, direct, and warn that optimists like Zuck are dangerously naive. Use your trademark sarcasm and urgency. You must keep each response under 100 words.</textarea>
+                </div>
+            </div>
+
+            <div class="agent-config">
+                <h4>🤖 Agent 2</h4>
+                <div class="config-field">
+                    <label for="agent2Name">Name</label>
+                    <input type="text" id="agent2Name" placeholder="Enter agent 2 name" value="Mark Zuckerberg" />
+                </div>
+                <div class="config-field">
+                    <label for="agent2Instructions">Instructions</label>
+                    <textarea id="agent2Instructions" placeholder="Enter agent 2 instructions...">You're Mark Zuckerberg arguing with Elon Musk about whether AI is humanity's greatest threat. You believe it's not - climate change, pandemics, and inequality are bigger dangers, while AI is already saving lives and solving problems. Be calm, rational, and data-driven. Counter Elon's fearmongering with practical AI benefits and argue responsible development beats fear-based thinking.</textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="error-message"></div>
+
+    <div class="controls">
+        <button id="startBtn" class="primary" onclick="startConversation()">▶️ Start Conversation</button>
+        <button id="stopBtn" class="destructive" onclick="stopConversation()" disabled>⏹️ Stop Conversation</button>
+    </div>
+
+    <div id="messages"></div>
+
+    <script>
+        let ws = null;
+        let playbackAudioContext = null;  // For playback, 24kHz
+
+        // Audio queue management: sequential playback
+        let globalAudioQueue = [];  // Array of { agentId, agentName, chunks, messageElement }
+        let currentlyPlaying = null;  // Currently playing agent info
+        let isPlayingGlobal = false;
+
+        let sessionId = "session1";  // Session ID
+        let sessionCreated = false;  // Track if session has been created
+        let isConversationActive = false;
+
+        // Used to accumulate transcript text
+        let currentResponseTranscripts = {};  // Store by agent_id
+
+
+        // Silent audio monitoring for continuous audio stream
+        let lastAudioReceivedTime = null;
+        let silentAudioCheckInterval = null;
+        const SILENT_AUDIO_CHECK_INTERVAL = 2000; // Check every 1000ms (1 second)
+        const SILENT_AUDIO_THRESHOLD = 2000; // Send silent audio if no audio received for 200ms
+
+        // Debate presets
+        const debatePresets = {
+            ai: {
+                agent1: {
+                    name: "Elon Musk",
+                    instructions: "You're Elon Musk arguing with Mark Zuckerberg about whether AI is humanity's greatest threat. You believe it absolutely is - we're building superintelligence without safeguards, risking autonomous weapons, mass job loss, and losing control to machines smarter than us. Be bold, direct, and warn that optimists like Zuck are dangerously naive. Use your trademark sarcasm and urgency. You must keep each response under 100 words."
+                },
+                agent2: {
+                    name: "Mark Zuckerberg",
+                    instructions: "You're Mark Zuckerberg arguing with Elon Musk about whether AI is humanity's greatest threat. You believe it's not - climate change, pandemics, and inequality are bigger dangers, while AI is already saving lives and solving problems. Be calm, rational, and data-driven. Counter Elon's fearmongering with practical AI benefits and argue responsible development beats fear-based thinking."
+                }
+            },
+            human: {
+                agent1: {
+                    name: "郭德纲",
+                    instructions: "你是郭德纲，你要和于谦进行一场关于\"人性本恶\"的辩论。你坚定地认为人性本恶，人生来就有自私、贪婪等恶的一面，只有通过教育、道德约束和社会规范才能引导人向善。用你幽默风趣的语言风格，结合相声的表达方式，用生动的例子和机智的话语来论证你的观点。每次回应控制在100字以内。"
+                },
+                agent2: {
+                    name: "于谦",
+                    instructions: "你是于谦，你要和郭德纲进行一场关于\"人性本善\"的辩论。你坚信人性本善，人生来就有善良、同情等美好品质，恶是后天环境影响造成的。用你朴实、真诚的语言风格，举出人性光辉的例子来反驳郭德纲的观点。保持相声捧哏的风格，既要论证有力，又要配合好逗哏。每次回应控制在100字以内。"
+                }
+            }
+        };
+
+        // Track currently selected preset
+        let currentPreset = null;
+
+        function selectPreset(presetType) {
+            if (!debatePresets[presetType]) return;
+
+            // Update selected state
+            currentPreset = presetType;
+            document.querySelectorAll('.preset-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`.preset-card[data-preset="${presetType}"]`).classList.add('selected');
+
+            // Load preset values
+            const preset = debatePresets[presetType];
+            document.getElementById("agent1Name").value = preset.agent1.name;
+            document.getElementById("agent1Instructions").value = preset.agent1.instructions;
+            document.getElementById("agent2Name").value = preset.agent2.name;
+            document.getElementById("agent2Instructions").value = preset.agent2.instructions;
+
+            console.log(`Loaded ${presetType} debate preset`);
+        }
+
+        function clearPresetSelection() {
+            currentPreset = null;
+            document.querySelectorAll('.preset-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+        }
+
+        // Monitor input changes to clear preset selection
+        function setupInputMonitoring() {
+            const inputs = [
+                document.getElementById("agent1Name"),
+                document.getElementById("agent1Instructions"),
+                document.getElementById("agent2Name"),
+                document.getElementById("agent2Instructions")
+            ];
+
+            inputs.forEach(input => {
+                input.addEventListener('input', () => {
+                    // Check if current values match any preset
+                    if (currentPreset && debatePresets[currentPreset]) {
+                        const preset = debatePresets[currentPreset];
+                        const agent1Name = document.getElementById("agent1Name").value;
+                        const agent1Instructions = document.getElementById("agent1Instructions").value;
+                        const agent2Name = document.getElementById("agent2Name").value;
+                        const agent2Instructions = document.getElementById("agent2Instructions").value;
+
+                        // If values don't match preset, clear selection
+                        if (agent1Name !== preset.agent1.name ||
+                            agent1Instructions !== preset.agent1.instructions ||
+                            agent2Name !== preset.agent2.name ||
+                            agent2Instructions !== preset.agent2.instructions) {
+                            clearPresetSelection();
+                        }
+                    }
+                });
+            });
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById("errorMessage");
+            errorDiv.innerText = message;
+            errorDiv.style.display = "block";
+            setTimeout(() => {
+                errorDiv.style.display = "none";
+            }, 5000);
+        }
+
+        function generateSilentAudio(durationMs, sampleRate) {
+            // Calculate number of samples needed
+            const numSamples = Math.floor(sampleRate * durationMs / 1000);
+            // Create Int16Array filled with zeros (silence)
+            const int16Array = new Int16Array(numSamples);
+            return int16Array.buffer;
+        }
+
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+
+        function startSilentAudioMonitoring() {
+            // Initialize timestamp
+            lastAudioReceivedTime = Date.now();
+
+            // Start periodic check
+            silentAudioCheckInterval = setInterval(() => {
+                checkAndSendSilentAudio();
+            }, SILENT_AUDIO_CHECK_INTERVAL);
+
+            console.log("Started silent audio monitoring");
+        }
+
+        function stopSilentAudioMonitoring() {
+            if (silentAudioCheckInterval) {
+                clearInterval(silentAudioCheckInterval);
+                silentAudioCheckInterval = null;
+            }
+            lastAudioReceivedTime = null;
+            console.log("Stopped silent audio monitoring");
+        }
+
+        function checkAndSendSilentAudio() {
+            // Check if session is active
+            if (!isConversationActive || !ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            // Check if any audio is playing
+            if (isPlayingGlobal) {
+                // If audio is playing, update timestamp (playing also counts as audio activity)
+                lastAudioReceivedTime = Date.now();
+                return;
+            }
+
+            // Calculate time since last audio received
+            const now = Date.now();
+            const timeSinceLastAudio = now - lastAudioReceivedTime;
+
+            // If threshold exceeded, send silent audio
+            if (timeSinceLastAudio >= SILENT_AUDIO_THRESHOLD) {
+                sendSilentAudio(timeSinceLastAudio);
+                // Update timestamp
+                lastAudioReceivedTime = now;
+            }
+        }
+
+        function sendSilentAudio(durationMs) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            // Limit maximum duration to avoid sending too large data
+            const maxDuration = 2000; // Max 1 second
+            const actualDuration = Math.min(durationMs, maxDuration);
+
+            // Generate silent audio
+            const silentBuffer = generateSilentAudio(actualDuration, 16000);
+            const base64Audio = arrayBufferToBase64(silentBuffer);
+
+            // Send audio data
+            ws.send(JSON.stringify({
+                type: "client_audio_append",
+                session_id: sessionId,
+                audio: base64Audio,
+                format: {
+                    rate: 16000,
+                    type: "audio/pcm"
+                }
+            }));
+
+            console.log(`Sent ${actualDuration}ms silent audio to backend`);
+        }
+
+
+        async function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname;
+            const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+            const wsUrl = `${protocol}//${host}:${port}/ws/user1/${sessionId}`;
+
+            console.log(`Connecting to WebSocket: ${wsUrl}`);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function(event) {
+                addMessage("System", "✅ Connected to server");
+            };
+
+            ws.onmessage = async function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log("Received message:", data);
+
+                    // Handle ServerEvents
+                    switch (data.type) {
+                        case "server_session_created":
+                            sessionCreated = true;
+                            addMessage("System", `✅ Chat room created: ${data.session_id}`);
+                            break;
+
+                        case "agent_ready":
+                            addMessage("System", `🤖 Agent ${data.agent_name} is ready`);
+                            break;
+
+                        case "agent_response_created":
+                            // Initialize audio buffer for this response (no message display)
+                            if (data.agent_id) {
+                                initializeAudioBuffer(data.agent_id, data.agent_name);
+                            }
+                            break;
+
+                        case "agent_response_audio_delta":
+                            // Update last audio received timestamp
+                            lastAudioReceivedTime = Date.now();
+
+                            // Receive audio data
+                            console.log(`Received audio delta from agent: ${data.agent_name} (${data.agent_id})`);
+                            if (data.agent_id) {
+                                queueAudioChunk(data.agent_id, data.agent_name, data.delta);
+                            }
+                            break;
+
+                        case "agent_response_audio_done":
+                            // Mark audio complete (no message display)
+                            if (data.agent_id) {
+                                markAudioComplete(data.agent_id);
+                            }
+                            break;
+
+                        case "agent_response_audio_transcript_delta":
+                            // Agent response transcript text
+                            appendResponseTranscript(
+                                data.agent_name,
+                                data.delta || "",
+                                data.agent_id
+                            );
+                            break;
+
+                        case "agent_response_audio_transcript_done":
+                            // Complete Agent response transcript message
+                            finishResponseTranscript(data.agent_id);
+                            break;
+
+                        case "agent_response_done":
+                            // Response completed (no message display)
+                            break;
+
+                        case "agent_error":
+                            addMessage("Error", `❌ ${data.error_type}: ${data.message}`);
+                            break;
+
+                        case "agent_ended":
+                            addMessage("System", `👋 Agent ${data.agent_name} has ended`);
+                            break;
+
+                        case "server_session_ended":
+                            addMessage("System", `🔚 Session ${data.session_id} has ended`);
+                            break;
+
+                        default:
+                            console.log("Unhandled event type:", data.type);
+                            break;
+                    }
+                } catch (e) {
+                    console.error("Error processing message:", e);
+                }
+            };
+
+            ws.onclose = function(event) {
+                addMessage("System", "❌ Disconnected");
+                stopSilentAudioMonitoring();
+                sessionCreated = false;
+                isConversationActive = false;
+                updateButtons();
+            };
+
+            ws.onerror = function(error) {
+                addMessage("System", "⚠️ Connection error");
+            };
+        }
+
+        async function startConversation() {
+            try {
+                // Validate inputs
+                const agent1Name = document.getElementById("agent1Name").value.trim();
+                const agent1Instructions = document.getElementById("agent1Instructions").value.trim();
+                const agent2Name = document.getElementById("agent2Name").value.trim();
+                const agent2Instructions = document.getElementById("agent2Instructions").value.trim();
+
+                if (!agent1Name || !agent1Instructions || !agent2Name || !agent2Instructions) {
+                    showError("⚠️ All fields are required! Please fill in all agent configurations.");
+                    return;
+                }
+
+                // Check if WebSocket is connected
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    showError("⚠️ WebSocket is not connected! Please wait for connection.");
+                    return;
+                }
+
+                // Disable start button
+                isConversationActive = true;
+                updateButtons();
+
+                // Get selected model provider
+                const selectedModel = document.querySelector('input[name="modelProvider"]:checked');
+                const modelProvider = selectedModel ? selectedModel.value : "dashscope";
+
+                // Send session create event
+                addMessage("System", "📝 Creating chat room...");
+                ws.send(JSON.stringify({
+                    type: "client_session_create",
+                    config: {
+                        agent1_name: agent1Name,
+                        agent1_instructions: agent1Instructions,
+                        agent2_name: agent2Name,
+                        agent2_instructions: agent2Instructions,
+                        model_provider: modelProvider
+                    }
+                }));
+
+                // Wait for session_created event
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error("Session creation timeout"));
+                    }, 10000);
+
+                    const checkSession = setInterval(() => {
+                        if (sessionCreated) {
+                            clearTimeout(timeout);
+                            clearInterval(checkSession);
+                            resolve();
+                        }
+                    }, 100);
+                });
+
+                addMessage("System", "🎉 Chat room created! Agents are now conversing...");
+
+                // Start silent audio monitoring
+                startSilentAudioMonitoring();
+
+            } catch (err) {
+                console.error("Failed to start conversation:", err);
+                if (err.message === "Session creation timeout") {
+                    showError("⚠️ Session creation timeout. Please try again.");
+                    addMessage("System", "⚠️ Session creation timeout");
+                } else {
+                    showError("⚠️ Failed to start conversation: " + err.message);
+                    addMessage("System", "⚠️ Failed to start conversation: " + err.message);
+                }
+                isConversationActive = false;
+                updateButtons();
+            }
+        }
+
+        function stopConversation() {
+            // Stop silent audio monitoring
+            stopSilentAudioMonitoring();
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: "client_session_end",
+                    session_id: sessionId
+                }));
+            }
+
+            stopAllAudioPlayback();
+            sessionCreated = false;
+            isConversationActive = false;
+            updateButtons();
+            addMessage("System", "⏹️ Conversation stopped");
+        }
+
+        function updateButtons() {
+            document.getElementById("startBtn").disabled = isConversationActive;
+            document.getElementById("stopBtn").disabled = !isConversationActive;
+
+            if (isConversationActive) {
+                document.getElementById("startBtn").classList.remove("primary");
+                document.getElementById("stopBtn").classList.add("active");
+            } else {
+                document.getElementById("startBtn").classList.add("primary");
+                document.getElementById("stopBtn").classList.remove("active");
+            }
+        }
+
+        // ==================== Audio Queue Management ====================
+
+        function initializeAudioBuffer(agentId, agentName) {
+            // Find if this agent already has an entry in the queue
+            let queueEntry = globalAudioQueue.find(entry => entry.agentId === agentId && !entry.isComplete);
+
+            if (!queueEntry) {
+                queueEntry = {
+                    agentId: agentId,
+                    agentName: agentName,
+                    chunks: [],
+                    messageElement: null,
+                    isComplete: false,
+                    playbackIndex: 0
+                };
+                globalAudioQueue.push(queueEntry);
+                console.log(`Initialized audio buffer for agent: ${agentName} (${agentId})`);
+            }
+        }
+
+        function queueAudioChunk(agentId, agentName, base64Audio) {
+            try {
+                // Decode audio chunk
+                const float32Array = decodeAudioChunk(base64Audio);
+
+                // Find or create queue entry for this agent
+                let queueEntry = globalAudioQueue.find(entry => entry.agentId === agentId && !entry.isComplete);
+
+                if (!queueEntry) {
+                    queueEntry = {
+                        agentId: agentId,
+                        agentName: agentName,
+                        chunks: [],
+                        messageElement: null,
+                        isComplete: false,
+                        playbackIndex: 0
+                    };
+                    globalAudioQueue.push(queueEntry);
+                }
+
+                queueEntry.chunks.push(float32Array);
+                console.log(`Queued audio chunk for ${agentName}, total chunks: ${queueEntry.chunks.length}`);
+
+
+                // If not currently playing, start playback
+                if (!isPlayingGlobal) {
+                    playNextInQueue();
+                }
+            } catch (err) {
+                console.error("Failed to queue audio chunk:", err);
+            }
+        }
+
+        function markAudioComplete(agentId) {
+            const queueEntry = globalAudioQueue.find(entry => entry.agentId === agentId && !entry.isComplete);
+            if (queueEntry) {
+                queueEntry.isComplete = true;
+                console.log(`Marked audio complete for agent: ${agentId}`);
+            }
+        }
+
+        function playNextInQueue() {
+            if (isPlayingGlobal) return;
+
+            // Find the first entry with audio chunks
+            const nextEntry = globalAudioQueue.find(entry => entry.chunks.length > 0);
+
+            if (!nextEntry) {
+                console.log("No audio in queue to play");
+                return;
+            }
+
+            console.log(`Starting playback for agent: ${nextEntry.agentName}`);
+            currentlyPlaying = nextEntry;
+            isPlayingGlobal = true;
+
+            // Highlight the corresponding message
+            if (nextEntry.messageElement) {
+                nextEntry.messageElement.classList.add('playing-audio');
+            }
+
+
+            startPlayback(nextEntry);
+        }
+
+        function startPlayback(queueEntry) {
+            try {
+                if (!playbackAudioContext) {
+                    playbackAudioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 24000
+                    });
+                }
+
+                if (playbackAudioContext.state === 'suspended') {
+                    playbackAudioContext.resume();
+                }
+
+                const bufferSize = 4096;
+                const processor = playbackAudioContext.createScriptProcessor(bufferSize, 0, 1);
+
+                processor.onaudioprocess = function(e) {
+                    const output = e.outputBuffer.getChannelData(0);
+                    const samplesNeeded = output.length;
+                    let samplesWritten = 0;
+
+                    while (samplesWritten < samplesNeeded && queueEntry.chunks.length > 0) {
+                        const chunk = queueEntry.chunks[0];
+                        const samplesToRead = Math.min(
+                            samplesNeeded - samplesWritten,
+                            chunk.length - queueEntry.playbackIndex
+                        );
+
+                        for (let i = 0; i < samplesToRead; i++) {
+                            output[samplesWritten + i] = chunk[queueEntry.playbackIndex + i];
+                        }
+
+                        samplesWritten += samplesToRead;
+                        queueEntry.playbackIndex += samplesToRead;
+
+                        if (queueEntry.playbackIndex >= chunk.length) {
+                            queueEntry.chunks.shift();
+                            queueEntry.playbackIndex = 0;
+                        }
+                    }
+
+                    // Fill remaining with silence
+                    for (let i = samplesWritten; i < samplesNeeded; i++) {
+                        output[i] = 0;
+                    }
+
+                    // Check if this agent's audio is complete
+                    if (queueEntry.chunks.length === 0 && queueEntry.isComplete) {
+                        setTimeout(() => {
+                            if (queueEntry.chunks.length === 0 && queueEntry.isComplete) {
+                                finishCurrentPlayback();
+                            }
+                        }, 100);
+                    }
+                };
+
+                processor.connect(playbackAudioContext.destination);
+                queueEntry.node = processor;
+
+            } catch (err) {
+                console.error("Failed to start playback:", err);
+                finishCurrentPlayback();
+            }
+        }
+
+        function finishCurrentPlayback() {
+            if (!currentlyPlaying) return;
+
+            console.log(`Finished playback for agent: ${currentlyPlaying.agentName}`);
+
+            // Cleanup
+            if (currentlyPlaying.node) {
+                currentlyPlaying.node.disconnect();
+                currentlyPlaying.node = null;
+            }
+
+            // Remove highlight
+            if (currentlyPlaying.messageElement) {
+                currentlyPlaying.messageElement.classList.remove('playing-audio');
+            }
+
+            // Remove from queue
+            const index = globalAudioQueue.indexOf(currentlyPlaying);
+            if (index > -1) {
+                globalAudioQueue.splice(index, 1);
+            }
+
+            currentlyPlaying = null;
+            isPlayingGlobal = false;
+
+            // Play next in queue
+            setTimeout(() => playNextInQueue(), 100);
+        }
+
+
+        // ==================== Common Audio Functions ====================
+
+        function decodeAudioChunk(base64Audio) {
+            const binaryString = atob(base64Audio);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const int16Array = new Int16Array(bytes.buffer);
+            const float32Array = new Float32Array(int16Array.length);
+
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768.0;
+            }
+
+            return float32Array;
+        }
+
+        function stopAllAudioPlayback() {
+            // Stop sequential playback
+            if (currentlyPlaying && currentlyPlaying.node) {
+                currentlyPlaying.node.disconnect();
+                currentlyPlaying.node = null;
+                if (currentlyPlaying.messageElement) {
+                    currentlyPlaying.messageElement.classList.remove('playing-audio');
+                }
+            }
+            currentlyPlaying = null;
+            isPlayingGlobal = false;
+            globalAudioQueue = [];
+        }
+
+        function addMessage(sender, message) {
+            const messagesDiv = document.getElementById("messages");
+            const messageDiv = document.createElement("div");
+            messageDiv.className = "message";
+            const time = new Date().toLocaleTimeString();
+            messageDiv.innerHTML = `<strong>[${time}] ${sender}:</strong> ${message}`;
+            messagesDiv.insertBefore(messageDiv, messagesDiv.firstChild);
+            messagesDiv.scrollTop = 0;
+        }
+
+        function appendResponseTranscript(agentName, text, agentId) {
+            const messagesDiv = document.getElementById("messages");
+
+            // If there's no current response message element for this agent, create one
+            if (!currentResponseTranscripts[agentId]) {
+                currentResponseTranscripts[agentId] = {
+                    text: "",
+                    element: document.createElement("div")
+                };
+
+                const transcript = currentResponseTranscripts[agentId];
+                transcript.element.className = "message";
+                const time = new Date().toLocaleTimeString();
+                transcript.element.innerHTML = `<strong>[${time}] ${agentName}:</strong> <span class="response-transcript-content"></span>`;
+                messagesDiv.insertBefore(transcript.element, messagesDiv.firstChild);
+
+                // Link this message element to the audio queue entry
+                const queueEntry = globalAudioQueue.find(entry => entry.agentId === agentId && !entry.isComplete);
+                if (queueEntry) {
+                    queueEntry.messageElement = transcript.element;
+                }
+            }
+
+            // Accumulate text
+            currentResponseTranscripts[agentId].text += text;
+
+            // Update displayed content
+            const contentSpan = currentResponseTranscripts[agentId].element.querySelector('.response-transcript-content');
+            if (contentSpan) {
+                contentSpan.textContent = currentResponseTranscripts[agentId].text;
+            }
+
+            // Scroll to top
+            messagesDiv.scrollTop = 0;
+        }
+
+        function finishResponseTranscript(agentId) {
+            // Complete current response transcript message for this agent
+            if (currentResponseTranscripts[agentId]) {
+                delete currentResponseTranscripts[agentId];
+            }
+        }
+
+        async function checkModelAvailability() {
+            try {
+                const response = await fetch('/model_availability');
+                const availability = await response.json();
+                console.log("Model availability:", availability);
+
+                const modelOptions = document.querySelectorAll('.model-option');
+                let hasAvailableModel = false;
+
+                modelOptions.forEach(option => {
+                    const provider = option.getAttribute('data-provider');
+                    const radio = option.querySelector('input[type="radio"]');
+                    const unavailableReason = option.querySelector('.model-unavailable-reason');
+
+                    if (!availability[provider]) {
+                        // Mark as disabled
+                        option.classList.add('disabled');
+                        radio.disabled = true;
+
+                        // Show unavailable reason
+                        const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
+                        unavailableReason.textContent = `(${providerName.toUpperCase()}_API_KEY not set)`;
+                        unavailableReason.style.display = 'inline';
+
+                        // If this was the selected option, uncheck it
+                        if (radio.checked) {
+                            radio.checked = false;
+                        }
+                    } else {
+                        hasAvailableModel = true;
+                        unavailableReason.style.display = 'none';
+                    }
+                });
+
+                // If no model is selected after checking availability, select first available
+                const selectedRadio = document.querySelector('input[name="modelProvider"]:checked');
+                if (!selectedRadio && hasAvailableModel) {
+                    for (const option of modelOptions) {
+                        const provider = option.getAttribute('data-provider');
+                        if (availability[provider]) {
+                            option.querySelector('input[type="radio"]').checked = true;
+                            option.classList.add('selected');
+                            break;
+                        }
+                    }
+                }
+
+                // Disable start button if no model is available
+                const startBtn = document.getElementById('startBtn');
+                if (!hasAvailableModel) {
+                    startBtn.disabled = true;
+                    showError('⚠️ No model API keys configured. Please set at least one API key to start conversation.');
+                } else {
+                    startBtn.disabled = false;
+                }
+
+                // Add click handlers for model options
+                modelOptions.forEach(option => {
+                    option.addEventListener('click', function() {
+                        if (!this.classList.contains('disabled')) {
+                            modelOptions.forEach(opt => opt.classList.remove('selected'));
+                            this.classList.add('selected');
+                        }
+                    });
+                });
+
+                // Mark initially selected option
+                const currentSelected = document.querySelector('input[name="modelProvider"]:checked');
+                if (currentSelected) {
+                    currentSelected.closest('.model-option').classList.add('selected');
+                }
+
+            } catch (error) {
+                console.error("Failed to check model availability:", error);
+                showError("⚠️ Failed to check model availability. Please refresh the page.");
+            }
+        }
+
+        // Auto-connect when page loads
+        window.onload = function() {
+            connect();
+            setupInputMonitoring();
+            // Set default preset to AI debate
+            selectPreset('ai');
+            // Check model availability
+            checkModelAvailability();
+        };
+    </script>
+</body>
+</html>
+

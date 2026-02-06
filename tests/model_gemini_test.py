@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for Google Gemini API model class."""
+import json
 from typing import AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock
@@ -85,7 +86,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
         """Test initialization with custom parameters."""
         thinking_config = {"include_thoughts": True, "thinking_budget": 1024}
         generate_kwargs = {"temperature": 0.7, "top_p": 0.9}
-        client_args = {"timeout": 30}
+        client_kwargs = {"timeout": 30}
 
         with patch("google.genai.Client") as mock_client:
             model = GeminiChatModel(
@@ -93,7 +94,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                 api_key="test_key",
                 stream=False,
                 thinking_config=thinking_config,
-                client_args=client_args,
+                client_kwargs=client_kwargs,
                 generate_kwargs=generate_kwargs,
             )
             self.assertEqual(model.model_name, "gemini-2.5-pro")
@@ -201,6 +202,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                     id="call_123",
                     name="get_weather",
                     input={"location": "Beijing"},
+                    raw_input=json.dumps({"location": "Beijing"}),
                 ),
             ]
             self.assertEqual(result.content, expected_content)
@@ -355,6 +357,65 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
             self.assertEqual(call_args["config"]["temperature"], 0.7)
             self.assertEqual(call_args["config"]["top_p"], 0.9)
             self.assertEqual(call_args["config"]["top_k"], 40)
+
+    def test_format_tools_with_nested_schema(self) -> None:
+        """Test formatting tools with nested JSON schema ($defs and $ref)."""
+        model = GeminiChatModel(
+            model_name="gemini-2.5-flash",
+            api_key="test_key",
+        )
+
+        nested_schema = {
+            "type": "object",
+            "properties": {
+                "person": {"$ref": "#/$defs/Person"},
+                "location": {"type": "string"},
+            },
+            "required": ["person"],
+            "$defs": {
+                "Person": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "age": {"type": "integer"},
+                    },
+                    "required": ["name"],
+                },
+            },
+        }
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "process_person",
+                    "description": "Process person info",
+                    "parameters": nested_schema,
+                },
+            },
+        ]
+
+        # pylint: disable=protected-access
+        formatted_tools = model._format_tools_json_schemas(tools)
+
+        # Check if $ref is resolved
+        params = formatted_tools[0]["function_declarations"][0]["parameters"]
+        expected_params = {
+            "type": "object",
+            "properties": {
+                "person": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "age": {"type": "integer"},
+                    },
+                    "required": ["name"],
+                },
+                "location": {"type": "string"},
+            },
+            "required": ["person"],
+        }
+        self.assertEqual(params, expected_params)
 
     # Auxiliary methods
     def _create_mock_response(
