@@ -75,13 +75,6 @@ AgentScope 为长期记忆提供了一个基类 ``LongTermMemoryBase`` 和一个
 
 
 
-.. rst-class:: sphx-glr-script-out
-
- .. code-block:: none
-
-    /opt/hostedtoolcache/Python/3.10.19/x64/lib/python3.10/site-packages/mem0/client/project.py:14: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
-      class ProjectConfig(BaseModel):
-
 
 
 
@@ -180,15 +173,7 @@ AgentScope 中的 ``ReActAgent`` 在构造函数中包含 ``long_term_memory`` �
 
  .. code-block:: none
 
-    Friday: 看来你很喜欢体验民宿的感觉呢！杭州确实有很多特色民宿，特别是在西湖周边、龙井村、以及一些古镇如塘栖等地。这些民宿通常会融入当地的文化元素，能让你更深入地感受杭州的风土人情。
-
-    如果你计划下次再去杭州旅行，我可以帮你推荐一些特别有特色的民宿，或者教你如何挑选最适合自己的民宿类型。比如：
-
-    1. **靠近景点**：选择离你想游览的景点近的民宿，方便出行。
-    2. **主题风格**：有些民宿主打禅意设计，有些则是文艺复古风，可以根据自己的喜好选择。
-    3. **房东服务**：很多民宿主人都非常热情，可以提供地道的旅行建议，甚至带你体验当地生活。
-
-    你还记得上次住过哪家民宿吗？如果记得，我们可以一起复盘一下它有哪些地方让你觉得满意或需要改进哦！
+    Friday: 好的。
 
 
 
@@ -224,7 +209,7 @@ AgentScope 中的 ``ReActAgent`` 在构造函数中包含 ``long_term_memory`` �
 
  .. code-block:: none
 
-    Friday: 你偏好住民宿，且有杭州旅行的经历。
+    Friday: 你偏好住民宿。
 
 
 
@@ -511,7 +496,7 @@ AgentScope 提供了 ``LongTermMemoryBase`` 基类，它定义了长期记忆的
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 43.240 seconds)
+   **Total running time of the script:** (0 minutes 24.559 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

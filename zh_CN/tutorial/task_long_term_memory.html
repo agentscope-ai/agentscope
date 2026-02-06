@@ -381,10 +381,6 @@ to download the full example code.</p>
 <span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/opt/hostedtoolcache/Python/3.10.19/x64/lib/python3.10/site-packages/mem0/client/project.py:14: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
-  class ProjectConfig(BaseModel):
-</pre></div>
-</div>
 <p><code class="docutils literal notranslate"><span class="pre">Mem0LongTermMemory</span></code> 类提供了两个操作长期记忆的方法，<code class="docutils literal notranslate"><span class="pre">record</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>。
 它们接收消息对象的列表作为输入，分别记录和检索长期记忆中的信息。</p>
 <p>例如下面的例子中，我们先存入用户的一条偏好，然后在长期记忆中检索相关信息。</p>
@@ -444,15 +440,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">record_preferences</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 看来你很喜欢体验民宿的感觉呢！杭州确实有很多特色民宿，特别是在西湖周边、龙井村、以及一些古镇如塘栖等地。这些民宿通常会融入当地的文化元素，能让你更深入地感受杭州的风土人情。
-
-如果你计划下次再去杭州旅行，我可以帮你推荐一些特别有特色的民宿，或者教你如何挑选最适合自己的民宿类型。比如：
-
-1. **靠近景点**：选择离你想游览的景点近的民宿，方便出行。
-2. **主题风格**：有些民宿主打禅意设计，有些则是文艺复古风，可以根据自己的喜好选择。
-3. **房东服务**：很多民宿主人都非常热情，可以提供地道的旅行建议，甚至带你体验当地生活。
-
-你还记得上次住过哪家民宿吗？如果记得，我们可以一起复盘一下它有哪些地方让你觉得满意或需要改进哦！
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 好的。
 </pre></div>
 </div>
 <p>然后我们清空智能体的短期记忆，以避免造成干扰，并测试智能体是否会记住之前的对话。</p>
@@ -469,7 +457,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">retrieve_preferences</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你偏好住民宿，且有杭州旅行的经历。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你偏好住民宿。
 </pre></div>
 </div>
 </section>
@@ -768,7 +756,7 @@ to download the full example code.</p>
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a> - ReAct 智能体</p></li>
 <li><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">工具</span></a> - 工具系统</p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 43.240 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 24.559 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-long-term-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/cf2bfcc46b2b3d58d3df8c98a6a13f87/task_long_term_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_long_term_memory.ipynb</span></code></a></p>

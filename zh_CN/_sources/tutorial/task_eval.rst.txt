@@ -330,11 +330,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_05853932b9114ff299081a"
+        "id": "call_8dc33c244bea4e97922b3a"
     }
     system: {
         "type": "tool_result",
-        "id": "call_05853932b9114ff299081a",
+        "id": "call_8dc33c244bea4e97922b3a",
         "name": "generate_response",
         "output": [
             {
@@ -352,11 +352,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 73331
         },
-        "id": "call_541e0f48d068415baa683e"
+        "id": "call_f160da1cb18d48c49ead83"
     }
     system: {
         "type": "tool_result",
-        "id": "call_541e0f48d068415baa683e",
+        "id": "call_f160da1cb18d48c49ead83",
         "name": "generate_response",
         "output": [
             {
@@ -384,7 +384,7 @@ AgentScope 当前的实现包括：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.639 seconds)
+   **Total running time of the script:** (0 minutes 7.318 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:

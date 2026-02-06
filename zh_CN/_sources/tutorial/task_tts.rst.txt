@@ -139,7 +139,7 @@ AgentScope 支持以下 TTS API：
 
  .. code-block:: none
 
-    音频数据长度： 148480
+    音频数据长度： 184320
 
 
 
@@ -203,10 +203,8 @@ AgentScope 支持以下 TTS API：
     接收到的音频块长度： 204800
     接收到的音频块长度： 225280
     接收到的音频块长度： 245760
-    接收到的音频块长度： 266240
-    接收到的音频块长度： 286720
-    接收到的音频块长度： 296960
-    接收到的音频块长度： 296960
+    接收到的音频块长度： 261120
+    接收到的音频块长度： 261120
 
 
 
@@ -327,7 +325,7 @@ AgentScope 智能体在提供 TTS 模型时，可以自动将其响应合成为�
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.801 seconds)
+   **Total running time of the script:** (0 minutes 4.235 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tts.py:

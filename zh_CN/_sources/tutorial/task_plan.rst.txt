@@ -276,7 +276,7 @@ AgentScope中的 ``ReActAgent`` 已通过构造函数中的 ``plan_notebook`` �
     **Description**: 对基于LLM的智能体进行全面研究
     **Expected Outcome**: 一份Markdown格式的报告，回答三个问题：1. 什么是智能体？2. 智能体的当前技术水平是什么？3. 智能体的未来趋势是什么？
     **State**: todo
-    **Created At**: 2026-02-06 02:09:32.873
+    **Created At**: 2026-02-06 05:28:58.082
     ## Subtasks
     - [ ] 搜索智能体相关调研论文
     - [ ] 阅读和总结论文
