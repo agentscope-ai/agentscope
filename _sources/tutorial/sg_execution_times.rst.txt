@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**05:26.086** total execution time for 33 files **from tutorial**:
+**04:19.449** total execution time for 33 files **from tutorial**:
 
 .. container::
 
@@ -32,80 +32,80 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_tutorial_workflow_routing.py` (``workflow_routing.py``)
-     - 01:11.669
-     - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py` (``workflow_multiagent_debate.py``)
-     - 01:04.136
+     - 00:41.576
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_long_term_memory.py` (``task_long_term_memory.py``)
-     - 00:40.311
+     - 00:36.974
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_rag.py` (``task_rag.py``)
-     - 00:31.967
+     - 00:32.233
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_routing.py` (``workflow_routing.py``)
+     - 00:31.722
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_agent.py` (``task_agent.py``)
-     - 00:22.831
+     - 00:20.613
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_pipeline.py` (``task_pipeline.py``)
-     - 00:14.608
+     - 00:16.274
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_model.py` (``task_model.py``)
-     - 00:13.504
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_task_eval.py` (``task_eval.py``)
-     - 00:12.846
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_workflow_handoffs.py` (``workflow_handoffs.py``)
-     - 00:09.739
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_quickstart_agent.py` (``quickstart_agent.py``)
-     - 00:07.688
+     - 00:11.638
      - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_conversation.py` (``workflow_conversation.py``)
-     - 00:07.358
+     - 00:10.041
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_eval.py` (``task_eval.py``)
+     - 00:09.750
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_handoffs.py` (``workflow_handoffs.py``)
+     - 00:08.878
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_mcp.py` (``task_mcp.py``)
-     - 00:06.852
+     - 00:08.508
      - 0.0
-   * - :ref:`sphx_glr_tutorial_task_state.py` (``task_state.py``)
-     - 00:05.057
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_task_tts.py` (``task_tts.py``)
-     - 00:04.512
+   * - :ref:`sphx_glr_tutorial_quickstart_agent.py` (``quickstart_agent.py``)
+     - 00:07.823
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_tuner.py` (``task_tuner.py``)
-     - 00:03.042
+     - 00:04.921
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_tts.py` (``task_tts.py``)
+     - 00:04.520
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_state.py` (``task_state.py``)
+     - 00:03.910
      - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_concurrent_agents.py` (``workflow_concurrent_agents.py``)
      - 00:03.005
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_embedding.py` (``task_embedding.py``)
-     - 00:02.275
+     - 00:02.739
      - 0.0
    * - :ref:`sphx_glr_tutorial_quickstart_installation.py` (``quickstart_installation.py``)
-     - 00:01.593
+     - 00:01.484
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_tool.py` (``task_tool.py``)
      - 00:01.021
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_token.py` (``task_token.py``)
-     - 00:00.999
+     - 00:00.838
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_a2a.py` (``task_a2a.py``)
-     - 00:00.658
+     - 00:00.571
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_eval_openjudge.py` (``task_eval_openjudge.py``)
-     - 00:00.274
+     - 00:00.278
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_memory.py` (``task_memory.py``)
-     - 00:00.098
+     - 00:00.091
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_plan.py` (``task_plan.py``)
      - 00:00.024
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_prompt.py` (``task_prompt.py``)
-     - 00:00.005
+     - 00:00.004
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_agent_skill.py` (``task_agent_skill.py``)
      - 00:00.004
@@ -117,7 +117,7 @@ Computation times
      - 00:00.002
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_realtime.py` (``task_realtime.py``)
-     - 00:00.001
+     - 00:00.002
      - 0.0
    * - :ref:`sphx_glr_tutorial_faq.py` (``faq.py``)
      - 00:00.000
