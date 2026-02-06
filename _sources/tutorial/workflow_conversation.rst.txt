@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. It's great to meet you! Could you tell me a little about yourself?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play basketball for my school team. Besides that, I enjoy learning about history. Nice to meet you too!
-    Charlie: Hi, I'm Charlie! I'm a student who's really passionate about music and art. I play the guitar and love to paint in my free time. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm into sports and history. It's great to meet you too!
+    Charlie: Hello Alice and Bob! I'm Charlie, and I'm really into music and art. It's awesome to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. It's great to meet you! Could you tell me a little about yourself?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play basketball for my school team. Besides that, I enjoy learning about history. Nice to meet you too!
-    Charlie: Hi, I'm Charlie! I'm a student who's really passionate about music and art. I play the guitar and love to paint in my free time. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm into sports and history. It's great to meet you too!
+    Charlie: Hello Alice and Bob! I'm Charlie, and I'm really into music and art. It's awesome to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 7.262 seconds)
+   **Total running time of the script:** (0 minutes 7.358 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

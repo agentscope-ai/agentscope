@@ -192,9 +192,19 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personal experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique local touch to your travels, allowing you to immerse yourself in the culture and daily life of the city. 
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who can provide insider tips about the city.
 
-    If you're planning another trip to Hangzhou, I can help you find some great homestay options or suggest areas that are known for their charming accommodations. Would you like recommendations on specific neighborhoods or tips for finding the perfect homestay?
+    If you're looking for recommendations or advice on finding great homestays in Hangzhou, I can help suggest some neighborhoods or platforms to explore. For instance:
+
+    1. **West Lake (Xihu) Area**: Staying near West Lake is perfect if you want to be close to Hangzhou's most famous attraction. Many homestays here offer beautiful views and easy access to walking paths around the lake.
+   
+    2. **Longjing Tea Village**: If you're a tea lover, this area is known for its dragon well tea plantations. Homestays here often provide a peaceful retreat surrounded by lush greenery.
+
+    3. **Hefang Street**: This historic street is full of traditional charm and vibrant markets. A homestay nearby would let you experience both modern and ancient sides of Hangzhou.
+
+    4. **Qiantang River Area**: For a more contemporary vibe, consider staying along the Qiantang River, where you'll find stylish homestays with great skyline views.
+
+    Would you like more detailed suggestions, such as specific homestay platforms or things to look out for when booking?
 
 
 
@@ -230,7 +240,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You prefer staying in homestays when traveling to Hangzhou.
+    Friday: You prefer staying in homestays when visiting Hangzhou.
 
 
 
@@ -532,7 +542,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 35.888 seconds)
+   **Total running time of the script:** (0 minutes 40.311 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
