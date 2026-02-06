@@ -60,7 +60,7 @@ AgentScope 需要 Python 3.10 或更高版本。您可以从源代码或 PyPI �
 
  .. code-block:: none
 
-    1.0.14
+    1.0.15dev
 
 
 
@@ -92,7 +92,7 @@ AgentScope 需要 Python 3.10 或更高版本。您可以从源代码或 PyPI �
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.628 seconds)
+   **Total running time of the script:** (0 minutes 1.473 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_installation.py:
