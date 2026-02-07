@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_2d7b3d09ff5e43ae863c4f",
+        "id": "call_db483362014b4b6e9c246a",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_ddc00552448e429ba76ffe",
+        "id": "call_300d461760524894938ba5",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,32 +363,30 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_2d7b3d09ff5e43ae863c4f",
+        "id": "call_db483362014b4b6e9c246a",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 05:20:20.028609 and ended at 05:20:23.031897. "
+                "text": "Tag tag1 started at 12:54:44.783973 and ended at 12:54:47.787232. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_ddc00552448e429ba76ffe",
+        "id": "call_300d461760524894938ba5",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 05:20:20.028702 and ended at 05:20:23.032549. "
+                "text": "Tag tag2 started at 12:54:44.784065 and ended at 12:54:47.787919. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called with both tags 'tag1' and 'tag2' and they have executed in parallel. Here are the results:
+    Jarvis: The 'example_tool_function' has been called with two different tags, 'tag1' and 'tag2', and they have executed in parallel.
 
-    - For 'tag1', the function started at 05:20:20.028609 and ended at 05:20:23.031897.
-    - For 'tag2', the function started at 05:20:20.028702 and ended at 05:20:23.032549.
-
-    Both instances of the function ran for approximately the same duration, indicating that they were processed concurrently.
+    For the tag1, the function started at 12:54:44.783973 and ended at 12:54:47.787232.
+    For the tag2, the function started at 12:54:44.784065 and ended at 12:54:47.787919.
 
 
 
@@ -467,11 +465,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_0d181cb9c9c94e25ae5459",
+        "id": "call_ae5bc58151f44a7aae0d2e",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
-            "description": "A renowned theoretical physicist, best known for developing the theory of relativity.",
+            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -479,11 +477,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned theoretical physicist, best known for developing the theory of relativity.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_0d181cb9c9c94e25ae5459",
+        "id": "call_ae5bc58151f44a7aae0d2e",
         "name": "generate_response",
         "output": [
             {
@@ -492,12 +490,14 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned theoretical physicist, celebrated for his groundbreaking contributions to the field of science, most notably the development of the theory of relativity. Born in 1879, Einstein's work revolutionized our understanding of fundamental aspects of the physical universe, including space, time, and gravity. He was awarded the Nobel Prize in Physics in 1921, primarily for his discovery of the law of the photoelectric effect, which was pivotal in establishing the field of quantum theory. Throughout his distinguished career, Einstein received numerous honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. His legacy as one of the greatest scientists in history continues to inspire and influence scientific thought and research. Einstein passed away at the age of 76, leaving behind an enduring impact on both science and culture.
+    Jarvis: Albert Einstein was a theoretical physicist who is best known for developing the theory of relativity, which is one of the two pillars of modern physics. Born in 1879 and passing away in 1955 at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. His work not only revolutionized the field of theoretical physics but also had profound implications for technology and philosophy.
+
+    Einstein received numerous accolades for his groundbreaking work, including the Nobel Prize in Physics in 1921, which he was awarded for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect. He was also honored with the Copley Medal in 1925 and the Max Planck Medal in 1929, among other distinctions. These honors reflect the immense impact of his scientific contributions and his status as one of the most influential scientists of the 20th century.
 
     The structured output:
     {
         "name": "Albert Einstein",
-        "description": "A renowned theoretical physicist, best known for developing the theory of relativity.",
+        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 20.613 seconds)
+   **Total running time of the script:** (0 minutes 30.563 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

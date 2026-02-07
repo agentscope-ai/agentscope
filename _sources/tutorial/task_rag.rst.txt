@@ -331,9 +331,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='3tyvDffXRicUgwzsTVFpgJ', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='LzvWoHw9tR6ZQunPtB6oi8', embedding=None, score=0.5657136536003619) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='jGAvwVhZjw67AM4ZXPQRzG', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='TneAYRtJtG6pChtfVUa48o', embedding=None, score=0.5062624400117309) 
 
 
 
@@ -455,13 +455,13 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great! It's wonderful to have a best friend. Is there anything specific you'd like to share or ask about John Doe or your friendship?
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any particular way I can help you with your friendship?
 
 
     The second response: 
     Friday: {
         "type": "tool_use",
-        "id": "call_6c6a96665c2a4784817a8d",
+        "id": "call_fd52094e3d204cc18ab2d0",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
@@ -472,7 +472,7 @@ and providing a proper description for the tool.
     }
     system: {
         "type": "tool_result",
-        "id": "call_6c6a96665c2a4784817a8d",
+        "id": "call_fd52094e3d204cc18ab2d0",
         "name": "retrieve_knowledge",
         "output": [
             {
@@ -497,7 +497,7 @@ and providing a proper description for the tool.
             }
         ]
     }
-    Friday: According to the information I found, John Doe's father is Michael Doe, who is a doctor. Would you like to know more about John or his family?
+    Friday: According to the information I found, John Doe's father is Michael Doe, who is a doctor. If you need more details or if there's anything else you're curious about, feel free to ask!
 
 
 
@@ -713,7 +713,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='AQAKPgtyapGDafy3NewtD8', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-02-06 05:22:30.582', invocation_id='None')
+    Msg(id='Mw5B2SNLxhZ8iPcqnYHZmf', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata=None, timestamp='2026-02-07 12:57:33.137', invocation_id='None')
 
 
 
@@ -726,7 +726,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 32.233 seconds)
+   **Total running time of the script:** (0 minutes 34.681 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:
