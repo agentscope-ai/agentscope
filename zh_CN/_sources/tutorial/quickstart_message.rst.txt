@@ -340,7 +340,7 @@ Message 类通过提供不同的 block 结构来支持多模态内容：
 
     <class 'dict'>
     {
-        "id": "Ydiv3v4gebwwEuTryKt8ui",
+        "id": "V96Tdf9YsP8ZvfSwf3pGUL",
         "name": "Jarvis",
         "role": "assistant",
         "content": [
@@ -374,7 +374,7 @@ Message 类通过提供不同的 block 结构来支持多模态内容：
             }
         ],
         "metadata": null,
-        "timestamp": "2026-02-06 05:26:22.024"
+        "timestamp": "2026-02-07 13:01:56.883"
     }
 
 
