@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_db483362014b4b6e9c246a",
+        "id": "call_78d7117f15df4e1c91e017",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_300d461760524894938ba5",
+        "id": "call_f31537e0819c4fabb1450f",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,30 +363,30 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_db483362014b4b6e9c246a",
+        "id": "call_78d7117f15df4e1c91e017",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 12:54:44.783973 and ended at 12:54:47.787232. "
+                "text": "Tag tag1 started at 14:15:31.028713 and ended at 14:15:34.029123. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_300d461760524894938ba5",
+        "id": "call_f31537e0819c4fabb1450f",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 12:54:44.784065 and ended at 12:54:47.787919. "
+                "text": "Tag tag2 started at 14:15:31.028805 and ended at 14:15:34.029798. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called with two different tags, 'tag1' and 'tag2', and they have executed in parallel.
+    Jarvis: The 'example_tool_function' has been called with two tags 'tag1' and 'tag2' in parallel. Here are the results:
 
-    For the tag1, the function started at 12:54:44.783973 and ended at 12:54:47.787232.
-    For the tag2, the function started at 12:54:44.784065 and ended at 12:54:47.787919.
+    - For tag1, the function started at 14:15:31.028713 and ended at 14:15:34.029123.
+    - For tag2, the function started at 14:15:31.028805 and ended at 14:15:34.029798.
 
 
 
@@ -465,11 +465,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_ae5bc58151f44a7aae0d2e",
+        "id": "call_0ae8b6c5bb9e4d92993cb4",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
-            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
+            "description": "A renowned physicist who developed the theory of relativity",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -477,11 +477,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_ae5bc58151f44a7aae0d2e",
+        "id": "call_0ae8b6c5bb9e4d92993cb4",
         "name": "generate_response",
         "output": [
             {
@@ -490,14 +490,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a theoretical physicist who is best known for developing the theory of relativity, which is one of the two pillars of modern physics. Born in 1879 and passing away in 1955 at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. His work not only revolutionized the field of theoretical physics but also had profound implications for technology and philosophy.
-
-    Einstein received numerous accolades for his groundbreaking work, including the Nobel Prize in Physics in 1921, which he was awarded for his services to theoretical physics, and especially for his discovery of the law of the photoelectric effect. He was also honored with the Copley Medal in 1925 and the Max Planck Medal in 1929, among other distinctions. These honors reflect the immense impact of his scientific contributions and his status as one of the most influential scientists of the 20th century.
+    Jarvis: Allow me to introduce Albert Einstein, a renowned physicist best known for developing the theory of relativity. Born in 1879, Einstein's work revolutionized our understanding of fundamental aspects of the physical universe. He was awarded the Nobel Prize in Physics in 1921, primarily for his explanation of the photoelectric effect, and went on to receive further accolades including the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that continues to influence physics and our broader scientific understanding.
 
     The structured output:
     {
         "name": "Albert Einstein",
-        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
+        "description": "A renowned physicist who developed the theory of relativity",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +579,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 30.563 seconds)
+   **Total running time of the script:** (0 minutes 24.583 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

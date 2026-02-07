@@ -116,14 +116,14 @@ Initialize a routing agent
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "your_choice": "Content Generation",
-            "task_description": "Write a poem as per the user's request."
+            "task_description": "Help me to write a poem",
+            "your_choice": "Content Generation"
         },
-        "id": "call_43d0b157140243349b3175"
+        "id": "call_dfb1fee7655c4b7f9e3fba"
     }
     system: {
         "type": "tool_result",
-        "id": "call_43d0b157140243349b3175",
+        "id": "call_dfb1fee7655c4b7f9e3fba",
         "name": "generate_response",
         "output": [
             {
@@ -132,11 +132,11 @@ Initialize a routing agent
             }
         ]
     }
-    Router: I've routed your request to our creative team who will help you write a beautiful poem. Could you please share with me any specific themes, styles, or emotions you would like the poem to convey? This will help in crafting a piece that resonates with your vision.
+    Router: Sure, I can help with that! To get started, could you share a bit more about what you'd like the poem to be about? For example, do you have a specific theme, mood, or style in mind? Any particular length or form, like a sonnet or haiku? The more details you provide, the better I can tailor the poem to your liking.
     The structured output:
     {
         "your_choice": "Content Generation",
-        "task_description": "Write a poem as per the user's request."
+        "task_description": "Help me to write a poem"
     }
 
 
@@ -269,7 +269,7 @@ After that, we define a routing agent and equip it with the above tool functions
         "input": {
             "demand": "a quick sort function"
         },
-        "id": "call_938e63da7dca46f693a081"
+        "id": "call_ca23870df6a845458cbf17"
     }
     PythonAgent: Certainly! Below is a Python implementation of the Quick Sort algorithm. This implementation uses the Lomuto partition scheme, which is simpler to understand and implement compared to the Hoare partition scheme.
 
@@ -302,26 +302,28 @@ After that, we define a routing agent and equip it with the above tool functions
 
     ### Explanation:
     1. **partition(low, high)**: This function takes the last element as the pivot, places the pivot element at its correct position in the sorted array, and places all smaller elements to the left of the pivot and all greater elements to the right.
-    2. **quick_sort_recursive(low, high)**: This function recursively sorts the elements before and after the partition index.
+    2. **quick_sort_recursive(low, high)**: This function recursively sorts the elements before and after the partition.
     3. **quick_sort(arr)**: This is the main function that initializes the recursive sorting process.
 
-    ### Example Usage:
-    - The example usage demonstrates how to sort an array using the `quick_sort` function.
-    - The sorted array is then printed.
+    ### Example Output:
+    For the input array `[10, 7, 8, 9, 1, 5]`, the output will be:
+    ```
+    Sorted array: [1, 5, 7, 8, 9, 10]
+    ```
 
-    You can test this code with different arrays to see how it works.
+    This implementation is in-place and has an average time complexity of \(O(n \log n)\). The worst-case time complexity is \(O(n^2)\), but this can be mitigated by choosing a good pivot (e.g., using the median-of-three method).
     system: {
         "type": "tool_result",
-        "id": "call_938e63da7dca46f693a081",
+        "id": "call_ca23870df6a845458cbf17",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "Certainly! Below is a Python implementation of the Quick Sort algorithm. This implementation uses the Lomuto partition scheme, which is simpler to understand and implement compared to the Hoare partition scheme.\n\n```python\ndef quick_sort(arr):\n    def partition(low, high):\n        pivot = arr[high]\n        i = low - 1\n        for j in range(low, high):\n            if arr[j] <= pivot:\n                i += 1\n                arr[i], arr[j] = arr[j], arr[i]\n        arr[i + 1], arr[high] = arr[high], arr[i + 1]\n        return i + 1\n\n    def quick_sort_recursive(low, high):\n        if low < high:\n            pi = partition(low, high)\n            quick_sort_recursive(low, pi - 1)\n            quick_sort_recursive(pi + 1, high)\n\n    quick_sort_recursive(0, len(arr) - 1)\n    return arr\n\n# Example usage:\narr = [10, 7, 8, 9, 1, 5]\nsorted_arr = quick_sort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n### Explanation:\n1. **partition(low, high)**: This function takes the last element as the pivot, places the pivot element at its correct position in the sorted array, and places all smaller elements to the left of the pivot and all greater elements to the right.\n2. **quick_sort_recursive(low, high)**: This function recursively sorts the elements before and after the partition index.\n3. **quick_sort(arr)**: This is the main function that initializes the recursive sorting process.\n\n### Example Usage:\n- The example usage demonstrates how to sort an array using the `quick_sort` function.\n- The sorted array is then printed.\n\nYou can test this code with different arrays to see how it works."
+                "text": "Certainly! Below is a Python implementation of the Quick Sort algorithm. This implementation uses the Lomuto partition scheme, which is simpler to understand and implement compared to the Hoare partition scheme.\n\n```python\ndef quick_sort(arr):\n    def partition(low, high):\n        pivot = arr[high]\n        i = low - 1\n        for j in range(low, high):\n            if arr[j] <= pivot:\n                i += 1\n                arr[i], arr[j] = arr[j], arr[i]\n        arr[i + 1], arr[high] = arr[high], arr[i + 1]\n        return i + 1\n\n    def quick_sort_recursive(low, high):\n        if low < high:\n            pi = partition(low, high)\n            quick_sort_recursive(low, pi - 1)\n            quick_sort_recursive(pi + 1, high)\n\n    quick_sort_recursive(0, len(arr) - 1)\n    return arr\n\n# Example usage:\narr = [10, 7, 8, 9, 1, 5]\nsorted_arr = quick_sort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n### Explanation:\n1. **partition(low, high)**: This function takes the last element as the pivot, places the pivot element at its correct position in the sorted array, and places all smaller elements to the left of the pivot and all greater elements to the right.\n2. **quick_sort_recursive(low, high)**: This function recursively sorts the elements before and after the partition.\n3. **quick_sort(arr)**: This is the main function that initializes the recursive sorting process.\n\n### Example Output:\nFor the input array `[10, 7, 8, 9, 1, 5]`, the output will be:\n```\nSorted array: [1, 5, 7, 8, 9, 10]\n```\n\nThis implementation is in-place and has an average time complexity of \\(O(n \\log n)\\). The worst-case time complexity is \\(O(n^2)\\), but this can be mitigated by choosing a good pivot (e.g., using the median-of-three method)."
             }
         ]
     }
-    Router: The Python code for a quick sort function has been generated. Below is the implementation using the Lomuto partition scheme:
+    Router: The Python code for a quick sort function has been generated. Here's the implementation:
 
     ```python
     def quick_sort(arr):
@@ -350,7 +352,18 @@ After that, we define a routing agent and equip it with the above tool functions
     print("Sorted array:", sorted_arr)
     ```
 
-    You can use this `quick_sort` function to sort any list of numbers. The example provided sorts the array `[10, 7, 8, 9, 1, 5]` and prints the sorted result. Feel free to test it with other arrays as well.
+    ### Explanation:
+    - **partition(low, high)**: This function takes the last element as the pivot, places the pivot element at its correct position in the sorted array, and places all smaller elements to the left of the pivot and all greater elements to the right.
+    - **quick_sort_recursive(low, high)**: This function recursively sorts the elements before and after the partition.
+    - **quick_sort(arr)**: This is the main function that initializes the recursive sorting process.
+
+    ### Example Output:
+    For the input array `[10, 7, 8, 9, 1, 5]`, the output will be:
+    ```
+    Sorted array: [1, 5, 7, 8, 9, 10]
+    ```
+
+    This implementation is in-place and has an average time complexity of \(O(n \log n)\). The worst-case time complexity is \(O(n^2)\), but this can be mitigated by choosing a good pivot (e.g., using the median-of-three method).
 
 
 
@@ -358,7 +371,7 @@ After that, we define a routing agent and equip it with the above tool functions
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 49.568 seconds)
+   **Total running time of the script:** (0 minutes 48.322 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:

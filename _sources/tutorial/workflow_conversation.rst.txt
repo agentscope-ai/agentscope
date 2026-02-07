@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to solve some of our biggest environmental challenges. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and fitness, and I'm always looking for ways to stay active and healthy. It's great to meet someone who's passionate about using technology for good!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a deep interest in literature and history, and I enjoy learning about different cultures and their stories. It's really cool to meet both of you with such diverse interests!
+    Alice: Hi there! I'm Alice, a student interested in technology and how it can be used to make our lives better. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play basketball for my school team. It's great to meet someone who's passionate about tech! How do you think technology can improve sports?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love reading and writing, and I'm always curious about how stories can influence and shape our world. It's cool to see different interests here! Alice, your interest in technology sounds fascinating. And Bob, I bet there are some amazing stories behind your basketball games!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to solve some of our biggest environmental challenges. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and fitness, and I'm always looking for ways to stay active and healthy. It's great to meet someone who's passionate about using technology for good!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a deep interest in literature and history, and I enjoy learning about different cultures and their stories. It's really cool to meet both of you with such diverse interests!
+    Alice: Hi there! I'm Alice, a student interested in technology and how it can be used to make our lives better. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and I play basketball for my school team. It's great to meet someone who's passionate about tech! How do you think technology can improve sports?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love reading and writing, and I'm always curious about how stories can influence and shape our world. It's cool to see different interests here! Alice, your interest in technology sounds fascinating. And Bob, I bet there are some amazing stories behind your basketball games!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.716 seconds)
+   **Total running time of the script:** (0 minutes 14.459 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
