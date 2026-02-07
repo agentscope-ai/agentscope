@@ -76,3 +76,9 @@ You are an expert coding agent. IMPORTANT RULE - CONTEXT MANAGEMENT:
 - 未经 `docs/**/SOP.md` 与 `todo.md` 明确列项，禁止向核心接口追加/更改任何入参或行为（包括“可选”参数）。若确有需要，先更新文档与证明链，再改代码。
 - 每次提交前核对“规范→不变量→测试→代码”链条；任何脱离文档的“临时便利”都会被视为噪声并拒绝合入。
 
+
+## Active Technologies
+- Python 3.10 (per `setup.py` python_requires) + Managed in `setup.py` (install_requires + extras) (002-version-deps-sync)
+
+## Recent Changes
+- 002-version-deps-sync: Added Python 3.10 (per `setup.py` python_requires) + Managed in `setup.py` (install_requires + extras)

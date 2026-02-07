@@ -26,9 +26,10 @@ minimal_requires = [
     "numpy",
     "openai",
     "python-datauri",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-exporter-otlp",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
     "shortuuid",
     "tiktoken",
@@ -45,7 +46,7 @@ extra_requires = [
     # Evaluator
     "ray",
     # Long-term memory
-    "mem0ai",
+    "mem0ai<=0.1.116",
     "packaging",
     # RAG
     "pypdf",
