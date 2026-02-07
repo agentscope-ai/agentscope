@@ -332,11 +332,11 @@ as well.
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_3273d8e53a7a45b983c786"
+        "id": "call_82381ef1d9f54753aad27e"
     }
     system: {
         "type": "tool_result",
-        "id": "call_3273d8e53a7a45b983c786",
+        "id": "call_82381ef1d9f54753aad27e",
         "name": "generate_response",
         "output": [
             {
@@ -352,13 +352,13 @@ as well.
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "answer_as_number": 73051
+            "answer_as_number": 73331
         },
-        "id": "call_0799bae528e14219a91182"
+        "id": "call_ef745168144d4a83b79676"
     }
     system: {
         "type": "tool_result",
-        "id": "call_0799bae528e14219a91182",
+        "id": "call_ef745168144d4a83b79676",
         "name": "generate_response",
         "output": [
             {
@@ -367,7 +367,7 @@ as well.
             }
         ]
     }
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 73051.
+    Friday: The sum of 12345, 54321, 6789, and 9876 is 73331.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -386,7 +386,7 @@ as well.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.934 seconds)
+   **Total running time of the script:** (0 minutes 8.563 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:

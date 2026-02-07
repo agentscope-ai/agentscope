@@ -350,7 +350,7 @@ Taking the ``maps_geo`` function as an example, you can obtain it as a callable 
     }
 
     Function call result:
-    ToolResponse(content=[{'type': 'text', 'text': '{"results":[{"country":"中国","province":"北京市","city":"北京市","citycode":"010","district":"东城区","street":[],"number":[],"adcode":"110101","location":"116.397463,39.909187","level":"兴趣点"}]}'}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-02-07 14:14:32.690_d227ed')
+    ToolResponse(content=[{'type': 'text', 'text': '{"results":[{"country":"中国","province":"北京市","city":"北京市","citycode":"010","district":"东城区","street":[],"number":[],"adcode":"110101","location":"116.397463,39.909187","level":"兴趣点"}]}'}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-02-07 14:16:10.733_3ebde4')
 
 
 
@@ -369,7 +369,7 @@ For more details, see:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.374 seconds)
+   **Total running time of the script:** (0 minutes 7.820 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_mcp.py:
