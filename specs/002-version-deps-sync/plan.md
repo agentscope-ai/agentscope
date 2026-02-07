@@ -14,14 +14,14 @@ lists. No interface, schema, or tool-contract changes are introduced.
 
 ## Technical Context
 
-**Language/Version**: Python 3.10 (per `setup.py` python_requires)  
-**Primary Dependencies**: Managed in `setup.py` (install_requires + extras)  
-**Storage**: N/A  
-**Testing**: pytest + ruff + pylint (per CI/pre-commit)  
-**Target Platform**: Cross-platform Python package  
-**Project Type**: Single package under `src/agentscope/`  
-**Performance Goals**: N/A  
-**Constraints**: Maintain easy-only features; no schema or API changes  
+**Language/Version**: Python 3.10 (per `setup.py` python_requires)
+**Primary Dependencies**: Managed in `setup.py` (install_requires + extras)
+**Storage**: N/A
+**Testing**: pytest + ruff + pylint (per CI/pre-commit)
+**Target Platform**: Cross-platform Python package
+**Project Type**: Single package under `src/agentscope/`
+**Performance Goals**: N/A
+**Constraints**: Maintain easy-only features; no schema or API changes
 **Scale/Scope**: Small surface area change (version + dependency bounds)
 
 ## Constitution Check
