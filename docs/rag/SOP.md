@@ -45,7 +45,8 @@ graph TD
 - **Document/DocMetadata**：标准化文档块，包含 `content`（Text/Image/Video block）、`doc_id`、`chunk_id`、`total_chunks`、可选 `embedding` 与 `score`。
 - **ReaderBase 及实现**：
   - `TextReader`：读取纯文本/Markdown，按行或规则切分为 `Document`。
-  - `PDFReader`：调用 `pypdf` 抽取文本，支持分页切分。
+  - `PDFReader`：调用 `pypdf` 抽取文本，支持分页切分；为降低跨版本抽取差异，使用显式抽取参数
+    以避免单词内插入空格等问题。
   - `ImageReader`：用于 OCR 或图像嵌入前的包装（输出 `ImageBlock`）。
   - `WordReader`：读取 `.docx` 文档（文本/表格/可选图片），输出 `Document`；默认 `include_image=False`，启用后会产生 `ImageBlock(Base64Source)` 并要求下游多模态 embedding。
 - **VDBStoreBase / QdrantStore / MilvusLiteStore**：定义 `add_documents`、`retrieve` 等向量库接口；`QdrantStore` 调用 Qdrant 客户端写入/查询；`MilvusLiteStore` 通过 `pymilvus`（MilvusClient）连接 Milvus Lite/Server。
