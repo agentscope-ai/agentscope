@@ -70,7 +70,19 @@ class PDFReader(ReaderBase):
 
         gather_texts = []
         for page in reader.pages:
-            gather_texts.append(page.extract_text())
+            # NOTE: pypdf's text extraction defaults can change across
+            # versions, and some versions may insert intra-word spaces (e.g.
+            # "m arked"). We pass explicit extraction params for stability.
+            try:
+                text = page.extract_text(
+                    extraction_mode="plain",
+                    space_width=250.0,
+                )
+            except TypeError:
+                # Backward compatibility for older pypdf versions.
+                text = page.extract_text()
+
+            gather_texts.append(text or "")
 
         doc_id = hashlib.sha256(pdf_path.encode("utf-8")).hexdigest()
 
