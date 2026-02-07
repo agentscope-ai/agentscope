@@ -1,31 +1,49 @@
 # -*- coding: utf-8 -*-
-"""The agentscope serialization module"""
+"""AgentScope-easy top-level package.
+
+Keep import-time side effects minimal. Optional and heavy dependencies are
+loaded lazily on demand.
+"""
+from __future__ import annotations
+
+import importlib
 import os
+from typing import Any
 
-import requests
-
-from . import exception
-from . import module
-from . import message
-from . import model
-from . import tool
-from . import formatter
-from . import memory
-from . import agent
-from . import session
-from . import embedding
-from . import token
-from . import evaluate
-from . import pipeline
-from . import tracing
-from . import rag
-
-from ._logging import (
-    logger,
-    setup_logger,
-)
-from .hooks import _equip_as_studio_hooks
+from ._logging import logger, setup_logger
 from ._version import __version__
+
+
+_LAZY_SUBMODULES: set[str] = {
+    "exception",
+    "module",
+    "message",
+    "model",
+    "tool",
+    "formatter",
+    "memory",
+    "agent",
+    "session",
+    "embedding",
+    "token",
+    "evaluate",
+    "pipeline",
+    "tracing",
+    "rag",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily import submodules to avoid import-time side effects."""
+    if name in _LAZY_SUBMODULES:
+        module = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(list(globals().keys()) + list(_LAZY_SUBMODULES)))
 
 
 def init(
@@ -68,6 +86,17 @@ def init(
     setup_logger(logging_level, logging_path)
 
     if studio_url:
+        try:
+            import requests  # type: ignore
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                "Optional dependency 'requests' is required when 'studio_url' "
+                "is set. Install it via `pip install requests`.",
+            ) from exc
+
+        from .agent import UserAgent, StudioUserInput
+        from .hooks import _equip_as_studio_hooks
+
         # Register the run
         data = {
             "id": _config.run_id,
@@ -84,8 +113,6 @@ def init(
             json=data,
         )
         response.raise_for_status()
-
-        from .agent import UserAgent, StudioUserInput
 
         UserAgent.override_class_input_method(
             StudioUserInput(
