@@ -71,4 +71,3 @@ raise SystemExit(1)
     res = _run_python(code)
     assert res.returncode == 0, f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     assert "pip install requests" in res.stdout
-
