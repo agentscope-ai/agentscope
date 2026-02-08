@@ -11,10 +11,10 @@ features (SubAgent/Filesystem/Search/Web + SOP/spec governance).
 
 ## Technical Context
 
-**Language/Version**: Python 3.10+ (repo supports 3.10+)  
-**Primary Dependencies**: Packaging via `setup.py`; runtime deps via pip  
-**Testing**: pytest + pre-commit + ruff + pylint  
-**Target Platform**: Ubuntu CI + Windows + macOS matrices  
+**Language/Version**: Python 3.10+ (repo supports 3.10+)
+**Primary Dependencies**: Packaging via `setup.py`; runtime deps via pip
+**Testing**: pytest + pre-commit + ruff + pylint
+**Target Platform**: Ubuntu CI + Windows + macOS matrices
 **Project Type**: Single package (`src/agentscope`, `tests/`)
 
 ## Scope
