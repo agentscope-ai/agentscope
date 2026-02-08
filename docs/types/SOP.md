@@ -21,7 +21,7 @@ graph TD
 - `_tool.py`：定义 `ToolFunction` 联合类型，兼容同步函数、异步函数、同步/异步生成器以及返回生成器的协程。
 - `_hook.py`：声明 `AgentHookTypes`、`ReActAgentHookTypes`，列出允许注册的 Hook 名称。
 - `_object.py`：定义 `Embedding = list[float]` 等基础别名。
-- `__init__.py` 导出上述类型供其他模块引用；`CLAUDE.md` 记录调用链及使用场景。
+- `__init__.py` 导出上述类型供其他模块引用；引用关系与使用场景由本 SOP 说明。
 
 ### 4. 关键设计模式
 - **集中式类型定义**：通过单一模块暴露共享类型，避免在各模块重复声明。
@@ -39,7 +39,6 @@ graph TD
 - `src/agentscope/types/_hook.py`：`AgentHookTypes`、`ReActAgentHookTypes`。
 - `src/agentscope/types/_object.py`：`Embedding`。
 - `src/agentscope/types/__init__.py`：聚合导出。
-- `src/agentscope/types/CLAUDE.md`：记录引用关系。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `JSONSerializableObject`：递归定义的可 JSON 序列化结构，可用于 `register_state`、工具参数、配置等。

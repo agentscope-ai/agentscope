@@ -91,3 +91,26 @@ repos:
     hooks:
       - id: pyroma
         args: [--min=10, .]
+  - repo: local
+    hooks:
+      - id: forbid-claude-docs
+        name: forbid CLAUDE docs
+        language: system
+        pass_filenames: false
+        entry: bash
+        args:
+          - -c
+          - |
+            set -euo pipefail
+
+            if git ls-files | grep -E '(^|/)CLAUDE\.md$' >/dev/null; then
+              echo 'ERROR: CLAUDE docs are not allowed in this repo.'
+              git ls-files | grep -E '(^|/)CLAUDE\.md$'
+              exit 1
+            fi
+
+            if git grep -n 'CLAUDE\.md' -- docs AGENTS.md .specify src >/dev/null; then
+              echo 'ERROR: CLAUDE docs must not be referenced from docs/ or workflows.'
+              git grep -n 'CLAUDE\.md' -- docs AGENTS.md .specify src
+              exit 1
+            fi

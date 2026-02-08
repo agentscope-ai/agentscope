@@ -72,8 +72,6 @@ graph TD
   - `ChatResponse`/`ChatUsage` 数据结构（见上）。
 - `src/agentscope/model/__init__.py`
   - 导出所有模型类与响应数据结构。
-- `src/agentscope/model/CLAUDE.md`
-  - 记录各模型调用链，需要与本 SOP 同步维护。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `ChatModelBase.__call__(messages: list[dict], tools: list[dict] | None = None, tool_choice: str | None = None, structured_model: Type[BaseModel] | None = None, **kwargs) -> ChatResponse | AsyncGenerator[ChatResponse, None]`

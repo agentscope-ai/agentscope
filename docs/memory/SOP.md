@@ -60,8 +60,6 @@ graph TD
   - 提供 `AgentScopeLLM`、`AgentScopeEmbedding`，作为 mem0 provider 的适配器。
 - `src/agentscope/memory/__init__.py`
   - 导出 `InMemoryMemory`、`Mem0LongTermMemory`、基类等。
-- `src/agentscope/memory/CLAUDE.md`
-  - 记录调用链，文档更新需同步。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `MemoryBase` 抽象方法

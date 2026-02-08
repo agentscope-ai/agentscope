@@ -11,7 +11,8 @@ You are an expert coding agent. IMPORTANT RULE - CONTEXT MANAGEMENT:
 
 - 全局总纲：请阅读 `docs/SOP.md`。
 - 模块级规范：见 `docs/<module>/SOP.md`。
-- 程序记忆：参考 `CLAUDE.md`。
+- 程序记忆：以各模块 `docs/<module>/SOP.md` 的“文件映射/调用链”章节为准（不维护额外的“程序记忆”文档体系）。
+- 变更河流：`specs/###-*/{spec,plan,tasks}.md` 用于迭代开发与验收，不作为规范源。
 
 本文件仅作跳转，不再重复阐述具体规范。
 

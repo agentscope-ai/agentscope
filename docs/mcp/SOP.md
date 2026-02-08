@@ -64,8 +64,6 @@ graph TD
   - `MCPToolFunction`：包装远端工具调用；支持 `wrap_tool_result` 开关。
 - `src/agentscope/mcp/__init__.py`
   - 导出客户端类与 `MCPToolFunction`。
-- `src/agentscope/mcp/CLAUDE.md`
-  - 记录常见注册流程与注意事项。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `MCPClientBase.get_callable_function(func_name: str, wrap_tool_result: bool = True) -> Callable[..., Awaitable[ToolResponse | mcp.types.CallToolResult]]`

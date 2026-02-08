@@ -75,8 +75,6 @@ graph TD
   - DeepSeek 模型专用格式。
 - `src/agentscope/formatter/__init__.py`
   - 导出所有 Formatter 类。
-- `src/agentscope/formatter/CLAUDE.md`
-  - 记录调用链、token 截断逻辑；更新时同步维护。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `FormatterBase.format(msgs: list[Msg], tools: list[dict[str, Any]] | None = None, **kwargs) -> list[dict[str, Any]] | dict`

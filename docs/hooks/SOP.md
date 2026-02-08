@@ -31,8 +31,6 @@ graph TD
   - `as_studio_forward_message_pre_print_hook`：核心转发逻辑。
 - `src/agentscope/hooks/__init__.py`
   - `_equip_as_studio_hooks(studio_url: str)`：注册 Hook；导出 `as_studio_forward_message_pre_print_hook`。
-- `src/agentscope/hooks/CLAUDE.md`
-  - 记录 Hook 调用链与扩展指南。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - Hook 签名遵循 Agent 约定：`hook(self, kwargs: dict, **extra)`；`kwargs["msg"]` 为当前输出消息。
@@ -43,7 +41,7 @@ graph TD
 - 如需扩展其他 Hook（例如日志、监控），可参考该模块实现并使用 `register_class_hook`/`register_instance_hook`。
 
 ## 五、变更流程（与 AGENTS.md 对齐）
-- **文档先行**：新增 Hook 或调整现有 Hook 行为时，更新本 SOP 与 `src/agentscope/hooks/CLAUDE.md`，在 PR 描述中说明触发时机与副作用。
+- **文档先行**：新增 Hook 或调整现有 Hook 行为时，更新本 SOP，并在 PR 描述中说明触发时机与副作用。
 - **todo 规划**：在 `todo.md` 中列出验证项，例如：
   1. 注册 Hook 并触发一次 `print`，确认 Studio 接收到消息。
   2. 模拟网络失败，验证重试策略和异常路径。

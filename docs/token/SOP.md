@@ -46,8 +46,6 @@ graph TD
   - `HuggingFaceTokenCounter`：兼容 Transformers 模型。
 - `src/agentscope/token/__init__.py`
   - 导出所有计数器。
-- `src/agentscope/token/CLAUDE.md`
-  - 记录计数规则来源与注意事项。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `TokenCounterBase.count(messages: list[dict], **kwargs) -> int`

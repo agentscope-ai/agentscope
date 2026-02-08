@@ -118,10 +118,6 @@ SubAgent（子 Agent）相关内容已迁移至独立文档：`docs/agent/subage
 
 - 导出 `AgentBase`、`ReActAgent`、`UserAgent`、`StudioUserInput`。
 
-#### `src/agentscope/agent/CLAUDE.md`
-
-- 记录调用链、Hook 入口，文档更新时需同步。
-
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 
 - `AgentBase`

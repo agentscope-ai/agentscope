@@ -117,8 +117,6 @@ graph TD
   - `InMemoryPlanStorage`：`OrderedDict` 持久化，`add_plan(..., override=True)` 控制覆盖。
 - `src/agentscope/plan/__init__.py`
   - 暴露 `PlanNotebook`、`Plan`、`SubTask`、`PlanStorageBase` 等公共符号。
-- `src/agentscope/plan/CLAUDE.md`
-  - 记录调用链与关键函数引用，文档更新时需同步。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `SubTask` (Pydantic BaseModel)

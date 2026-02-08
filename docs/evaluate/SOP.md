@@ -84,8 +84,6 @@ graph TD
   - 示例基准实现（ACE Benchmark）。
 - `src/agentscope/evaluate/__init__.py`
   - 导出 Task、SolutionOutput、Evaluator、Metric、Benchmark 等。
-- `src/agentscope/evaluate/CLAUDE.md`
-  - 记录典型调用链。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `Task`
