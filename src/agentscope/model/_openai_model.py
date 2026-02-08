@@ -285,7 +285,7 @@ class OpenAIChatModel(ChatModelBase):
                 thinking += (
                     getattr(choice.delta, "reasoning_content", None) or ""
                 )
-                text += choice.delta.content or ""
+                text += getattr(choice.delta, "content", None) or ""
 
                 if (
                     hasattr(choice.delta, "audio")

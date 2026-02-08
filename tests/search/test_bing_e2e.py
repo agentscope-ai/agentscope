@@ -22,6 +22,10 @@ def test_bing_mobile_search_e2e_returns_results() -> None:
         text = "\n".join(
             b.get("text", "") for b in res.content if b.get("type") == "text"
         )
+        if "Executable doesn't exist" in text or "playwright install" in text:
+            pytest.skip(
+                "Playwright browsers not installed; run `playwright install`",
+            )
         # Print raw text so the caller sees real results
         print("=== E2E Bing Results (who is speed) ===")
         print(text)

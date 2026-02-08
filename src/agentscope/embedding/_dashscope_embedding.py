@@ -146,7 +146,7 @@ class DashScopeTextEmbedding(EmbeddingModelBase):
             batch_kwargs = {
                 "input": batch_texts,
                 "model": self.model_name,
-                "dimensions": self.dimensions,
+                "dimension": self.dimensions,
                 **kwargs,
             }
 
