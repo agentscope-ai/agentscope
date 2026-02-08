@@ -554,7 +554,7 @@ class ReActAgent(ReActAgentBase):
         prompt = await self.formatter.format(
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
-                *await self.memory.get_memory(),
+                *await self.memory.get_memory(exclude_mark=_MemoryMark.COMPRESSED),
             ],
         )
         # Clear the hint messages after use
