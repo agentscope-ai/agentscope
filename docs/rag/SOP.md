@@ -83,8 +83,6 @@ graph TD
   - `SimpleKnowledgeBase`：轻量内存实现（如适用）。
 - `src/agentscope/rag/__init__.py`
   - 导出 Reader/Store/KnowledgeBase；
-- `src/agentscope/rag/CLAUDE.md`
-  - 记录调用链、常用组合；更新 SOP 时需同步。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `Document`

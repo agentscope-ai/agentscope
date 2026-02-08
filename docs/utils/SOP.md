@@ -51,8 +51,6 @@ graph TD
   - `DictMixin`：属性访问代理。
 - `src/agentscope/_utils/__init__.py`
   - 暴露公共函数；
-- `src/agentscope/_utils/CLAUDE.md`
-  - 记录函数调用链及引用模块。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `_json_loads_with_repair(json_str: str) -> dict | list | JSONPrimitive`。

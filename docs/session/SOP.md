@@ -47,8 +47,6 @@ graph TD
   - `JSONSession`：默认实现；构造参数 `save_dir`；方法 `_get_save_path`、`save_session_state`、`load_session_state`；使用 `logger` 输出提示。
 - `src/agentscope/session/__init__.py`
   - 导出 `SessionBase`、`JSONSession`。
-- `src/agentscope/session/CLAUDE.md`
-  - 记录使用示例与调用链。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `JSONSession(save_dir: str = "./")`

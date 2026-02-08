@@ -69,8 +69,6 @@ graph TD
   - `SpanKind`、`SpanAttributes`：枚举与常量，统一 span 字段命名。
 - `src/agentscope/tracing/__init__.py`
   - 导出装饰器与 `setup_tracing`。
-- `src/agentscope/tracing/CLAUDE.md`
-  - 调用链与属性示例。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `setup_tracing(endpoint: str, service_name: str | None = None, headers: dict | None = None, **kwargs) -> None`

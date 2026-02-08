@@ -40,8 +40,6 @@ graph TD
   - `ToolNotFoundError`、`ToolInterruptedError`、`ToolInvalidArgumentsError`。
 - `src/agentscope/exception/__init__.py`
   - 导出上述异常。
-- `src/agentscope/exception/CLAUDE.md`
-  - 记录异常与调用链。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `AgentOrientedExceptionBase(message: str)`

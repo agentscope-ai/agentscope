@@ -69,8 +69,6 @@ graph TD
   - 示例工具集合，可参考其注册方式。
 - `src/agentscope/tool/__init__.py`
   - 导出 `Toolkit`、常用工具函数、`execute_python_code` 等。
-- `src/agentscope/tool/CLAUDE.md`
-  - 调用链与注册示例，需要与本 SOP 同步。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `Toolkit.register_tool_function(`

@@ -57,8 +57,6 @@ graph TD
   - `FanoutPipeline`：封装 Agent 列表与默认 `enable_gather`，`__call__` 调用 `fanout_pipeline`。
 - `src/agentscope/pipeline/__init__.py`
   - 导出函数式与类式接口。
-- `src/agentscope/pipeline/CLAUDE.md`
-  - 记录使用范式、注意事项。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `sequential_pipeline`
@@ -83,11 +81,11 @@ graph TD
 - **责任边界**：管线不管理 Agent 生命周期也不更改消息；上层应在执行前准备好 Agent、在执行后关闭资源。
 
 ## 五、变更流程（与 AGENTS.md 对齐）
-- **文档先行**：新增管线原语或调整并发策略前，先更新本 SOP 与 `src/agentscope/pipeline/CLAUDE.md`；PR 说明调度策略、异常传播和兼容性。
+- **文档先行**：新增管线原语或调整并发策略前，先更新本 SOP；PR 说明调度策略、异常传播和兼容性。
 - **todo 规划**：在 `todo.md` 列出验证项，例如：
   1. 含多个 Agent 的顺序与扇出编排示例（成功/失败/取消）。
   2. `enable_gather` 对异常传播的影响。
   3. `stream_printing_messages` 在多 Agent 输出下的行为（包含 `[END]` 信号）。
 - **验收要求**：通过 `tests/pipeline_test.py`，并执行 `pytest`、`ruff check src`。如增加新原语，需补充测试与示例。
 - **回滚预案**：若调整执行策略（例如 gather 行为），需提供回滚方式或兼容开关，并在 PR 记录。
-- **知识同步**：更新示例脚本、教程以及 `CLAUDE.md`，确保团队了解新的编排方式。
+- **知识同步**：更新示例脚本与教程，确保团队了解新的编排方式。

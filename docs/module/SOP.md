@@ -42,8 +42,6 @@ graph TD
   - `StateModule` 类：`__init__` 初始化 `_module_dict`、`_attribute_dict`；重载属性访问与注册方法。
 - `src/agentscope/module/__init__.py`
   - 导出 `StateModule`。
-- `src/agentscope/module/CLAUDE.md`
-  - 记录常见用法。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `register_state(attr_name: str, custom_to_json: Callable | None = None, custom_from_json: Callable | None = None) -> None`

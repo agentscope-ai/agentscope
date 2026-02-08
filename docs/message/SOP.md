@@ -62,8 +62,6 @@ graph TD
   - TypedDict 定义：`TextBlock`、`ThinkingBlock`、`ToolUseBlock`、`ToolResultBlock`、`ImageBlock`、`AudioBlock`、`VideoBlock`、`ContentBlock` 等。
 - `src/agentscope/message/__init__.py`
   - 导出 `Msg` 与所有内容块。
-- `src/agentscope/message/CLAUDE.md`
-  - 记录调用链与示例。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `Msg.__init__(name: str, content: str | Sequence[ContentBlock], role: Literal["user","assistant","system"], metadata: dict | None = None, timestamp: str | None = None, invocation_id: str | None = None)`

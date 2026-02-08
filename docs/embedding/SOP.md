@@ -59,8 +59,6 @@ graph TD
   - 缓存抽象与文件缓存实现。
 - `src/agentscope/embedding/__init__.py`
   - 导出所有模型与缓存；
-- `src/agentscope/embedding/CLAUDE.md`
-  - 记录调用链、配置示例。
 
 ## 三、关键数据结构与对外接口（含类型/返回约束）
 - `EmbeddingModelBase.__call__(*args, **kwargs) -> EmbeddingResponse`
