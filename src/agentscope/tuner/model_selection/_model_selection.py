@@ -3,7 +3,7 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import Sequence
+from typing import Sequence, Tuple
 from ...model import ChatModelBase
 from .._workflow import WorkflowType, WorkflowOutput
 from .._judge import JudgeType, JudgeOutput
@@ -19,7 +19,7 @@ async def select_model(
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
     auxiliary_models: dict[str, ChatModelBase] | None = None,
-) -> ChatModelBase:
+) -> Tuple[ChatModelBase, dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
     metrics on a dataset.
@@ -36,11 +36,7 @@ async def select_model(
             The judge function that evaluates the output of the workflow. This
             function is user-defined and needs to parse the corresponding
             WorkflowOutput. The function should return reward values where
-            higher values indicate better performance by default. However,
-            for built-in functions like avg_time_judge and
-            avg_token_consumption_judge, lower values (more negative)
-            indicate better performance, so the selection logic will adapt
-            accordingly.
+            higher values indicate better performance by default.
         train_dataset (`DatasetConfig`):
             Configuration of the dataset used for model evaluation.
         candidate_models (`Sequence[ChatModelBase]`):
@@ -50,16 +46,13 @@ async def select_model(
             None.
 
     Returns:
-        `ChatModelBase`: The model that achieved the best performance across
-                         the dataset.
-                         For custom judge functions (higher reward is better),
-                         the model with the highest average reward is returned.
-                         For built-in judge functions (lower consumption is
-                         better), the model with the lowest average (most
-                         negative) reward is returned.
+        `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
+            - The model that achieved the best performance across the dataset
+              (with the highest average reward)
+            - Dictionary of aggregated metrics collected during evaluation
     """
-    if not candidate_models:
-        raise ValueError("At least one candidate model must be provided.")
+    if len(candidate_models) < 1:
+        raise ValueError("At least two candidate models must be provided.")
 
     logger.info(
         "Evaluating %d candidate models: %s",
@@ -67,30 +60,8 @@ async def select_model(
         [model.model_name for model in candidate_models],
     )
 
-    # Determine if we're using built-in judge functions that favor lower values
-    # We check if the judge function is one of the known built-in functions
-    is_minimization_task = (
-        judge_func.__name__
-        in ["avg_time_judge", "avg_token_consumption_judge"]
-        if hasattr(judge_func, "__name__")
-        else False
-    )
-
-    # Set up initial best value depending on whether we're maximizing or
-    # minimizing
-    if is_minimization_task:
-        best_avg_reward = float(
-            "inf",
-        )  # Look for smallest (most negative) reward
-
-        def compare_better(current: float, best: float) -> bool:
-            return current < best
-
-    else:
-        best_avg_reward = float("-inf")  # Look for largest reward
-
-        def compare_better(current: float, best: float) -> bool:
-            return current > best
+    # Set up initial best value to look for the highest reward (always maximize)
+    best_avg_reward = float("-inf")  # Look for largest reward
 
     # Load dataset
 
@@ -118,12 +89,16 @@ async def select_model(
 
     best_model = candidate_models[0] if candidate_models else None
     model_scores = {}  # Track scores for each model to provide visibility
+    all_metrics = {}  # Collect metrics from the best model evaluation
 
     for model in candidate_models:
         logger.info("Evaluating model: %s", model.model_name)
 
         total_reward = 0.0
         num_samples = 0
+        model_metrics: dict[str, float] = (
+            {}
+        )  # Store accumulated metrics for this model
 
         # Iterate through dataset
         for idx, sample in enumerate(dataset):
@@ -158,8 +133,23 @@ async def select_model(
             total_reward += judge_output.reward
             num_samples += 1
 
+            # Aggregate metrics from this sample
+            if judge_output.metrics:
+                for key, value in judge_output.metrics.items():
+                    if key in model_metrics:
+                        model_metrics[key] += value
+                    else:
+                        model_metrics[key] = value
+
         avg_reward = total_reward / num_samples if num_samples > 0 else 0.0
         model_scores[model.model_name] = avg_reward
+
+        # Average the metrics per sample for this model
+        averaged_model_metrics = {}
+        for key, value in model_metrics.items():
+            averaged_model_metrics[f"{key}_avg"] = (
+                value / num_samples if num_samples > 0 else 0.0
+            )
 
         logger.info(
             "Model '%s' completed evaluation with average performance: %.4f",
@@ -168,9 +158,12 @@ async def select_model(
         )
 
         # Update best model if current model performs better
-        if compare_better(avg_reward, best_avg_reward):
+        if avg_reward > best_avg_reward:
             best_avg_reward = avg_reward
             best_model = model
+            all_metrics = (
+                averaged_model_metrics  # Store the metrics of the best model
+            )
 
     # Report final scores for all models
 
@@ -180,6 +173,6 @@ async def select_model(
             best_model.model_name,
             best_avg_reward,
         )
-        return best_model
+        return best_model, all_metrics
     else:
         raise RuntimeError("No best model selected. This should not happen.")

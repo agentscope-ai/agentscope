@@ -14,7 +14,9 @@ async def avg_time_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average time consumption of a model.
-    For this built-in function, smaller reward is better.
+    This function returns a negative reward (since smaller time usage is better,
+    making it a bigger-is-better metric), and includes the original metric
+    in the metrics field.
 
     Args:
         task (`Dict[str, Any]`):
@@ -27,8 +29,8 @@ async def avg_time_judge(
 
     Returns:
         `JudgeOutput`:
-            The time taken (since smaller time is better, and we want
-            smaller reward to be better for this built-in function).
+            The negative time taken (making smaller time a bigger reward),
+            and metrics containing the original time value.
     """
     # Extract execution time from workflow output metrics
     time_taken = 0.0
@@ -43,7 +45,9 @@ async def avg_time_judge(
     if "execution_time" not in response.metrics:
         raise ValueError("Missing 'execution' field in workflow_metrics")
     time_taken = response.metrics["execution_time"]
-    reward = time_taken
+
+    # Return negative reward to make it bigger-is-better (smaller time = higher reward)
+    reward = -time_taken
 
     return JudgeOutput(
         reward=reward,
@@ -58,9 +62,11 @@ async def avg_token_consumption_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average token consumption of a model.
-    For this built-in function, smaller reward is better.
     NOTE: The response parameter must include a 'usage' field containing token
     information.
+    This function returns a negative reward (since smaller token usage is better,
+    making it a bigger-is-better metric), and includes the original metric
+    in the metrics field.
 
     Args:
         task (`Dict[str, Any]`):
@@ -74,8 +80,8 @@ async def avg_token_consumption_judge(
 
     Returns:
         `JudgeOutput`:
-            The total token consumption (since lower usage is better,
-            and we want smaller reward to be better for built-in function).
+            The negative token consumption (making smaller consumption a bigger reward),
+            and metrics containing the original token consumption value.
     """
     # Check if response has a usage attribute/field
     if isinstance(response, WorkflowOutput):
@@ -86,20 +92,20 @@ async def avg_token_consumption_judge(
     usage = model_response.usage
 
     if "total_tokens" in usage and usage["total_tokens"] is not None:
-        reward = float(usage["total_tokens"])
+        original_reward = float(usage["total_tokens"])
     elif "output_tokens" in usage and usage["output_tokens"] is not None:
-        reward = float(usage["output_tokens"])
+        original_reward = float(usage["output_tokens"])
     else:
         raise ValueError(
             "Neither 'total_tokens' nor 'output_tokens' found in usage field",
         )
 
-    # For token consumption judge, smaller token usage is better,
-    # so we return the actual token count and the selection algorithm
-    # will choose the smallest value
+    # Return negative reward to make it bigger-is-better (smaller token usage = higher reward)
+    reward = -original_reward
+
     return JudgeOutput(
         reward=reward,
         metrics={
-            "token_consumed": reward,
+            "token_consumed": original_reward,
         },
     )
