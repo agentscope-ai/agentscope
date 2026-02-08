@@ -26,6 +26,10 @@ def test_sogou_search_e2e_returns_results() -> None:
         text = "\n".join(
             b.get("text", "") for b in res.content if b.get("type") == "text"
         )
+        if "Executable doesn't exist" in text or "playwright install" in text:
+            pytest.skip(
+                "Playwright browsers not installed; run `playwright install`",
+            )
         print("=== E2E Sogou Results (who is speed) ===")
         print(text)
         print("=== END ===")
