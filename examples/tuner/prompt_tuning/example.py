@@ -63,7 +63,6 @@ async def workflow(
 async def gsm8k_judge(
     task: dict,
     response: Msg,
-    auxiliary_models: dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """A simple judge function to calculate reward based on agent's response.
 
@@ -79,10 +78,6 @@ async def gsm8k_judge(
         JudgeOutput: The reward value assigned by the judge function.
     """
     from trinity.common.rewards.math_reward import MathBoxedRewardFn
-
-    assert (
-        len(auxiliary_models) == 0
-    ), "No auxiliary models are used in this workflow."
 
     reward_fn = MathBoxedRewardFn()
     # parse truth from gsm8k raw text
