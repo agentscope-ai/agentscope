@@ -1041,14 +1041,13 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             )
 
     def _ensure_builtin_skill_md_reader_registered(self) -> None:
-        """Register the built-in SKILL.md reader tool when skills exist."""
-        if len(self.skills) == 0:
+        """Register the built-in SKILL.md reader tool once."""
+        if "read_skill_md" in self.tools:
             return
 
         self.register_tool_function(
             self.read_skill_md,
             func_name="read_skill_md",
-            namesake_strategy="skip",
         )
 
     async def read_skill_md(
