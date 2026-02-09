@@ -709,6 +709,7 @@ Subtask at index 2:
 
         await notebook.update_subtask_state(0, "in_progress")
         res = await notebook.update_subtask_state(1, "in_progress")
+        self.assertIn("not done yet", res.content[0].get("text", ""))
 
         res = await notebook.finish_subtask(1, "outcome")
         self.assertIn("not done yet", res.content[0].get("text", ""))
