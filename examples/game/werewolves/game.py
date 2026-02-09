@@ -19,8 +19,8 @@ from structured_model import (
     get_seer_model,
     get_hunter_model,
 )
-from prompt import ChinesePrompts as Prompts
-
+#from prompt import ChinesePrompts as Prompts
+from prompt import EnglishPrompts as Prompts
 # Uncomment the following line to use Chinese prompts
 # from prompt import ChinesePrompts as Prompts
 
