@@ -1065,6 +1065,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             ranges (`list[int] | None`, optional):
                 The inclusive line range to read, e.g. `[1, 100]`. If omitted,
                 the whole file is returned.
+
+        Returns:
+            `ToolResponse`:
+                The tool response containing either the `SKILL.md` content or
+                an error message when the skill is not registered.
         """
         skill = self.skills.get(skill_name)
         if skill is None:
