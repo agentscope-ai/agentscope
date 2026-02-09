@@ -150,17 +150,17 @@ class DefaultPlanToHint:
                     ),
                 )
 
+            elif n_done + n_abandoned == len(plan.subtasks):
+                # All subtasks are done or abandoned
+                hint = self.at_the_end.format(
+                    plan=plan.to_markdown(),
+                )
+
             elif n_in_progress == 0 and n_done > 0:
                 # No subtask is in_progress, and some subtasks are done
                 hint = self.when_no_subtask_in_progress.format(
                     plan=plan.to_markdown(),
                     index=n_done,
-                )
-
-            elif n_done + n_abandoned == len(plan.subtasks):
-                # All subtasks are done or abandoned
-                hint = self.at_the_end.format(
-                    plan=plan.to_markdown(),
                 )
 
         if hint:
@@ -356,21 +356,25 @@ class PlanNotebook(StateModule):
 
         self._validate_current_plan()
 
-        # validate subtask_idx
-        if action != "add" and subtask_idx >= len(self.current_plan.subtasks):
-            response.append(
-                f"Invalid subtask_idx '{subtask_idx}' for action '{action}'. "
-                f"Must be between 0 "
-                f"and {len(self.current_plan.subtasks) - 1}.",
-            )
+        # validate subtask_idx range only when its type is valid
+        if isinstance(subtask_idx, int):
+            if action != "add" and subtask_idx >= len(
+                self.current_plan.subtasks,
+            ):
+                response.append(
+                    f"Invalid subtask_idx '{subtask_idx}' for action "
+                    f"'{action}'. Must be between 0 "
+                    f"and {len(self.current_plan.subtasks) - 1}.",
+                )
 
-        if action == "add" and not (
-            0 <= subtask_idx <= len(self.current_plan.subtasks)
-        ):
-            response.append(
-                f"Invalid subtask_idx '{subtask_idx}' for action 'add'. "
-                f"Must be between 0 and {len(self.current_plan.subtasks)}.",
-            )
+            if action == "add" and not (
+                0 <= subtask_idx <= len(self.current_plan.subtasks)
+            ):
+                max_idx = len(self.current_plan.subtasks)
+                response.append(
+                    f"Invalid subtask_idx '{subtask_idx}' for action 'add'. "
+                    f"Must be between 0 and {max_idx}.",
+                )
 
         if response:
             return ToolResponse(
