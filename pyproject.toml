@@ -1,0 +1,105 @@
+
+[project]
+name = "agentscope"
+dynamic = ["version"]
+description = "AgentScope-easy: Developer-first, composable multi-agent scaffolding."
+readme = "README.md"
+authors = [{ name = "AgentScope-easy maintainers", email = "noreply@example.com" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["deep-learning", "multi agents", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "aioitertools",
+    "anthropic",
+    "dashscope",
+    "docstring_parser",
+    "json5",
+    "json_repair",
+    "jsonschema",
+    "mcp>=1.13",
+    "numpy",
+    "openai",
+    "pydantic>=2,<3",
+    "python-datauri",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-semantic-conventions>=0.60b0",
+    "python-socketio",
+    "requests",
+    "shortuuid",
+    "tiktoken",
+    "sounddevice",
+    "typing_extensions",
+]
+
+[project.optional-dependencies]
+full = [
+    # Model
+    "ollama>=0.5.4",
+    "google-genai",
+    "Pillow",
+    "transformers",
+    "jinja2",
+    # Evaluator
+    "ray",
+    "tqdm",
+    # Long-term memory
+    "mem0ai<=0.1.116",
+    "packaging",
+    # RAG
+    "pypdf",
+    "nltk",
+    # Align with upstream to reduce conflicts with Milvus deps.
+    "qdrant-client==1.15.1",
+    "python-docx",
+    'pymilvus[milvus_lite]; platform_system != "Windows"',
+]
+dev = [
+    # Dev tools
+    "pre-commit",
+    "pytest",
+    "sphinx-gallery",
+    "furo",
+    "myst_parser",
+    "matplotlib",
+    # Include full deps explicitly (avoid self-referential extras).
+    "ollama>=0.5.4",
+    "google-genai",
+    "Pillow",
+    "transformers",
+    "jinja2",
+    "ray",
+    "tqdm",
+    "mem0ai<=0.1.116",
+    "packaging",
+    "pypdf",
+    "nltk",
+    "qdrant-client==1.15.1",
+    "python-docx",
+    'pymilvus[milvus_lite]; platform_system != "Windows"',
+]
+
+[project.urls]
+Homepage = "https://github.com/charSLee013/agentscope-easy"
+
+[tool.setuptools]
+packages = { find = { where = ["src"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "agentscope._version.__version__" }
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
