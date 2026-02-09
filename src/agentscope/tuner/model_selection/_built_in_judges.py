@@ -86,10 +86,10 @@ async def avg_token_consumption_judge(
     # Check if response has a usage attribute/field
     if isinstance(response, WorkflowOutput):
         model_response = response.response
-    if not hasattr(model_response, "usage") or model_response.usage is None:
+    if not hasattr(model_response, "usage") or getattr(model_response, "usage") is None:
         raise ValueError("Missing 'usage' field in response")
 
-    usage = model_response.usage
+    usage = getattr(model_response, "usage")
 
     if "total_tokens" in usage and usage["total_tokens"] is not None:
         original_reward = float(usage["total_tokens"])
