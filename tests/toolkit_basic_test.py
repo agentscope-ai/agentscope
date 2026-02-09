@@ -909,6 +909,155 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                 ],
             )
 
+    async def test_register_with_valid_json_schema(self) -> None:
+        """Test registering a tool with valid custom json_schema."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "legacy_name",
+                "description": "Custom description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "type": "integer",
+                            "description": "Test argument 1.",
+                        },
+                        "arg2": {
+                            "type": "string",
+                            "description": "Test argument 2.",
+                        },
+                    },
+                    "required": ["arg1"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            func_name="renamed_sync_func",
+            func_description="Overridden description.",
+            preset_kwargs={"arg1": 10},
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertEqual(len(schemas), 1)
+        self.assertEqual(
+            schemas[0]["function"]["name"],
+            "renamed_sync_func",
+        )
+        self.assertEqual(
+            schemas[0]["function"]["description"],
+            "Overridden description.",
+        )
+        self.assertNotIn(
+            "arg1",
+            schemas[0]["function"]["parameters"]["properties"],
+        )
+        self.assertNotIn(
+            "required",
+            schemas[0]["function"]["parameters"],
+        )
+
+    async def test_register_with_invalid_json_schema(self) -> None:
+        """Test that invalid json_schema raises AssertionError."""
+        invalid_schemas = [
+            "not a dict",
+            {"function": {"name": "test"}},
+            {"type": "object", "function": {"name": "test"}},
+            {"type": "function"},
+            {"type": "function", "function": "not a dict"},
+        ]
+
+        for schema in invalid_schemas:
+            with self.assertRaises(
+                AssertionError,
+                msg=f"Should raise for schema: {schema}",
+            ):
+                self.toolkit.register_tool_function(
+                    sync_func,
+                    json_schema=schema,
+                )
+
+    async def test_register_with_custom_json_schema_without_overrides(
+        self,
+    ) -> None:
+        """Test custom json_schema is used as-is when no overrides are set."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "custom_sync_func",
+                "description": "Custom schema description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "type": "integer",
+                            "description": "Argument one.",
+                        },
+                        "arg2": {
+                            "type": "string",
+                            "description": "Argument two.",
+                        },
+                    },
+                    "required": ["arg1", "arg2"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            func_name="custom_sync_func",
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertEqual(
+            schemas[0]["function"]["description"],
+            "Custom schema description.",
+        )
+        self.assertListEqual(
+            schemas[0]["function"]["parameters"]["required"],
+            ["arg1", "arg2"],
+        )
+
+    async def test_register_with_json_schema_preset_kwargs_keep_other_required(
+        self,
+    ) -> None:
+        """Test preset kwargs remove only matched required parameters."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "sync_func",
+                "description": "Custom schema description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {"type": "integer"},
+                        "arg2": {"type": "string"},
+                    },
+                    "required": ["arg1", "arg2"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            preset_kwargs={"arg1": 10},
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertNotIn(
+            "arg1",
+            schemas[0]["function"]["parameters"]["properties"],
+        )
+        self.assertListEqual(
+            schemas[0]["function"]["parameters"]["required"],
+            ["arg2"],
+        )
+
     async def test_partial_function(self) -> None:
         """Test the partial function registration."""
 
