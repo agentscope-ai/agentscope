@@ -19,8 +19,10 @@ from structured_model import (
     get_seer_model,
     get_hunter_model,
 )
-#from prompt import ChinesePrompts as Prompts
+
+# from prompt import ChinesePrompts as Prompts
 from prompt import EnglishPrompts as Prompts
+
 # Uncomment the following line to use Chinese prompts
 # from prompt import ChinesePrompts as Prompts
 
@@ -139,8 +141,13 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     res = await players.werewolves[_ % n_werewolves](
                         structured_model=DiscussionModel,
                     )
-                    if _ % n_werewolves == 0 and res and res.metadata and res.metadata.get(
-                        "reach_agreement",
+                    if (
+                        _ % n_werewolves == 0
+                        and res
+                        and res.metadata
+                        and res.metadata.get(
+                            "reach_agreement",
+                        )
                     ):
                         break
 
@@ -154,7 +161,10 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     enable_gather=False,
                 )
                 killed_player, votes = majority_vote(
-                    [_.metadata.get("vote") if _ and _.metadata else None for _ in msgs_vote],
+                    [
+                        _.metadata.get("vote") if _ and _.metadata else None
+                        for _ in msgs_vote
+                    ],
                 )
                 # Postpone the broadcast of voting
                 await werewolves_hub.broadcast(
@@ -184,7 +194,11 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                         ),
                         structured_model=WitchResurrectModel,
                     )
-                    if msg_witch_resurrect and msg_witch_resurrect.metadata and msg_witch_resurrect.metadata.get("resurrect"):
+                    if (
+                        msg_witch_resurrect
+                        and msg_witch_resurrect.metadata
+                        and msg_witch_resurrect.metadata.get("resurrect")
+                    ):
                         killed_player = None
                         healing = False
 
@@ -204,7 +218,11 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                             players.current_alive,
                         ),
                     )
-                    if msg_witch_poison and msg_witch_poison.metadata and msg_witch_poison.metadata.get("poison"):
+                    if (
+                        msg_witch_poison
+                        and msg_witch_poison.metadata
+                        and msg_witch_poison.metadata.get("poison")
+                    ):
                         poisoned_player = msg_witch_poison.metadata.get("name")
                         poison = False
 
@@ -222,7 +240,11 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     ),
                     structured_model=get_seer_model(players.current_alive),
                 )
-                if msg_seer and msg_seer.metadata and msg_seer.metadata.get("name"):
+                if (
+                    msg_seer
+                    and msg_seer.metadata
+                    and msg_seer.metadata.get("name")
+                ):
                     player = msg_seer.metadata.get("name")
                     await agent.observe(
                         await moderator(
@@ -305,7 +327,10 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                 enable_gather=False,
             )
             voted_player, votes = majority_vote(
-                [_.metadata.get("vote") if _ and _.metadata else None for _ in msgs_vote],
+                [
+                    _.metadata.get("vote") if _ and _.metadata else None
+                    for _ in msgs_vote
+                ],
             )
             # Broadcast the voting messages together to avoid influencing
             # each other
