@@ -12,6 +12,7 @@ from .._dataset import DatasetConfig
 
 logger = logging.getLogger(__name__)
 
+
 def check_workflow_function(
     func: Callable,
 ) -> None:
@@ -25,6 +26,7 @@ def check_workflow_function(
         func,
         essential_params,
     )
+
 
 def check_judge_function(
     func: Callable,
@@ -78,7 +80,7 @@ async def select_model(
     """
     check_workflow_function(workflow_func)
     check_judge_function(judge_func)
-    
+
     if len(candidate_models) < 2:
         raise ValueError("At least two candidate models must be provided.")
 
@@ -124,9 +126,10 @@ async def select_model(
 
         total_reward = 0.0
         num_samples = 0
-        model_metrics: dict[str, float] = (
-            {}
-        )  # Store accumulated metrics for this model
+        model_metrics: dict[
+            str,
+            float,
+        ] = {}  # Store accumulated metrics for this model
 
         # Iterate through dataset
         for idx, sample in enumerate(dataset):

@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """The judge module for tuner."""
-from typing import Any, Callable, Dict, Awaitable
-from logging import Logger
+from typing import Callable, Dict, Awaitable
 from pydantic import BaseModel, Field
-from ..model import ChatModelBase
 
 
 class JudgeOutput(BaseModel):
