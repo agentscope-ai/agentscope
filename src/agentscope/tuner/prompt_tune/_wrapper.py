@@ -8,7 +8,7 @@ import dspy
 from dspy.predict.predict import Predict
 
 from agentscope import logger
-from agentscope.tuner._workflow import WorkflowOutput, PromptTuneWorkflowType
+from agentscope.tuner._workflow import WorkflowOutput, WorkflowType
 
 
 class _OptimizablePrompt(Predict):
@@ -69,7 +69,7 @@ class _WorkflowWrapperModule(Module):
 
     def __init__(
         self,
-        workflow: PromptTuneWorkflowType,
+        workflow: WorkflowType,
         init_prompt: str,
     ):
         """Initialize the _WorkflowWrapperModule.

@@ -11,7 +11,7 @@ from agentscope.tuner import (
 )
 from agentscope import logger
 from agentscope.model._model_base import ChatModelBase
-from agentscope.tuner._config import check_judge_function, _check_function_signature
+from agentscope.tuner._config import _check_function_signature
 from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
 from agentscope.tuner.prompt_tune._config import PromptTuneConfig
@@ -31,18 +31,16 @@ def _wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
     async def inner(
         task: dict,
         response: Any,
-        auxiliary_models: dict[str, ChatModelBase],
     ) -> float:
         # set logger to None
-        output = await judge_fn(task, response, auxiliary_models, None)
+        output = await judge_fn(task=task, response=response)
         return output.reward
 
     def _sync_wrapper(
         task: dict,
         response: Any,
-        auxiliary_models: dict[str, ChatModelBase],
     ) -> float:
-        return asyncio.run(inner(task, response, auxiliary_models))
+        return asyncio.run(inner(task=task, response=response))
 
     return _sync_wrapper
 
@@ -86,6 +84,19 @@ def check_workflow_function(
         essential_params,
     )
 
+def check_judge_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "response"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
 
 def tune_prompt(
     *,
@@ -94,7 +105,6 @@ def tune_prompt(
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     eval_dataset: DatasetConfig | None = None,
-    auxiliary_models: dict[str, ChatModelBase] | None = None,
     config: PromptTuneConfig | None = None,
 ) -> tuple[str, dict[str, float]]:
     """Tune a system prompt using DSPy's MIPROv2 optimizer.
@@ -110,8 +120,6 @@ def tune_prompt(
             returns a JudgeOutput.
         train_dataset: The dataset used for training/optimization.
         eval_dataset: Optional dataset for evaluation after optimization.
-        auxiliary_models: Optional dictionary of additional chat models for
-            LLM-as-a-Judge usage.
         config: Configuration for prompt tuning. Defaults to
             PromptTuneConfig().
 
@@ -126,7 +134,6 @@ def tune_prompt(
     from datasets import load_dataset
 
     config = config or PromptTuneConfig()
-    auxiliary_models = auxiliary_models or {}
     check_workflow_function(workflow)
     check_judge_function(judge_func)
 
@@ -159,7 +166,6 @@ def tune_prompt(
             lambda data, output, trace=None: _wrap_judge_fn(judge_func)(
                 data.inp,
                 output,
-                auxiliary_models,
             )
         ),
         auto=config.optimization_level,
@@ -206,7 +212,7 @@ def tune_prompt(
             devset=dspy_evalset,
             metric=lambda data, output, trace=None: _wrap_judge_fn(
                 judge_func,
-            )(data.inp, output, auxiliary_models),
+            )(data.inp, output),
             display_progress=config.eval_display_progress,
             display_table=config.eval_display_table,
             num_threads=config.eval_num_threads,
