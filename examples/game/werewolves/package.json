@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@agentscope/studio": "^1.0.8"
+  }
+}

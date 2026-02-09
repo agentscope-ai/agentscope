@@ -78,7 +78,7 @@ Your target is to win the game with your teammates as much as possible.
 - Don't repeat the others' speeches.""",
         # model=DashScopeChatModel(
         #     api_key=os.environ.get("DASHSCOPE_API_KEY"),
-        #     model_name="qwen3-max-2025-09-23",
+        #     model_name="qwen3-max-2026-01-23",
         # ),
         # formatter=DashScopeMultiAgentFormatter(),
         # If you want to use TTS, uncomment the following lines and the
