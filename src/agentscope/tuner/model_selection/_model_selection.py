@@ -3,13 +3,42 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import Sequence, Tuple
+from typing import Callable, Sequence, Tuple
 from ...model import ChatModelBase
 from .._workflow import WorkflowType, WorkflowOutput
+from .._config import _check_function_signature
 from .._judge import JudgeType, JudgeOutput
 from .._dataset import DatasetConfig
 
 logger = logging.getLogger(__name__)
+
+def check_workflow_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "model"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
+
+def check_judge_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "response"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
 
 
 async def select_model(
@@ -18,7 +47,6 @@ async def select_model(
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
-    auxiliary_models: dict[str, ChatModelBase] | None = None,
 ) -> Tuple[ChatModelBase, dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
@@ -41,9 +69,6 @@ async def select_model(
             Configuration of the dataset used for model evaluation.
         candidate_models (`Sequence[ChatModelBase]`):
             A sequence of candidate models to evaluate.
-        auxiliary_models (`dict[str, ChatModelBase] | None`):
-            Auxiliary models used by the judge function, if any. Defaults to
-            None.
 
     Returns:
         `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
@@ -51,6 +76,9 @@ async def select_model(
               (with the highest average reward)
             - Dictionary of aggregated metrics collected during evaluation
     """
+    check_workflow_function(workflow_func)
+    check_judge_function(judge_func)
+    
     if len(candidate_models) < 2:
         raise ValueError("At least two candidate models must be provided.")
 
@@ -111,9 +139,8 @@ async def select_model(
             # Execute workflow with current model and measure execution time
             start_time = asyncio.get_event_loop().time()
             workflow_output: WorkflowOutput = await workflow_func(
-                sample,
-                model,
-                auxiliary_models or {},
+                task=sample,
+                model=model,
             )
             end_time = asyncio.get_event_loop().time()
 
@@ -125,9 +152,8 @@ async def select_model(
 
             # Evaluate the workflow output using judge function
             judge_output: JudgeOutput = await judge_func(
-                sample,
-                workflow_output,
-                auxiliary_models or {},
+                task=sample,
+                response=workflow_output,
             )
 
             total_reward += judge_output.reward
