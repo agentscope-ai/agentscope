@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different hobbies. Nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob. I'm also a student and I really enjoy playing basketball and video games. It's great to meet you! What kind of hobbies are you into?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and coding. It's cool to meet you both! Alice, what new things have you been learning lately?
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and history. It's great to meet you! What kind of tech and science stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really passionate about environmental science and sustainability. It's great to meet you both! Alice, what specific areas of technology and science do you find most interesting?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different hobbies. Nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob. I'm also a student and I really enjoy playing basketball and video games. It's great to meet you! What kind of hobbies are you into?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and coding. It's cool to meet you both! Alice, what new things have you been learning lately?
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and history. It's great to meet you! What kind of tech and science stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really passionate about environmental science and sustainability. It's great to meet you both! Alice, what specific areas of technology and science do you find most interesting?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 9.066 seconds)
+   **Total running time of the script:** (0 minutes 22.629 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

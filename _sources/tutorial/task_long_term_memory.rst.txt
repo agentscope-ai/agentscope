@@ -185,9 +185,19 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique, local feel and allow you to connect more deeply with the culture and people of the area. Hangzhou, known for its stunning West Lake, tea plantations, and rich history, has many charming neighborhoods where you can find great homestay options.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and get insider tips from your hosts about the best places to visit.
 
-    Would you like recommendations on specific areas or homestays in Hangzhou? Or perhaps tips on how to choose the best one based on your preferences?
+    If you're looking for recommendations or tips on great homestay options in Hangzhou, I can help suggest some neighborhoods or platforms where you can find unique stays. For instance:
+
+    1. **West Lake (Xi Hu) Area**: Staying near West Lake offers stunning views and easy access to Hangzhou's most famous attraction. Many homestays here have traditional Chinese architecture with modern amenities.
+   
+    2. **Longjing Tea Village**: If you love tea, staying in a homestay around the Longjing tea fields could be an unforgettable experience. You can participate in tea-picking activities and enjoy serene natural surroundings.
+
+    3. **Hefang Street**: This ancient street is full of history and charm, offering homestays with a more cultural vibe. It’s also close to many shops and local eateries.
+
+    4. **Qiantang River Area**: If you prefer something quieter but still want to enjoy scenic beauty, homestays near the Qiantang River can provide a peaceful retreat.
+
+    Would you like more detailed suggestions or help booking?
 
 
 
@@ -223,7 +233,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You prefer staying in homestays.
+    Friday: You prefer homestays in the West Lake (Xi Hu) Area for traditional Chinese architecture, enjoy cozy and personalized experiences, and appreciate quieter options near the Qiantang River. You also like culturally vibrant stays at Hefang Street and tea-themed homestays in Longjing Tea Village.
 
 
 
@@ -525,7 +535,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 34.099 seconds)
+   **Total running time of the script:** (1 minutes 29.908 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
