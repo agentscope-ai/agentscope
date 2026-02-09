@@ -51,7 +51,7 @@ async def select_model(
               (with the highest average reward)
             - Dictionary of aggregated metrics collected during evaluation
     """
-    if len(candidate_models) < 1:
+    if len(candidate_models) < 2:
         raise ValueError("At least two candidate models must be provided.")
 
     logger.info(
