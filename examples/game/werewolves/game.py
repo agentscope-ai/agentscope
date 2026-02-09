@@ -19,7 +19,7 @@ from structured_model import (
     get_seer_model,
     get_hunter_model,
 )
-from prompt import EnglishPrompts as Prompts
+from prompt import ChinesePrompts as Prompts
 
 # Uncomment the following line to use Chinese prompts
 # from prompt import ChinesePrompts as Prompts
@@ -59,7 +59,7 @@ async def hunter_stage(
         await moderator(Prompts.to_hunter.format(name=hunter_agent.name)),
         structured_model=get_hunter_model(players.current_alive),
     )
-    if msg_hunter.metadata.get("shoot"):
+    if msg_hunter and msg_hunter.metadata and msg_hunter.metadata.get("shoot"):
         return msg_hunter.metadata.get("name", None)
     return None
 
@@ -139,7 +139,7 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     res = await players.werewolves[_ % n_werewolves](
                         structured_model=DiscussionModel,
                     )
-                    if _ % n_werewolves == 0 and res.metadata.get(
+                    if _ % n_werewolves == 0 and res and res.metadata and res.metadata.get(
                         "reach_agreement",
                     ):
                         break
@@ -154,7 +154,7 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     enable_gather=False,
                 )
                 killed_player, votes = majority_vote(
-                    [_.metadata.get("vote") for _ in msgs_vote],
+                    [_.metadata.get("vote") if _ and _.metadata else None for _ in msgs_vote],
                 )
                 # Postpone the broadcast of voting
                 await werewolves_hub.broadcast(
@@ -184,14 +184,15 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                         ),
                         structured_model=WitchResurrectModel,
                     )
-                    if msg_witch_resurrect.metadata.get("resurrect"):
+                    if msg_witch_resurrect and msg_witch_resurrect.metadata and msg_witch_resurrect.metadata.get("resurrect"):
                         killed_player = None
                         healing = False
 
                 # Has poison potion and hasn't used the healing potion
                 if poison and not (
                     msg_witch_resurrect
-                    and msg_witch_resurrect.metadata["resurrect"]
+                    and msg_witch_resurrect.metadata
+                    and msg_witch_resurrect.metadata.get("resurrect")
                 ):
                     msg_witch_poison = await agent(
                         await moderator(
@@ -203,7 +204,7 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                             players.current_alive,
                         ),
                     )
-                    if msg_witch_poison.metadata.get("poison"):
+                    if msg_witch_poison and msg_witch_poison.metadata and msg_witch_poison.metadata.get("poison"):
                         poisoned_player = msg_witch_poison.metadata.get("name")
                         poison = False
 
@@ -221,8 +222,8 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                     ),
                     structured_model=get_seer_model(players.current_alive),
                 )
-                if msg_seer.metadata.get("name"):
-                    player = msg_seer.metadata["name"]
+                if msg_seer and msg_seer.metadata and msg_seer.metadata.get("name"):
+                    player = msg_seer.metadata.get("name")
                     await agent.observe(
                         await moderator(
                             Prompts.to_seer_result.format(
@@ -304,7 +305,7 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
                 enable_gather=False,
             )
             voted_player, votes = majority_vote(
-                [_.metadata.get("vote") for _ in msgs_vote],
+                [_.metadata.get("vote") if _ and _.metadata else None for _ in msgs_vote],
             )
             # Broadcast the voting messages together to avoid influencing
             # each other
@@ -357,7 +358,9 @@ async def werewolves_game(agents: list[ReActAgent]) -> None:
         first_day = False
 
     # Game over, each player reflects
+    # Use sequential execution to avoid API rate limit (429 error)
     await fanout_pipeline(
         agents=agents,
         msg=await moderator(Prompts.to_all_reflect),
+        enable_gather=False,
     )

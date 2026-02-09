@@ -3,6 +3,11 @@
 """The main entry point for the werewolf game."""
 import asyncio
 import os
+import sys
+
+# Fix Windows console encoding for emoji/unicode characters
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from game import werewolves_game
 
@@ -71,11 +76,11 @@ Your target is to win the game with your teammates as much as possible.
 - Your response should be specific and concise, provide clear reason and avoid unnecessary elaboration.
 - Generate a one-line response.
 - Don't repeat the others' speeches.""",
-        model=DashScopeChatModel(
-            api_key=os.environ.get("DASHSCOPE_API_KEY"),
-            model_name="qwen3-max",
-        ),
-        formatter=DashScopeMultiAgentFormatter(),
+        # model=DashScopeChatModel(
+        #     api_key=os.environ.get("DASHSCOPE_API_KEY"),
+        #     model_name="qwen3-max-2025-09-23",
+        # ),
+        # formatter=DashScopeMultiAgentFormatter(),
         # If you want to use TTS, uncomment the following lines and the
         # TTS-related import statement at the beginning of this file.
         # tts_model=DashScopeTTSModel(
@@ -93,11 +98,11 @@ async def main() -> None:
 
     # Uncomment the following lines if you want to use Agentscope Studio
     # to visualize the game process.
-    # import agentscope
-    # agentscope.init(
-    #     studio_url="http://localhost:3000",
-    #     project="werewolf_game",
-    # )
+    import agentscope
+    agentscope.init(
+         studio_url="http://localhost:3000",
+         project="werewolf_game",
+    )
 
     # Prepare 9 players, you can change their names here
     players = [get_official_agents(f"Player{_ + 1}") for _ in range(9)]

@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from prompt import EnglishPrompts as Prompts
+from prompt import ChinesePrompts as Prompts
 
 from agentscope.message import Msg, AudioBlock
 from agentscope.agent import ReActAgent, AgentBase
@@ -18,8 +18,12 @@ MAX_DISCUSSION_ROUND = 3
 
 def majority_vote(votes: list[str]) -> tuple:
     """Return the vote with the most counts."""
-    result = max(set(votes), key=votes.count)
-    names, counts = np.unique(votes, return_counts=True)
+    # Filter out None values
+    valid_votes = [v for v in votes if v is not None]
+    if not valid_votes:
+        return None, ""
+    result = max(set(valid_votes), key=valid_votes.count)
+    names, counts = np.unique(valid_votes, return_counts=True)
     conditions = ", ".join(
         [f"{name}: {count}" for name, count in zip(names, counts)],
     )
