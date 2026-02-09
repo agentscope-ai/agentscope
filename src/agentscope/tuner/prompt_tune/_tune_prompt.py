@@ -84,6 +84,7 @@ def check_workflow_function(
         essential_params,
     )
 
+
 def check_judge_function(
     func: Callable,
 ) -> None:
@@ -97,6 +98,7 @@ def check_judge_function(
         func,
         essential_params,
     )
+
 
 def tune_prompt(
     *,
@@ -239,7 +241,10 @@ def tune_prompt(
             logger.info("improvement: %.2f%%", valset_improvement)
 
     optimized_prompt = result.predictor.get_current_prompt()
-    assert isinstance(optimized_prompt, str), f"Optimized prompt must be a string but {type(optimized_prompt)}. This should not happen."
+    assert isinstance(
+        optimized_prompt,
+        str,
+    ), f"Optimized prompt must be a string but {type(optimized_prompt)}. This should not happen."
     logger.info("---------- Optimized Prompt ----------")
     logger.info(optimized_prompt)
     logger.info("--------------------------------------")

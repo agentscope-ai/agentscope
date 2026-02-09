@@ -16,6 +16,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 logger = logging.getLogger(__name__)
 
+
 def check_workflow_function(
     func: Callable,
 ) -> None:
@@ -29,6 +30,7 @@ def check_workflow_function(
         func,
         essential_params,
     )
+
 
 def check_judge_function(
     func: Callable,

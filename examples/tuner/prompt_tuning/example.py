@@ -6,7 +6,6 @@ from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 from agentscope.model import DashScopeChatModel
-from agentscope.model import ChatModelBase
 from agentscope.tuner import DatasetConfig
 from agentscope.tuner import JudgeOutput
 from agentscope.tuner import WorkflowOutput

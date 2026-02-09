@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """The workflow module for tuner."""
-from logging import Logger
 from typing import Any, Callable, Dict, Awaitable
 from pydantic import BaseModel, Field
-from ..model import ChatModelBase
 
 
 class WorkflowOutput(BaseModel):
