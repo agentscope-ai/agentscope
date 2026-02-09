@@ -3,6 +3,8 @@
 # mypy: disable-error-code="index"
 """Test toolkit module in agentscope."""
 import asyncio
+import os
+import tempfile
 import time
 from copy import deepcopy
 from functools import partial
@@ -601,6 +603,28 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
             ],
             self.toolkit.get_json_schemas(),
         )
+
+    async def test_register_agent_skill_stores_absolute_path(self) -> None:
+        """Verify agent skill directory is stored as absolute path."""
+        with tempfile.TemporaryDirectory(dir=".") as tmp_dir:
+            with open(
+                os.path.join(tmp_dir, "SKILL.md"),
+                "w",
+                encoding="utf-8",
+            ) as file:
+                file.write(
+                    "---\n"
+                    "name: test-skill\n"
+                    "description: test description\n"
+                    "---\n",
+                )
+
+            relative_skill_dir = os.path.relpath(tmp_dir)
+            self.toolkit.register_agent_skill(relative_skill_dir)
+            self.assertEqual(
+                self.toolkit.skills["test-skill"]["dir"],
+                os.path.abspath(relative_skill_dir),
+            )
 
     async def _verify_async_generator_wo_interruption(
         self,

@@ -1060,6 +1060,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         """
         import frontmatter
 
+        skill_dir = os.path.abspath(os.path.expanduser(skill_dir))
+
         # Check the skill directory
         if not os.path.isdir(skill_dir):
             raise ValueError(
