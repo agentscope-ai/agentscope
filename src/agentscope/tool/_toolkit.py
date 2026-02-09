@@ -32,6 +32,7 @@ from ._async_wrapper import (
     _object_wrapper,
     _sync_generator_wrapper,
 )
+from ._text_file import view_text_file
 from ._response import ToolResponse
 from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
 from .._utils._common import _parse_tool_function
@@ -1039,6 +1040,46 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 "in the toolkit.",
             )
 
+    def _ensure_builtin_skill_md_reader_registered(self) -> None:
+        """Register the built-in SKILL.md reader tool when skills exist."""
+        if len(self.skills) == 0:
+            return
+
+        self.register_tool_function(
+            self.read_skill_md,
+            func_name="read_skill_md",
+            namesake_strategy="skip",
+        )
+
+    async def read_skill_md(
+        self,
+        skill_name: str,
+        ranges: list[int] | None = None,
+    ) -> ToolResponse:
+        """Read the `SKILL.md` file for a registered agent skill.
+
+        Args:
+            skill_name (`str`):
+                The registered skill name defined in the YAML front matter of
+                the `SKILL.md`.
+            ranges (`list[int] | None`, optional):
+                The inclusive line range to read, e.g. `[1, 100]`. If omitted,
+                the whole file is returned.
+        """
+        skill = self.skills.get(skill_name)
+        if skill is None:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error: Skill '{skill_name}' is not registered.",
+                    ),
+                ],
+            )
+
+        path_skill_md = os.path.join(skill["dir"], "SKILL.md")
+        return await view_text_file(file_path=path_skill_md, ranges=ranges)
+
     def register_agent_skill(
         self,
         skill_dir: str,
@@ -1102,6 +1143,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             description=description,
             dir=skill_dir,
         )
+        self._ensure_builtin_skill_md_reader_registered()
 
         logger.info(
             "Registered agent skill '%s' from directory '%s'.",
