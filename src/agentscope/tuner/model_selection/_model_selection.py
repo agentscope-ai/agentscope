@@ -16,6 +16,34 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 logger = logging.getLogger(__name__)
 
+def check_workflow_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "model"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
+
+def check_judge_function(
+    func: Callable,
+) -> None:
+    """Check if the given function is a valid JudgeType.
+
+    Args:
+        func (Callable): The function to check.
+    """
+    essential_params = ["task", "response"]
+    _check_function_signature(
+        func,
+        essential_params,
+    )
+
 
 def check_workflow_function(
     func: Callable,
@@ -84,7 +112,6 @@ async def select_model(
     """
     check_workflow_function(workflow_func)
     check_judge_function(judge_func)
-
     if len(candidate_models) < 2:
         raise ValueError("At least two candidate models must be provided.")
 
