@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_190a18197d8746448e3687",
+        "id": "call_e4fbad2f84694384b733a1",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_4aea810643354550bce8f1",
+        "id": "call_653edc53bb1e436aa8ccef",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,32 +363,30 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_190a18197d8746448e3687",
+        "id": "call_e4fbad2f84694384b733a1",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 03:38:48.528759 and ended at 03:38:51.529979. "
+                "text": "Tag tag1 started at 10:09:46.482466 and ended at 10:09:49.485729. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_4aea810643354550bce8f1",
+        "id": "call_653edc53bb1e436aa8ccef",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 03:38:48.528871 and ended at 03:38:51.530637. "
+                "text": "Tag tag2 started at 10:09:46.482555 and ended at 10:09:49.486405. "
             }
         ]
     }
-    Jarvis: The function 'example_tool_function' has been called in parallel with two different tags. 
+    Jarvis: The 'example_tool_function' has been called in parallel with the tags 'tag1' and 'tag2'. Here are the results:
 
-    - For the tag 'tag1', it started at 03:38:48.528759 and ended at 03:38:51.529979.
-    - For the tag 'tag2', it started at 03:38:48.528871 and ended at 03:38:51.530637.
-
-    Both calls have executed successfully.
+    - For 'tag1', the function started at 10:09:46.482466 and ended at 10:09:49.485729.
+    - For 'tag2', the function started at 10:09:46.482555 and ended at 10:09:49.486405.
 
 
 
@@ -463,15 +461,15 @@ Taking introducing Einstein as an example:
 
  .. code-block:: none
 
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:203: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_1f03ee0f619849128e08c7",
+        "id": "call_c335b75f094d49d0b895df",
         "name": "generate_response",
         "input": {
-            "name": "Einstein",
-            "description": "A renowned physicist who developed the theory of relativity",
+            "name": "Albert Einstein",
+            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -479,11 +477,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_1f03ee0f619849128e08c7",
+        "id": "call_c335b75f094d49d0b895df",
         "name": "generate_response",
         "output": [
             {
@@ -492,12 +490,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein, widely recognized as one of the most influential scientists of the 20th century, was a renowned physicist who developed the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein's contributions to science have had a profound impact on both theoretical and practical aspects of modern physics. He passed away at the age of 76, leaving behind a legacy that includes being awarded the Nobel Prize in Physics in 1921 for his services to Theoretical Physics, and particularly for his discovery of the law of the photoelectric effect. Additionally, he was honored with the Copley Medal in 1925 and the Max Planck Medal in 1929, further cementing his status as a giant in the field of physics.
+    Jarvis: Albert Einstein was a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two foundational pillars of modern physics. Born in 1879 and passing away at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. His work continues to influence scientific thought and exploration to this day.
 
     The structured output:
     {
-        "name": "Einstein",
-        "description": "A renowned physicist who developed the theory of relativity",
+        "name": "Albert Einstein",
+        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +579,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 29.296 seconds)
+   **Total running time of the script:** (0 minutes 33.813 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

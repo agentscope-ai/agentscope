@@ -146,7 +146,7 @@ Taking DashScope TTS model as an example:
 
  .. code-block:: none
 
-    The length of audio data: 163840
+    The length of audio data: 230400
 
 
 
@@ -213,7 +213,8 @@ you to start playback before synthesis completes. This reduces perceived latency
     Received audio chunk of length: 204800
     Received audio chunk of length: 225280
     Received audio chunk of length: 245760
-    Received audio chunk of length: 245760
+    Received audio chunk of length: 250880
+    Received audio chunk of length: 250880
 
 
 
@@ -337,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.177 seconds)
+   **Total running time of the script:** (0 minutes 4.285 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tts.py:

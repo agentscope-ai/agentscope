@@ -324,7 +324,7 @@ as well.
 
  .. code-block:: none
 
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:203: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Friday: {
         "type": "tool_use",
@@ -332,11 +332,11 @@ as well.
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_e5e33dbc3574413fa46f56"
+        "id": "call_0ec40d55b509451a96ccce"
     }
     system: {
         "type": "tool_result",
-        "id": "call_e5e33dbc3574413fa46f56",
+        "id": "call_0ec40d55b509451a96ccce",
         "name": "generate_response",
         "output": [
             {
@@ -346,19 +346,19 @@ as well.
         ]
     }
     Friday: The answer to 2 + 2 is 4.
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:203: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Friday: {
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "answer_as_number": 73331
+            "answer_as_number": 73021
         },
-        "id": "call_3f1d155349a1460cb2f456"
+        "id": "call_7528ceed7ea5425385ced6"
     }
     system: {
         "type": "tool_result",
-        "id": "call_3f1d155349a1460cb2f456",
+        "id": "call_7528ceed7ea5425385ced6",
         "name": "generate_response",
         "output": [
             {
@@ -367,7 +367,7 @@ as well.
             }
         ]
     }
-    Friday: The sum of 12345, 54321, 6789, and 9876 is 73331.
+    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73021.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -386,7 +386,7 @@ as well.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.180 seconds)
+   **Total running time of the script:** (0 minutes 9.334 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:
