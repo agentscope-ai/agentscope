@@ -215,14 +215,34 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         return False
 
+    def require_user_confirmation(self, name: str) -> bool:
+        """Check if a tool function requires user confirmation before
+        execution.
+
+        Args:
+            name (`str`):
+                The tool function name.
+
+        Returns:
+            `bool`:
+                Whether the tool function requires user confirmation.
+        """
+        if name in self.tools:
+            return self.tools[name].require_confirmation
+
+        raise ValueError(
+            f"Tool function '{name}' not found in the toolkit.",
+        )
+
     def register_external_tool_function(
         self,
         json_schema: dict,
         group_name: str | Literal["basic"] = "basic",
         preset_kwargs: dict[str, JSONSerializableObject] | None = None,
+        require_confirmation: bool = False,
     ) -> None:
-        """Register an external function that doesn't execute on the agent side.
-        For example, the frontend tool function or user-side tool function.
+        """Register an external function that doesn't execute on the agent
+        side, e.g. the frontend tool function or user-side tool function.
         In such case, the agent only needs to know the function schema, and
         within the ReActAgent class, the tool call will be returned from the
         reply directly without execution.
@@ -277,41 +297,13 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             name=name,
             group=group_name,
             source="function",
-            original_function=None,
+            original_func=None,
             json_schema=json_schema,
             preset_kwargs=preset_kwargs,
+            require_confirmation=require_confirmation,
         )
 
         self.tools[name] = func_obj
-
-    def is_external_tool_function(self, tool_call: str | ToolUseBlock) -> bool:
-        """Check if a tool function is an external tool function.
-
-        Args:
-            tool_call (`str | ToolUseBlock`):
-                The tool function name or tool call block.
-
-        Returns:
-            `bool`:
-                Whether the tool function is an external tool function. Note
-                that if the tool function is not found in the toolkit, it
-                will also return `False`.
-        """
-        if isinstance(tool_call, str):
-            tool_name = tool_call
-        elif isinstance(tool_call, dict) and "name" in tool_call:
-            tool_name = tool_call["name"]
-        else:
-            raise ValueError(
-                f"Invalid tool_call: {tool_call}. It must be a string "
-                "or a ToolUseBlock.",
-            )
-
-        if tool_name in self.tools:
-            return self.tools[tool_name].original_func is None
-
-        return False
-
 
     # pylint: disable=too-many-branches, too-many-statements
     def register_tool_function(
@@ -336,6 +328,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             ]
         )
         | None = None,
+        require_confirmation: bool = False,
         namesake_strategy: Literal[
             "override",
             "skip",
@@ -389,6 +382,10 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 async. If it returns `None`, the tool result will be
                 returned as is. If it returns a `ToolResponse`,
                 the returned block will be used as the final tool result.
+            require_confirmation (`bool`, defaults to `False`):
+                Whether user confirmation is required before executing this
+                tool function. If `True`, the system will prompt for user
+                approval before the tool is executed.
             namesake_strategy (`Literal['raise', 'override', 'skip', \
             'rename']`, defaults to `'raise'`):
                 The strategy to handle the tool function name conflict:
@@ -499,6 +496,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
+            require_confirmation=require_confirmation,
         )
 
         if func_name in self.tools:

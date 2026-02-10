@@ -3,11 +3,8 @@
 import asyncio
 import os
 
-import fakeredis
-
 from agentscope.agent import ReActAgent, UserAgent
 from agentscope.formatter import DashScopeChatFormatter
-from agentscope.memory import InMemoryMemory, RedisMemory
 from agentscope.model import DashScopeChatModel
 from agentscope.tool import (
     Toolkit,
@@ -25,13 +22,6 @@ async def main() -> None:
     toolkit.register_tool_function(execute_python_code)
     toolkit.register_tool_function(view_text_file)
 
-    memory = RedisMemory(
-        user_id="user_1",
-        session_id="session_1",
-        host="localhost",
-        port=6379,
-    )
-
     agent = ReActAgent(
         name="Friday",
         sys_prompt="You are a helpful assistant named Friday.",
@@ -43,7 +33,6 @@ async def main() -> None:
         ),
         formatter=DashScopeChatFormatter(),
         toolkit=toolkit,
-        memory=memory,
     )
 
     user = UserAgent("User")
@@ -54,10 +43,6 @@ async def main() -> None:
         if msg.get_text_content() == "exit":
             break
         msg = await agent(msg)
-
-    await memory.close()
-
-    await memory.clear()
 
 
 asyncio.run(main())

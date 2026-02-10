@@ -28,5 +28,5 @@ __all__ = [
     "ToolResultBlock",
     "ContentBlock",
     "Msg",
-    "GenerateReason"
+    "GenerateReason",
 ]

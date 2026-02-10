@@ -21,6 +21,7 @@ from ..types import JSONSerializableObject
 
 class GenerateReason(str, Enum):
     """The reason for the agent generating the reply message."""
+
     NORMAL_REPLY = "normal_reply"
     """The message is a normal reply from the agent, which contains the
     response to the outside user or agent."""
@@ -43,7 +44,7 @@ class GenerateReason(str, Enum):
     next input with tool execution results."""
 
     TOOL_EXECUTION_RESULT = "tool_execution_result"
-    """The message contains the results of tool execution for the previously 
+    """The message contains the results of tool execution for the previously
     requested tool use block(s)."""
 
     AWAITING_USER_CONFIRMATION = "awaiting_user_confirmation"
@@ -51,14 +52,21 @@ class GenerateReason(str, Enum):
     before execution. Awaiting the next input with user confirmation
     results."""
 
-    USER_CONFIRMATION_RESULT = "user_confirmation_result"
-    """The message contains the results of user confirmation for the 
-    previously requested tool use block(s)."""
+    USER_CONFIRMATION_APPROVED = "user_confirmation_approved"
+    """The user approved the tool use block(s) in the content. The tool(s)
+    should be executed as requested."""
+
+    USER_CONFIRMATION_REJECTED = "user_confirmation_rejected"
+    """The user rejected the tool use block(s). The content may contain
+    the rejection reason or explanation."""
+
+    USER_CONFIRMATION_MODIFIED = "user_confirmation_modified"
+    """The user modified and approved the tool use block(s). The content
+    contains the modified tool use blocks that should be executed."""
 
 
 class Msg:
     """The message class in agentscope."""
-
 
     def __init__(
         self,
