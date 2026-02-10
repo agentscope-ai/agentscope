@@ -90,7 +90,11 @@ def _parse_pyproject(
             i += 1
             continue
 
-        if section == "project" and stripped.startswith("dependencies") and "[" in stripped:
+        if (
+            section == "project"
+            and stripped.startswith("dependencies")
+            and "[" in stripped
+        ):
             base_deps, i = _collect_list(lines, i)
             continue
 
@@ -161,4 +165,3 @@ def test_pyproject_dev_includes_full() -> None:
 
     missing = sorted(full_names - dev_names)
     assert not missing, f"dev is missing full requirements: {missing}"
-
