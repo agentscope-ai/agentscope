@@ -18,7 +18,7 @@ You are an expert coding agent. IMPORTANT RULE - CONTEXT MANAGEMENT:
 - 变更河流：`specs/###-*/{spec,plan,tasks}.md` 用于迭代开发与验收，不作为规范源。
 
 ## Active Technologies
-- Python 3.10 (per `setup.py` python_requires) + Managed in `setup.py` (install_requires + extras) (002-version-deps-sync)
+- Python 3.10 (per `pyproject.toml` requires-python) + Managed in `pyproject.toml` ([project].dependencies + optional-dependencies) (006-packaging-pyproject)
 
 ## Recent Changes
-- 002-version-deps-sync: Added Python 3.10 (per `setup.py` python_requires) + Managed in `setup.py` (install_requires + extras)
+- 006-packaging-pyproject: Migrated packaging to `pyproject.toml` and declared missing direct dependencies
