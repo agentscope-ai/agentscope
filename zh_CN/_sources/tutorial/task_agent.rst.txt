@@ -331,7 +331,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_3e19387c48e74b3b9c33e3",
+        "id": "call_c5f7ef7e3cda4fb3a95bf7",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -340,7 +340,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_230d303ac5604a60875fe7",
+        "id": "call_4d97e34c82694aa7a71f69",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -349,32 +349,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_3e19387c48e74b3b9c33e3",
+        "id": "call_c5f7ef7e3cda4fb3a95bf7",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 10:18:00.305922，结束于 10:18:03.309191。"
+                "text": "标签 tag1 开始于 10:19:46.562292，结束于 10:19:49.565624。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_230d303ac5604a60875fe7",
+        "id": "call_4d97e34c82694aa7a71f69",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 10:18:00.306018，结束于 10:18:03.309841。"
+                "text": "标签 tag2 开始于 10:19:46.562396，结束于 10:19:49.566247。"
             }
         ]
     }
-    Jarvis: 两个 `example_tool_function` 函数已经并行执行完成。下面是它们各自的运行时间：
+    Jarvis: 两个 `example_tool_function` 函数已经并行执行完毕。下面是它们各自的运行时间：
 
-    - 标签为 'tag1' 的函数从 10:18:00.305922 开始，在 10:18:03.309191 结束。
-    - 标签为 'tag2' 的函数从 10:18:00.306018 开始，在 10:18:03.309841 结束。
+    - 标签为 'tag1' 的函数开始于 10:19:46.562292，结束于 10:19:49.565624。
+    - 标签为 'tag2' 的函数开始于 10:19:46.562396，结束于 10:19:49.566247。
 
-    这两个函数几乎是同时开始和结束的，表明它们确实被并行调用了。
+    两个函数几乎是同时启动的，并且执行时间非常接近。
 
 
 
@@ -443,23 +443,23 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_c6f91dd5bb0b49cbb5f65a",
+        "id": "call_91c8ca12f30241a59722c5",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
             "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
             "age": 76,
             "honor": [
-                "1921年诺贝尔物理学奖",
-                "普朗克奖章",
-                "科普利奖章"
+                "诺贝尔物理学奖",
+                "科普利奖章",
+                "马克斯·普朗克奖章"
             ]
         },
-        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"20世纪最伟大的理论物理学家之一，相对论的创立者。\", \"age\": 76, \"honor\": [\"1921年诺贝尔物理学奖\", \"普朗克奖章\", \"科普利奖章\"]}"
+        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"20世纪最伟大的理论物理学家之一，相对论的创立者。\", \"age\": 76, \"honor\": [\"诺贝尔物理学奖\", \"科普利奖章\", \"马克斯·普朗克奖章\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_c6f91dd5bb0b49cbb5f65a",
+        "id": "call_91c8ca12f30241a59722c5",
         "name": "generate_response",
         "output": [
             {
@@ -468,7 +468,7 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他最为人所知的是作为相对论的创立者。爱因斯坦出生于1879年，在物理学领域做出了许多开创性的贡献，并因此获得了诸多荣誉，包括1921年的诺贝尔物理学奖、普朗克奖章以及科普利奖章等。他的工作不仅深刻地改变了我们对时间、空间和重力的理解，而且也为现代科学技术的发展奠定了基础。爱因斯坦于1955年去世，享年76岁，但其科学成就继续影响着世界。
+    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。爱因斯坦出生于1879年，在物理学领域做出了许多开创性的贡献，并因此获得了包括诺贝尔物理学奖在内的多个重要奖项。除了诺贝尔物理学奖之外，他还荣获了科普利奖章和马克斯·普朗克奖章等荣誉。爱因斯坦的一生充满了对科学的探索与奉献，直至1955年去世时享年76岁。他的工作不仅深刻地改变了我们对于宇宙的理解，也对后来的技术发展产生了深远的影响。
 
     结构化输出：
     {
@@ -476,9 +476,9 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
         "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
         "age": 76,
         "honor": [
-            "1921年诺贝尔物理学奖",
-            "普朗克奖章",
-            "科普利奖章"
+            "诺贝尔物理学奖",
+            "科普利奖章",
+            "马克斯·普朗克奖章"
         ]
     }
 
@@ -555,7 +555,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 34.981 seconds)
+   **Total running time of the script:** (0 minutes 35.383 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

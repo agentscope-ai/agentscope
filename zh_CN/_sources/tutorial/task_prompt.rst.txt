@@ -480,7 +480,7 @@ AgentScope 提供了两个基类 ``FormatterBase`` 和其子类 ``TruncatedForma
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.005 seconds)
+   **Total running time of the script:** (0 minutes 0.004 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_prompt.py:

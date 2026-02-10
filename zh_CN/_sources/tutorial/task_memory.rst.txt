@@ -175,29 +175,29 @@ AgentScope 中的记忆模块负责：
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='4V2ptpDJdf7BhsbxQxqu9g', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:21:20.873', invocation_id='None')
+    - Msg(id='ZnMhyo5SkTyVrVjnZKQK6U', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:23:37.995', invocation_id='None')
     记忆的状态字典：
     {
       "content": [
         [
           {
-            "id": "RmvhA3ipscCei59vCSei8Y",
+            "id": "jQARMLV6dCkTXqoVYqpmUj",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": null,
-            "timestamp": "2026-02-10 10:21:20.873"
+            "timestamp": "2026-02-10 10:23:37.995"
           },
           []
         ],
         [
           {
-            "id": "4V2ptpDJdf7BhsbxQxqu9g",
+            "id": "ZnMhyo5SkTyVrVjnZKQK6U",
             "name": "system",
             "role": "system",
             "content": "<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>",
             "metadata": null,
-            "timestamp": "2026-02-10 10:21:20.873"
+            "timestamp": "2026-02-10 10:23:37.995"
           },
           [
             "hint"
@@ -211,12 +211,12 @@ AgentScope 中的记忆模块负责：
       "content": [
         [
           {
-            "id": "RmvhA3ipscCei59vCSei8Y",
+            "id": "jQARMLV6dCkTXqoVYqpmUj",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": null,
-            "timestamp": "2026-02-10 10:21:20.873"
+            "timestamp": "2026-02-10 10:23:37.995"
           },
           []
         ]
@@ -293,7 +293,7 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='5uNrc9KHQRRVCQUq9kGMMA', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:21:20.915', invocation_id='None')
+    - Msg(id='3CYsfAvaHvMssKp8263CZa', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:23:38.037', invocation_id='None')
 
 
 
@@ -337,9 +337,9 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     记忆中的所有消息：
-    - Msg(id='MvBooj73xDn27prFReYXzh', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata=None, timestamp='2026-02-10 10:21:20.884', invocation_id='None')
-    - Msg(id='5uNrc9KHQRRVCQUq9kGMMA', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:21:20.915', invocation_id='None')
-    - Msg(id='PTVk4offNheWUwwjFg63ff', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata=None, timestamp='2026-02-10 10:21:20.923', invocation_id='None')
+    - Msg(id='GEwvDoDYmvY9c8Updzm4ff', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata=None, timestamp='2026-02-10 10:23:38.005', invocation_id='None')
+    - Msg(id='3CYsfAvaHvMssKp8263CZa', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:23:38.037', invocation_id='None')
+    - Msg(id='mdFVKTR9qxAeRkRYUUyjgn', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata=None, timestamp='2026-02-10 10:23:38.046', invocation_id='None')
 
 
 
@@ -485,7 +485,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='9qcicAV3PdLKnxFEBCxJED', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:21:20.941', invocation_id='None')
+    - Msg(id='kvFrnGJUsfh85BAfkHt227', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-10 10:23:38.064', invocation_id='None')
 
 
 
