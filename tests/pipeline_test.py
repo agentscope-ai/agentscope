@@ -5,6 +5,7 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.message import Msg
 from agentscope.pipeline import (
+    MsgHub,
     SequentialPipeline,
     FanoutPipeline,
     sequential_pipeline,
@@ -146,6 +147,17 @@ class MultAgent(AgentBase):
 
 class PipelineTest(IsolatedAsyncioTestCase):
     """Test cases for Pipelines"""
+
+    async def test_msghub_accepts_sequence_participants(self) -> None:
+        """MsgHub should accept non-list sequences (e.g., tuples)."""
+        add1 = AddAgent(1)
+        add2 = AddAgent(2)
+
+        hub = MsgHub(
+            participants=(add1, add2),
+            enable_auto_broadcast=False,
+        )
+        self.assertEqual(hub.participants, [add1, add2])
 
     async def test_functional_sequential_pipeline(self) -> None:
         """Test SequentialPipeline executes agents sequentially"""
