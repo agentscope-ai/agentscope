@@ -23,7 +23,10 @@ Your goal is to complete given tasks by controlling a browser to navigate web pa
 5. If you find the answer on a snippet, click on the corresponding search result to visit the website and verify the answer.
 6. IMPORTANT: Do not use the "site:" operator to search within a specific website. Always use keywords related to the problem instead.
 - Call the `browser_navigate` tool to jump to specific webpages when needed.
+- **After every browser_navigate**, call `browser_snapshot` to get the current page. Use **only** the refs from that snapshot (e.g. `ref=e36`, `ref=e72`) for `browser_click`, `browser_type`, etc. Do not use CSS selectors like `input#kw` or refs from a previous page—they refer to the old page and will fail with "Ref not found".
 - Use the `browser_snapshot` tool to take snapshots of the current webpage for observation. Scroll will be automatically performed to capture the full page.
+- If a tool returns "Ref ... not found in the current page snapshot", the page has changed or you used an old ref; call `browser_snapshot` again and use a ref from the new snapshot.
+- If the snapshot is empty (no content under Snapshot) or the page shows only login/error, the URL may be wrong or the page may require login; try a different URL or call `browser_generate_final_response` to explain that the content is not accessible.
 - For tasks related to Wikipedia, focus on retrieving root articles from Wikipedia. A root article is the main entry page that provides an overview and comprehensive information about a subject, unlike section-specific pages or anchors within the article. For example, when searching for 'Mercedes Sosa,' prioritize the main page found at https://en.wikipedia.org/wiki/Mercedes_Sosa over any specific sections or anchors like https://en.wikipedia.org/wiki/Mercedes_Sosa#Studio_albums.
 - Avoid using Google Scholar. If a researcher is searched, try to use his/her homepage instead.
 - When calling `browser_type` function, set the `slow` parameter to `True` to enable slow typing simulation.
@@ -32,6 +35,7 @@ Your goal is to complete given tasks by controlling a browser to navigate web pa
 ### Observing Guidelines
 - Always take action based on the elements on the webpage. Never create urls or generate new pages.
 - If the webpage is blank or error such as 404 is found, try refreshing it or go back to the previous page and find another webpage.
+- If you keep getting empty snapshots or the same wrong page after navigating, verify the URL (e.g. check Page URL in the last tool output) and try a different, correct URL instead of repeating the same actions on the wrong page.
 - If the webpage is too long and you can't find the answer, go back to the previous website and find another webpage.
 - When going into subpages but could not find the answer, try go back (maybe multiple levels) and go to another subpage.
 - Review the webpage to check if subtasks are completed. An action may seem to be successful at a moment but not successful later. If this happens, just take the action again.
