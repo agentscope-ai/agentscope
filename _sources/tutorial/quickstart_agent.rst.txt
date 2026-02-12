@@ -174,7 +174,7 @@ Taking DashScope API as example, we create an agent object as follows:
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_99140f84d81249c7838c73",
+        "id": "call_8457073ed22543afa4cca9",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello World')",
@@ -184,7 +184,7 @@ Taking DashScope API as example, we create an agent object as follows:
     }
     system: {
         "type": "tool_result",
-        "id": "call_99140f84d81249c7838c73",
+        "id": "call_8457073ed22543afa4cca9",
         "name": "execute_python_code",
         "output": [
             {
@@ -193,7 +193,7 @@ Taking DashScope API as example, we create an agent object as follows:
             }
         ]
     }
-    Jarvis: The Python code has been executed successfully and it printed:
+    Jarvis: The Python code has been successfully executed, and it printed:
 
     ```
     Hello World
@@ -338,7 +338,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.165 seconds)
+   **Total running time of the script:** (0 minutes 10.315 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_agent.py:

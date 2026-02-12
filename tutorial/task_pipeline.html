@@ -406,9 +406,9 @@ Note David is not included in this meeting.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Hello, I&#39;m Alice, a 50-year-old teacher with a passion for education and a wealth of experience in the classroom.
-Bob: Hi, I&#39;m Bob, a 35-year-old engineer with a focus on innovative solutions and a dedication to my field.
-Charlie: Hi, I&#39;m Charlie, a 28-year-old designer with a keen eye for aesthetics and a drive to create meaningful user experiences.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: Hello, I&#39;m Alice, a 50-year-old teacher with a passion for helping students learn and grow.
+Bob: Hi, I&#39;m Bob, a 35-year-old engineer who enjoys solving complex problems and designing innovative solutions.
+Charlie: Hi, I&#39;m Charlie, a 28-year-old designer who loves creating visually appealing and functional designs.
 </pre></div>
 </div>
 <p>Now let’s check if Bob, Charlie and David received Alice’s message.</p>
@@ -428,9 +428,9 @@ Charlie: Hi, I&#39;m Charlie, a 28-year-old designer with a keen eye for aesthet
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">check_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice is a 50-year-old teacher who is passionate about education and has extensive experience in teaching.
-Charlie: Alice is a 50-year-old teacher who is passionate about education and has extensive experience in teaching.
-David: I don&#39;t have specific information about an Alice without more context. Could you provide more details, such as where you heard about her or in what context she was mentioned? That way, I can give you a more accurate and helpful response.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice is a 50-year-old teacher who is passionate about teaching and fostering the growth of her students.
+Charlie: Alice is a 50-year-old teacher who is passionate about education and helping her students learn and grow.
+David: I don&#39;t have specific information about an Alice you&#39;re referring to, as there could be many people with that name. Could you provide more details or context so I can give you the right information?
 </pre></div>
 </div>
 <p>Now we observe that Bob and Charlie know Alice and her profession, while David has no idea
@@ -570,15 +570,15 @@ containing the printing message during execution of the coroutine task.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_example_pipeline</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hi&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hi there! I&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice,&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 2&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 05:52:24.282&#39;, invocation_id=&#39;None&#39;) True
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hi&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hi there! I&#39;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice,&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 2&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;dJQKsEq2aaqSRzsYCtkaJ5&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;Hi there! I&#39;m Alice, a 20-year-old student. Nice to meet you! How can I help you today?&quot;}], role=&#39;assistant&#39;, metadata=None, timestamp=&#39;2026-02-12 06:38:04.827&#39;, invocation_id=&#39;None&#39;) True
 </pre></div>
 </div>
 </section>
@@ -616,7 +616,7 @@ Msg(id=&#39;BnPFhYaHsgQ3T4mBHT4ksW&#39;, name=&#39;Alice&#39;, content=[{&#39;ty
 </pre></div>
 </div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 23.092 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 19.443 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-pipeline-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/a841049f564cf5f9c0fea523e59490f5/task_pipeline.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_pipeline.ipynb</span></code></a></p>
