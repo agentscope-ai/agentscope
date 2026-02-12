@@ -8,33 +8,35 @@ from agentscope.tool import Toolkit, ToolResponse
 
 
 async def middleware_1(
-    tool_call: ToolUseBlock,
-    request: Callable[
+    kwargs: dict,
+    next_handler: Callable[
         ...,
         Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
     ],
 ) -> AsyncGenerator[ToolResponse, None]:
     """A simple middleware that adds a key-value pair to the kwargs."""
     # Pre-processing
-    tool_call["input"]["a"] = "[pre1]" + str(tool_call["input"]["a"])
+    tool_call = kwargs["tool_call"]
+    tool_call["input"]["a"] += "[pre1]"
 
-    async for chunk in await request(tool_call):
+    async for chunk in await next_handler(**kwargs):
         chunk.content[0]["text"] += "[post1]"
         yield chunk
 
 
 async def middleware_2(
-    tool_call: ToolUseBlock,
-    request: Callable[
+    kwargs: dict,
+    next_handler: Callable[
         ...,
         Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
     ],
 ) -> AsyncGenerator[ToolResponse, None]:
     """Another middleware that adds a key-value pair to the kwargs."""
     # Pre-processing
-    tool_call["input"]["a"] = "[pre2]" + str(tool_call["input"]["a"])
+    tool_call = kwargs["tool_call"]
+    tool_call["input"]["a"] += "[pre2]"
 
-    async for chunk in await request(tool_call):
+    async for chunk in await next_handler(**kwargs):
         chunk.content[0]["text"] += "[post2]"
         yield chunk
 
@@ -78,4 +80,7 @@ class ToolkitMiddlewareTest(IsolatedAsyncioTestCase):
         )
 
         async for chunk in res:
-            print(chunk)
+            self.assertEqual(
+                chunk.content[0]["text"],
+                "[ori][pre1][pre2][post2][post1]",
+            )

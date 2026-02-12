@@ -85,11 +85,10 @@ def apply_middlewares(
 
         # Build the middleware chain from innermost to outermost
         async def base_handler(
-            tc: ToolUseBlock,
+            **kwargs: Any,
         ) -> AsyncGenerator[ToolResponse, None]:
             """Base handler that calls the original function."""
-            # Return the async generator from func directly
-            return await func(self, tc)
+            return await func(self, **kwargs)
 
         # Wrap with each middleware in reverse order
         current_handler = base_handler
@@ -99,18 +98,17 @@ def apply_middlewares(
                 """Create wrapped handler for middleware."""
 
                 async def wrapped(
-                    tc: ToolUseBlock,
+                    **kwargs: Any,
                 ) -> AsyncGenerator[ToolResponse, None]:
                     """Handler that applies middleware."""
-                    # Middleware returns AsyncGenerator, return it directly
-                    return mw(tc, handler)
+                    return mw(kwargs, handler)
 
                 return wrapped
 
             current_handler = make_handler(middleware, current_handler)
 
         # Execute the middleware chain
-        async for chunk in await current_handler(tool_call):
+        async for chunk in await current_handler(tool_call=tool_call):
             yield chunk
 
     return wrapper
@@ -1220,13 +1218,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
     def register_middleware(
         self,
         middleware: Callable[
-            [
-                ToolUseBlock,
-                Callable[
-                    ...,
-                    Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
-                ],
-            ],
+            ...,
             Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]]
             | AsyncGenerator[ToolResponse, None],
         ],
@@ -1245,19 +1237,30 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         - Perform post-processing after the tool function completes
         - Skip the tool function execution entirely
 
+        The middleware function should accept a ``kwargs`` dict as the first
+        parameter and ``next_handler`` as the second parameter. The ``kwargs``
+        dict currently contains:
+
+        - ``tool_call`` (`ToolUseBlock`): The tool call request
+
+        When calling ``next_handler``, pass ``**kwargs`` to unpack the dict.
+
         Example:
             .. code-block:: python
 
                 # Simple direct consumption style (recommended)
                 async def my_middleware(
-                    tool_call: ToolUseBlock,
+                    kwargs: dict,
                     next_handler: Callable,
                 ) -> AsyncGenerator[ToolResponse, None]:
+                    # Access the tool call
+                    tool_call = kwargs["tool_call"]
+
                     # Pre-processing
                     print(f"Calling tool: {tool_call['name']}")
 
-                    # Directly consume and yield responses
-                    async for response in await next_handler(tool_call):
+                    # Call next handler with **kwargs
+                    async for response in await next_handler(**kwargs):
                         # Intercept and modify response if needed
                         yield response
 
@@ -1268,32 +1271,40 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
             .. code-block:: python
 
-                # Alternative wrapper style (when you need to return early)
+                # Alternative: Skip execution based on conditions
                 async def my_middleware(
-                    tool_call: ToolUseBlock,
+                    kwargs: dict,
                     next_handler: Callable,
                 ) -> AsyncGenerator[ToolResponse, None]:
+                    tool_call = kwargs["tool_call"]
+
                     # Pre-processing
                     if not is_authorized(tool_call):
-                        # Skip execution and return error
-                        async def error_gen():
-                            yield ToolResponse(content=[...])
-                        return error_gen()
+                        # Skip execution and return error directly
+                        yield ToolResponse(
+                            content=[
+                                TextBlock(
+                                    type="text",
+                                    text="Unauthorized",
+                                ),
+                            ],
+                        )
+                        return
 
-                    # Get the AsyncGenerator from next handler
-                    generator = await next_handler(tool_call)
-                    return generator  # Or wrap it
+                    # Call next handler with **kwargs
+                    async for response in await next_handler(**kwargs):
+                        yield response
 
                 toolkit.register_middleware(my_middleware)
 
         Args:
-            middleware (`Callable[[ToolUseBlock, Callable[..., \
-Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]]]], \
-Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]] | \
-AsyncGenerator[ToolResponse, None]]`):
-                The middleware function that takes a tool call dict and a
-                next handler callable, and returns a coroutine that yields
-                AsyncGenerator of ToolResponse objects.
+            middleware (`Callable[..., Coroutine[Any, Any, \
+AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
+                The middleware function that accepts ``kwargs`` (dict) and
+                ``next_handler`` (Callable), and returns a coroutine that
+                yields AsyncGenerator of ToolResponse objects. The ``kwargs``
+                dict currently includes ``tool_call`` (ToolUseBlock), and may
+                include additional context in future versions.
 
         Note:
             The middleware chain is applied inside the `call_tool_function`
