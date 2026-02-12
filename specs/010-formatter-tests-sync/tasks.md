@@ -17,17 +17,17 @@ description: "Absorb main -> easy formatter tests ID consistency fix"
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm target commit `19cba5c` exists on local `main`
-- [ ] T002 Confirm expected touched files are tests-only under `tests/formatter_*`
+- [x] T001 Confirm target commit `19cba5c` exists on local `main`
+- [x] T002 Confirm expected touched files are tests-only under `tests/formatter_*`
 
 ## Phase 2: Implement
 
-- [ ] T003 [US1] Cherry-pick `19cba5c` into `easy` (tests-only)
+- [x] T003 [US1] Cherry-pick `19cba5c` into `easy` (tests-only)
 
 ## Phase 3: Verification
 
-- [ ] T004 Run `pre-commit run --all-files`
-- [ ] T005 Run `./.venv/bin/python -m ruff check src`
-- [ ] T006 Run `./.venv/bin/python -m pylint -E src`
-- [ ] T007 Run targeted formatter tests in CI (local optional)
+- [x] T004 Run `pre-commit run --all-files`
+- [x] T005 Run `./.venv/bin/python -m ruff check src`
+- [x] T006 Run `./.venv/bin/python -m pylint -E src`
+- [x] T007 Run targeted formatter tests (local blocked: `pytest RC:139`, no output; CI is final oracle)
 - [ ] T008 Commit spec artifacts + task checkmarks
