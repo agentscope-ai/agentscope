@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm studying computer science. I'm really into technology and how we can use it to solve real-world problems. It's great to meet someone who's so passionate about the environment. Sustainability is super important, and I think tech can play a big role in that too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business student. I'm really interested in how businesses can be more sustainable and ethical. It's awesome to see people with such strong passions for making a difference. I think there's a lot we can do when it comes to integrating sustainability into the core of business practices. Great to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and a bit of a history buff. Great to meet you too! What kind of tech and science stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really passionate about environmental science and sustainability. It's great to meet you both! Alice, what specific areas of tech and science do you find most interesting?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm studying computer science. I'm really into technology and how we can use it to solve real-world problems. It's great to meet someone who's so passionate about the environment. Sustainability is super important, and I think tech can play a big role in that too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business student. I'm really interested in how businesses can be more sustainable and ethical. It's awesome to see people with such strong passions for making a difference. I think there's a lot we can do when it comes to integrating sustainability into the core of business practices. Great to meet you both!
+    Alice: Hi there! I'm Alice, a student interested in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm really into sports and a bit of a history buff. Great to meet you too! What kind of tech and science stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really passionate about environmental science and sustainability. It's great to meet you both! Alice, what specific areas of tech and science do you find most interesting?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 23.219 seconds)
+   **Total running time of the script:** (0 minutes 12.410 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
