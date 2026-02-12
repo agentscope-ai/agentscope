@@ -348,9 +348,9 @@ to download the full example code.</p>
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;编写并执行一个Python脚本，该脚本应该输出 &#39;Hello, World!&#39; 到控制台。&quot;
+        &quot;task_description&quot;: &quot;使用 Python 编写并执行一个简单的 &#39;Hello, World!&#39; 程序。请打印出 &#39;Hello, World!&#39; 到控制台。&quot;
     },
-    &quot;id&quot;: &quot;call_1d38a6a01b4b4cb689a7d9&quot;
+    &quot;id&quot;: &quot;call_5804fd62c0154401a41650&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
@@ -359,11 +359,11 @@ Worker: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
         &quot;timeout&quot;: 5
     },
-    &quot;id&quot;: &quot;call_14d0b03bce8b49b5bf2cf0&quot;
+    &quot;id&quot;: &quot;call_43522b3c615a491290fb94&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_14d0b03bce8b49b5bf2cf0&quot;,
+    &quot;id&quot;: &quot;call_43522b3c615a491290fb94&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -372,19 +372,19 @@ system: {
         }
     ]
 }
-Worker: Python 脚本已成功执行，并输出了 &#39;Hello, World!&#39; 到控制台。
+Worker: &#39;Hello, World!&#39; 已经成功地打印到控制台。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_1d38a6a01b4b4cb689a7d9&quot;,
+    &quot;id&quot;: &quot;call_5804fd62c0154401a41650&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Python 脚本已成功执行，并输出了 &#39;Hello, World!&#39; 到控制台。&quot;
+            &quot;text&quot;: &quot;&#39;Hello, World!&#39; 已经成功地打印到控制台。&quot;
         }
     ]
 }
-Orchestrator: 子智能体已成功编写并执行了一个Python脚本，该脚本输出了 &#39;Hello, World!&#39; 到控制台。
+Orchestrator: 子智能体已经成功地在 Python 中执行了 &quot;Hello, World!&quot; 程序，并打印到了控制台。
 </pre></div>
 </div>
 <div class="line-block">
@@ -467,7 +467,7 @@ Orchestrator: 子智能体已成功编写并执行了一个Python脚本，该脚
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 14.671 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 16.090 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>

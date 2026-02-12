@@ -331,7 +331,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_c5f7ef7e3cda4fb3a95bf7",
+        "id": "call_b05b18f139f84e60946be4",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -340,7 +340,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_4d97e34c82694aa7a71f69",
+        "id": "call_cb5d31412af04f9aaef6d9",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -349,32 +349,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_c5f7ef7e3cda4fb3a95bf7",
+        "id": "call_b05b18f139f84e60946be4",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 10:19:46.562292，结束于 10:19:49.565624。"
+                "text": "标签 tag1 开始于 06:01:24.976338，结束于 06:01:27.979548。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_4d97e34c82694aa7a71f69",
+        "id": "call_cb5d31412af04f9aaef6d9",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 10:19:46.562396，结束于 10:19:49.566247。"
+                "text": "标签 tag2 开始于 06:01:24.976412，结束于 06:01:27.980070。"
             }
         ]
     }
-    Jarvis: 两个 `example_tool_function` 函数已经并行执行完毕。下面是它们各自的运行时间：
+    Jarvis: 两个函数 `example_tool_function` 已经并行执行完成。以下是它们的执行时间详情：
 
-    - 标签为 'tag1' 的函数开始于 10:19:46.562292，结束于 10:19:49.565624。
-    - 标签为 'tag2' 的函数开始于 10:19:46.562396，结束于 10:19:49.566247。
+    - 标签为 'tag1' 的函数开始于 06:01:24.976338，结束于 06:01:27.979548。
+    - 标签为 'tag2' 的函数开始于 06:01:24.976412，结束于 06:01:27.980070。
 
-    两个函数几乎是同时启动的，并且执行时间非常接近。
+    看起来这两个函数几乎是同时启动和完成的。
 
 
 
@@ -443,11 +443,11 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_91c8ca12f30241a59722c5",
+        "id": "call_f5e31715b7354b0f806fbf",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
-            "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
+            "description": "著名的理论物理学家，以相对论闻名。",
             "age": 76,
             "honor": [
                 "诺贝尔物理学奖",
@@ -455,11 +455,11 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
                 "马克斯·普朗克奖章"
             ]
         },
-        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"20世纪最伟大的理论物理学家之一，相对论的创立者。\", \"age\": 76, \"honor\": [\"诺贝尔物理学奖\", \"科普利奖章\", \"马克斯·普朗克奖章\"]}"
+        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"著名的理论物理学家，以相对论闻名。\", \"age\": 76, \"honor\": [\"诺贝尔物理学奖\", \"科普利奖章\", \"马克斯·普朗克奖章\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_91c8ca12f30241a59722c5",
+        "id": "call_f5e31715b7354b0f806fbf",
         "name": "generate_response",
         "output": [
             {
@@ -468,12 +468,14 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。爱因斯坦出生于1879年，在物理学领域做出了许多开创性的贡献，并因此获得了包括诺贝尔物理学奖在内的多个重要奖项。除了诺贝尔物理学奖之外，他还荣获了科普利奖章和马克斯·普朗克奖章等荣誉。爱因斯坦的一生充满了对科学的探索与奉献，直至1955年去世时享年76岁。他的工作不仅深刻地改变了我们对于宇宙的理解，也对后来的技术发展产生了深远的影响。
+    Jarvis: 阿尔伯特·爱因斯坦是一位著名的理论物理学家，他最广为人知的成就是发展了相对论。爱因斯坦出生于1879年，在他76年的生命里对物理学做出了革命性的贡献。他的工作不仅改变了我们对于时间、空间以及重力的理解，而且奠定了现代宇宙学和量子力学的基础。
+
+    爱因斯坦获得了多项荣誉以表彰他在科学领域的杰出成就，其中包括诺贝尔物理学奖（1921年获得，奖励理由是“光电效应定律的发现及由此而起的研究”）、科普利奖章（英国皇家学会颁发）以及马克斯·普朗克奖章等重要奖项。通过这些贡献与认可，爱因斯坦成为了20世纪最具影响力的科学家之一，并且直到今天依然被全世界所敬仰。
 
     结构化输出：
     {
         "name": "阿尔伯特·爱因斯坦",
-        "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
+        "description": "著名的理论物理学家，以相对论闻名。",
         "age": 76,
         "honor": [
             "诺贝尔物理学奖",
@@ -555,7 +557,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 35.383 seconds)
+   **Total running time of the script:** (0 minutes 43.005 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
