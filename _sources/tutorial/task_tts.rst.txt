@@ -43,8 +43,20 @@ AgentScope supports the following TTS APIs:
       - ✅
       - ✅
       - ✅
+    * - DashScope CosyVoice Realtime API
+      - ``DashScopeCosyVoiceRealtimeTTSModel``
+      - ✅
+      - ✅
+      - ✅
+      - ✅
     * - DashScope API
       - ``DashScopeTTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+    * - DashScope CosyVoice API
+      - ``DashScopeCosyVoiceTTSModel``
       - ❌
       - ✅
       - ✅
@@ -71,7 +83,7 @@ AgentScope supports the following TTS APIs:
 - **Use Realtime TTS** when text is generated progressively (e.g., streaming
   LLM responses) for lower latency
 
-.. GENERATED FROM PYTHON SOURCE LINES 57-70
+.. GENERATED FROM PYTHON SOURCE LINES 69-82
 
 .. code-block:: Python
 
@@ -95,7 +107,7 @@ AgentScope supports the following TTS APIs:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 71-77
+.. GENERATED FROM PYTHON SOURCE LINES 83-89
 
 Non-Realtime TTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -104,7 +116,7 @@ to use. You can directly call their ``synthesize()`` method.
 
 Taking DashScope TTS model as an example:
 
-.. GENERATED FROM PYTHON SOURCE LINES 77-107
+.. GENERATED FROM PYTHON SOURCE LINES 89-119
 
 .. code-block:: Python
 
@@ -146,12 +158,12 @@ Taking DashScope TTS model as an example:
 
  .. code-block:: none
 
-    The length of audio data: 163840
+    The length of audio data: 179200
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 108-113
+.. GENERATED FROM PYTHON SOURCE LINES 120-125
 
 **Streaming Output for Lower Latency:**
 
@@ -159,7 +171,7 @@ When ``stream=True``, the model returns audio chunks progressively, allowing
 you to start playback before synthesis completes. This reduces perceived latency.
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 113-143
+.. GENERATED FROM PYTHON SOURCE LINES 125-155
 
 .. code-block:: Python
 
@@ -212,13 +224,13 @@ you to start playback before synthesis completes. This reduces perceived latency
     Received audio chunk of length: 184320
     Received audio chunk of length: 204800
     Received audio chunk of length: 225280
-    Received audio chunk of length: 235520
-    Received audio chunk of length: 235520
+    Received audio chunk of length: 245760
+    Received audio chunk of length: 245760
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 144-194
+.. GENERATED FROM PYTHON SOURCE LINES 156-206
 
 Realtime TTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -271,7 +283,7 @@ and non-realtime TTS models.
 4. The audio is played during the agent's ``self.print()`` method
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 194-226
+.. GENERATED FROM PYTHON SOURCE LINES 206-238
 
 .. code-block:: Python
 
@@ -314,7 +326,7 @@ and non-realtime TTS models.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 227-244
+.. GENERATED FROM PYTHON SOURCE LINES 239-256
 
 Customizing TTS Model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -337,7 +349,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.540 seconds)
+   **Total running time of the script:** (0 minutes 4.163 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tts.py:

@@ -460,21 +460,77 @@ This tutorial will guide you through how to leverage the <code class="docutils l
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Workflow response:&quot;</span><span class="p">,</span> <span class="n">workflow_output</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">get_text_content</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>react_agent: To find the sum of 123 and 456, you simply add the two numbers together:
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>react_agent: To solve the problem of adding 123 and 456, follow these steps:
 
-\[
-123 + 456 = 579
-\]
+1. Write down the numbers one under the other, aligning them by place value:
+   ```
+     123
+   + 456
+   ```
 
-So, 123 plus 456 is 579.
+2. Add the digits in the ones place:
+   \[
+   3 + 6 = 9
+   \]
+   Write down 9.
 
-Workflow response: To find the sum of 123 and 456, you simply add the two numbers together:
+3. Add the digits in the tens place:
+   \[
+   2 + 5 = 7
+   \]
+   Write down 7.
 
-\[
-123 + 456 = 579
-\]
+4. Add the digits in the hundreds place:
+   \[
+   1 + 4 = 5
+   \]
+   Write down 5.
 
-So, 123 plus 456 is 579.
+Putting it all together, you get:
+   ```
+     123
+   + 456
+   ------
+     579
+   ```
+
+So, 123 plus 456 is **579**.
+
+Workflow response: To solve the problem of adding 123 and 456, follow these steps:
+
+1. Write down the numbers one under the other, aligning them by place value:
+   ```
+     123
+   + 456
+   ```
+
+2. Add the digits in the ones place:
+   \[
+   3 + 6 = 9
+   \]
+   Write down 9.
+
+3. Add the digits in the tens place:
+   \[
+   2 + 5 = 7
+   \]
+   Write down 7.
+
+4. Add the digits in the hundreds place:
+   \[
+   1 + 4 = 5
+   \]
+   Write down 5.
+
+Putting it all together, you get:
+   ```
+     123
+   + 456
+   ------
+     579
+   ```
+
+So, 123 plus 456 is **579**.
 </pre></div>
 </div>
 </section>
@@ -582,7 +638,7 @@ python<span class="w"> </span>main.py
 <p class="admonition-title">Tip</p>
 <p>For more tuning examples, refer to the <a class="reference external" href="https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner">tuner directory</a> of the AgentScope-Samples repository.</p>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 3.566 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 15.183 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tuner-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/243e482519a51e80a9f627d3dbd503d2/task_tuner.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tuner.ipynb</span></code></a></p>

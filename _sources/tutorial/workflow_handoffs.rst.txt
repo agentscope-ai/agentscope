@@ -46,20 +46,20 @@ First, we create a function to allow the orchestrator to create workers dynamica
         "input": {
             "task_description": "Print 'Hello, World!' using Python"
         },
-        "id": "call_0d62853207374982b8ada9"
+        "id": "call_664e5463c46a4f23b27848"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello, World!')",
-            "timeout": 300
+            "timeout": 30
         },
-        "id": "call_2ce86524577e4defa0d4b3"
+        "id": "call_10657a05a51546fd8824c1"
     }
     system: {
         "type": "tool_result",
-        "id": "call_2ce86524577e4defa0d4b3",
+        "id": "call_10657a05a51546fd8824c1",
         "name": "execute_python_code",
         "output": [
             {
@@ -75,7 +75,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
     ```
     system: {
         "type": "tool_result",
-        "id": "call_0d62853207374982b8ada9",
+        "id": "call_664e5463c46a4f23b27848",
         "name": "create_worker",
         "output": [
             {
@@ -84,7 +84,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
             }
         ]
     }
-    Orchestrator: The Python code has been executed successfully and printed 'Hello, World!' to the standard output. 
+    Orchestrator: The Python code has been executed and it printed 'Hello, World!' to the standard output.
 
     ```
     Hello, World!
@@ -179,7 +179,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 10.237 seconds)
+   **Total running time of the script:** (0 minutes 10.996 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:

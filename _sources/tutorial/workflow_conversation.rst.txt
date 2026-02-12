@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology. It's great to meet you too! What kind of things are you interested in exploring?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been exploring lately?
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and history. It's great to meet you!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love music and I play the guitar. It's really cool to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology. It's great to meet you too! What kind of things are you interested in exploring?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been exploring lately?
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and environmental science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and history. It's great to meet you!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I love music and I play the guitar. It's really cool to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.758 seconds)
+   **Total running time of the script:** (0 minutes 8.680 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

@@ -263,7 +263,7 @@ We can create a ReAct agent with the registered agent skills as follows:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.004 seconds)
+   **Total running time of the script:** (0 minutes 0.003 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent_skill.py:
