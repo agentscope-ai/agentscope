@@ -273,16 +273,22 @@ class InMemoryMemory(MemoryBase):
     def state_dict(self) -> dict:
         """Get the state dictionary for serialization."""
         return {
+            **super().state_dict(),
             "content": [[msg.to_dict(), marks] for msg, marks in self.content],
         }
 
     def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
         """Load the state dictionary for deserialization."""
-        if strict and "content" not in state_dict:
+        if strict and (
+            "content" not in state_dict
+            or "_compressed_summary" not in state_dict
+        ):
             raise KeyError(
-                "The state_dict does not contain 'content' key required for "
-                "InMemoryMemory.",
+                "The state_dict does not contain 'content' or "
+                "'_compressed_summary' keys required for InMemoryMemory.",
             )
+
+        self._compressed_summary = state_dict["_compressed_summary"]
 
         self.content = []
         for item in state_dict.get("content", []):

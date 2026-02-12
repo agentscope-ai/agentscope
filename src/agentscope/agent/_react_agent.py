@@ -554,7 +554,12 @@ class ReActAgent(ReActAgentBase):
         prompt = await self.formatter.format(
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
-                *await self.memory.get_memory(),
+                *await self.memory.get_memory(
+                    exclude_mark=_MemoryMark.COMPRESSED
+                    if self.compression_config
+                    and self.compression_config.enable
+                    else None,
+                ),
             ],
         )
         # Clear the hint messages after use
@@ -731,7 +736,12 @@ class ReActAgent(ReActAgentBase):
         prompt = await self.formatter.format(
             [
                 Msg("system", self.sys_prompt, "system"),
-                *await self.memory.get_memory(),
+                *await self.memory.get_memory(
+                    exclude_mark=_MemoryMark.COMPRESSED
+                    if self.compression_config
+                    and self.compression_config.enable
+                    else None,
+                ),
                 hint_msg,
             ],
         )
@@ -926,7 +936,12 @@ class ReActAgent(ReActAgentBase):
                     rewrite_prompt = await self.formatter.format(
                         msgs=[
                             Msg("system", self.sys_prompt, "system"),
-                            *await self.memory.get_memory(),
+                            *await self.memory.get_memory(
+                                exclude_mark=_MemoryMark.COMPRESSED
+                                if self.compression_config
+                                and self.compression_config.enable
+                                else None,
+                            ),
                             Msg(
                                 "user",
                                 "<system-hint>Now you need to rewrite "

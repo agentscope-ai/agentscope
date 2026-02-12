@@ -451,6 +451,47 @@ class ShortTermMemoryTest(IsolatedAsyncioTestCase):
 
         await self.memory.clear()
 
+    async def _test_serialization(self) -> None:
+        """Test the serialization and deserialization of RedisMemory."""
+
+        # Test the state dict before any updates
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "",
+            },
+        )
+
+        # Update compressed summary and test state dict
+        await self.memory.update_compressed_summary("Hi there!")
+        state_dict = self.memory.state_dict()
+
+        # Verify the state dict content
+        self.assertDictEqual(
+            state_dict,
+            {
+                "_compressed_summary": "Hi there!",
+            },
+        )
+
+        # Clear the compressed summary and verify state dict
+        await self.memory.update_compressed_summary("")
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "",
+            },
+        )
+
+        # Load the previous state dict and verify restoration
+        self.memory.load_state_dict(state_dict)
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "Hi there!",
+            },
+        )
+
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""
         await self.memory.clear()
@@ -473,6 +514,91 @@ class InMemoryMemoryTest(ShortTermMemoryTest):
         await self._mark_tests()
         await self._test_add_duplicated_msgs()
         await self._test_delete_nonexistent_msg()
+
+    async def test_serialization(self) -> None:
+        """Test the serialization and deserialization of InMemoryMemory."""
+
+        msg = Msg("user", "1", "user")
+        await self.memory.add(msg)
+
+        # Test the state dict before any updates
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "",
+                "content": [
+                    [
+                        {
+                            "id": msg.id,
+                            "name": msg.name,
+                            "role": msg.role,
+                            "content": msg.content,
+                            "metadata": msg.metadata,
+                            "timestamp": msg.timestamp,
+                        },
+                        [],
+                    ],
+                ],
+            },
+        )
+
+        # Update compressed summary and test state dict
+        await self.memory.update_compressed_summary("Hello World!")
+        state_dict = self.memory.state_dict()
+
+        # Verify the state dict content
+        self.assertDictEqual(
+            state_dict,
+            {
+                "_compressed_summary": "Hello World!",
+                "content": [
+                    [
+                        {
+                            "id": msg.id,
+                            "name": msg.name,
+                            "role": msg.role,
+                            "content": msg.content,
+                            "metadata": msg.metadata,
+                            "timestamp": msg.timestamp,
+                        },
+                        [],
+                    ],
+                ],
+            },
+        )
+
+        # Clear the compressed summary and verify state dict
+        await self.memory.update_compressed_summary("")
+        await self.memory.clear()
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "",
+                "content": [],
+            },
+        )
+
+        # Load the previous state dict and verify restoration
+        self.memory.load_state_dict(state_dict)
+        self.assertDictEqual(
+            self.memory.state_dict(),
+            {
+                "_compressed_summary": "Hello World!",
+                "content": [
+                    [
+                        {
+                            "id": msg.id,
+                            "name": msg.name,
+                            "role": msg.role,
+                            "content": msg.content,
+                            "metadata": msg.metadata,
+                            "timestamp": msg.timestamp,
+                        },
+                        [],
+                    ],
+                ],
+            },
+        )
 
 
 class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
@@ -511,6 +637,7 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
         await self._mark_tests()
         await self._multi_tenant_tests()
         await self._multi_session_tests()
+        await self._test_serialization()
 
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""
@@ -569,6 +696,7 @@ class RedisMemoryTest(ShortTermMemoryTest):
         await self._test_delete_nonexistent_msg()
         await self._multi_tenant_tests()
         await self._multi_session_tests()
+        await self._test_serialization()
 
     async def test_ttl(self) -> None:
         """Test the TTL functionality of the Redis memory."""
