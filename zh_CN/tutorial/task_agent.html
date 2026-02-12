@@ -620,7 +620,7 @@ to download the full example code.</p>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_c979893680c444659d0db9&quot;,
+    &quot;id&quot;: &quot;call_ee8a78830765453e9d63ae&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -629,7 +629,7 @@ to download the full example code.</p>
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_2f456f46f9934679ac6cac&quot;,
+    &quot;id&quot;: &quot;call_6c0376738481491ea43e09&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -638,32 +638,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_c979893680c444659d0db9&quot;,
+    &quot;id&quot;: &quot;call_ee8a78830765453e9d63ae&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;标签 tag1 开始于 06:47:37.326093，结束于 06:47:40.329356。&quot;
+            &quot;text&quot;: &quot;标签 tag1 开始于 06:49:48.538152，结束于 06:49:51.541419。&quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_2f456f46f9934679ac6cac&quot;,
+    &quot;id&quot;: &quot;call_6c0376738481491ea43e09&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;标签 tag2 开始于 06:47:37.326175，结束于 06:47:40.330011。&quot;
+            &quot;text&quot;: &quot;标签 tag2 开始于 06:49:48.538245，结束于 06:49:51.542083。&quot;
         }
     ]
 }
-Jarvis: 两个函数调用已经并行执行完毕。下面是它们各自的运行时间：
+Jarvis: 两个函数 `example_tool_function` 已经并行执行完成，分别带有标签 &#39;tag1&#39; 和 &#39;tag2&#39;。下面是它们的执行时间信息：
 
-- 标签为 &#39;tag1&#39; 的 `example_tool_function` 开始于 06:47:37.326093，结束于 06:47:40.329356。
-- 标签为 &#39;tag2&#39; 的 `example_tool_function` 开始于 06:47:37.326175，结束于 06:47:40.330011。
+- 标签为 &#39;tag1&#39; 的函数开始于 06:49:48.538152，结束于 06:49:51.541419。
+- 标签为 &#39;tag2&#39; 的函数开始于 06:49:48.538245，结束于 06:49:51.542083。
 
-看起来两者几乎同时开始和结束。
+请注意，这些时间戳表示的是每个带有相应标签的函数的开始和结束时间。
 </pre></div>
 </div>
 </section>
@@ -714,24 +714,23 @@ Jarvis: 两个函数调用已经并行执行完毕。下面是它们各自的运
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_35a60c33b36b4d6a84b3f0&quot;,
+    &quot;id&quot;: &quot;call_5dabb2c60ef146f484ad68&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;name&quot;: &quot;阿尔伯特·爱因斯坦&quot;,
         &quot;description&quot;: &quot;20世纪最伟大的理论物理学家之一，相对论的创立者。&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
-            &quot;1921年诺贝尔物理学奖&quot;,
-            &quot;普朗克奖章&quot;,
+            &quot;诺贝尔物理学奖&quot;,
             &quot;科普利奖章&quot;,
-            &quot;富兰克林奖章&quot;
+            &quot;马克斯·普朗克奖章&quot;
         ]
     },
-    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;阿尔伯特·爱因斯坦\&quot;, \&quot;description\&quot;: \&quot;20世纪最伟大的理论物理学家之一，相对论的创立者。\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;1921年诺贝尔物理学奖\&quot;, \&quot;普朗克奖章\&quot;, \&quot;科普利奖章\&quot;, \&quot;富兰克林奖章\&quot;]}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;阿尔伯特·爱因斯坦\&quot;, \&quot;description\&quot;: \&quot;20世纪最伟大的理论物理学家之一，相对论的创立者。\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;诺贝尔物理学奖\&quot;, \&quot;科普利奖章\&quot;, \&quot;马克斯·普朗克奖章\&quot;]}&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_35a60c33b36b4d6a84b3f0&quot;,
+    &quot;id&quot;: &quot;call_5dabb2c60ef146f484ad68&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -740,11 +739,9 @@ system: {
         }
     ]
 }
-Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein，1879年3月14日—1955年4月18日）是20世纪最伟大的理论物理学家之一，以创立相对论而闻名于世。他的工作对现代物理学产生了深远的影响，并且极大地改变了我们对于时间、空间以及重力的理解。爱因斯坦在科学上的贡献不仅限于相对论，在量子力学领域也有重要发现。
+Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein）是20世纪最伟大的理论物理学家之一，以其相对论的创立而闻名于世。他出生于1879年，在物理学领域做出了革命性的贡献，直到1955年去世，享年76岁。爱因斯坦的工作不仅改变了我们对时间、空间以及引力的理解，还为现代物理学的发展奠定了基础。
 
-爱因斯坦出生于德国的一个犹太家庭，在年轻时就展现出了非凡的数学才能。他的一生中获得了许多荣誉，其中包括1921年的诺贝尔物理学奖，这是为了表彰他在光电效应方面的研究以及他对理论物理学服务所做出的基础性贡献。除此之外，他还被授予了普朗克奖章、科普利奖章和富兰克林奖章等多项国际大奖。
-
-除了是一位杰出的科学家外，爱因斯坦还以其和平主义立场和社会活动家的身份而著称。直到1955年去世前，爱因斯坦一直致力于科学研究和社会正义事业，享年76岁。今天，人们仍然通过各种方式纪念这位伟大的思想家及其对人类知识宝库所作的巨大贡献。
+在其辉煌的职业生涯中，爱因斯坦获得了多项荣誉，其中包括1921年的诺贝尔物理学奖，该奖项表彰了他在光电效应方面的研究工作；科普利奖章，这是英国皇家学会颁发给在任何自然科学分支中做出杰出贡献者的荣誉；以及马克斯·普朗克奖章，这是德国物理学会为了纪念著名物理学家马克斯·普朗克而设立的一个奖项，用以认可在理论物理学领域内的卓越成就。通过这些以及其他众多贡献，爱因斯坦成为了科学史上最受尊敬的人物之一。
 
 结构化输出：
 {
@@ -752,10 +749,9 @@ Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein，1879年3月14日—1955�
     &quot;description&quot;: &quot;20世纪最伟大的理论物理学家之一，相对论的创立者。&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
-        &quot;1921年诺贝尔物理学奖&quot;,
-        &quot;普朗克奖章&quot;,
+        &quot;诺贝尔物理学奖&quot;,
         &quot;科普利奖章&quot;,
-        &quot;富兰克林奖章&quot;
+        &quot;马克斯·普朗克奖章&quot;
     ]
 }
 </pre></div>
@@ -853,7 +849,7 @@ Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein，1879年3月14日—1955�
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">智能体钩子函数</span></a></p></li>
 <li><p><a class="reference internal" href="task_a2a.html#a2a"><span class="std std-ref">A2A 智能体</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 37.915 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 34.580 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>

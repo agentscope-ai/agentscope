@@ -115,7 +115,7 @@ AgentScope 在 ``agentscope.token`` 模块下提供了 token 计数功能，用�
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.553 seconds)
+   **Total running time of the script:** (0 minutes 1.091 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_token.py:
