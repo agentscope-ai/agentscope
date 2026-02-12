@@ -175,30 +175,30 @@ AgentScope 中的记忆模块负责：
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='mCjFBcDTVHM53mi48vNPA6', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:53:25.267', invocation_id='None')
+    - Msg(id='9VbGUxo8ti3UetR4qQC7Nh', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:40:06.430', invocation_id='None')
     记忆的状态字典：
     {
       "_compressed_summary": "",
       "content": [
         [
           {
-            "id": "QutNJwvFu4AEPjjCjp7UMP",
+            "id": "crQg46JiA6WMiLFp6qwESF",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:53:25.267"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:40:06.430"
           },
           []
         ],
         [
           {
-            "id": "mCjFBcDTVHM53mi48vNPA6",
+            "id": "9VbGUxo8ti3UetR4qQC7Nh",
             "name": "system",
             "role": "system",
             "content": "<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:53:25.267"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:40:06.430"
           },
           [
             "hint"
@@ -213,12 +213,12 @@ AgentScope 中的记忆模块负责：
       "content": [
         [
           {
-            "id": "QutNJwvFu4AEPjjCjp7UMP",
+            "id": "crQg46JiA6WMiLFp6qwESF",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:53:25.267"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:40:06.430"
           },
           []
         ]
@@ -295,7 +295,7 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='K8eANa3Chq9sdcDRGGhD5y', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:53:25.309', invocation_id='None')
+    - Msg(id='Fi56tXo3bXgwuTsWVQzuC6', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:40:06.471', invocation_id='None')
 
 
 
@@ -339,9 +339,9 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     记忆中的所有消息：
-    - Msg(id='aKSg4cCSK3BHkJQ5MrGmdW', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata=None, timestamp='2026-02-12 06:53:25.278', invocation_id='None')
-    - Msg(id='K8eANa3Chq9sdcDRGGhD5y', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:53:25.309', invocation_id='None')
-    - Msg(id='79K66MAoC5Mor9vzG2YAPF', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata=None, timestamp='2026-02-12 06:53:25.317', invocation_id='None')
+    - Msg(id='QCVdLX98LHoeNhSAccpmS4', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-02-12 08:40:06.441', invocation_id='None')
+    - Msg(id='Fi56tXo3bXgwuTsWVQzuC6', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:40:06.471', invocation_id='None')
+    - Msg(id='nyYwehxWnTcXGfzxwk799L', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-02-12 08:40:06.479', invocation_id='None')
 
 
 
@@ -487,7 +487,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='NgruhvtPPUTMHviyR93LrM', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:53:25.334', invocation_id='None')
+    - Msg(id='PVuo85cemGR3dnLXjoeEMG', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:40:06.497', invocation_id='None')
 
 
 
