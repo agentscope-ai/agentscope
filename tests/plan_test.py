@@ -610,3 +610,175 @@ Subtask at index 2:
         self.assertIsNotNone(
             agent.plan_notebook.current_plan,
         )
+
+    async def test_hint_generator_all_states(self) -> None:
+        """Test DefaultPlanToHint covers all plan states."""
+        from agentscope.plan._plan_notebook import DefaultPlanToHint
+
+        hint_gen = DefaultPlanToHint()
+
+        # State 1: No plan
+        hint = hint_gen(None)
+        assert hint is not None
+        self.assertIn("create_plan", hint)
+
+        # State 2: All todo
+        plan = Plan(
+            name="Test",
+            description="desc",
+            expected_outcome="outcome",
+            subtasks=[
+                SubTask(name="t1", description="d", expected_outcome="e"),
+            ],
+        )
+        hint = hint_gen(plan)
+        assert hint is not None
+        self.assertIn("subtask_idx=0", hint)
+
+        # State 3: In progress
+        plan.subtasks[0].state = "in_progress"
+        hint = hint_gen(plan)
+        assert hint is not None
+        self.assertIn("finish_subtask", hint)
+
+        # State 4: Some done, none in progress
+        plan.subtasks[0].state = "done"
+        plan.subtasks.append(
+            SubTask(name="t2", description="d", expected_outcome="e"),
+        )
+        hint = hint_gen(plan)
+        assert hint is not None
+        self.assertIn("first 1", hint.lower())
+
+        # State 5: All done
+        plan.subtasks[1].state = "done"
+        hint = hint_gen(plan)
+        assert hint is not None
+        self.assertIn("finish_plan", hint)
+
+        # State 6: Mix done and abandoned
+        plan.subtasks[1].state = "abandoned"
+        hint = hint_gen(plan)
+        assert hint is not None
+        self.assertIn("finish_plan", hint)
+
+    async def test_error_paths(self) -> None:
+        """Test error handling paths to improve coverage."""
+        notebook = PlanNotebook()
+
+        # Test operations without plan
+        with self.assertRaises(ValueError):
+            await notebook.revise_current_plan(0, "delete")
+
+        # Create plan for subsequent tests
+        await notebook.create_plan(
+            name="Test",
+            description="d",
+            expected_outcome="e",
+            subtasks=[
+                SubTask(name="t1", description="d", expected_outcome="e"),
+                SubTask(name="t2", description="d", expected_outcome="e"),
+            ],
+        )
+
+        # Invalid types and values
+        # type: ignore
+        res = await notebook.revise_current_plan("invalid", "delete")
+        self.assertIn("Invalid type", res.content[0].get("text", ""))
+
+        # type: ignore
+        res = await notebook.revise_current_plan(0, "bad_action")
+        self.assertIn("Invalid action", res.content[0].get("text", ""))
+
+        res = await notebook.revise_current_plan(0, "add", None)
+        self.assertIn("must be provided", res.content[0].get("text", ""))
+
+        res = await notebook.revise_current_plan(999, "delete")
+        self.assertIn("Invalid subtask_idx", res.content[0].get("text", ""))
+
+        res = await notebook.update_subtask_state(999, "in_progress")
+        self.assertIn("Invalid subtask_idx", res.content[0].get("text", ""))
+
+        # type: ignore
+        res = await notebook.update_subtask_state(0, "bad_state")
+        self.assertIn("Invalid state", res.content[0].get("text", ""))
+
+        # State constraints
+        res = await notebook.update_subtask_state(1, "in_progress")
+        self.assertIn("not done yet", res.content[0].get("text", ""))
+
+        await notebook.update_subtask_state(0, "in_progress")
+        res = await notebook.update_subtask_state(1, "in_progress")
+        self.assertIn("not done yet", res.content[0].get("text", ""))
+
+        res = await notebook.finish_subtask(1, "outcome")
+        self.assertIn("not done yet", res.content[0].get("text", ""))
+
+    async def test_edge_cases(self) -> None:
+        """Test edge cases and special scenarios."""
+        notebook = PlanNotebook()
+
+        # Finish plan when no plan exists
+        res = await notebook.finish_plan("done", "outcome")
+        self.assertIn("no plan", res.content[0].get("text", "").lower())
+
+        # Create and replace plan
+        await notebook.create_plan(
+            "P1",
+            "d",
+            "e",
+            [SubTask(name="t", description="d", expected_outcome="e")],
+        )
+        res = await notebook.create_plan(
+            "P2",
+            "d",
+            "e",
+            [SubTask(name="t", description="d", expected_outcome="e")],
+        )
+        self.assertIn("replaced", res.content[0].get("text", "").lower())
+
+        # Auto-activate next subtask
+        assert notebook.current_plan is not None
+        notebook.current_plan.subtasks.append(
+            SubTask(name="t2", description="d", expected_outcome="e"),
+        )
+        await notebook.update_subtask_state(0, "in_progress")
+        res = await notebook.finish_subtask(0, "done")
+        self.assertIn("next subtask", res.content[0].get("text", "").lower())
+        assert notebook.current_plan is not None
+        self.assertEqual(
+            notebook.current_plan.subtasks[1].state,
+            "in_progress",
+        )
+
+        # Historical plans
+        await notebook.finish_subtask(1, "done")
+        await notebook.finish_plan("done", "final")
+        res = await notebook.view_historical_plans()
+        self.assertIn("P2", res.content[0].get("text", ""))
+
+        plans = await notebook.storage.get_plans()
+        res = await notebook.recover_historical_plan(plans[0].id)
+        self.assertIn("recovered", res.content[0].get("text", "").lower())
+
+        res = await notebook.recover_historical_plan("bad_id")
+        self.assertIn("cannot find", res.content[0].get("text", "").lower())
+
+        # Hooks
+        called = []
+
+        async def hook(_nb: PlanNotebook, _p: Plan | None) -> None:
+            called.append(True)
+
+        notebook.register_plan_change_hook("test", hook)
+        await notebook.create_plan(
+            "P3",
+            "d",
+            "e",
+            [SubTask(name="t", description="d", expected_outcome="e")],
+        )
+        self.assertTrue(called)
+
+        notebook.remove_plan_change_hook("test")
+        with self.assertRaises(ValueError):
+            notebook.remove_plan_change_hook("bad_hook")
