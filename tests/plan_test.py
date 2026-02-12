@@ -315,7 +315,7 @@ Subtask at index 2:
         self.assertDictEqual(
             state,
             {
-                "memory": {"content": []},
+                "memory": {"_compressed_summary": "", "content": []},
                 "toolkit": {"active_groups": []},
                 "plan_notebook": {
                     "storage": {

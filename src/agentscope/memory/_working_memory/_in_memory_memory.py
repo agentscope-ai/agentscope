@@ -279,16 +279,13 @@ class InMemoryMemory(MemoryBase):
 
     def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
         """Load the state dictionary for deserialization."""
-        if strict and (
-            "content" not in state_dict
-            or "_compressed_summary" not in state_dict
-        ):
+        if strict and "content" not in state_dict:
             raise KeyError(
-                "The state_dict does not contain 'content' or "
-                "'_compressed_summary' keys required for InMemoryMemory.",
+                "The state_dict does not contain 'content' "
+                "keys required for InMemoryMemory.",
             )
 
-        self._compressed_summary = state_dict["_compressed_summary"]
+        self._compressed_summary = state_dict.get("_compressed_summary", "")
 
         self.content = []
         for item in state_dict.get("content", []):
