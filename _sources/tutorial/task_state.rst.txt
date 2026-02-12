@@ -186,6 +186,7 @@ In AgentScope, the ``AgentBase``, ``MemoryBase``, ``LongTermMemoryBase`` and ``T
     Initial state of the agent:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": []
         },
         "toolkit": {
@@ -227,35 +228,36 @@ Then we change its state by generating a reply message:
 
  .. code-block:: none
 
-    Friday: Hello! I'm Friday, your AI assistant. How can I assist you today?
+    Friday: Hello! I'm Friday, your virtual assistant. How can I assist you today?
     State of the agent after generating a reply:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": [
                 [
                     {
-                        "id": "9yiaVk7b6KCSbc9uSPPteP",
+                        "id": "ksAVQ9pRi3oUFwHM47e88N",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:42.683"
+                        "timestamp": "2026-02-12 06:41:29.009"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "A9hLN8aXzAsjtXXokNM5ev",
+                        "id": "heqkTRcE9WaAm9qdpMWG58",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Hello! I'm Friday, your AI assistant. How can I assist you today?"
+                                "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:42.683"
+                        "timestamp": "2026-02-12 06:41:29.009"
                     },
                     []
                 ]
@@ -297,6 +299,7 @@ Now we recover the state of the agent to its initial state:
     State after loading the initial state:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": []
         },
         "toolkit": {
@@ -352,21 +355,22 @@ Saving Session State
     State of the agent after generating a reply:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": [
                 [
                     {
-                        "id": "Uo7qGYV6M7XebNeKCLoNUb",
+                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.563"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "eMZ56EBMijikmSXsEfVPnh",
+                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -376,7 +380,7 @@ Saving Session State
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.564"
                     },
                     []
                 ]
@@ -392,21 +396,22 @@ Saving Session State
     State of agent:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": [
                 [
                     {
-                        "id": "Uo7qGYV6M7XebNeKCLoNUb",
+                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.563"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "eMZ56EBMijikmSXsEfVPnh",
+                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -416,7 +421,7 @@ Saving Session State
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.564"
                     },
                     []
                 ]
@@ -473,21 +478,22 @@ Then we save it to a session file:
     {
         "agent": {
             "memory": {
+                "_compressed_summary": "",
                 "content": [
                     [
                         {
-                            "id": "Uo7qGYV6M7XebNeKCLoNUb",
+                            "id": "eu2o8VwkPPiJLrWJ4vpcof",
                             "name": "user",
                             "role": "user",
                             "content": "Hello, agent!",
                             "metadata": null,
-                            "timestamp": "2026-02-12 06:39:45.317"
+                            "timestamp": "2026-02-12 06:41:31.563"
                         },
                         []
                     ],
                     [
                         {
-                            "id": "eMZ56EBMijikmSXsEfVPnh",
+                            "id": "X8QxZoJJpVwKbzqBxUoCZf",
                             "name": "Friday",
                             "role": "assistant",
                             "content": [
@@ -497,7 +503,7 @@ Then we save it to a session file:
                                 }
                             ],
                             "metadata": null,
-                            "timestamp": "2026-02-12 06:39:45.317"
+                            "timestamp": "2026-02-12 06:41:31.564"
                         },
                         []
                     ]
@@ -558,6 +564,7 @@ Now we load the session state from the saved file:
     Current state of the agent:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": []
         },
         "toolkit": {
@@ -569,21 +576,22 @@ Now we load the session state from the saved file:
     After loading the session state:
     {
         "memory": {
+            "_compressed_summary": "",
             "content": [
                 [
                     {
-                        "id": "Uo7qGYV6M7XebNeKCLoNUb",
+                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.563"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "eMZ56EBMijikmSXsEfVPnh",
+                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -593,7 +601,7 @@ Now we load the session state from the saved file:
                             }
                         ],
                         "metadata": null,
-                        "timestamp": "2026-02-12 06:39:45.317"
+                        "timestamp": "2026-02-12 06:41:31.564"
                     },
                     []
                 ]
@@ -617,7 +625,7 @@ Now we can see the agent state is restored to the saved state.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.378 seconds)
+   **Total running time of the script:** (0 minutes 4.623 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_state.py:

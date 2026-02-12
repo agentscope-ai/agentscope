@@ -292,7 +292,7 @@ The following is an example of manually creating a plan to conduct a comprehensi
     **Description**: Conduct a comprehensive research on the LLM-empowered agent.
     **Expected Outcome**: A Markdown format report answer three questions: 1. What's agent? 2. What's the current state of the art of agent? 3. What's the future trend of agent?
     **State**: todo
-    **Created At**: 2026-02-12 06:42:38.869
+    **Created At**: 2026-02-12 06:44:48.247
     ## Subtasks
     - [ ] Search agent-related survey papers
     - [ ] Read and summarize the papers
@@ -427,7 +427,7 @@ functions. A template of the plan change hook function is as follows:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.025 seconds)
+   **Total running time of the script:** (0 minutes 0.023 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_plan.py:
