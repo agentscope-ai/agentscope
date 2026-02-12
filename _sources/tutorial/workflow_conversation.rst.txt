@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring new ideas and learning about how we can use tech to help protect our planet. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and fitness, but I'm also interested in how technology can enhance our daily lives. It's cool to hear about your interest in using tech for the environment!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a passion for music and arts, but I'm also fascinated by the intersection of creativity and technology. It's great to meet you both and hear about your interests!
+    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology. It's great to meet you too! What kind of things are you interested in exploring?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been exploring lately?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring new ideas and learning about how we can use tech to help protect our planet. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and fitness, but I'm also interested in how technology can enhance our daily lives. It's cool to hear about your interest in using tech for the environment!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a passion for music and arts, but I'm also fascinated by the intersection of creativity and technology. It's great to meet you both and hear about your interests!
+    Alice: Hi there! I'm Alice, a student passionate about learning and exploring new things. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, also a student. I'm into sports and technology. It's great to meet you too! What kind of things are you interested in exploring?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, what new things have you been exploring lately?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.604 seconds)
+   **Total running time of the script:** (0 minutes 8.758 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
