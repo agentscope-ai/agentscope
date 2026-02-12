@@ -320,7 +320,7 @@ tensorboard 日志可在检查点目录下的 ``monitor/tensorboard`` 中找到�
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.875 seconds)
+   **Total running time of the script:** (0 minutes 1.733 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tuner.py:
