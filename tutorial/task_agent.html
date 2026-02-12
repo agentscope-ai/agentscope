@@ -632,7 +632,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_dbc6594b601a4a999f8415&quot;,
+    &quot;id&quot;: &quot;call_de2374e72b5342b4a7ce7e&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -641,7 +641,7 @@ they will be executed in parallel by the <code class="docutils literal notransla
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_56c2687d32814b3eafe95f&quot;,
+    &quot;id&quot;: &quot;call_5bb632cc49db41f5b34263&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -650,32 +650,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_dbc6594b601a4a999f8415&quot;,
+    &quot;id&quot;: &quot;call_de2374e72b5342b4a7ce7e&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag1 started at 08:28:23.900784 and ended at 08:28:26.904072. &quot;
+            &quot;text&quot;: &quot;Tag tag1 started at 08:31:19.225970 and ended at 08:31:22.229227. &quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_56c2687d32814b3eafe95f&quot;,
+    &quot;id&quot;: &quot;call_5bb632cc49db41f5b34263&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Tag tag2 started at 08:28:23.900895 and ended at 08:28:26.904753. &quot;
+            &quot;text&quot;: &quot;Tag tag2 started at 08:31:19.226065 and ended at 08:31:22.229867. &quot;
         }
     ]
 }
-Jarvis: The &#39;example_tool_function&#39; has been called with two tags &#39;tag1&#39; and &#39;tag2&#39; in parallel. Here are the details:
+Jarvis: The &#39;example_tool_function&#39; was called in parallel with two different tags, &#39;tag1&#39; and &#39;tag2&#39;. Here are the results:
 
-- For tag1, the function started at 08:28:23.900784 and ended at 08:28:26.904072.
-- For tag2, the function started at 08:28:23.900895 and ended at 08:28:26.904753.
+- For &#39;tag1&#39;, the function started at 08:31:19.225970 and ended at 08:31:22.229227.
+- For &#39;tag2&#39;, the function started at 08:31:19.226065 and ended at 08:31:22.229867.
 
-Both functions executed concurrently within a similar time frame.
+Both instances of the function executed concurrently, as you can see from their start and end times.
 </pre></div>
 </div>
 </section>
@@ -735,11 +735,11 @@ Then we can get the structured output from the <code class="docutils literal not
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_563b32e030a44eca8c061a&quot;,
+    &quot;id&quot;: &quot;call_dc3d5041f4e44f85bc91ae&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
-        &quot;name&quot;: &quot;Albert Einstein&quot;,
-        &quot;description&quot;: &quot;A renowned theoretical physicist who developed the theory of relativity.&quot;,
+        &quot;name&quot;: &quot;Einstein&quot;,
+        &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
             &quot;Nobel Prize in Physics (1921)&quot;,
@@ -747,11 +747,11 @@ Jarvis: {
             &quot;Max Planck Medal (1929)&quot;
         ]
     },
-    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;Albert Einstein\&quot;, \&quot;description\&quot;: \&quot;A renowned theoretical physicist who developed the theory of relativity.\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;Nobel Prize in Physics (1921)\&quot;, \&quot;Copley Medal (1925)\&quot;, \&quot;Max Planck Medal (1929)\&quot;]}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;Einstein\&quot;, \&quot;description\&quot;: \&quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;Nobel Prize in Physics (1921)\&quot;, \&quot;Copley Medal (1925)\&quot;, \&quot;Max Planck Medal (1929)\&quot;]}&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_563b32e030a44eca8c061a&quot;,
+    &quot;id&quot;: &quot;call_dc3d5041f4e44f85bc91ae&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -760,12 +760,12 @@ system: {
         }
     ]
 }
-Jarvis: Albert Einstein was a renowned theoretical physicist, celebrated for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein&#39;s profound impact on science and his iconic status as a genius have left an indelible mark on the world. He was awarded the Nobel Prize in Physics in 1921, primarily for his discovery of the law of the photoelectric effect, a pivotal contribution to the foundation of quantum theory. Among his many honors, he also received the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, but his legacy continues to inspire and influence scientific thought and exploration.
+Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which is one of the two foundational pillars of modern physics. Born in 1879, Einstein&#39;s contributions to science have had a profound and lasting impact on our understanding of the universe. He was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, but he is perhaps more widely recognized for his famous equation, E=mc², which expresses the equivalence of mass and energy. Throughout his career, Einstein received numerous honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. He passed away in 1955 at the age of 76, leaving behind a legacy that continues to inspire and influence scientific thought and exploration.
 
 The structured output:
 {
-    &quot;name&quot;: &quot;Albert Einstein&quot;,
-    &quot;description&quot;: &quot;A renowned theoretical physicist who developed the theory of relativity.&quot;,
+    &quot;name&quot;: &quot;Einstein&quot;,
+    &quot;description&quot;: &quot;A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
         &quot;Nobel Prize in Physics (1921)&quot;,
@@ -870,7 +870,7 @@ We summarize the agent under <code class="docutils literal notranslate"><span cl
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">Agent Hooks</span></a></p></li>
 <li><p><a class="reference internal" href="task_a2a.html#a2a"><span class="std std-ref">A2A Agent</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.053 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 32.522 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>
