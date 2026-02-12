@@ -6,7 +6,6 @@ TODO: We should consider to split this `Toolkit` class in the future.
 # pylint: disable=too-many-lines
 import asyncio
 import inspect
-import os
 from copy import deepcopy
 from functools import partial
 from typing import (
@@ -33,6 +32,7 @@ from ._async_wrapper import (
     _sync_generator_wrapper,
 )
 from ._response import ToolResponse
+from ._skill_manager import AgentSkillManager
 from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
 from .._utils._common import _parse_tool_function
 from ..mcp import (
@@ -75,6 +75,8 @@ class Toolkit(StateModule):
     - Provide prompt for the registered skills to the agent.
     """
 
+    # pylint: disable=too-many-public-methods
+
     _DEFAULT_AGENT_SKILL_INSTRUCTION = (
         "# Agent Skills\n"
         "The agent skills are a collection of folds of instructions, scripts, "
@@ -108,14 +110,26 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         self.tools: dict[str, RegisteredToolFunction] = {}
         self.groups: dict[str, ToolGroup] = {}
-        self.skills: dict[str, AgentSkill] = {}
 
-        self._agent_skill_instruction = (
-            agent_skill_instruction or self._DEFAULT_AGENT_SKILL_INSTRUCTION
+        # Initialize skill manager with composition pattern
+        self._skill_manager = AgentSkillManager(
+            agent_skill_instruction=(
+                agent_skill_instruction
+                or self._DEFAULT_AGENT_SKILL_INSTRUCTION
+            ),
+            agent_skill_template=(
+                agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
+            ),
         )
-        self._agent_skill_template = (
-            agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
-        )
+
+    @property
+    def skills(self) -> dict[str, AgentSkill]:
+        """Read-only view of registered skills.
+
+        Returns:
+            dict[str, AgentSkill]: Mapping from skill name to skill metadata.
+        """
+        return dict(self._skill_manager.skills)
 
     def create_tool_group(
         self,
@@ -1043,69 +1057,65 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         self,
         skill_dir: str,
     ) -> None:
-        """Register agent skills from a given directory. This function will
-        scan the directory, read metadata from the SKILL.md file, and add
-        it to the skill related prompt. Developers can obtain the
-        skills-related prompt by calling `toolkit.get_agent_skill_prompt()`.
+        """Register an agent skill from a directory.
 
-        .. note:: This directory
-         - Must include a SKILL.md file at the top level
-         - The SKILL.md must have a YAML Front Matter including `name` and
-            `description` fields
-         - All files must specify a common root directory in their paths
+        Directory must contain SKILL.md with 'name' and 'description' fields.
 
         Args:
             skill_dir (`str`):
-                The path to the skill directory.
+                Path to the skill directory.
         """
-        import frontmatter
+        self._skill_manager.register_agent_skill(skill_dir)
 
-        # Check the skill directory
-        if not os.path.isdir(skill_dir):
-            raise ValueError(
-                f"The skill directory '{skill_dir}' does not exist or is "
-                "not a directory.",
-            )
+    def monitor_agent_skills(
+        self,
+        directory: str,
+    ) -> None:
+        """Register a directory to be monitored for agent skills.
 
-        # Check SKILL.md file
-        path_skill_md = os.path.join(skill_dir, "SKILL.md")
-        if not os.path.isfile(path_skill_md):
-            raise ValueError(
-                f"The skill directory '{skill_dir}' must include a "
-                "SKILL.md file at the top level.",
-            )
+        Skills are discovered lazily when get_agent_skill_prompt()
+        is called.
 
-        # Check YAML Front Matter
-        with open(path_skill_md, "r", encoding="utf-8") as f:
-            post = frontmatter.load(f)
+        Args:
+            directory (`str`):
+                Path to the root directory to monitor.
 
-        name = post.get("name", None)
-        description = post.get("description", None)
+        Raises:
+            ValueError: If the directory does not exist or is not
+                accessible.
+        """
+        self._skill_manager.monitor_agent_skills(directory)
 
-        if not name or not description:
-            raise ValueError(
-                f"The SKILL.md file in '{skill_dir}' must have a YAML Front "
-                "Matter including `name` and `description` fields.",
-            )
+    def remove_monitored_directory(self, directory: str) -> None:
+        """Remove a monitored directory and all auto-discovered skills.
 
-        name, description = str(name), str(description)
-        if name in self.skills:
-            raise ValueError(
-                f"An agent skill with name '{name}' is already registered "
-                "in the toolkit.",
-            )
+        Manually registered skills are NOT removed.
 
-        self.skills[name] = AgentSkill(
-            name=name,
-            description=description,
-            dir=skill_dir,
-        )
+        Args:
+            directory (`str`):
+                Path to the monitored directory to remove.
+        """
+        self._skill_manager.remove_monitored_directory(directory)
 
-        logger.info(
-            "Registered agent skill '%s' from directory '%s'.",
-            name,
-            skill_dir,
-        )
+    def refresh_monitored_skills(
+        self,
+        force: bool = False,
+    ) -> dict[str, int]:
+        """Manually trigger skill scanning and refresh.
+
+        Useful when mtime-based caching might be unreliable
+        (e.g., network filesystems).
+
+        Args:
+            force (`bool`, defaults to `False`):
+                If True, clear all caches and force full rescan.
+
+        Returns:
+            `dict[str, int]`:
+                Statistics dict: {"added": int, "modified": int,
+                "removed": int}
+        """
+        return self._skill_manager.refresh_monitored_skills(force)
 
     def remove_agent_skill(self, name: str) -> None:
         """Remove an agent skill by its name.
@@ -1114,40 +1124,17 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             name (`str`):
                 The name of the agent skill to be removed.
         """
-        if name in self.skills:
-            self.skills.pop(name)
-        else:
-            logger.warning(
-                "Agent skill '%s' not found in the toolkit, skipping removal.",
-                name,
-            )
+        self._skill_manager.remove_agent_skill(name)
 
     def get_agent_skill_prompt(self) -> str | None:
-        """Get the prompt for all registered agent skills, which can be
-        attached to the system prompt for the agent.
+        """Get the prompt for all registered agent skills.
 
-        The prompt is consisted of an overall instruction and the detailed
-        descriptions of each skill, including its name, description, and
-        directory.
-
-        .. note:: If no skill is registered, None will be returned.
+        Includes instruction and descriptions of each skill
+        (name, description, directory).
 
         Returns:
             `str | None`:
-                The combined prompt for all registered agent skills, or None
-                if no skill is registered.
+                Combined prompt for all skills, or None if no skills
+                registered.
         """
-        if len(self.skills) == 0:
-            return None
-
-        skill_descriptions = [
-            self._agent_skill_instruction,
-        ] + [
-            self._agent_skill_template.format(
-                name=_["name"],
-                description=_["description"],
-                dir=_["dir"],
-            )
-            for _ in self.skills.values()
-        ]
-        return "\n".join(skill_descriptions)
+        return self._skill_manager.get_agent_skill_prompt()
