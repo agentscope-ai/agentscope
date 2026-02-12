@@ -186,30 +186,30 @@ different users and sessions.
  .. code-block:: none
 
     The messages with mark 'hint':
-    - Msg(id='NpyiutL4nnntyZrM2uKf3a', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:45:03.451', invocation_id='None')
+    - Msg(id='MUWWpEcyJw2BzMiwTXUQGM', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:31:23.672', invocation_id='None')
     The state dict of the memory:
     {
       "_compressed_summary": "",
       "content": [
         [
           {
-            "id": "TNeYmM3qX5PMBw2LYNU9GE",
+            "id": "jwXims5YmsrdeJopoNs59K",
             "name": "Alice",
             "role": "user",
             "content": "Generate a report about AgentScope",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:45:03.451"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:31:23.672"
           },
           []
         ],
         [
           {
-            "id": "NpyiutL4nnntyZrM2uKf3a",
+            "id": "MUWWpEcyJw2BzMiwTXUQGM",
             "name": "system",
             "role": "system",
             "content": "<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:45:03.451"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:31:23.672"
           },
           [
             "hint"
@@ -224,12 +224,12 @@ different users and sessions.
       "content": [
         [
           {
-            "id": "TNeYmM3qX5PMBw2LYNU9GE",
+            "id": "jwXims5YmsrdeJopoNs59K",
             "name": "Alice",
             "role": "user",
             "content": "Generate a report about AgentScope",
-            "metadata": null,
-            "timestamp": "2026-02-12 06:45:03.451"
+            "metadata": {},
+            "timestamp": "2026-02-12 08:31:23.672"
           },
           []
         ]
@@ -307,7 +307,7 @@ Specifically, here we use a memory backed by SQLite as an example.
  .. code-block:: none
 
     The messages with mark 'hint':
-    - Msg(id='Ws9rnHrPjcfDsNUFtqJebn', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:45:03.490', invocation_id='None')
+    - Msg(id='k4msxMbYxAizeQ5xjWkKe7', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:31:23.713', invocation_id='None')
 
 
 
@@ -351,9 +351,9 @@ Optionally, you can also use the ``AsyncSQLAlchemyMemory`` as an async context m
  .. code-block:: none
 
     All messages in the memory:
-    - Msg(id='QisdLgzWJEpwHfwXZreCPn', name='Alice', content='Generate a report about AgentScope', role='user', metadata=None, timestamp='2026-02-12 06:45:03.461', invocation_id='None')
-    - Msg(id='Ws9rnHrPjcfDsNUFtqJebn', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:45:03.490', invocation_id='None')
-    - Msg(id='8rZ43rXCVYwfDYAfTGsrYF', name='Alice', content='Generate a report about AgentScope', role='user', metadata=None, timestamp='2026-02-12 06:45:03.497', invocation_id='None')
+    - Msg(id='b3dshUv32gcd2ZuZj7JVLa', name='Alice', content='Generate a report about AgentScope', role='user', metadata={}, timestamp='2026-02-12 08:31:23.683', invocation_id='None')
+    - Msg(id='k4msxMbYxAizeQ5xjWkKe7', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:31:23.713', invocation_id='None')
+    - Msg(id='TGLwb4jAW4UjiDVmoXvqqN', name='Alice', content='Generate a report about AgentScope', role='user', metadata={}, timestamp='2026-02-12 08:31:23.721', invocation_id='None')
 
 
 
@@ -500,7 +500,7 @@ First, we can initialize the Redis memory as follows:
  .. code-block:: none
 
     The messages with mark 'hint':
-    - Msg(id='88GaYVkid7X6nNXmKWhN8k', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata=None, timestamp='2026-02-12 06:45:03.514', invocation_id='None')
+    - Msg(id='2sxXn7sLHczjMbKXafozwe', name='system', content='<system-hint>Create a plan first to collect information and generate the report step by step.</system-hint>', role='system', metadata={}, timestamp='2026-02-12 08:31:23.739', invocation_id='None')
 
 
 
@@ -608,7 +608,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.087 seconds)
+   **Total running time of the script:** (0 minutes 0.093 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_memory.py:

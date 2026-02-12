@@ -186,13 +186,13 @@ You can directly run this workflow function with a task dictionary and a ``DashS
 
     \[ 123 + 456 = 579 \]
 
-    So, 123 plus 456 is 579.
+    So, 123 plus 456 equals 579.
 
     Workflow response: To find the sum of 123 and 456, you simply add the two numbers together:
 
     \[ 123 + 456 = 579 \]
 
-    So, 123 plus 456 is 579.
+    So, 123 plus 456 equals 579.
 
 
 
@@ -326,7 +326,7 @@ Checkpoints and logs are automatically saved to the ``checkpoints/AgentScope`` d
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.973 seconds)
+   **Total running time of the script:** (0 minutes 3.876 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tuner.py:

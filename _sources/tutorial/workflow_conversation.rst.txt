@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in literature and art. It's nice to meet you! Could you tell me a little about yourself?
-    Bob: Hi Alice! I'm Bob, and I'm also a student. I'm really into science and technology, but I like to dabble in sports too. It's great to meet you! What kind of literature and art are you into?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I love exploring different genres of music and playing video games. It's cool to hear about your interests in literature, art, science, and sports! Alice, what are some of your favorite books or artists?
+    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different cultures. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student and I really enjoy sports and technology. It's great to meet you too! What kind of cultures are you interested in?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, that's really cool that you're interested in different cultures. Have you traveled much?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in literature and art. It's nice to meet you! Could you tell me a little about yourself?
-    Bob: Hi Alice! I'm Bob, and I'm also a student. I'm really into science and technology, but I like to dabble in sports too. It's great to meet you! What kind of literature and art are you into?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I love exploring different genres of music and playing video games. It's cool to hear about your interests in literature, art, science, and sports! Alice, what are some of your favorite books or artists?
+    Alice: Hi there! I'm Alice, a student passionate about learning new things and exploring different cultures. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student and I really enjoy sports and technology. It's great to meet you too! What kind of cultures are you interested in?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and science. It's awesome to meet you both! Alice, that's really cool that you're interested in different cultures. Have you traveled much?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.104 seconds)
+   **Total running time of the script:** (0 minutes 12.307 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

@@ -236,18 +236,18 @@ Then we change its state by generating a reply message:
             "content": [
                 [
                     {
-                        "id": "ksAVQ9pRi3oUFwHM47e88N",
+                        "id": "VEDjyGJUUJWYfZrz2778Af",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:29.009"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:16.240"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "heqkTRcE9WaAm9qdpMWG58",
+                        "id": "k2nCY5J3pLwGDG2e8oxpKr",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -256,8 +256,8 @@ Then we change its state by generating a reply message:
                                 "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                             }
                         ],
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:29.009"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:16.240"
                     },
                     []
                 ]
@@ -359,18 +359,18 @@ Saving Session State
             "content": [
                 [
                     {
-                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
+                        "id": "fsGtvYu8NvMetbtsEs6RpL",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.563"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
+                        "id": "QVLpbzxRfXbGWcB79Mr7az",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -379,8 +379,8 @@ Saving Session State
                                 "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                             }
                         ],
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.564"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ]
@@ -400,18 +400,18 @@ Saving Session State
             "content": [
                 [
                     {
-                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
+                        "id": "fsGtvYu8NvMetbtsEs6RpL",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.563"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
+                        "id": "QVLpbzxRfXbGWcB79Mr7az",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -420,8 +420,8 @@ Saving Session State
                                 "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                             }
                         ],
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.564"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ]
@@ -482,18 +482,18 @@ Then we save it to a session file:
                 "content": [
                     [
                         {
-                            "id": "eu2o8VwkPPiJLrWJ4vpcof",
+                            "id": "fsGtvYu8NvMetbtsEs6RpL",
                             "name": "user",
                             "role": "user",
                             "content": "Hello, agent!",
-                            "metadata": null,
-                            "timestamp": "2026-02-12 06:41:31.563"
+                            "metadata": {},
+                            "timestamp": "2026-02-12 08:28:18.006"
                         },
                         []
                     ],
                     [
                         {
-                            "id": "X8QxZoJJpVwKbzqBxUoCZf",
+                            "id": "QVLpbzxRfXbGWcB79Mr7az",
                             "name": "Friday",
                             "role": "assistant",
                             "content": [
@@ -502,8 +502,8 @@ Then we save it to a session file:
                                     "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                                 }
                             ],
-                            "metadata": null,
-                            "timestamp": "2026-02-12 06:41:31.564"
+                            "metadata": {},
+                            "timestamp": "2026-02-12 08:28:18.006"
                         },
                         []
                     ]
@@ -580,18 +580,18 @@ Now we load the session state from the saved file:
             "content": [
                 [
                     {
-                        "id": "eu2o8VwkPPiJLrWJ4vpcof",
+                        "id": "fsGtvYu8NvMetbtsEs6RpL",
                         "name": "user",
                         "role": "user",
                         "content": "Hello, agent!",
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.563"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ],
                 [
                     {
-                        "id": "X8QxZoJJpVwKbzqBxUoCZf",
+                        "id": "QVLpbzxRfXbGWcB79Mr7az",
                         "name": "Friday",
                         "role": "assistant",
                         "content": [
@@ -600,8 +600,8 @@ Now we load the session state from the saved file:
                                 "text": "Hello! I'm Friday, your virtual assistant. How can I assist you today?"
                             }
                         ],
-                        "metadata": null,
-                        "timestamp": "2026-02-12 06:41:31.564"
+                        "metadata": {},
+                        "timestamp": "2026-02-12 08:28:18.006"
                     },
                     []
                 ]
@@ -625,7 +625,7 @@ Now we can see the agent state is restored to the saved state.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.623 seconds)
+   **Total running time of the script:** (0 minutes 3.731 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_state.py:
