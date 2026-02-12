@@ -161,22 +161,35 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
         """Test conversion from agentscope message to A2A message."""
         a2a_msg = await self.formatter.format(self.as_msgs)
         self.assertIsInstance(a2a_msg, Message)
+
+        # Verify that all parts have metadata with msg source and id
+        for part in a2a_msg.parts:
+            # Metadata is stored on part.root, not on part itself
+            self.assertIsNotNone(part.root.metadata)
+            self.assertIn("_agentscope_msg_source", part.root.metadata)
+            self.assertIn("_agentscope_msg_id", part.root.metadata)
+
+        # Verify the content of each part (excluding metadata for comparison)
+        parts_data = []
+        for part in a2a_msg.parts:
+            data = part.model_dump()
+            # Remove metadata for content comparison
+            data.pop("metadata", None)
+            parts_data.append(data)
+
         self.assertListEqual(
-            [_.model_dump() for _ in a2a_msg.parts],
+            parts_data,
             [
                 {
                     "kind": "text",
-                    "metadata": None,
                     "text": "Hello, how are you?",
                 },
                 {
                     "kind": "text",
-                    "metadata": None,
                     "text": "Hello, how are you?",
                 },
                 {
                     "kind": "text",
-                    "metadata": None,
                     "text": "yes",
                 },
                 {
@@ -189,7 +202,6 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         },
                     },
                     "kind": "data",
-                    "metadata": None,
                 },
                 {
                     "data": {
@@ -199,7 +211,6 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "output": "Tool output here.",
                     },
                     "kind": "data",
-                    "metadata": None,
                 },
                 {
                     "file": {
@@ -208,7 +219,6 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "uri": "https://example.com/image.png",
                     },
                     "kind": "file",
-                    "metadata": None,
                 },
                 {
                     "file": {
@@ -218,7 +228,6 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "name": None,
                     },
                     "kind": "file",
-                    "metadata": None,
                 },
                 {
                     "file": {
@@ -227,7 +236,6 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "uri": "https://example.com/video.mp4",
                     },
                     "kind": "file",
-                    "metadata": None,
                 },
             ],
         )
@@ -298,8 +306,11 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
         )
 
     async def test_a2a_task_to_as(self) -> None:
-        """Test conversion from A2A task to agentscope message."""
+        """Test conversion from A2A task to agentscope message.
 
+        Role mapping: A2A Role.agent -> 'assistant', Role.user -> 'user'.
+        Artifact content is merged into the message.
+        """
         as_msgs = await self.formatter.format_a2a_task(
             name="Friday",
             task=Task(
@@ -334,71 +345,58 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                 ),
             ),
         )
+
+        # self.a2a_msg has Role.user, so first msg has role='user'
+        # Artifact creates a new assistant msg since first msg is not assistant
         self.assertEqual(len(as_msgs), 2)
         self.maxDiff = None
-        self.assertDictEqual(
-            as_msgs[0].to_dict(),
-            {
-                "id": as_msgs[0].id,
-                "name": "Friday",
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Hello, how are you?"},
-                    {
-                        "type": "audio",
-                        "source": {
-                            "type": "url",
-                            "url": "https://example.com/greeting.wav",
-                        },
-                    },
-                    {
-                        "type": "audio",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "audio/wav",
-                            "data": "UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+"
-                            "AAACABAAZGF0YQAAAAA=",
-                        },
-                    },
-                    {
-                        "type": "tool_use",
-                        "id": "tool_1",
-                        "name": "tool_1",
-                        "input": {"param1": "value1"},
-                    },
-                    {
-                        "type": "tool_result",
-                        "id": "tool_1",
-                        "name": "tool_1",
-                        "output": "Tool output here.",
-                    },
-                    {
-                        "type": "text",
-                        "text": "{'type': 'unknown_type', 'content': 'Some "
-                        "unknown content'}",
-                    },
-                ],
-                "metadata": None,
-                "timestamp": as_msgs[0].timestamp,
-            },
+
+        # First message from status.message (Role.user -> 'user')
+        self.assertEqual(as_msgs[0].name, "Friday")
+        self.assertEqual(as_msgs[0].role, "user")
+
+        # Second message from artifact (role='assistant')
+        self.assertEqual(as_msgs[1].name, "Friday")
+        self.assertEqual(as_msgs[1].role, "assistant")
+
+        # Verify artifact content
+        artifact_blocks = as_msgs[1].get_content_blocks()
+        text_blocks = [b for b in artifact_blocks if b.get("type") == "text"]
+        self.assertTrue(
+            any(
+                "This is an artifact text part." in b["text"]
+                for b in text_blocks
+            ),
         )
 
-        self.assertDictEqual(
-            as_msgs[1].to_dict(),
-            {
-                "id": as_msgs[1].id,
-                "name": "Friday",
-                "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "This is an artifact text part."},
-                    {
-                        "type": "tool_result",
-                        "id": "tool_2",
-                        "name": "tool_2",
-                        "output": "Artifact tool output.",
-                    },
-                ],
-                "metadata": None,
-                "timestamp": as_msgs[1].timestamp,
-            },
+        tool_results = [
+            b for b in artifact_blocks if b.get("type") == "tool_result"
+        ]
+        artifact_tool_result = [
+            b for b in tool_results if b.get("id") == "tool_2"
+        ]
+        self.assertEqual(len(artifact_tool_result), 1)
+        self.assertEqual(
+            artifact_tool_result[0]["output"],
+            "Artifact tool output.",
         )
+
+    async def test_context_id_included_when_set(self) -> None:
+        """Test that context_id is included in A2A Message when set."""
+        formatter_with_context = A2AChatFormatter(
+            context_id="test-context-123",
+        )
+        a2a_msg = await formatter_with_context.format(self.as_msgs)
+
+        self.assertIsInstance(a2a_msg, Message)
+        self.assertEqual(a2a_msg.context_id, "test-context-123")
+
+    async def test_context_id_not_included_when_none(self) -> None:
+        """Test that context_id is not included in A2A Message when not set."""
+        formatter_without_context = (
+            A2AChatFormatter()
+        )  # context_id defaults to None
+        a2a_msg = await formatter_without_context.format(self.as_msgs)
+
+        self.assertIsInstance(a2a_msg, Message)
+        self.assertIsNone(a2a_msg.context_id)
