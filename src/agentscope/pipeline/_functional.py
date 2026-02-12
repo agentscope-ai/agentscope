@@ -156,14 +156,18 @@ async def stream_printing_messages(
     else:
         task.add_done_callback(lambda _: queue.put_nowait(end_signal))
 
-    # Receive the messages from the agent's message queue
     while True:
         # The message obj, and a boolean indicating whether it's the last chunk
         # in a streaming message
         printing_msg = await queue.get()
 
-        # End the loop when the message is None
+        # Check if this is the end signal
         if isinstance(printing_msg, str) and printing_msg == end_signal:
             break
 
         yield printing_msg
+
+    # Check exception after processing all messages
+    exception = task.exception()
+    if exception is not None:
+        raise exception from None
