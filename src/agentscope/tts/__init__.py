@@ -7,6 +7,10 @@ from ._dashscope_tts_model import DashScopeTTSModel
 from ._dashscope_realtime_tts_model import DashScopeRealtimeTTSModel
 from ._gemini_tts_model import GeminiTTSModel
 from ._openai_tts_model import OpenAITTSModel
+from ._dashscope_cosyvoice_tts_model import DashScopeCosyVoiceTTSModel
+from ._dashscope_cosyvoice_realtime_tts_model import (
+    DashScopeCosyVoiceRealtimeTTSModel,
+)
 
 __all__ = [
     "TTSModelBase",
@@ -16,4 +20,6 @@ __all__ = [
     "DashScopeRealtimeTTSModel",
     "GeminiTTSModel",
     "OpenAITTSModel",
+    "DashScopeCosyVoiceTTSModel",
+    "DashScopeCosyVoiceRealtimeTTSModel",
 ]
