@@ -621,7 +621,7 @@ to download the full example code.</p>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_53157b1e23f14f24a36778&quot;,
+    &quot;id&quot;: &quot;call_009a8028acfd4c1dbede0c&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag1&quot;
@@ -630,7 +630,7 @@ to download the full example code.</p>
 }
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_06df33bbaf33429a97cd17&quot;,
+    &quot;id&quot;: &quot;call_a191219332e74c279794fb&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;input&quot;: {
         &quot;tag&quot;: &quot;tag2&quot;
@@ -639,32 +639,32 @@ Jarvis: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_53157b1e23f14f24a36778&quot;,
+    &quot;id&quot;: &quot;call_009a8028acfd4c1dbede0c&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;标签 tag1 开始于 09:57:01.273033，结束于 09:57:04.276286。&quot;
+            &quot;text&quot;: &quot;标签 tag1 开始于 10:11:36.317247，结束于 10:11:39.320508。&quot;
         }
     ]
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_06df33bbaf33429a97cd17&quot;,
+    &quot;id&quot;: &quot;call_a191219332e74c279794fb&quot;,
     &quot;name&quot;: &quot;example_tool_function&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;标签 tag2 开始于 09:57:01.273128，结束于 09:57:04.276995。&quot;
+            &quot;text&quot;: &quot;标签 tag2 开始于 10:11:36.317344，结束于 10:11:39.321166。&quot;
         }
     ]
 }
-Jarvis: 两个函数 `example_tool_function` 已经并行执行完成。下面是它们各自的运行时间：
+Jarvis: 两个 `example_tool_function` 函数已经并行执行完毕。下面是它们的执行时间详情：
 
-- 标签为 &#39;tag1&#39; 的函数开始于 09:57:01.273033，结束于 09:57:04.276286。
-- 标签为 &#39;tag2&#39; 的函数开始于 09:57:01.273128，结束于 09:57:04.276995。
+- 标签为 **tag1** 的函数开始于 10:11:36.317247，结束于 10:11:39.320508。
+- 标签为 **tag2** 的函数开始于 10:11:36.317344，结束于 10:11:39.321166。
 
-这两个函数几乎是同时开始和结束的，表明它们确实是以并行的方式执行的。
+这两个函数几乎是同时开始和结束的，这表明它们确实被并行调用了。
 </pre></div>
 </div>
 </section>
@@ -715,24 +715,23 @@ Jarvis: 两个函数 `example_tool_function` 已经并行执行完成。下面�
   warnings.warn(
 Jarvis: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_6f54c48c1363459e93c2dc&quot;,
+    &quot;id&quot;: &quot;call_bc16d2bc05d5495c924368&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;name&quot;: &quot;阿尔伯特·爱因斯坦&quot;,
         &quot;description&quot;: &quot;20世纪最伟大的理论物理学家之一，相对论的创立者。&quot;,
         &quot;age&quot;: 76,
         &quot;honor&quot;: [
-            &quot;1921年诺贝尔物理学奖&quot;,
-            &quot;普朗克奖章&quot;,
+            &quot;诺贝尔物理学奖&quot;,
             &quot;科普利奖章&quot;,
-            &quot;富兰克林奖章&quot;
+            &quot;马克斯·普朗克奖章&quot;
         ]
     },
-    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;阿尔伯特·爱因斯坦\&quot;, \&quot;description\&quot;: \&quot;20世纪最伟大的理论物理学家之一，相对论的创立者。\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;1921年诺贝尔物理学奖\&quot;, \&quot;普朗克奖章\&quot;, \&quot;科普利奖章\&quot;, \&quot;富兰克林奖章\&quot;]}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;name\&quot;: \&quot;阿尔伯特·爱因斯坦\&quot;, \&quot;description\&quot;: \&quot;20世纪最伟大的理论物理学家之一，相对论的创立者。\&quot;, \&quot;age\&quot;: 76, \&quot;honor\&quot;: [\&quot;诺贝尔物理学奖\&quot;, \&quot;科普利奖章\&quot;, \&quot;马克斯·普朗克奖章\&quot;]}&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_6f54c48c1363459e93c2dc&quot;,
+    &quot;id&quot;: &quot;call_bc16d2bc05d5495c924368&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -741,7 +740,9 @@ system: {
         }
     ]
 }
-Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他以创立相对论而闻名于世。爱因斯坦出生于1879年，在他生命的76年里对科学界做出了巨大贡献。他的工作不仅改变了我们对于时间、空间以及引力的理解，还促进了原子能的发展。爱因斯坦获得了许多荣誉和奖项，其中包括1921年的诺贝尔物理学奖、普朗克奖章、科普利奖章以及富兰克林奖章等。这些成就使他在科学史上占据了不可动摇的地位。
+Jarvis: 阿尔伯特·爱因斯坦（Albert Einstein）是20世纪最伟大的理论物理学家之一，以创立相对论而闻名于世。他出生于1879年，在物理学领域做出了许多开创性的贡献，直到1955年去世，享年76岁。爱因斯坦的工作极大地改变了我们对时间、空间以及重力的理解，并为现代宇宙学奠定了基础。
+
+爱因斯坦因其在光电效应方面的研究获得了1921年的诺贝尔物理学奖；此外，他还荣获了科普利奖章及马克斯·普朗克奖章等多项荣誉。这些奖项不仅是对他个人成就的认可，也反映了他对整个科学界乃至人类知识进步所做出的巨大贡献。
 
 结构化输出：
 {
@@ -749,10 +750,9 @@ Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之�
     &quot;description&quot;: &quot;20世纪最伟大的理论物理学家之一，相对论的创立者。&quot;,
     &quot;age&quot;: 76,
     &quot;honor&quot;: [
-        &quot;1921年诺贝尔物理学奖&quot;,
-        &quot;普朗克奖章&quot;,
+        &quot;诺贝尔物理学奖&quot;,
         &quot;科普利奖章&quot;,
-        &quot;富兰克林奖章&quot;
+        &quot;马克斯·普朗克奖章&quot;
     ]
 }
 </pre></div>
@@ -850,7 +850,7 @@ Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之�
 <li><p><a class="reference internal" href="task_hook.html#hook"><span class="std std-ref">智能体钩子函数</span></a></p></li>
 <li><p><a class="reference internal" href="task_a2a.html#a2a"><span class="std std-ref">A2A 智能体</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 40.027 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 41.312 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-agent-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/7dec07e2c813e72e1dad091b3ac4913a/task_agent.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_agent.ipynb</span></code></a></p>

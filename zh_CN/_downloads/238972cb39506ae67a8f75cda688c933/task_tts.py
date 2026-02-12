@@ -25,8 +25,20 @@ AgentScope 支持以下 TTS API：
       - ✅
       - ✅
       - ✅
+    * - DashScope CosyVoice 实时 API
+      - ``DashScopeCosyVoiceRealtimeTTSModel``
+      - ✅
+      - ✅
+      - ✅
+      - ✅
     * - DashScope API
       - ``DashScopeTTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+    * - DashScope CosyVoice API
+      - ``DashScopeCosyVoiceTTSModel``
       - ❌
       - ✅
       - ✅

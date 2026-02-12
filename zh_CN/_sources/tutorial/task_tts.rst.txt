@@ -43,8 +43,20 @@ AgentScope 支持以下 TTS API：
       - ✅
       - ✅
       - ✅
+    * - DashScope CosyVoice 实时 API
+      - ``DashScopeCosyVoiceRealtimeTTSModel``
+      - ✅
+      - ✅
+      - ✅
+      - ✅
     * - DashScope API
       - ``DashScopeTTSModel``
+      - ❌
+      - ✅
+      - ✅
+      - ✅
+    * - DashScope CosyVoice API
+      - ``DashScopeCosyVoiceTTSModel``
       - ❌
       - ✅
       - ✅
@@ -69,7 +81,7 @@ AgentScope 支持以下 TTS API：
 - **使用非实时 TTS**：当已有完整文本时（例如预先编写的响应、完整的 LLM 输出）
 - **使用实时 TTS**：当文本是逐步生成时（例如 LLM 的流式返回），以获得更低的延迟
 
-.. GENERATED FROM PYTHON SOURCE LINES 55-68
+.. GENERATED FROM PYTHON SOURCE LINES 67-80
 
 .. code-block:: Python
 
@@ -93,7 +105,7 @@ AgentScope 支持以下 TTS API：
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 69-74
+.. GENERATED FROM PYTHON SOURCE LINES 81-86
 
 非实时 TTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -101,7 +113,7 @@ AgentScope 支持以下 TTS API：
 
 以 DashScope TTS 模型为例：
 
-.. GENERATED FROM PYTHON SOURCE LINES 74-100
+.. GENERATED FROM PYTHON SOURCE LINES 86-112
 
 .. code-block:: Python
 
@@ -144,7 +156,7 @@ AgentScope 支持以下 TTS API：
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 101-106
+.. GENERATED FROM PYTHON SOURCE LINES 113-118
 
 **流式输出以降低延迟：**
 
@@ -152,7 +164,7 @@ AgentScope 支持以下 TTS API：
 您在合成完成前开始播放。这减少了感知延迟。
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 106-133
+.. GENERATED FROM PYTHON SOURCE LINES 118-145
 
 .. code-block:: Python
 
@@ -202,15 +214,13 @@ AgentScope 支持以下 TTS API：
     接收到的音频块长度： 184320
     接收到的音频块长度： 204800
     接收到的音频块长度： 225280
-    接收到的音频块长度： 245760
-    接收到的音频块长度： 266240
-    接收到的音频块长度： 286720
-    接收到的音频块长度： 286720
+    接收到的音频块长度： 235520
+    接收到的音频块长度： 235520
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 134-182
+.. GENERATED FROM PYTHON SOURCE LINES 146-194
 
 实时 TTS
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -261,7 +271,7 @@ AgentScope 智能体在提供 TTS 模型时，可以自动将其响应合成为�
 4. 音频在智能体的 ``self.print()`` 方法期间播放
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 182-214
+.. GENERATED FROM PYTHON SOURCE LINES 194-226
 
 .. code-block:: Python
 
@@ -304,7 +314,7 @@ AgentScope 智能体在提供 TTS 模型时，可以自动将其响应合成为�
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 215-231
+.. GENERATED FROM PYTHON SOURCE LINES 227-243
 
 自定义 TTS 模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -326,7 +336,7 @@ AgentScope 智能体在提供 TTS 模型时，可以自动将其响应合成为�
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.303 seconds)
+   **Total running time of the script:** (0 minutes 4.027 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tts.py:
