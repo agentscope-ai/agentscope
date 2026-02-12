@@ -54,7 +54,7 @@ from ..tracing._trace import trace_toolkit
 from .._logging import logger
 
 
-def apply_middlewares(
+def _apply_middlewares(
     func: Callable[
         ...,
         Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
@@ -670,7 +670,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         )
 
     @trace_toolkit
-    @apply_middlewares
+    @_apply_middlewares
     async def call_tool_function(
         self,
         tool_call: ToolUseBlock,
@@ -1306,11 +1306,10 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
                 dict currently includes ``tool_call`` (ToolUseBlock), and may
                 include additional context in future versions.
 
-        Note:
-            The middleware chain is applied inside the `call_tool_function`
-            via the `@apply_middlewares` decorator. This ensures that the
-            `@trace_toolkit` decorator remains at the outermost layer for
-            complete observability.
+        .. note:: The middleware chain is applied inside the
+        `call_tool_function` via the `@apply_middlewares` decorator. This
+        ensures that the `@trace_toolkit` decorator remains at the outermost
+        layer for complete observability.
         """
         # Simply append the middleware to the list
         # The @apply_middlewares decorator will handle the execution
