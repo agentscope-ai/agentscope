@@ -402,7 +402,7 @@ from the OpenJudge graders.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.317 seconds)
+   **Total running time of the script:** (0 minutes 0.311 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval_openjudge.py:

@@ -292,7 +292,7 @@ The following is an example of manually creating a plan to conduct a comprehensi
     **Description**: Conduct a comprehensive research on the LLM-empowered agent.
     **Expected Outcome**: A Markdown format report answer three questions: 1. What's agent? 2. What's the current state of the art of agent? 3. What's the future trend of agent?
     **State**: todo
-    **Created At**: 2026-02-12 09:32:21.847
+    **Created At**: 2026-02-12 09:37:10.590
     ## Subtasks
     - [ ] Search agent-related survey papers
     - [ ] Read and summarize the papers
