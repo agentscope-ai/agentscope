@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import importlib
 import os
+import warnings
 from typing import Any
 
 from ._logging import logger, setup_logger
 from ._version import __version__
+
+# Raise each warning only once
+warnings.filterwarnings("once", category=DeprecationWarning)
 
 
 _LAZY_SUBMODULES: set[str] = {

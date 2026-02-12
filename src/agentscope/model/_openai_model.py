@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches
 """OpenAI Chat model class."""
+import warnings
 from datetime import datetime
 from typing import (
     Any,
@@ -35,6 +36,31 @@ if TYPE_CHECKING:
 else:
     ChatCompletion = "openai.types.chat.ChatCompletion"
     AsyncStream = "openai.types.chat.AsyncStream"
+
+
+def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
+    """Qwen-omni uses OpenAI-compatible API but requires different audio
+    data format than OpenAI with "data:;base64," prefix.
+    Refer to `Qwen-omni documentation
+    <https://bailian.console.aliyun.com/?tab=doc#/doc/?type=model&url=2867839>`_
+    for more details.
+
+    Args:
+        messages (`list[dict]`):
+            The list of message dictionaries from OpenAI formatter.
+    """
+    for msg in messages:
+        if isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if (
+                    isinstance(block, dict)
+                    and "input_audio" in block
+                    and isinstance(block["input_audio"].get("data"), str)
+                ):
+                    if not block["input_audio"]["data"].startswith("http"):
+                        block["input_audio"]["data"] = (
+                            "data:;base64," + block["input_audio"]["data"]
+                        )
 
 
 class OpenAIChatModel(ChatModelBase):
@@ -95,9 +121,7 @@ class OpenAIChatModel(ChatModelBase):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "any", "required"]
-        | str
-        | None = None,
+        tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -110,10 +134,10 @@ class OpenAIChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
+                 Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice
             structured_model (`Type[BaseModel] | None`, default `None`):
@@ -154,6 +178,10 @@ class OpenAIChatModel(ChatModelBase):
                 "and 'content' key for OpenAI API.",
             )
 
+        # Qwen-omni requires different base64 audio format from openai
+        if "omni" in self.model_name.lower():
+            _format_audio_data_for_qwen_omni(messages)
+
         kwargs = {
             "model": self.model_name,
             "messages": messages,
@@ -168,6 +196,14 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
+            # Handle deprecated "any" option with warning
+            if tool_choice == "any":
+                warnings.warn(
+                    '"any" is deprecated and will be removed in a future '
+                    "version.",
+                    DeprecationWarning,
+                )
+                tool_choice = "required"
             self._validate_tool_choice(tool_choice, tools)
             kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
 
@@ -487,16 +523,16 @@ class OpenAIChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "any", "required"] | str | None,
+        tool_choice: Literal["auto", "none", "required"] | str | None,
     ) -> str | dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "any", "required"] | str \
+            tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "any", "required", or specific tool
-                 name. For more details, please refer to
+                 Can be "auto", "none", "required", or specific tool name.
+                 For more details, please refer to
                  https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice
         Returns:
             `dict | None`:
@@ -505,10 +541,10 @@ class OpenAIChatModel(ChatModelBase):
         """
         if tool_choice is None:
             return None
+
         mode_mapping = {
             "auto": "auto",
             "none": "none",
-            "any": "required",
             "required": "required",
         }
         if tool_choice in mode_mapping:
