@@ -57,6 +57,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_agent
    tutorial/task_state
    tutorial/task_hook
+   tutorial/task_middleware
    tutorial/task_a2a
    tutorial/task_realtime
 

@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">中间件</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
 </ul>
@@ -536,7 +537,7 @@ openai_audio_to_text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-02-12 08:45:46.833_d92d5e&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正在使用 API 密钥 &#39;xxx&#39; 搜索 &#39;AgentScope&#39;&quot;}], metadata=None, stream=False, is_last=True, is_interrupted=False, id=&#39;2026-02-12 09:41:38.929_e80ce9&#39;)
 </pre></div>
 </div>
 </section>
@@ -667,7 +668,7 @@ ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;正
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>工具响应：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-12 08:45:47.838_2dc108&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-12 09:41:39.934_883598&#39;)
 中断标志：
 True
 </pre></div>
@@ -728,11 +729,11 @@ True
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>块 0：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2026-02-12 08:45:47.841_c64056&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=False, id=&#39;2026-02-12 09:41:39.936_533f47&#39;)
 中断标志： False
 
 块 1：
-ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-12 08:45:47.841_c64056&#39;)
+ToolResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1234&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;system-info&gt;The tool call has been interrupted by the user.&lt;/system-info&gt;&#39;}], metadata=None, stream=True, is_last=True, is_interrupted=True, id=&#39;2026-02-12 09:41:39.936_533f47&#39;)
 中断标志： True
 </pre></div>
 </div>
@@ -1009,7 +1010,7 @@ Now tool groups &#39;browser_use&#39; are activated. You MUST follow these notes
 <li><p><a class="reference internal" href="task_state.html#state"><span class="std std-ref">状态/会话管理</span></a></p></li>
 <li><p><a class="reference internal" href="task_mcp.html#mcp"><span class="std std-ref">MCP</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.024 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.022 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tool-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/c814d0f0885573dcc616fd38c752cf4e/task_tool.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tool.ipynb</span></code></a></p>

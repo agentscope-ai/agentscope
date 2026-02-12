@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">中间件</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
 </ul>
@@ -434,30 +435,30 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;2YJqhRoHhzVXXcHpLZqAvR&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.628&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;4uYddMxRd6viLoMeRP4nv6&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.668&#39;, invocation_id=&#39;None&#39;)
 记忆的状态字典：
 {
   &quot;_compressed_summary&quot;: &quot;&quot;,
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;A4dv5RSwwDKDLZSkeqkH6f&quot;,
+        &quot;id&quot;: &quot;baxNZ7TVKmc9Hm3gKZitkp&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-02-12 08:44:59.628&quot;
+        &quot;timestamp&quot;: &quot;2026-02-12 09:40:56.667&quot;
       },
       []
     ],
     [
       {
-        &quot;id&quot;: &quot;2YJqhRoHhzVXXcHpLZqAvR&quot;,
+        &quot;id&quot;: &quot;4uYddMxRd6viLoMeRP4nv6&quot;,
         &quot;name&quot;: &quot;system&quot;,
         &quot;role&quot;: &quot;system&quot;,
         &quot;content&quot;: &quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-02-12 08:44:59.628&quot;
+        &quot;timestamp&quot;: &quot;2026-02-12 09:40:56.668&quot;
       },
       [
         &quot;hint&quot;
@@ -472,12 +473,12 @@ to download the full example code.</p>
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;A4dv5RSwwDKDLZSkeqkH6f&quot;,
+        &quot;id&quot;: &quot;baxNZ7TVKmc9Hm3gKZitkp&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-02-12 08:44:59.628&quot;
+        &quot;timestamp&quot;: &quot;2026-02-12 09:40:56.667&quot;
       },
       []
     ]
@@ -537,7 +538,7 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;YX5KUzmwaRpwFzU8U4Veo6&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.671&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;VG3o2hRFxLG4wpwMbvfMAR&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.709&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>可选地，您也可以将 <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> 用作异步上下文管理器，退出上下文时会话将自动关闭。</p>
@@ -563,9 +564,9 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>记忆中的所有消息：
-- Msg(id=&#39;SQSi32sX2gdxr6ApM862Md&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.639&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;YX5KUzmwaRpwFzU8U4Veo6&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.671&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;5W3UhTXc2fMyjrRqGGXceM&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.679&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;27UeTzQhPXusjsdXyeemDp&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.678&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;VG3o2hRFxLG4wpwMbvfMAR&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.709&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;feoCv9r5p88bz2UGz26zaM&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.717&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>在生产环境中，例如使用FastAPI时，可以按如下方式启用连接池：</p>
@@ -692,7 +693,7 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;ZaGeKvXncbeGM7ewJj47FP&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 08:44:59.696&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;2GTosTWcpuKh2T7qfDjrxa&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-02-12 09:40:56.734&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>同样，<cite>RedisMemory</cite> 也可以在生产环境中使用连接池，例如与FastAPI一起使用。</p>
@@ -806,7 +807,7 @@ to download the full example code.</p>
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a></p></li>
 <li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">长期记忆</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.095 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.092 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>

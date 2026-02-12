@@ -46,50 +46,50 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "使用 Python 编写并执行一个简单的 Hello World 程序，然后返回程序的输出。"
+            "task_description": "在 Python 中打印 'Hello, World!' 并返回执行结果。"
         },
-        "id": "call_a85c966158c24942bd9114"
+        "id": "call_e06156ad2ad34748b3fa23"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
-            "code": "print('Hello World!')",
-            "timeout": 5
+            "code": "print('Hello, World!')",
+            "timeout": 300
         },
-        "id": "call_54b9ed2e914d4acebc4b02"
+        "id": "call_1e4faa27d6ab4c3a996b7e"
     }
     system: {
         "type": "tool_result",
-        "id": "call_54b9ed2e914d4acebc4b02",
+        "id": "call_1e4faa27d6ab4c3a996b7e",
         "name": "execute_python_code",
         "output": [
             {
                 "type": "text",
-                "text": "<returncode>0</returncode><stdout>Hello World!\n</stdout><stderr></stderr>"
+                "text": "<returncode>0</returncode><stdout>Hello, World!\n</stdout><stderr></stderr>"
             }
         ]
     }
-    Worker: 你的Python代码已经成功执行，输出结果为：
+    Worker: 成功执行了 Python 代码，它打印出了 'Hello, World!'。
 
     ```
-    Hello World!
+    Hello, World!
     ```
     system: {
         "type": "tool_result",
-        "id": "call_a85c966158c24942bd9114",
+        "id": "call_e06156ad2ad34748b3fa23",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "你的Python代码已经成功执行，输出结果为：\n\n```\nHello World!\n```"
+                "text": "成功执行了 Python 代码，它打印出了 'Hello, World!'。\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: 你的Python代码已经成功执行，输出结果为：
+    Orchestrator: 成功地在 Python 中执行了 "Hello, World!" 的打印，输出结果如下：
 
     ```
-    Hello World!
+    Hello, World!
     ```
 
 
@@ -181,7 +181,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.076 seconds)
+   **Total running time of the script:** (0 minutes 14.193 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:

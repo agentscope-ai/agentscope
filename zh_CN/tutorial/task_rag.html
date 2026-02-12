@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">中间件</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
 </ul>
@@ -600,9 +601,9 @@ AgentScope 目前内置支持基于 <a class="reference external" href="https://
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>检索到的 Document 对象：
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;CvioCLPtjPuxJTXsJCpgkJ&#39;, embedding=None, score=0.5971063116560947)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;GmuzHnVa8F8rNn7Sg2BBpE&#39;, embedding=None, score=0.5971063116560947)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;WnQsEUFTvQgHczeMzVGVPY&#39;, embedding=None, score=0.5449764333507582)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;WZj4ZFqYgWeMeMWWC5r2Er&#39;, embedding=None, score=0.5449764333507582)
 </pre></div>
 </div>
 <p>AgentScope 中的知识库类提供两个核心方法：<code class="docutils literal notranslate"><span class="pre">add_documents</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>，分别用于添加数据块和搜索检索数据块。</p>
@@ -708,22 +709,24 @@ Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>第一次回复:
-Friday: 那听起来很不错！有李明这样的好朋友一定很让人开心。你们经常一起做些什么呢？
+Friday: 那真是太好了！有好朋友是一件非常幸福的事情。你和李明是怎么成为好朋友的呢？你们之间有什么共同的兴趣爱好吗？
 
 
 第二次回复:
 Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_d016e3531ffe4409a1b2cf&quot;,
+    &quot;id&quot;: &quot;call_8141facd0912405fb02327&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
-        &quot;query&quot;: &quot;李明的父亲&quot;
+        &quot;query&quot;: &quot;李明的父亲&quot;,
+        &quot;limit&quot;: 5,
+        &quot;score_threshold&quot;: null
     },
-    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;李明的父亲\&quot;}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;李明的父亲\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: null}&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_d016e3531ffe4409a1b2cf&quot;,
+    &quot;id&quot;: &quot;call_8141facd0912405fb02327&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -748,7 +751,7 @@ system: {
         }
     ]
 }
-Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医生。如果你需要更多关于李明或者他父亲的详细信息，请告诉我。
+Friday: 根据我查到的信息，李明的父亲名叫李强，他是一名医生。如果你需要更多关于李明或他父亲的详细信息，请告诉我，我会尽力帮助你。
 </pre></div>
 </div>
 <p>在上面的例子中，我们模拟了正常与智能体交流过程。第一次的交流我们提供了“李明”的名字作为上下文内容。
@@ -901,8 +904,7 @@ Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你好，Ming Li！😊
-我刚刚从你提供的信息中得知你的名字是 Ming Li。很高兴认识你！
-有什么我可以帮你的吗？
+很高兴认识你～ 有什么我可以帮你的吗？
 
 查看智能体记忆中检索信息如何插入：
 [
@@ -931,7 +933,7 @@ Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医
 <li><p><a class="reference internal" href="task_embedding.html#embedding"><span class="std std-ref">嵌入(Embedding)</span></a></p></li>
 <li><p><a class="reference internal" href="task_plan.html#plan"><span class="std std-ref">计划</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 34.573 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.942 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>

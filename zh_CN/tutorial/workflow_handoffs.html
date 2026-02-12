@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">中间件</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
 </ul>
@@ -348,50 +349,50 @@ to download the full example code.</p>
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;使用 Python 编写并执行一个简单的 Hello World 程序，然后返回程序的输出。&quot;
+        &quot;task_description&quot;: &quot;在 Python 中打印 &#39;Hello, World!&#39; 并返回执行结果。&quot;
     },
-    &quot;id&quot;: &quot;call_a85c966158c24942bd9114&quot;
+    &quot;id&quot;: &quot;call_e06156ad2ad34748b3fa23&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
-        &quot;code&quot;: &quot;print(&#39;Hello World!&#39;)&quot;,
-        &quot;timeout&quot;: 5
+        &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
+        &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_54b9ed2e914d4acebc4b02&quot;
+    &quot;id&quot;: &quot;call_1e4faa27d6ab4c3a996b7e&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_54b9ed2e914d4acebc4b02&quot;,
+    &quot;id&quot;: &quot;call_1e4faa27d6ab4c3a996b7e&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
+            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
         }
     ]
 }
-Worker: 你的Python代码已经成功执行，输出结果为：
+Worker: 成功执行了 Python 代码，它打印出了 &#39;Hello, World!&#39;。
 
 ```
-Hello World!
+Hello, World!
 ```
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a85c966158c24942bd9114&quot;,
+    &quot;id&quot;: &quot;call_e06156ad2ad34748b3fa23&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;你的Python代码已经成功执行，输出结果为：\n\n```\nHello World!\n```&quot;
+            &quot;text&quot;: &quot;成功执行了 Python 代码，它打印出了 &#39;Hello, World!&#39;。\n\n```\nHello, World!\n```&quot;
         }
     ]
 }
-Orchestrator: 你的Python代码已经成功执行，输出结果为：
+Orchestrator: 成功地在 Python 中执行了 &quot;Hello, World!&quot; 的打印，输出结果如下：
 
 ```
-Hello World!
+Hello, World!
 ```
 </pre></div>
 </div>
@@ -475,7 +476,7 @@ Hello World!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 12.076 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 14.193 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>

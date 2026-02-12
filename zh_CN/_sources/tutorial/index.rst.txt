@@ -538,6 +538,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 提供了灵活的中间件系统，允许开发者拦截和修改各种操作的执行。 目前，中间件支持已在 Toolkit 类中实现，用于工具执行。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_middleware_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_middleware`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">中间件</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="为了确保准确可靠的工具解析，AgentScope 全面支持工具 API 的使用，具有以下特性：">
 
 .. only:: html
@@ -611,6 +628,7 @@
    /tutorial/task_memory
    /tutorial/task_eval
    /tutorial/task_rag
+   /tutorial/task_middleware
    /tutorial/task_tool
    /tutorial/task_eval_openjudge
 

@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">状态/会话管理</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">智能体钩子函数</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">中间件</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A 智能体</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">实时智能体</a></li>
 </ul>
@@ -440,7 +441,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">record_preferences</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你的喜好，我建议你可以考虑住在西湖附近或者龙井村的民宿。这些地方环境优美，交通便利，而且很多民宿都充满当地特色。住在那里可以更好地感受杭州的风土人情。不过记得提前预订，因为这些热门区域的好民宿很抢手。你之前有住过什么特别满意的民宿吗？可以分享一下你的体验。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据你的喜好，我建议你可以选择一些具有特色主题的民宿，比如西湖边的文艺风民宿、龙井村的茶园民宿或者运河附近的中式庭院民宿。这些民宿不仅能让你更好地感受杭州的风土人情，还提供更舒适和个性化的居住体验。需要我帮你推荐几个具体的选择吗？
 </pre></div>
 </div>
 <p>然后我们清空智能体的短期记忆，以避免造成干扰，并测试智能体是否会记住之前的对话。</p>
@@ -457,7 +458,7 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">retrieve_preferences</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你偏好住民宿，认为提前预订很重要，且建议住在西湖附近或龙井村的民宿。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 你偏好住民宿，尤其是特色主题、文艺风、中式庭院或茶园民宿。
 </pre></div>
 </div>
 </section>
@@ -756,7 +757,7 @@ to download the full example code.</p>
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a> - ReAct 智能体</p></li>
 <li><p><a class="reference internal" href="task_tool.html#tool"><span class="std std-ref">工具</span></a> - 工具系统</p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 40.663 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 54.357 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-long-term-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/cf2bfcc46b2b3d58d3df8c98a6a13f87/task_long_term_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_long_term_memory.ipynb</span></code></a></p>
