@@ -334,13 +334,16 @@ class PlanNotebook(StateModule):
             try:
                 subtask_idx = int(subtask_idx)
             except ValueError:
-                pass
-
-        if not isinstance(subtask_idx, int):
-            response.append(
-                f"Invalid type for argument 'subtask_idx'. "
-                f"Expected 'int', but got '{type(subtask_idx)}'.",
-            )
+                return ToolResponse(
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text=f"Error: Invalid type for argument "
+                            f"'subtask_idx'. Expected 'int', but got "
+                            f"'{type(subtask_idx)}'.",
+                        ),
+                    ],
+                )
 
         if action not in ["add", "revise", "delete"]:
             response.append(
@@ -356,25 +359,23 @@ class PlanNotebook(StateModule):
 
         self._validate_current_plan()
 
-        # validate subtask_idx range only when its type is valid
-        if isinstance(subtask_idx, int):
-            if action != "add" and subtask_idx >= len(
-                self.current_plan.subtasks,
-            ):
-                response.append(
-                    f"Invalid subtask_idx '{subtask_idx}' for action "
-                    f"'{action}'. Must be between 0 "
-                    f"and {len(self.current_plan.subtasks) - 1}.",
-                )
+        if action != "add" and subtask_idx >= len(
+            self.current_plan.subtasks,
+        ):
+            response.append(
+                f"Invalid subtask_idx '{subtask_idx}' for action "
+                f"'{action}'. Must be between 0 "
+                f"and {len(self.current_plan.subtasks) - 1}.",
+            )
 
-            if action == "add" and not (
-                0 <= subtask_idx <= len(self.current_plan.subtasks)
-            ):
-                max_idx = len(self.current_plan.subtasks)
-                response.append(
-                    f"Invalid subtask_idx '{subtask_idx}' for action 'add'. "
-                    f"Must be between 0 and {max_idx}.",
-                )
+        if action == "add" and not (
+            0 <= subtask_idx <= len(self.current_plan.subtasks)
+        ):
+            max_idx = len(self.current_plan.subtasks)
+            response.append(
+                f"Invalid subtask_idx '{subtask_idx}' for action 'add'. "
+                f"Must be between 0 and {max_idx}.",
+            )
 
         if response:
             return ToolResponse(
