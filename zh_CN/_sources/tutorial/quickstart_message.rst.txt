@@ -340,7 +340,7 @@ Message 类通过提供不同的 block 结构来支持多模态内容：
 
     <class 'dict'>
     {
-        "id": "jk9NSMChKJt5ydMdTQkkEr",
+        "id": "DVDunDRB8w3vq5vWTwnZQs",
         "name": "Jarvis",
         "role": "assistant",
         "content": [
@@ -374,7 +374,7 @@ Message 类通过提供不同的 block 结构来支持多模态内容：
             }
         ],
         "metadata": {},
-        "timestamp": "2026-02-12 08:36:14.696"
+        "timestamp": "2026-02-12 08:39:16.120"
     }
 
 
@@ -466,7 +466,7 @@ Message 类通过提供不同的 block 结构来支持多模态内容：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.004 seconds)
+   **Total running time of the script:** (0 minutes 0.005 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_message.py:

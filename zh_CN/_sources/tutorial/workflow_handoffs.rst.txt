@@ -46,46 +46,50 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "在 Python 中打印 'Hello, World!' 并返回输出结果。"
+            "task_description": "使用 Python 编写并执行一个简单的 Hello World 程序，然后返回程序的输出。"
         },
-        "id": "call_dfdd0620210c45e8b96df5"
+        "id": "call_a85c966158c24942bd9114"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
-            "code": "print('Hello, World!')",
+            "code": "print('Hello World!')",
             "timeout": 5
         },
-        "id": "call_f4836a65870545bf9724eb"
+        "id": "call_54b9ed2e914d4acebc4b02"
     }
     system: {
         "type": "tool_result",
-        "id": "call_f4836a65870545bf9724eb",
+        "id": "call_54b9ed2e914d4acebc4b02",
         "name": "execute_python_code",
         "output": [
             {
                 "type": "text",
-                "text": "<returncode>0</returncode><stdout>Hello, World!\n</stdout><stderr></stderr>"
+                "text": "<returncode>0</returncode><stdout>Hello World!\n</stdout><stderr></stderr>"
             }
         ]
     }
-    Worker: Python 代码已成功执行，并打印出了 'Hello, World!'。
+    Worker: 你的Python代码已经成功执行，输出结果为：
+
+    ```
+    Hello World!
+    ```
     system: {
         "type": "tool_result",
-        "id": "call_dfdd0620210c45e8b96df5",
+        "id": "call_a85c966158c24942bd9114",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "Python 代码已成功执行，并打印出了 'Hello, World!'。"
+                "text": "你的Python代码已经成功执行，输出结果为：\n\n```\nHello World!\n```"
             }
         ]
     }
-    Orchestrator: 子智能体已成功在 Python 中执行了 "Hello, World!" 的打印任务。下面是执行结果：
+    Orchestrator: 你的Python代码已经成功执行，输出结果为：
 
     ```
-    Hello, World!
+    Hello World!
     ```
 
 
@@ -177,7 +181,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 11.446 seconds)
+   **Total running time of the script:** (0 minutes 12.076 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:

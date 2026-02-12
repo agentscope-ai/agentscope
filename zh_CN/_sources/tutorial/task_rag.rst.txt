@@ -327,9 +327,9 @@ AgentScope 目前内置支持基于 `Qdrant <https://qdrant.tech/>`_ 实现的�
  .. code-block:: none
 
     检索到的 Document 对象：
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': '我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。'}, doc_id='547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13', chunk_id=2, total_chunks=5), id='kvP33jUQfqjHxu8YMVSn9i', embedding=None, score=0.5971063116560947) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': '我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。'}, doc_id='547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13', chunk_id=2, total_chunks=5), id='CvioCLPtjPuxJTXsJCpgkJ', embedding=None, score=0.5971063116560947) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': '我的名字是李明，今年28岁。'}, doc_id='547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13', chunk_id=0, total_chunks=5), id='Zq4C7k5kuTXvi7vjKG9MNe', embedding=None, score=0.5449764333507582) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': '我的名字是李明，今年28岁。'}, doc_id='547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13', chunk_id=0, total_chunks=5), id='WnQsEUFTvQgHczeMzVGVPY', embedding=None, score=0.5449764333507582) 
 
 
 
@@ -442,24 +442,22 @@ AgentScope 支持并鼓励开发者自定义 RAG 组件，包括 reader、知识
  .. code-block:: none
 
     第一次回复: 
-    Friday: 那很好啊！有好朋友是一件很幸福的事情。你和李明是怎么成为好朋友的呢？你们之间有什么共同的兴趣爱好吗？
+    Friday: 那听起来很不错！有李明这样的好朋友一定很让人开心。你们经常一起做些什么呢？
 
 
     第二次回复: 
     Friday: {
         "type": "tool_use",
-        "id": "call_52ec0439e9844264bd8640",
+        "id": "call_d016e3531ffe4409a1b2cf",
         "name": "retrieve_knowledge",
         "input": {
-            "query": "李明的父亲",
-            "limit": 5,
-            "score_threshold": null
+            "query": "李明的父亲"
         },
-        "raw_input": "{\"query\": \"李明的父亲\", \"limit\": 5, \"score_threshold\": null}"
+        "raw_input": "{\"query\": \"李明的父亲\"}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_52ec0439e9844264bd8640",
+        "id": "call_d016e3531ffe4409a1b2cf",
         "name": "retrieve_knowledge",
         "output": [
             {
@@ -484,7 +482,7 @@ AgentScope 支持并鼓励开发者自定义 RAG 组件，包括 reader、知识
             }
         ]
     }
-    Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医生。如果这是你朋友李明的信息的话。如果不是，请提供更多信息以便我能更准确地帮助你。
+    Friday: 根据我找到的信息，李明的父亲名叫李强，他是一名医生。如果你需要更多关于李明或者他父亲的详细信息，请告诉我。
 
 
 
@@ -572,11 +570,11 @@ AgentScope 支持并鼓励开发者自定义 RAG 组件，包括 reader、知识
       },
       {
         "type": "text",
-        "text": "我现在在北京大学攻读博士学位，研究方向是人工智能。"
+        "text": "我居住在中国杭州，是一名算法工程师。我喜欢打篮球和玩游戏。"
       },
       {
         "type": "text",
-        "text": "我居住在中国杭州，是一名算法工程师。我喜欢打篮球和玩游戏。"
+        "text": "我现在在北京大学攻读博士学位，研究方向是人工智能。"
       },
       {
         "type": "text",
@@ -691,7 +689,8 @@ AgentScope 中的 RAG 模块原生支持多模态，因为
  .. code-block:: none
 
     Friday: 你好，Ming Li！😊  
-    很高兴认识你～ 有什么我可以帮你的吗？
+    我刚刚从你提供的信息中得知你的名字是 Ming Li。很高兴认识你！  
+    有什么我可以帮你的吗？
 
     查看智能体记忆中检索信息如何插入：
     [
@@ -726,7 +725,7 @@ AgentScope 中的 RAG 模块原生支持多模态，因为
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 36.210 seconds)
+   **Total running time of the script:** (0 minutes 34.573 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:
