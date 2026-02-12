@@ -116,14 +116,14 @@ Routing
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "your_choice": "Content Generation",
-            "task_description": "写一首诗"
+            "task_description": "用户请求帮助写一首诗",
+            "your_choice": "Content Generation"
         },
-        "id": "call_6fb3a6a0c2654c50816c75"
+        "id": "call_810cf466ef0745a8bca578"
     }
     system: {
         "type": "tool_result",
-        "id": "call_6fb3a6a0c2654c50816c75",
+        "id": "call_810cf466ef0745a8bca578",
         "name": "generate_response",
         "output": [
             {
@@ -132,13 +132,11 @@ Routing
             }
         ]
     }
-    Router: 我将为您转接到我们的内容创作助手，它会帮助您写一首诗。请稍等一下！
-    工具"generate_response"被调用时使用了以下参数：
-    {"your_choice": "Content Generation", "task_description": "写一首诗"}
+    Router: 我将为您转接到诗歌创作任务，让我们的系统帮助您完成这首诗的创作。请稍等片刻！
     结构化输出：
     {
         "your_choice": "Content Generation",
-        "task_description": "写一首诗"
+        "task_description": "用户请求帮助写一首诗"
     }
 
 
@@ -271,113 +269,135 @@ Routing
         "input": {
             "demand": "生成一个快速排序函数"
         },
-        "id": "call_bb99da616f2a4912a3a436"
+        "id": "call_1093def03fe244c0ab8ef2"
     }
-    PythonAgent: 当然！快速排序是一种高效的排序算法，它使用分治法策略来将一个数组分成两个子数组，然后递归地对这两个子数组进行排序。以下是一个用 Python 实现的快速排序函数：
+    PythonAgent: 快速排序是一种非常高效的排序算法，它使用分治法策略来递归地将数组分成更小的部分进行排序。下面是一个用 Python 实现的快速排序函数：
 
     ```python
     def quicksort(arr):
         if len(arr) <= 1:
             return arr
         else:
-            pivot = arr[len(arr) // 2]
-            left = [x for x in arr if x < pivot]
-            middle = [x for x in arr if x == pivot]
-            right = [x for x in arr if x > pivot]
-            return quicksort(left) + middle + quicksort(right)
+            # 选择一个基准值（pivot），这里我们选择列表中的第一个元素
+            pivot = arr[0]
+        
+            # 小于基准值的元素
+            less = [x for x in arr[1:] if x <= pivot]
+        
+            # 大于基准值的元素
+            greater = [x for x in arr[1:] if x > pivot]
+        
+            # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并
+            return quicksort(less) + [pivot] + quicksort(greater)
 
-    # 示例用法
+    # 示例
     arr = [3, 6, 8, 10, 1, 2, 1]
     sorted_arr = quicksort(arr)
-    print(sorted_arr)
+    print("Sorted array:", sorted_arr)
     ```
 
-    这个实现使用了列表推导式来创建 `left`、`middle` 和 `right` 子数组。选择中间元素作为枢轴（pivot），并将数组分为小于、等于和大于枢轴的三个部分。然后递归地对 `left` 和 `right` 部分进行排序，并将结果合并。
+    这个实现选择了列表的第一个元素作为基准值（pivot）。然后，它创建了两个子列表：一个包含所有小于或等于基准值的元素，另一个包含所有大于基准值的元素。接着对这两个子列表递归地应用相同的过程，最后将排序后的子列表与基准值合并。
 
-    如果你需要一个更传统的原地排序实现，可以参考以下代码：
+    你可以通过修改 `pivot` 的选择方式来优化性能，例如选择中间位置的元素或者随机选择一个元素作为基准值。下面是使用随机选择基准值的一个例子：
 
     ```python
-    def quicksort_inplace(arr, low, high):
-        if low < high:
-            pi = partition(arr, low, high)
-            quicksort_inplace(arr, low, pi - 1)
-            quicksort_inplace(arr, pi + 1, high)
+    import random
 
-    def partition(arr, low, high):
-        pivot = arr[high]
-        i = low - 1
-        for j in range(low, high):
-            if arr[j] < pivot:
-                i += 1
-                arr[i], arr[j] = arr[j], arr[i]
-        arr[i + 1], arr[high] = arr[high], arr[i + 1]
-        return i + 1
+    def quicksort_random_pivot(arr):
+        if len(arr) <= 1:
+            return arr
+        else:
+            # 随机选择一个基准值
+            pivot_index = random.randint(0, len(arr) - 1)
+            pivot = arr[pivot_index]
+        
+            # 移除基准值并将其放在最后处理
+            arr.pop(pivot_index)
+        
+            # 小于基准值的元素
+            less = [x for x in arr if x <= pivot]
+        
+            # 大于基准值的元素
+            greater = [x for x in arr if x > pivot]
+        
+            # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并
+            return quicksort_random_pivot(less) + [pivot] + quicksort_random_pivot(greater)
 
-    # 示例用法
+    # 示例
     arr = [3, 6, 8, 10, 1, 2, 1]
-    quicksort_inplace(arr, 0, len(arr) - 1)
-    print(arr)
+    sorted_arr = quicksort_random_pivot(arr)
+    print("Sorted array:", sorted_arr)
     ```
 
-    这个版本的快速排序是原地排序，不需要额外的空间来存储子数组。`partition` 函数用于重新排列数组并返回枢轴的正确位置。`quicksort_inplace` 函数递归地对枢轴左右两侧的子数组进行排序。
+    在这个版本中，我们使用 `random.randint` 函数来随机选择一个基准值，这样可以减少最坏情况的发生概率。
     system: {
         "type": "tool_result",
-        "id": "call_bb99da616f2a4912a3a436",
+        "id": "call_1093def03fe244c0ab8ef2",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "当然！快速排序是一种高效的排序算法，它使用分治法策略来将一个数组分成两个子数组，然后递归地对这两个子数组进行排序。以下是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quicksort(left) + middle + quicksort(right)\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(sorted_arr)\n```\n\n这个实现使用了列表推导式来创建 `left`、`middle` 和 `right` 子数组。选择中间元素作为枢轴（pivot），并将数组分为小于、等于和大于枢轴的三个部分。然后递归地对 `left` 和 `right` 部分进行排序，并将结果合并。\n\n如果你需要一个更传统的原地排序实现，可以参考以下代码：\n\n```python\ndef quicksort_inplace(arr, low, high):\n    if low < high:\n        pi = partition(arr, low, high)\n        quicksort_inplace(arr, low, pi - 1)\n        quicksort_inplace(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] < pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# 示例用法\narr = [3, 6, 8, 10, 1, 2, 1]\nquicksort_inplace(arr, 0, len(arr) - 1)\nprint(arr)\n```\n\n这个版本的快速排序是原地排序，不需要额外的空间来存储子数组。`partition` 函数用于重新排列数组并返回枢轴的正确位置。`quicksort_inplace` 函数递归地对枢轴左右两侧的子数组进行排序。"
+                "text": "快速排序是一种非常高效的排序算法，它使用分治法策略来递归地将数组分成更小的部分进行排序。下面是一个用 Python 实现的快速排序函数：\n\n```python\ndef quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        # 选择一个基准值（pivot），这里我们选择列表中的第一个元素\n        pivot = arr[0]\n        \n        # 小于基准值的元素\n        less = [x for x in arr[1:] if x <= pivot]\n        \n        # 大于基准值的元素\n        greater = [x for x in arr[1:] if x > pivot]\n        \n        # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并\n        return quicksort(less) + [pivot] + quicksort(greater)\n\n# 示例\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n这个实现选择了列表的第一个元素作为基准值（pivot）。然后，它创建了两个子列表：一个包含所有小于或等于基准值的元素，另一个包含所有大于基准值的元素。接着对这两个子列表递归地应用相同的过程，最后将排序后的子列表与基准值合并。\n\n你可以通过修改 `pivot` 的选择方式来优化性能，例如选择中间位置的元素或者随机选择一个元素作为基准值。下面是使用随机选择基准值的一个例子：\n\n```python\nimport random\n\ndef quicksort_random_pivot(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        # 随机选择一个基准值\n        pivot_index = random.randint(0, len(arr) - 1)\n        pivot = arr[pivot_index]\n        \n        # 移除基准值并将其放在最后处理\n        arr.pop(pivot_index)\n        \n        # 小于基准值的元素\n        less = [x for x in arr if x <= pivot]\n        \n        # 大于基准值的元素\n        greater = [x for x in arr if x > pivot]\n        \n        # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并\n        return quicksort_random_pivot(less) + [pivot] + quicksort_random_pivot(greater)\n\n# 示例\narr = [3, 6, 8, 10, 1, 2, 1]\nsorted_arr = quicksort_random_pivot(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n在这个版本中，我们使用 `random.randint` 函数来随机选择一个基准值，这样可以减少最坏情况的发生概率。"
             }
         ]
     }
-    Router: 这里有两个版本的快速排序算法实现：
-
-    第一个函数是使用额外空间的简洁版本，它利用了 Python 的列表推导式来创建子数组并递归地对它们进行排序：
+    Router: 生成的快速排序函数如下所示：
 
     ```python
     def quicksort(arr):
         if len(arr) <= 1:
             return arr
         else:
-            pivot = arr[len(arr) // 2]
-            left = [x for x in arr if x < pivot]
-            middle = [x for x in arr if x == pivot]
-            right = [x for x in arr if x > pivot]
-            return quicksort(left) + middle + quicksort(right)
+            # 选择一个基准值（pivot），这里我们选择列表中的第一个元素
+            pivot = arr[0]
+        
+            # 小于基准值的元素
+            less = [x for x in arr[1:] if x <= pivot]
+        
+            # 大于基准值的元素
+            greater = [x for x in arr[1:] if x > pivot]
+        
+            # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并
+            return quicksort(less) + [pivot] + quicksort(greater)
 
-    # 示例用法
+    # 示例
     arr = [3, 6, 8, 10, 1, 2, 1]
     sorted_arr = quicksort(arr)
-    print(sorted_arr)  # 输出排序后的数组
+    print("Sorted array:", sorted_arr)
     ```
 
-    第二个函数是原地排序的版本，不需要额外的空间，更接近于传统的快速排序实现：
+    这个实现选择了列表的第一个元素作为基准值。如果你想要使用随机选择的基准值来优化性能，可以参考以下代码：
 
     ```python
-    def quicksort_inplace(arr, low, high):
-        if low < high:
-            pi = partition(arr, low, high)
-            quicksort_inplace(arr, low, pi - 1)
-            quicksort_inplace(arr, pi + 1, high)
+    import random
 
-    def partition(arr, low, high):
-        pivot = arr[high]
-        i = low - 1
-        for j in range(low, high):
-            if arr[j] < pivot:
-                i += 1
-                arr[i], arr[j] = arr[j], arr[i]
-        arr[i + 1], arr[high] = arr[high], arr[i + 1]
-        return i + 1
+    def quicksort_random_pivot(arr):
+        if len(arr) <= 1:
+            return arr
+        else:
+            # 随机选择一个基准值
+            pivot_index = random.randint(0, len(arr) - 1)
+            pivot = arr[pivot_index]
+        
+            # 移除基准值并将其放在最后处理
+            arr.pop(pivot_index)
+        
+            # 小于基准值的元素
+            less = [x for x in arr if x <= pivot]
+        
+            # 大于基准值的元素
+            greater = [x for x in arr if x > pivot]
+        
+            # 递归调用 quicksort 对两部分进行排序，并将结果与基准值合并
+            return quicksort_random_pivot(less) + [pivot] + quicksort_random_pivot(greater)
 
-    # 示例用法
+    # 示例
     arr = [3, 6, 8, 10, 1, 2, 1]
-    quicksort_inplace(arr, 0, len(arr) - 1)
-    print(arr)  # 输出排序后的数组
+    sorted_arr = quicksort_random_pivot(arr)
+    print("Sorted array:", sorted_arr)
     ```
 
-    您可以根据您的需求选择其中一种实现方式。如果您需要节省空间，请使用第二个 `quicksort_inplace` 函数。如果您希望代码更加简洁易读，则可以使用第一个 `quicksort` 函数。
+    在这段代码中，我们通过 `random.randint` 函数来随机选择一个基准值，这样可以提高算法在面对特定数据集时的平均性能。你可以根据需要选择使用哪种方式。现在你就可以使用这些函数对数组进行排序了。
 
 
 
@@ -385,7 +405,7 @@ Routing
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 5.159 seconds)
+   **Total running time of the script:** (1 minutes 3.248 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:
