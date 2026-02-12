@@ -538,6 +538,23 @@
 
 .. raw:: html
 
+    <div class="sphx-glr-thumbcontainer" tooltip="AgentScope provides a flexible middleware system that allows developers to intercept and modify the execution of various operations. Currently, middleware support is available for tool execution in the Toolkit class.">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_task_middleware_thumb.png
+    :alt:
+
+  :doc:`/tutorial/task_middleware`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Middleware</div>
+    </div>
+
+
+.. raw:: html
+
     <div class="sphx-glr-thumbcontainer" tooltip="To ensure accurate and reliable tool parsing, AgentScope fully embraces the use of tools API with the following features:">
 
 .. only:: html
@@ -611,6 +628,7 @@
    /tutorial/task_eval
    /tutorial/task_memory
    /tutorial/task_rag
+   /tutorial/task_middleware
    /tutorial/task_tool
    /tutorial/task_eval_openjudge
 

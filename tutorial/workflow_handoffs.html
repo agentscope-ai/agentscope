@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">Middleware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">Realtime Agent</a></li>
 </ul>
@@ -350,7 +351,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
     &quot;input&quot;: {
         &quot;task_description&quot;: &quot;Print &#39;Hello, World!&#39; using Python&quot;
     },
-    &quot;id&quot;: &quot;call_7f98f82ab2cd4fdf8c16d2&quot;
+    &quot;id&quot;: &quot;call_af8478791a974cadb01c34&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
@@ -359,11 +360,11 @@ Worker: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
         &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_a229952f34f746d7881e6d&quot;
+    &quot;id&quot;: &quot;call_03c55606503e45668d7955&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_a229952f34f746d7881e6d&quot;,
+    &quot;id&quot;: &quot;call_03c55606503e45668d7955&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -372,27 +373,19 @@ system: {
         }
     ]
 }
-Worker: The Python code has been executed and it printed:
-
-```
-Hello, World!
-```
+Worker: The Python code has been executed successfully and printed &#39;Hello, World!&#39; as requested.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_7f98f82ab2cd4fdf8c16d2&quot;,
+    &quot;id&quot;: &quot;call_af8478791a974cadb01c34&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;The Python code has been executed and it printed:\n\n```\nHello, World!\n```&quot;
+            &quot;text&quot;: &quot;The Python code has been executed successfully and printed &#39;Hello, World!&#39; as requested.&quot;
         }
     ]
 }
-Orchestrator: The worker has successfully executed the Python code, and it printed:
-
-```
-Hello, World!
-```
+Orchestrator: The task has been completed successfully. The Python code was executed and it printed &#39;Hello, World!&#39;.
 </pre></div>
 </div>
 <div class="line-block">
@@ -475,7 +468,7 @@ Hello, World!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 11.552 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.283 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>

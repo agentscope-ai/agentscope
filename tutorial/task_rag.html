@@ -268,6 +268,7 @@
 <li class="toctree-l1"><a class="reference internal" href="task_agent.html">Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_state.html">State/Session Management</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_hook.html">Agent Hooks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task_middleware.html">Middleware</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_a2a.html">A2A Agent</a></li>
 <li class="toctree-l1"><a class="reference internal" href="task_realtime.html">Realtime Agent</a></li>
 </ul>
@@ -605,9 +606,9 @@ They can be used as follows:</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Retrieved Documents:
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;SKHZB7NgaRJisi985wAsHy&#39;, embedding=None, score=0.5657136536003619)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;Vkkj2omDaorczxY3S7jTmp&#39;, embedding=None, score=0.5657136536003619)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;Mvwuca3AMxNPn9FmkL3yhU&#39;, embedding=None, score=0.5062624400117309)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;YK8HM7ca8ZHzJQRxcLLogk&#39;, embedding=None, score=0.5062624400117309)
 </pre></div>
 </div>
 <p>The knowledge base class provides two main methods: <code class="docutils literal notranslate"><span class="pre">add_documents</span></code> and
@@ -720,13 +721,13 @@ and providing a proper description for the tool.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The first response:
-Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any special plans you have together?
+Friday: That&#39;s great! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any special plans you have together?
 
 
 The second response:
 Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_4b4dd3f550a648ac8876f2&quot;,
+    &quot;id&quot;: &quot;call_73f2d51c55fa4ebd8e46ce&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
         &quot;query&quot;: &quot;John Doe father&quot;,
@@ -737,7 +738,7 @@ Friday: {
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_4b4dd3f550a648ac8876f2&quot;,
+    &quot;id&quot;: &quot;call_73f2d51c55fa4ebd8e46ce&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -762,7 +763,7 @@ system: {
         }
     ]
 }
-Friday: According to the information I found, John Doe&#39;s father is Michael Doe, who is a doctor. It seems that John is very proud of his father. If there&#39;s more you&#39;d like to know or if this isn&#39;t the John Doe you&#39;re asking about, please let me know!
+Friday: According to the information I found, John Doe&#39;s father is Michael Doe, who is a doctor. Would you like to know more about John or his family?
 </pre></div>
 </div>
 <p>In the above example, our question is “Do you know who his father is?”.
@@ -807,7 +808,7 @@ will automatically retrieve knowledge at the beginning of each reply.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_generic_manner</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: According to the information provided, John Doe&#39;s father is Michael Doe, who is a doctor.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, John Doe&#39;s father is Michael Doe, who is a doctor.
 Take a look at the agent&#39;s memory:
 [
   {
@@ -924,12 +925,12 @@ The example is the same as before, just using the <code class="docutils literal 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, your name is Tony Stank.
 
 The image is attached in the agent&#39;s memory:
-Msg(id=&#39;9WFRLu7ZWo5pSht9sDbHSG&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 08:35:00.769&#39;, invocation_id=&#39;None&#39;)
+Msg(id=&#39;BVT3R9PKzPeTqtWgVQavxj&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-12 09:33:02.537&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>We can see that the agent can answer the question based on the retrieved
 image.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 35.198 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 33.575 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>

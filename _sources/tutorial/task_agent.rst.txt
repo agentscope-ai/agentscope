@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_de2374e72b5342b4a7ce7e",
+        "id": "call_5df3daec0c5b413cbc77bf",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_5bb632cc49db41f5b34263",
+        "id": "call_d76c3f6050b049b78fa58d",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,32 +363,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_de2374e72b5342b4a7ce7e",
+        "id": "call_5df3daec0c5b413cbc77bf",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 08:31:19.225970 and ended at 08:31:22.229227. "
+                "text": "Tag tag1 started at 09:29:26.079242 and ended at 09:29:29.082491. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_5bb632cc49db41f5b34263",
+        "id": "call_d76c3f6050b049b78fa58d",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 08:31:19.226065 and ended at 08:31:22.229867. "
+                "text": "Tag tag2 started at 09:29:26.079334 and ended at 09:29:29.083181. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' was called in parallel with two different tags, 'tag1' and 'tag2'. Here are the results:
+    Jarvis: The 'example_tool_function' has been called with two tags 'tag1' and 'tag2' in parallel. Here are the results:
 
-    - For 'tag1', the function started at 08:31:19.225970 and ended at 08:31:22.229227.
-    - For 'tag2', the function started at 08:31:19.226065 and ended at 08:31:22.229867.
+    For 'tag1': It started at 09:29:26.079242 and ended at 09:29:29.082491.
+    For 'tag2': It started at 09:29:26.079334 and ended at 09:29:29.083181. 
 
-    Both instances of the function executed concurrently, as you can see from their start and end times.
+    Both functions executed concurrently, as you can see from the close start and end times.
 
 
 
@@ -467,11 +467,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_dc3d5041f4e44f85bc91ae",
+        "id": "call_3877adc168594e4ebf97ae",
         "name": "generate_response",
         "input": {
-            "name": "Einstein",
-            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
+            "name": "Albert Einstein",
+            "description": "A renowned physicist who developed the theory of relativity, one of the two pillars of modern physics.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -479,11 +479,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_dc3d5041f4e44f85bc91ae",
+        "id": "call_3877adc168594e4ebf97ae",
         "name": "generate_response",
         "output": [
             {
@@ -492,12 +492,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which is one of the two foundational pillars of modern physics. Born in 1879, Einstein's contributions to science have had a profound and lasting impact on our understanding of the universe. He was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, but he is perhaps more widely recognized for his famous equation, E=mc², which expresses the equivalence of mass and energy. Throughout his career, Einstein received numerous honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. He passed away in 1955 at the age of 76, leaving behind a legacy that continues to inspire and influence scientific thought and exploration.
+    Jarvis: Albert Einstein was a renowned physicist, celebrated for developing the theory of relativity, which stands as one of the two pillars of modern physics. Born in 1879, Einstein's profound impact on the scientific community and our understanding of the universe is immeasurable. He was awarded the Nobel Prize in Physics in 1921, not for his work on relativity, but for his services to Theoretical Physics and his discovery of the law of the photoelectric effect. Throughout his career, he received numerous accolades including the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that continues to influence science and inspire generations.
 
     The structured output:
     {
-        "name": "Einstein",
-        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
+        "name": "Albert Einstein",
+        "description": "A renowned physicist who developed the theory of relativity, one of the two pillars of modern physics.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 32.522 seconds)
+   **Total running time of the script:** (0 minutes 36.757 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
