@@ -30,26 +30,12 @@ jobs:
             revert
           # Require a scope (the part in parentheses)
           requireScope: false
-          # Allow custom scopes
-          scopes: |
-            memory
-            agent
-            model
-            tool
-            web
-            pipeline
-            rag
-            prompt
-            service
-            format
-            msg
-            rpc
-            studio
-            utils
-            deps
-            examples
-            tests
-            workflow
+          # Scope pattern: only lowercase letters, numbers, hyphens, and underscores allowed
+          scopePattern: ^[a-z0-9_-]+$
+          scopePatternError: |
+            The scope (text in parentheses) must contain only lowercase letters, numbers, hyphens, and underscores.
+            Example: "feat(memory): add redis cache support"
+            Invalid: "feat(Memory): ..." or "feat(MEMORY): ..."
           # Subject (description) must not be empty and must be lowercase
           subjectPattern: ^(?![A-Z]).+$
           subjectPatternError: |

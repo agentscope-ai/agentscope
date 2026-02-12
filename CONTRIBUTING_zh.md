@@ -52,13 +52,48 @@ refactor(formatter): simplify message formatting logic
 ci(models): add unit tests for OpenAI integration
 ```
 
-### 3. 代码开发指南
+### 3. Pull Request 标题格式
+
+Pull Request 标题必须遵循相同的 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
+
+**格式：**
+```
+<type>(<scope>): <description>
+```
+
+**要求：**
+- 标题必须以允许的类型之一开头：`feat`、`fix`、`docs`、`ci`、`refactor`、`test`、`chore`、`perf`、`style`、`build`、`revert`
+- Scope 是可选的但建议添加
+- **Scope 必须是小写** - 只允许小写字母、数字、连字符（`-`）和下划线（`_`）
+- 描述应以小写字母开头
+- 保持标题简洁且具有描述性
+
+**示例：**
+```
+✅ 有效：
+feat(memory): add redis cache support
+fix(agent): resolve memory leak in ReActAgent
+docs(tutorial): update installation guide
+ci(workflow): add PR title validation
+refactor(my-feature): simplify logic
+
+❌ 无效：
+feat(Memory): add cache          # Scope 必须是小写
+feat(MEMORY): add cache          # Scope 必须是小写
+feat(MyFeature): add feature     # Scope 必须是小写
+```
+
+**自动化验证：**
+- 针对 `main` 分支的 PR 标题会通过 GitHub Actions 自动验证
+- 标题无效的 PR 将被阻止，直到标题被修正
+
+### 4. 代码开发指南
 
 #### a. 提交前检查
 
 在提交代码之前，请运行 pre-commit 钩子以确保代码质量和一致性：
 
-**安装：**
+
 ```bash
 pip install pre-commit
 pre-commit install
