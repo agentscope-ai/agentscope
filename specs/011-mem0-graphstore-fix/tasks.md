@@ -17,19 +17,19 @@ description: "Absorb main -> easy mem0 graphstore compatibility fix"
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm target commit `233915d` exists on local `main`
-- [ ] T002 Confirm expected touched files are mem0 integration + example only
+- [x] T001 Confirm target commit `233915d` exists on local `main`
+- [x] T002 Confirm expected touched files are mem0 integration + example only
 
 ## Phase 2: Implement
 
-- [ ] T003 [US1] Cherry-pick `233915d` and ensure relations are included in retrieval outputs
-- [ ] T004 [US2] Ensure AgentScopeLLM returns mem0-compatible structured output when tools are provided
+- [x] T003 [US1] Cherry-pick `233915d` and ensure relations are included in retrieval outputs
+- [x] T004 [US2] Ensure AgentScopeLLM returns mem0-compatible structured output when tools are provided
 
 ## Phase 3: Verification
 
-- [ ] T005 Run `pre-commit run --all-files`
-- [ ] T006 Run `./.venv/bin/python -m ruff check src`
-- [ ] T007 Run `./.venv/bin/python -m pylint -E src`
-- [ ] T008 Run focused runtime checks for relations formatting and tool-call parsing
-- [ ] T009 Run pytest in CI (local optional; record environment blocker if `RC:139`)
+- [x] T005 Run `pre-commit run --all-files`
+- [x] T006 Run `./.venv/bin/python -m ruff check src`
+- [x] T007 Run `./.venv/bin/python -m pylint -E src`
+- [x] T008 Run focused runtime checks for relations formatting and tool-call parsing
+- [x] T009 Run pytest in CI (local blocked: `pytest RC:139`, no output; CI is final oracle)
 - [ ] T010 Commit task checkmarks
