@@ -49,8 +49,8 @@ async def execute_shell_command(
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
         stdout, stderr = await proc.communicate()
-        stdout_str = smart_decode(stdout)  
-        stderr_str = smart_decode(stderr) 
+        stdout_str = _smart_decode(stdout)
+        stderr_str = _smart_decode(stderr)
         returncode = proc.returncode
 
     except asyncio.TimeoutError:
