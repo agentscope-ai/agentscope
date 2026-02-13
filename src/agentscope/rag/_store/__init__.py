@@ -8,6 +8,7 @@ from ._qdrant_store import QdrantStore
 from ._milvuslite_store import MilvusLiteStore
 from ._oceanbase_store import OceanBaseStore
 from ._mongodb_store import MongoDBStore
+from ._alibabacloud_analyticdb_store import AlibabaCloudAnalyticDBStore
 from ._alibabacloud_mysql_store import AlibabaCloudMySQLStore
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "MilvusLiteStore",
     "OceanBaseStore",
     "MongoDBStore",
+    "AlibabaCloudAnalyticDBStore",
     "AlibabaCloudMySQLStore",
 ]
