@@ -69,20 +69,22 @@ T = TypeVar("T")
 def _check_tracing_enabled() -> bool:
     """Check if the OpenTelemetry tracer is initialized in AgentScope with an
     endpoint.
-    This approach handles async context
-    loss issues automatically, as it checks the actual OpenTelemetry state
-    rather than relying solely on ContextVar.
+
+    This approach handles async context loss issues automatically by checking
+    the actual OpenTelemetry state rather than relying solely on ContextVar.
+    A global_trace_enabled flag is also supported for manual control.
     """
-    from opentelemetry import trace as trace_api
-    from opentelemetry.sdk.trace import TracerProvider
+    # If global tracing is explicitly enabled, check TracerProvider state
+    if _config.global_trace_enabled:
+        from opentelemetry import trace as trace_api
+        from opentelemetry.sdk.trace import TracerProvider
 
-    # Check if a real TracerProvider is set (not the default proxy)
-    tracer_provider = trace_api.get_tracer_provider()
-    if isinstance(tracer_provider, TracerProvider):
-        # A real TracerProvider exists, which means tracing was configured
-        return True
+        tracer_provider = trace_api.get_tracer_provider()
+        if isinstance(tracer_provider, TracerProvider):
+            # A real TracerProvider exists, which means tracing was configured
+            return True
 
-    # Fall back to ContextVar for runtime control
+    # Default behavior: use ContextVar for runtime control
     return _config.trace_enabled
 
 
