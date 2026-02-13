@@ -7,6 +7,7 @@ from typing import Any, Callable
 from .._metric_base import MetricResult
 from .._solution import SolutionOutput
 from ...agent import AgentBase
+from ...types import JSONSerializableObject
 
 
 class EvaluatorStorageBase:
@@ -169,6 +170,64 @@ class EvaluatorStorageBase:
         Args:
             meta_info (`dict`):
                 A dictionary containing the meta information.
+        """
+
+    @abstractmethod
+    def save_task_meta(
+        self,
+        task_id: str,
+        meta_info: dict[str, JSONSerializableObject],
+    ) -> None:
+        """Save the task meta information.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            meta_info (`dict[str, JSONSerializableObject]`):
+                The task meta information to be saved, which should be JSON
+                serializable.
+        """
+
+    @abstractmethod
+    def save_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+        stats: dict,
+    ) -> None:
+        """Save the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+            stats (`dict`):
+                A dictionary containing the solution statistics to be saved.
+        """
+
+    @abstractmethod
+    def get_solution_stats(
+        self,
+        task_id: str,
+        repeat_id: str,
+    ) -> dict:
+        """Get the solution statistics information for a given task and
+        repeat ID.
+
+        Args:
+            task_id (`str`):
+                The task ID.
+            repeat_id (`str`):
+                The repeat ID for the task, usually the index of the repeat
+                evaluation.
+
+        Returns:
+            `dict`:
+                A dictionary containing the solution statistics for the given
+                task and repeat ID.
         """
 
     @abstractmethod

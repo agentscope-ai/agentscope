@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-lines
 # mypy: disable-error-code="index"
 """Test toolkit module in agentscope."""
 import asyncio
@@ -908,6 +909,155 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
                 ],
             )
 
+    async def test_register_with_valid_json_schema(self) -> None:
+        """Test registering a tool with valid custom json_schema."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "legacy_name",
+                "description": "Custom description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "type": "integer",
+                            "description": "Test argument 1.",
+                        },
+                        "arg2": {
+                            "type": "string",
+                            "description": "Test argument 2.",
+                        },
+                    },
+                    "required": ["arg1"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            func_name="renamed_sync_func",
+            func_description="Overridden description.",
+            preset_kwargs={"arg1": 10},
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertEqual(len(schemas), 1)
+        self.assertEqual(
+            schemas[0]["function"]["name"],
+            "renamed_sync_func",
+        )
+        self.assertEqual(
+            schemas[0]["function"]["description"],
+            "Overridden description.",
+        )
+        self.assertNotIn(
+            "arg1",
+            schemas[0]["function"]["parameters"]["properties"],
+        )
+        self.assertNotIn(
+            "required",
+            schemas[0]["function"]["parameters"],
+        )
+
+    async def test_register_with_invalid_json_schema(self) -> None:
+        """Test that invalid json_schema raises AssertionError."""
+        invalid_schemas = [
+            "not a dict",
+            {"function": {"name": "test"}},
+            {"type": "object", "function": {"name": "test"}},
+            {"type": "function"},
+            {"type": "function", "function": "not a dict"},
+        ]
+
+        for schema in invalid_schemas:
+            with self.assertRaises(
+                AssertionError,
+                msg=f"Should raise for schema: {schema}",
+            ):
+                self.toolkit.register_tool_function(
+                    sync_func,
+                    json_schema=schema,
+                )
+
+    async def test_register_with_custom_json_schema_without_overrides(
+        self,
+    ) -> None:
+        """Test custom json_schema is used as-is when no overrides are set."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "custom_sync_func",
+                "description": "Custom schema description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {
+                            "type": "integer",
+                            "description": "Argument one.",
+                        },
+                        "arg2": {
+                            "type": "string",
+                            "description": "Argument two.",
+                        },
+                    },
+                    "required": ["arg1", "arg2"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            func_name="custom_sync_func",
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertEqual(
+            schemas[0]["function"]["description"],
+            "Custom schema description.",
+        )
+        self.assertListEqual(
+            schemas[0]["function"]["parameters"]["required"],
+            ["arg1", "arg2"],
+        )
+
+    async def test_register_with_json_schema_preset_kwargs_keep_other_required(
+        self,
+    ) -> None:
+        """Test preset kwargs remove only matched required parameters."""
+        custom_schema = {
+            "type": "function",
+            "function": {
+                "name": "sync_func",
+                "description": "Custom schema description.",
+                "parameters": {
+                    "properties": {
+                        "arg1": {"type": "integer"},
+                        "arg2": {"type": "string"},
+                    },
+                    "required": ["arg1", "arg2"],
+                    "type": "object",
+                },
+            },
+        }
+
+        self.toolkit.register_tool_function(
+            sync_func,
+            json_schema=custom_schema,
+            preset_kwargs={"arg1": 10},
+        )
+
+        schemas = self.toolkit.get_json_schemas()
+        self.assertNotIn(
+            "arg1",
+            schemas[0]["function"]["parameters"]["properties"],
+        )
+        self.assertListEqual(
+            schemas[0]["function"]["parameters"]["required"],
+            ["arg2"],
+        )
+
     async def test_partial_function(self) -> None:
         """Test the partial function registration."""
 
@@ -972,6 +1122,102 @@ class ToolkitBasicTest(IsolatedAsyncioTestCase):
             self.assertEqual(
                 chunk.content[0]["text"],
                 "Received: a=1, b=test, c=[1, 2, 3], d=xyz",
+            )
+
+    async def test_func_name_parameter(self) -> None:
+        """Test func_name parameter for custom tool renaming."""
+        # Test 1: Regular function with func_name
+        self.toolkit.register_tool_function(
+            sync_func,
+            func_name="custom_sync_func",
+        )
+        self.assertIn("custom_sync_func", self.toolkit.tools)
+        self.assertNotIn("sync_func", self.toolkit.tools)
+
+        # Verify the JSON schema uses the custom name
+        schemas = self.toolkit.get_json_schemas()
+        self.assertEqual(schemas[0]["function"]["name"], "custom_sync_func")
+
+        # Verify original_name is set when func_name is provided
+        tool_obj = self.toolkit.tools["custom_sync_func"]
+        self.assertEqual(tool_obj.original_name, "sync_func")
+
+        # Test 2: Regular function without func_name (backward compatibility)
+        def another_func(x: int) -> ToolResponse:
+            """Another test function."""
+            return ToolResponse(content=[TextBlock(type="text", text=str(x))])
+
+        self.toolkit.register_tool_function(another_func)
+        self.assertIn("another_func", self.toolkit.tools)
+        tool_obj = self.toolkit.tools["another_func"]
+        self.assertIsNone(tool_obj.original_name)
+
+        # Test 3: Partial function with func_name
+        partial_func = partial(sync_func, arg1=10)
+        self.toolkit.register_tool_function(
+            partial_func,
+            func_name="custom_partial_func",
+        )
+        self.assertIn("custom_partial_func", self.toolkit.tools)
+        tool_obj = self.toolkit.tools["custom_partial_func"]
+        self.assertEqual(tool_obj.original_name, "sync_func")
+
+        # Test 4: func_name with namesake_strategy="rename"
+        self.toolkit.register_tool_function(
+            sync_func,
+            func_name="custom_sync_func",  # Already exists
+            namesake_strategy="rename",
+        )
+        # Should create a new name with random suffix
+        renamed_tools = [
+            name
+            for name in self.toolkit.tools
+            if name.startswith("custom_sync_func_")
+        ]
+        self.assertEqual(len(renamed_tools), 1)
+        renamed_name = renamed_tools[0]
+        tool_obj = self.toolkit.tools[renamed_name]
+        # original_name should be "sync_func" (the true original function name)
+        # because original_name records the actual function name, not the
+        # func_name
+        self.assertEqual(tool_obj.original_name, "sync_func")
+
+        # Test 5: func_name with namesake_strategy="rename" but no func_name
+        # (should use original function name as original_name)
+        def test_func() -> ToolResponse:
+            """Test function."""
+            return ToolResponse(content=[TextBlock(type="text", text="test")])
+
+        self.toolkit.register_tool_function(test_func)
+        self.toolkit.register_tool_function(
+            test_func,
+            namesake_strategy="rename",
+        )
+        # Find the renamed tool
+        renamed_test_tools = [
+            name
+            for name in self.toolkit.tools
+            if name.startswith("test_func_")
+        ]
+        self.assertEqual(len(renamed_test_tools), 1)
+        renamed_test_name = renamed_test_tools[0]
+        tool_obj = self.toolkit.tools[renamed_test_name]
+        # original_name should be "test_func" (the original function name)
+        self.assertEqual(tool_obj.original_name, "test_func")
+
+        # Test 6: Verify tool can be called with custom name
+        res = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                type="tool_use",
+                id="123",
+                name="custom_sync_func",
+                input={"arg1": 42},
+            ),
+        )
+        async for chunk in res:
+            self.assertEqual(
+                chunk.content[0]["text"],
+                "arg1: 42, arg2: None",
             )
 
     async def asyncTearDown(self) -> None:

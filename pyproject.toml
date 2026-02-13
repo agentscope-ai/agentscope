@@ -30,38 +30,125 @@ dependencies = [
     "numpy",
     "openai",
     "python-datauri",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-exporter-otlp",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-exporter-otlp>=1.39.0",
+    "opentelemetry-semantic-conventions>=0.60b0",
     "python-socketio",
     "shortuuid",
     "tiktoken",
     "sounddevice",
+    "sqlalchemy",
     "python-frontmatter",
 ]
 
 [project.optional-dependencies]
-full = [
-    # Model
-    "ollama>=0.5.4",
-    "google-genai",
+# ------------ A2A protocol ------------
+a2a = [
+    "a2a-sdk",
+    "httpx",
+    # TODO: split the card resolvers from the a2a dependency
+    "nacos-sdk-python>=3.0.0",
+]
+
+# ------------ Realtime -------------
+realtime = ["websockets>=14.0", "scipy"]
+
+# ------------ Model APIs ------------
+gemini = ["google-genai"]
+ollama = ["ollama>=0.5.4"]
+models = [
+    "agentscope[ollama]",
+    "agentscope[gemini]",
+]
+
+# ------------ Tokenizers ------------
+tokens = [
     "Pillow",
     "transformers",
     "jinja2",
-    # Evaluator
-    "ray",
-    # Long-term memory
-    "mem0ai",
-    "packaging",
-    "reme-ai>=0.2.0.3",
-    # RAG
-    "pypdf",
-    "python-docx",
-    "nltk",
-    # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
-    # the version to 1.15.1 here.
-    "qdrant-client==1.15.1",
 ]
+
+# ------------ Memory ------------
+redis_memory = ["redis"]
+
+mem0ai = [
+    "mem0ai<=1.0.3",
+    "packaging"
+]
+reme = ["reme-ai>=0.2.0.3"]
+memory = [
+    "agentscope[redis_memory]",
+    "agentscope[mem0ai]",
+    "agentscope[reme]",
+]
+
+# ------------ RAG ------------
+# readers
+text-reader = ["nltk"]
+pdf-reader = [
+    "agentscope[text-reader]",
+    # TODO: the latest pypdf has some issues with parsing PDFs
+    #  (2026-01-13), so we fix the version here temporarily.
+    "pypdf<=6.5.0",
+]
+docx-reader = [
+    "agentscope[text-reader]",
+    "python-docx"
+]
+excel-reader = [
+    "agentscope[text-reader]",
+    "pandas",
+    "openpyxl",
+]
+ppt-reader = [
+    "agentscope[text-reader]",
+    "python-pptx"
+]
+readers = [
+    "agentscope[text-reader]",
+    "agentscope[pdf-reader]",
+    "agentscope[docx-reader]",
+    "agentscope[excel-reader]",
+    "agentscope[ppt-reader]",
+]
+
+# vdb
+# The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
+# the version to 1.15.1 here.
+qdrant = ["qdrant-client==1.15.1"]
+milvus = ["pymilvus[milvus_lite]"]
+ali_mysql = ["mysql-connector-python"]
+mongodb = ["pymongo"]
+oceanbase = ["pyobvector>=0.2.0,<0.3.0"]
+vdbs = [
+    "agentscope[ali_mysql]",
+    "agentscope[qdrant]",
+    "agentscope[milvus]",
+    "agentscope[mongodb]",
+    "agentscope[oceanbase]",
+]
+
+rag = [
+    "agentscope[readers]",
+    "agentscope[vdbs]",
+]
+
+# ------------ Evaluation ------------
+evaluate = ["ray"]
+
+# ------------ Full ------------
+full = [
+    "agentscope[a2a]",
+    "agentscope[models]",
+    "agentscope[tokens]",
+    "agentscope[memory]",
+    "agentscope[rag]",
+    "agentscope[evaluate]",
+    "agentscope[realtime]",
+]
+
+# ------------ Development ------------
 dev = [
     # Include full dependencies from local package
     "agentscope[full]",
@@ -73,7 +160,13 @@ dev = [
     "furo",
     "myst_parser",
     "matplotlib",
-    "pymilvus[milvus_lite]",
+    # For unittests
+    # For mocking redis in unittests
+    "fakeredis",
+    "aiosqlite",
+    "greenlet",
+    # For openjudge
+    "py-openjudge",
 ]
 
 [project.urls]

@@ -244,7 +244,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
             async for response in result:
                 responses.append(response)
 
-            self.assertGreaterEqual(len(responses), 1)
+            self.assertEqual(len(responses), 2)
             final_response = responses[-1]
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)
@@ -322,6 +322,44 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
 
         return response
 
+    async def test_streaming_response_with_none_delta(self) -> None:
+        """Test streaming response when a chunk has delta = None."""
+        with patch("openai.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = OpenAIChatModel(
+                model_name="gpt-4",
+                api_key="test_key",
+                stream=True,
+            )
+            model.client = mock_client
+
+            messages = [{"role": "user", "content": "Hello"}]
+            stream_mock = self._create_stream_mock(
+                [
+                    {"content": "Hello"},
+                    None,  # simulate missing delta
+                    {"content": " there!"},
+                ],
+            )
+
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=stream_mock,
+            )
+
+            result = await model(messages)
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            # The None-delta chunk should not break streaming parsing.
+            # We still expect the final aggregated text.
+            final_response = responses[-1]
+            expected_content = [TextBlock(type="text", text="Hello there!")]
+            self.assertEqual(final_response.content, expected_content)
+
     def _create_stream_mock(self, chunks_data: list) -> Any:
         """Create a mock stream with proper async context management."""
 
@@ -352,31 +390,37 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
                 chunk_data = self.chunks_data[self.index]
                 self.index += 1
 
-                delta = Mock()
-                delta.content = chunk_data.get("content")
-                delta.reasoning_content = chunk_data.get("reasoning_content")
-
-                audio_mock = Mock()
-                audio_mock.__contains__ = lambda self, key: False
-                delta.audio = audio_mock
-                if "audio" in chunk_data:
-                    delta.audio = chunk_data["audio"]
-                if "tool_calls" in chunk_data:
-                    tool_call_mocks = []
-                    for tc_data in chunk_data["tool_calls"]:
-                        tc_mock = Mock()
-                        tc_mock.id = tc_data["id"]
-                        tc_mock.index = 0
-                        tc_mock.function = Mock()
-                        tc_mock.function.name = tc_data["name"]
-                        tc_mock.function.arguments = tc_data["arguments"]
-                        tool_call_mocks.append(tc_mock)
-                    delta.tool_calls = tool_call_mocks
-                else:
-                    delta.tool_calls = []
-
                 choice = Mock()
-                choice.delta = delta
+
+                if chunk_data is None:
+                    choice.delta = None
+                else:
+                    delta = Mock()
+                    delta.content = chunk_data.get("content")
+                    delta.reasoning_content = chunk_data.get(
+                        "reasoning_content",
+                    )
+
+                    audio_mock = Mock()
+                    audio_mock.__contains__ = lambda self, key: False
+                    delta.audio = audio_mock
+                    if "audio" in chunk_data:
+                        delta.audio = chunk_data["audio"]
+                    if "tool_calls" in chunk_data:
+                        tool_call_mocks = []
+                        for tc_data in chunk_data["tool_calls"]:
+                            tc_mock = Mock()
+                            tc_mock.id = tc_data["id"]
+                            tc_mock.index = 0
+                            tc_mock.function = Mock()
+                            tc_mock.function.name = tc_data["name"]
+                            tc_mock.function.arguments = tc_data["arguments"]
+                            tool_call_mocks.append(tc_mock)
+                        delta.tool_calls = tool_call_mocks
+                    else:
+                        delta.tool_calls = []
+
+                    choice.delta = delta
 
                 chunk = Mock()
                 chunk.choices = [choice]

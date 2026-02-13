@@ -8,7 +8,7 @@ import asyncio
 import inspect
 import os
 from copy import deepcopy
-from functools import partial
+from functools import partial, wraps
 from typing import (
     AsyncGenerator,
     Literal,
@@ -17,8 +17,10 @@ from typing import (
     Generator,
     Callable,
     Awaitable,
+    Coroutine,
 )
 
+import mcp
 import shortuuid
 from pydantic import (
     BaseModel,
@@ -50,6 +52,66 @@ from ..types import (
 )
 from ..tracing._trace import trace_toolkit
 from .._logging import logger
+
+
+def _apply_middlewares(
+    func: Callable[
+        ...,
+        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
+    ],
+) -> Callable[..., AsyncGenerator[ToolResponse, None]]:
+    """Decorator that applies registered middlewares at runtime.
+
+    This decorator reads the middleware list from the instance and constructs
+    the middleware chain dynamically during each invocation.
+
+    .. note:: Middlewares must be async generator functions that yield
+     `ToolResponse` objects.
+    """
+
+    @wraps(func)
+    async def wrapper(
+        self: "Toolkit",
+        tool_call: ToolUseBlock,
+    ) -> AsyncGenerator[ToolResponse, None]:
+        """Wrapper that applies middleware chain."""
+        middlewares = getattr(self, "_middlewares", [])
+
+        if not middlewares:
+            # No middlewares, call the original function directly
+            async for chunk in await func(self, tool_call):
+                yield chunk
+            return
+
+        # Build the middleware chain from innermost to outermost
+        async def base_handler(
+            **kwargs: Any,
+        ) -> AsyncGenerator[ToolResponse, None]:
+            """Base handler that calls the original function."""
+            return await func(self, **kwargs)
+
+        # Wrap with each middleware in reverse order
+        current_handler = base_handler
+        for middleware in reversed(middlewares):
+
+            def make_handler(mw: Callable, handler: Callable) -> Callable:
+                """Create wrapped handler for middleware."""
+
+                async def wrapped(
+                    **kwargs: Any,
+                ) -> AsyncGenerator[ToolResponse, None]:
+                    """Handler that applies middleware."""
+                    return mw(kwargs, handler)
+
+                return wrapped
+
+            current_handler = make_handler(middleware, current_handler)
+
+        # Execute the middleware chain
+        async for chunk in await current_handler(tool_call=tool_call):
+            yield chunk
+
+    return wrapper
 
 
 class Toolkit(StateModule):
@@ -108,6 +170,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         self.tools: dict[str, RegisteredToolFunction] = {}
         self.groups: dict[str, ToolGroup] = {}
         self.skills: dict[str, AgentSkill] = {}
+        self._middlewares: list = []  # Store registered middlewares
 
         self._agent_skill_instruction = (
             agent_skill_instruction or self._DEFAULT_AGENT_SKILL_INSTRUCTION
@@ -208,6 +271,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         tool_func: ToolFunction,
         group_name: str | Literal["basic"] = "basic",
         preset_kwargs: dict[str, JSONSerializableObject] | None = None,
+        func_name: str | None = None,
         func_description: str | None = None,
         json_schema: dict | None = None,
         include_long_description: bool = True,
@@ -246,6 +310,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             optional):
                 Preset arguments by the user, which will not be included in
                 the JSON schema, nor exposed to the agent.
+            func_name (`str | None`, optional):
+                The custom function name, which should be consistent with the
+                name in function_description and json_schema (if provided).
+                By default, the function name will be extracted from the
+                function automatically.
             func_description (`str | None`, optional):
                 The function description. If not provided, the description
                 will be extracted from the docstring automatically.
@@ -301,7 +370,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         # Handle MCP tool function and regular function respectively
         mcp_name = None
         if isinstance(tool_func, MCPToolFunction):
-            func_name = tool_func.name
+            input_func_name = tool_func.name
             original_func = tool_func.__call__
             json_schema = json_schema or tool_func.json_schema
             mcp_name = tool_func.mcp_name
@@ -323,7 +392,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 **(preset_kwargs or {}),
             }
 
-            func_name = tool_func.func.__name__
+            input_func_name = tool_func.func.__name__
             original_func = tool_func.func
             json_schema = json_schema or _parse_tool_function(
                 tool_func.func,
@@ -334,7 +403,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         else:
             # normal function
-            func_name = tool_func.__name__
+            input_func_name = tool_func.__name__
             original_func = tool_func
             json_schema = json_schema or _parse_tool_function(
                 tool_func,
@@ -342,6 +411,15 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 include_var_positional=include_var_positional,
                 include_var_keyword=include_var_keyword,
             )
+
+        # Record the original function name if the func_name is given
+        original_name = input_func_name if func_name else None
+
+        # Use the given function name if provided
+        func_name = func_name or input_func_name
+
+        # Always set the function name in json_schema
+        json_schema["function"]["name"] = func_name
 
         # Override the description if provided
         if func_description:
@@ -375,6 +453,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             original_func=original_func,
             json_schema=json_schema,
             preset_kwargs=preset_kwargs or {},
+            original_name=original_name,
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
@@ -425,6 +504,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 )
 
                 # Replace the function name with the new one
+                func_obj.original_name = original_name or func_name
                 func_obj.name = new_func_name
                 func_obj.json_schema["function"]["name"] = new_func_name
 
@@ -590,6 +670,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         )
 
     @trace_toolkit
+    @_apply_middlewares
     async def call_tool_function(
         self,
         tool_call: ToolUseBlock,
@@ -693,6 +774,16 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 # When `tool_func.original_func` is Async generator function or
                 # Sync function
                 res = tool_func.original_func(**kwargs)
+
+        except mcp.shared.exceptions.McpError as e:
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error occurred when calling MCP tool: {e}",
+                    ),
+                ],
+            )
 
         except Exception as e:
             res = ToolResponse(
@@ -1123,3 +1214,103 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             for _ in self.skills.values()
         ]
         return "\n".join(skill_descriptions)
+
+    def register_middleware(
+        self,
+        middleware: Callable[
+            ...,
+            Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]]
+            | AsyncGenerator[ToolResponse, None],
+        ],
+    ) -> None:
+        """Register an onion-style middleware for the `call_tool_function`,
+        which will wrap around the `call_tool_function` method, allowing
+        pre-processing, post-processing, or even skipping the execution of
+        the tool function.
+
+        The middleware follows an onion model, where each registered
+        middleware wraps around the previous one, forming layers. The
+        middleware can:
+
+        - Perform pre-processing before calling the tool function
+        - Intercept and modify each ToolResponse chunk
+        - Perform post-processing after the tool function completes
+        - Skip the tool function execution entirely
+
+        The middleware function should accept a ``kwargs`` dict as the first
+        parameter and ``next_handler`` as the second parameter. The ``kwargs``
+        dict currently contains:
+
+        - ``tool_call`` (`ToolUseBlock`): The tool call request
+
+        When calling ``next_handler``, pass ``**kwargs`` to unpack the dict.
+
+        Example:
+            .. code-block:: python
+
+                # Simple direct consumption style (recommended)
+                async def my_middleware(
+                    kwargs: dict,
+                    next_handler: Callable,
+                ) -> AsyncGenerator[ToolResponse, None]:
+                    # Access the tool call
+                    tool_call = kwargs["tool_call"]
+
+                    # Pre-processing
+                    print(f"Calling tool: {tool_call['name']}")
+
+                    # Call next handler with **kwargs
+                    async for response in await next_handler(**kwargs):
+                        # Intercept and modify response if needed
+                        yield response
+
+                    # Post-processing after tool completes
+                    print(f"Tool {tool_call['name']} completed")
+
+                toolkit.register_middleware(my_middleware)
+
+            .. code-block:: python
+
+                # Alternative: Skip execution based on conditions
+                async def my_middleware(
+                    kwargs: dict,
+                    next_handler: Callable,
+                ) -> AsyncGenerator[ToolResponse, None]:
+                    tool_call = kwargs["tool_call"]
+
+                    # Pre-processing
+                    if not is_authorized(tool_call):
+                        # Skip execution and return error directly
+                        yield ToolResponse(
+                            content=[
+                                TextBlock(
+                                    type="text",
+                                    text="Unauthorized",
+                                ),
+                            ],
+                        )
+                        return
+
+                    # Call next handler with **kwargs
+                    async for response in await next_handler(**kwargs):
+                        yield response
+
+                toolkit.register_middleware(my_middleware)
+
+        Args:
+            middleware (`Callable[..., Coroutine[Any, Any, \
+AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
+                The middleware function that accepts ``kwargs`` (dict) and
+                ``next_handler`` (Callable), and returns a coroutine that
+                yields AsyncGenerator of ToolResponse objects. The ``kwargs``
+                dict currently includes ``tool_call`` (ToolUseBlock), and may
+                include additional context in future versions.
+
+        .. note:: The middleware chain is applied inside the
+        `call_tool_function` via the `@apply_middlewares` decorator. This
+        ensures that the `@trace_toolkit` decorator remains at the outermost
+        layer for complete observability.
+        """
+        # Simply append the middleware to the list
+        # The @apply_middlewares decorator will handle the execution
+        self._middlewares.append(middleware)

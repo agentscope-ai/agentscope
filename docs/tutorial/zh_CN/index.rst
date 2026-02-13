@@ -31,48 +31,47 @@ Welcome to AgentScope's documentation!
 
    tutorial/faq
 
+
 .. toctree::
    :maxdepth: 1
-   :caption: Task Guides
+   :caption: Model and Context
 
    tutorial/task_model
    tutorial/task_prompt
-   tutorial/task_tool
+   tutorial/task_token
    tutorial/task_memory
    tutorial/task_long_term_memory
-   tutorial/task_agent
-   tutorial/task_pipeline
-   tutorial/task_plan
-   tutorial/task_rag
-   tutorial/task_state
-   tutorial/task_hook
-   tutorial/task_mcp
-   tutorial/task_agent_skill
-   tutorial/task_studio
-   tutorial/task_tracing
-   tutorial/task_eval
-   tutorial/task_embedding
-   tutorial/task_token
 
 .. toctree::
    :maxdepth: 1
-   :caption: API Docs
+   :caption: Tool
 
-   api/agentscope
-   api/agentscope.message
-   api/agentscope.model
-   api/agentscope.formatter
-   api/agentscope.module
-   api/agentscope.pipeline
-   api/agentscope.agent
-   api/agentscope.memory
-   api/agentscope.tool
-   api/agentscope.mcp
-   api/agentscope.embedding
-   api/agentscope.evaluate
-   api/agentscope.plan
-   api/agentscope.rag
-   api/agentscope.token
-   api/agentscope.tracing
-   api/agentscope.session
-   api/agentscope.exception
+   tutorial/task_tool
+   tutorial/task_mcp
+   tutorial/task_agent_skill
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Agent
+
+   tutorial/task_agent
+   tutorial/task_state
+   tutorial/task_hook
+   tutorial/task_middleware
+   tutorial/task_a2a
+   tutorial/task_realtime
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Features
+
+   tutorial/task_pipeline
+   tutorial/task_plan
+   tutorial/task_rag
+   tutorial/task_studio
+   tutorial/task_tracing
+   tutorial/task_eval
+   tutorial/task_eval_openjudge
+   tutorial/task_embedding
+   tutorial/task_tts
+   tutorial/task_tuner

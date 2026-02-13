@@ -3,6 +3,7 @@
 # pylint: disable=wrong-import-position
 """The agentscope serialization module"""
 import os
+import warnings
 from contextvars import ContextVar
 from datetime import datetime
 
@@ -39,7 +40,6 @@ _config = _ConfigCls(
     ),
 )
 
-
 from . import exception
 from . import module
 from . import message
@@ -55,6 +55,8 @@ from . import evaluate
 from . import pipeline
 from . import tracing
 from . import rag
+from . import a2a
+from . import realtime
 
 from ._logging import (
     logger,
@@ -62,6 +64,9 @@ from ._logging import (
 )
 from .hooks import _equip_as_studio_hooks
 from ._version import __version__
+
+# Raise each warning only once
+warnings.filterwarnings("once", category=DeprecationWarning)
 
 
 def init(
@@ -169,6 +174,7 @@ __all__ = [
     "pipeline",
     "tracing",
     "rag",
+    "a2a",
     # functions
     "init",
     "setup_logger",

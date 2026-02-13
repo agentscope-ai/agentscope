@@ -118,7 +118,7 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
                 [
                     ToolResultBlock(
                         type="tool_result",
-                        id="1",
+                        id="2",
                         name="get_capital",
                         output="The capital of South Korea is Seoul.",
                     ),
@@ -434,7 +434,7 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": "1",
+                        "tool_use_id": "2",
                         "content": [
                             {
                                 "type": "text",

@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Realtime Chatbot with AgentScope</title>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: hsl(0, 0%, 98%);
+            color: hsl(222.2, 84%, 4.9%);
+            line-height: 1.5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            color: hsl(222.2, 84%, 4.9%);
+            letter-spacing: -0.025em;
+            flex-shrink: 0;
+        }
+
+        #messages {
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            min-height: 300px;
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: hsl(0, 0%, 100%);
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        }
+
+        #messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #messages::-webkit-scrollbar-track {
+            background: hsl(210, 40%, 96.1%);
+            border-radius: 4px;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: hsl(215.4, 16.3%, 56.9%);
+            border-radius: 4px;
+        }
+
+        #messages::-webkit-scrollbar-thumb:hover {
+            background: hsl(215.4, 16.3%, 46.9%);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.375rem;
+            background: hsl(0, 0%, 100%);
+            color: hsl(222.2, 84%, 4.9%);
+            transition: all 0.15s ease;
+            outline: none;
+        }
+
+        input[type="text"]:focus {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            box-shadow: 0 0 0 3px hsl(221.2, 83.2%, 53.3%, 0.1);
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 0.625rem 0.875rem;
+            font-size: 0.875rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.375rem;
+            background: hsl(0, 0%, 100%);
+            color: hsl(222.2, 84%, 4.9%);
+            transition: all 0.15s ease;
+            outline: none;
+            resize: vertical;
+            font-family: inherit;
+            line-height: 1.5;
+        }
+
+        textarea:focus {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            box-shadow: 0 0 0 3px hsl(221.2, 83.2%, 53.3%, 0.1);
+        }
+
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.625rem 1rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border: 1px solid transparent;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:focus-visible {
+            outline: 2px solid hsl(221.2, 83.2%, 53.3%);
+            outline-offset: 2px;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Primary button style */
+        button.btn-primary {
+            background: hsl(221.2, 83.2%, 53.3%);
+            color: hsl(0, 0%, 100%);
+            border-color: hsl(221.2, 83.2%, 53.3%);
+        }
+
+        button.btn-primary:hover:not(:disabled) {
+            background: hsl(221.2, 83.2%, 45%);
+            border-color: hsl(221.2, 83.2%, 45%);
+        }
+
+        button.btn-primary.recording,
+        button.btn-primary.recording-video {
+            background: hsl(0, 84.2%, 60.2%);
+            border-color: hsl(0, 84.2%, 60.2%);
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        button.btn-primary.recording:hover:not(:disabled),
+        button.btn-primary.recording-video:hover:not(:disabled) {
+            background: hsl(0, 84.2%, 50%);
+            border-color: hsl(0, 84.2%, 50%);
+        }
+
+        /* Secondary button style */
+        button.btn-secondary {
+            background: hsl(0, 0%, 100%);
+            color: hsl(222.2, 47.4%, 11.2%);
+            border-color: hsl(214.3, 31.8%, 91.4%);
+        }
+
+        button.btn-secondary:hover:not(:disabled) {
+            background: hsl(210, 40%, 98%);
+            border-color: hsl(214.3, 31.8%, 81.4%);
+        }
+
+        .message {
+            margin: 0.75rem 0;
+            padding: 0.75rem 1rem;
+            background: hsl(210, 40%, 98%);
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            font-size: 0.875rem;
+        }
+
+        .message strong {
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-weight: 600;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                box-shadow: 0 0 0 0 hsl(0, 84.2%, 60.2%, 0.7);
+            }
+            50% {
+                opacity: 0.9;
+                box-shadow: 0 0 0 8px hsl(0, 84.2%, 60.2%, 0);
+            }
+        }
+
+        .controls {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .controls #voiceBtn,
+        .controls #videoBtn {
+            flex: 1;
+        }
+
+        .controls button:not(#voiceBtn):not(#videoBtn) {
+            width: 140px;
+            flex-shrink: 0;
+        }
+
+        .text-input-container {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .text-input-container input[type="text"] {
+            flex: 1;
+        }
+
+        .text-input-container button {
+            width: 100px;
+            flex-shrink: 0;
+        }
+
+        .configuration-container {
+            background: hsl(0, 0%, 100%);
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+            flex-shrink: 0;
+        }
+
+        .configuration-container h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: hsl(222.2, 84%, 4.9%);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .config-field {
+            margin-bottom: 1.25rem;
+        }
+
+        .config-field:last-child {
+            margin-bottom: 0;
+        }
+
+        .config-field label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-size: 0.875rem;
+        }
+
+        .error-message {
+            padding: 0.875rem 1rem;
+            background: hsl(0, 84.2%, 95%);
+            border: 1px solid hsl(0, 84.2%, 85%);
+            border-radius: 0.5rem;
+            display: none;
+            color: hsl(0, 84.2%, 30%);
+            font-size: 0.875rem;
+            font-weight: 500;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            flex-shrink: 0;
+        }
+
+
+        .model-options {
+            display: flex;
+            flex-direction: row;
+            gap: 0.75rem;
+        }
+
+        .model-option {
+            flex: 1;
+            padding: 0.75rem;
+            border: 2px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            background: hsl(0, 0%, 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .model-option:hover:not(.disabled) {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            background: hsl(221.2, 83.2%, 98%);
+        }
+
+        .model-option.selected {
+            border-color: hsl(221.2, 83.2%, 53.3%);
+            background: hsl(221.2, 83.2%, 95%);
+        }
+
+        .model-option.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: hsl(0, 0%, 98%);
+        }
+
+        .model-option-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .model-option input[type="radio"] {
+            margin: 0;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .model-option.disabled input[type="radio"] {
+            cursor: not-allowed;
+        }
+
+        .model-info {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex: 1;
+        }
+
+        .model-name-line {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-height: 1.25rem;
+        }
+
+        .model-name {
+            font-weight: 600;
+            color: hsl(222.2, 84%, 4.9%);
+        }
+
+        .model-unavailable-reason {
+            font-size: 0.625rem;
+            color: hsl(215.4, 16.3%, 56.9%);
+            font-style: italic;
+            white-space: nowrap;
+        }
+
+        .model-tags {
+            display: flex;
+            gap: 0.375rem;
+            flex-wrap: wrap;
+        }
+
+        .model-tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.125rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: 0.25rem;
+            background: hsl(214.3, 31.8%, 91.4%);
+            color: hsl(222.2, 47.4%, 11.2%);
+        }
+
+        .model-tag.text {
+            background: hsl(200, 95%, 90%);
+            color: hsl(200, 95%, 30%);
+        }
+
+        .model-tag.audio {
+            background: hsl(280, 85%, 90%);
+            color: hsl(280, 85%, 30%);
+        }
+
+        .model-tag.image {
+            background: hsl(25, 95%, 90%);
+            color: hsl(25, 95%, 30%);
+        }
+
+        .model-tag.tool {
+            background: hsl(142, 71%, 90%);
+            color: hsl(142, 71%, 30%);
+        }
+
+        .tools-label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-size: 0.875rem;
+        }
+
+        .tools-disabled-hint {
+            font-size: 0.75rem;
+            color: hsl(215.4, 16.3%, 56.9%);
+            font-weight: 400;
+            font-style: italic;
+            margin-left: 0.5rem;
+        }
+
+        .tools-list {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .tool-item {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem 0.75rem;
+            background: hsl(0, 0%, 100%);
+            border: 2px solid hsl(214.3, 31.8%, 91.4%);
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            color: hsl(222.2, 47.4%, 11.2%);
+            font-weight: 500;
+            transition: all 0.15s ease;
+        }
+
+        .tool-item.disabled {
+            background: hsl(0, 0%, 96%);
+            color: hsl(215.4, 16.3%, 56.9%);
+            border-color: hsl(214.3, 31.8%, 91.4%);
+            opacity: 0.6;
+        }
+
+        #videoPreview {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            background: hsl(0, 0%, 0%);
+            display: none;
+            margin: 1rem 0;
+            flex-shrink: 0;
+        }
+
+        #videoPreview.active {
+            display: block;
+        }
+
+        .video-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Realtime Chatbot</h1>
+
+    <div class="configuration-container">
+        <h3>⚙️ Configuration</h3>
+
+        <div class="config-field">
+            <label for="instructions">Instructions</label>
+            <textarea id="instructions" placeholder="Enter agent instructions...">You're a helpful assistant named Friday.</textarea>
+        </div>
+
+        <div class="config-field">
+            <label for="agentName">Agent Name</label>
+            <input type="text" id="agentName" placeholder="Enter agent name" value="Friday" />
+        </div>
+
+
+        <div class="config-field">
+            <label>Model Provider</label>
+            <div class="model-options" id="modelOptions">
+                <label class="model-option" data-provider="dashscope">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="dashscope" checked />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">DashScope</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                            <div class="model-tags">
+                                <span class="model-tag audio">Audio</span>
+                                <span class="model-tag image">Image</span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+                <label class="model-option" data-provider="gemini">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="gemini" />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">Gemini</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                            <div class="model-tags">
+                                <span class="model-tag text">Text</span>
+                                <span class="model-tag audio">Audio</span>
+                                <span class="model-tag image">Image</span>
+                                <span class="model-tag tool">Tool</span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+                <label class="model-option" data-provider="openai">
+                    <div class="model-option-header">
+                        <input type="radio" name="modelProvider" value="openai" />
+                        <div class="model-info">
+                            <div class="model-name-line">
+                                <span class="model-name">OpenAI</span>
+                                <span class="model-unavailable-reason" style="display: none;"></span>
+                            </div>
+                            <div class="model-tags">
+                                <span class="model-tag text">Text</span>
+                                <span class="model-tag audio">Audio</span>
+                                <span class="model-tag tool">Tool</span>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <div class="config-field">
+            <label class="tools-label">
+                Equipped Tools
+                <span class="tools-disabled-hint" id="toolsDisabledHint" style="display: none;">(Not supported by this model)</span>
+            </label>
+            <div class="tools-list" id="toolsList">
+                <div class="tool-item" data-tool="execute_python_code">🐍 execute_python_code</div>
+                <div class="tool-item" data-tool="execute_shell_command">💻 execute_shell_command</div>
+                <div class="tool-item" data-tool="view_text_file">📄 view_text_file</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="error-message"></div>
+
+    <div class="controls">
+        <button id="voiceBtn" class="btn-primary" onclick="toggleVoice()">🎤 Start Voice Chat</button>
+        <button id="videoBtn" class="btn-primary" onclick="toggleVideo()">📹 Start Video Recording</button>
+        <button class="btn-secondary" onclick="disconnect()">❌ Disconnect</button>
+    </div>
+
+    <div class="video-container">
+        <video id="videoPreview" autoplay muted playsinline></video>
+    </div>
+
+    <div class="text-input-container">
+        <input type="text" id="textInput" placeholder="Type your message here..." />
+        <button id="sendBtn" class="btn-primary" onclick="sendTextMessage()" disabled>📤 Send</button>
+    </div>
+
+
+    <div id="messages"></div>
+
+    <script>
+        let ws = null;
+        let audioContext = null;  // For recording, 16kHz
+        let playbackAudioContext = null;  // For playback, 24kHz
+        let mediaStream = null;
+        let videoStream = null;  // For video recording
+        let videoFrameInterval = null;  // Interval for sending video frames
+        let videoCanvas = null;  // Canvas for capturing video frames
+        let videoCanvasCtx = null;  // Canvas context
+        let isRecording = false;
+        let isRecordingVideo = false;
+        let isPlaying = false;
+        let audioPlaybackNode = null;
+        let audioPlaybackQueue = [];  // Store decoded Float32Array
+        let audioPlaybackIndex = 0;
+        let sessionId = "session1";  // Session ID
+        let sessionCreated = false;  // Track if session has been created
+
+        // Update send button state based on input and recording status
+        function updateSendButtonState() {
+            const textInput = document.getElementById("textInput");
+            const sendBtn = document.getElementById("sendBtn");
+            const hasText = textInput.value.trim().length > 0;
+            sendBtn.disabled = !(hasText && isRecording);
+        }
+
+        // Send text message to backend
+        function sendTextMessage() {
+            const textInput = document.getElementById("textInput");
+            const text = textInput.value.trim();
+
+            if (!text || !isRecording) {
+                return;
+            }
+
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                showError("⚠️ WebSocket is not connected!");
+                return;
+            }
+
+            // Send ClientTextAppendEvent
+            ws.send(JSON.stringify({
+                type: "client_text_append",
+                session_id: sessionId,
+                text: text
+            }));
+
+            addMessage("You", text);
+            textInput.value = "";
+            updateSendButtonState();
+        }
+
+        // Add event listener for text input
+        document.addEventListener("DOMContentLoaded", function() {
+            const textInput = document.getElementById("textInput");
+
+            // Update button state on input
+            textInput.addEventListener("input", updateSendButtonState);
+
+            // Send on Enter key
+            textInput.addEventListener("keypress", function(e) {
+                if (e.key === "Enter" && !document.getElementById("sendBtn").disabled) {
+                    sendTextMessage();
+                }
+            });
+        });
+
+        // Used to accumulate transcript text
+        let currentTranscript = "";
+        let currentTranscriptElement = null;
+        let currentResponseTranscript = "";
+        let currentResponseTranscriptElement = null;
+
+        // Check available models on page load
+        async function checkAvailableModels() {
+            try {
+                const apiUrl = `${window.location.protocol}//${window.location.host}/api/check-models`;
+
+                const response = await fetch(apiUrl);
+                const availability = await response.json();
+
+                console.log("Model availability:", availability);
+
+                let hasAvailableModel = false;
+
+                // Update UI based on availability
+                const modelOptions = document.querySelectorAll('.model-option');
+                modelOptions.forEach(option => {
+                    const provider = option.getAttribute('data-provider');
+                    const radio = option.querySelector('input[type="radio"]');
+                    const unavailableReason = option.querySelector('.model-unavailable-reason');
+
+                    if (!availability[provider]) {
+                        option.classList.add('disabled');
+                        radio.disabled = true;
+
+                        // Show unavailable reason
+                        const providerName = provider.charAt(0).toUpperCase() + provider.slice(1);
+                        unavailableReason.textContent = `(${providerName.toUpperCase()}_API_KEY not set)`;
+                        unavailableReason.style.display = 'inline';
+
+                        // If this was the selected option, uncheck it
+                        if (radio.checked) {
+                            radio.checked = false;
+                        }
+                    } else {
+                        hasAvailableModel = true;
+                        unavailableReason.style.display = 'none';
+                    }
+                });
+
+                // If no model is selected after checking availability, select first available
+                const selectedRadio = document.querySelector('input[name="modelProvider"]:checked');
+                if (!selectedRadio && hasAvailableModel) {
+                    for (const option of modelOptions) {
+                        const provider = option.getAttribute('data-provider');
+                        if (availability[provider]) {
+                            option.querySelector('input[type="radio"]').checked = true;
+                            option.classList.add('selected');
+                            break;
+                        }
+                    }
+                }
+
+                // Disable recording button if no model is available
+                const voiceBtn = document.getElementById('voiceBtn');
+                if (!hasAvailableModel) {
+                    voiceBtn.disabled = true;
+                    showError('⚠️ No model API keys configured. Please set at least one API key to start voice chat.');
+                } else {
+                    voiceBtn.disabled = false;
+                }
+
+                // Add click handlers for model options
+                modelOptions.forEach(option => {
+                    option.addEventListener('click', function() {
+                        if (!this.classList.contains('disabled')) {
+                            modelOptions.forEach(opt => opt.classList.remove('selected'));
+                            this.classList.add('selected');
+                            updateToolsDisplay();
+                        }
+                    });
+                });
+
+                // Mark initially selected option
+                const currentSelected = document.querySelector('input[name="modelProvider"]:checked');
+                if (currentSelected) {
+                    currentSelected.closest('.model-option').classList.add('selected');
+                }
+
+                // Update tools display based on initial selection
+                updateToolsDisplay();
+
+            } catch (error) {
+                console.error("Failed to check model availability:", error);
+                showError("⚠️ Failed to check model availability. Please refresh the page.");
+            }
+        }
+
+        function updateToolsDisplay() {
+            const selectedRadio = document.querySelector('input[name="modelProvider"]:checked');
+            const toolItems = document.querySelectorAll('.tool-item');
+            const toolsDisabledHint = document.getElementById('toolsDisabledHint');
+
+            if (selectedRadio) {
+                const provider = selectedRadio.value;
+                // Enable tools for Gemini and OpenAI, disable for others
+                if (provider === 'gemini' || provider === 'openai') {
+                    toolItems.forEach(item => item.classList.remove('disabled'));
+                    toolsDisabledHint.style.display = 'none';
+                } else {
+                    toolItems.forEach(item => item.classList.add('disabled'));
+                    toolsDisabledHint.style.display = 'inline';
+                }
+            } else {
+                toolItems.forEach(item => item.classList.add('disabled'));
+                toolsDisabledHint.style.display = 'inline';
+            }
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById("errorMessage");
+            errorDiv.innerText = message;
+            errorDiv.style.display = "block";
+            setTimeout(() => {
+                errorDiv.style.display = "none";
+            }, 5000);
+        }
+
+        async function connect() {
+            const userId = "You";
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/${userId}/${sessionId}`;
+
+            console.log(`Connecting to WebSocket: ${wsUrl}`);
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = function() {
+                addMessage("System", "✅ WebSocket connected successfully, ready for voice conversation");
+            };
+
+            ws.onmessage = async function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log("Received message:", data);
+
+                    // Handle ServerEvents
+                    switch (data.type) {
+                        case "server_session_created":
+                            sessionCreated = true;
+                            addMessage("System", `✅ Session created: ${data.session_id}`);
+                            break;
+
+                        case "agent_ready":
+                            addMessage("System", `🤖 Agent ${data.agent_name} is ready`);
+                            break;
+
+                        case "agent_response_created":
+                            addMessage("System", `💬 Agent ${data.agent_name} started generating response...`);
+                            break;
+
+                        case "agent_response_audio_delta":
+                            // Receive audio data and add to playback queue
+                            queueAudioChunk(data.delta);
+                            break;
+
+                        case "agent_response_audio_done":
+                            addMessage("System", "🔊 Audio response completed");
+                            break;
+
+                        case "agent_response_audio_transcript_delta":
+                            // Agent response transcript text
+                            appendResponseTranscript(data.agent_name, data.delta || "");
+                            break;
+
+                        case "agent_response_audio_transcript_done":
+                            // Complete Agent response transcript message
+                            finishResponseTranscript();
+                            break;
+
+                        case "agent_input_transcription_delta":
+                            // User input transcript text
+                            appendTranscript("You", data.delta || "");
+                            break;
+
+                        case "agent_input_transcription_done":
+                            appendTranscript("You", data.transcript || "");
+                            // Complete user input transcript message
+                            finishTranscript();
+                            addMessage("System", `📝 User input recognition completed`);
+                            break;
+
+                        case "agent_input_started":
+                            addMessage("System", "🎤 Voice input started");
+                            break;
+
+                        case "agent_input_done":
+                            addMessage("System", "⏹️ Voice input ended");
+                            break;
+
+                        case "agent_response_done":
+                            addMessage("System", `✅ Response completed (input tokens: ${data.input_tokens}, output tokens: ${data.output_tokens})`);
+                            break;
+
+                        case "agent_response_tool_use_delta":
+                            addMessage("System", `🔧 Tool call: ${data.name}`);
+                            break;
+
+                        case "agent_response_tool_use_done":
+                            // Display tool use with complete information
+                            const toolUseInfo = JSON.stringify(data.tool_use, null, 2);
+                            addMessage(data.agent_name, `🔧 Tool Use:\n${toolUseInfo}`);
+                            break;
+
+                        case "agent_response_tool_result":
+                            // Display tool result with complete information
+                            const toolResultInfo = JSON.stringify(data.tool_result, null, 2);
+                            addMessage(data.agent_name, `✅ Tool Result:\n${toolResultInfo}`);
+                            break;
+
+                        case "agent_error":
+                            addMessage("Error", `❌ ${data.error_type}: ${data.message}`);
+                            break;
+
+                        case "agent_ended":
+                            addMessage("System", `👋 Agent ${data.agent_name} has ended`);
+                            break;
+
+                        case "server_session_ended":
+                            addMessage("System", `🔚 Session ${data.session_id} has ended`);
+                            break;
+
+                        default:
+                            console.log("Unhandled event type:", data.type);
+                            break;
+                    }
+                } catch (e) {
+                    console.error("Error processing message:", e);
+                }
+            };
+
+            ws.onclose = function() {
+                addMessage("System", "❌ Disconnected");
+                stopVoice();
+                stopVideoRecording();  // Also stop video recording on disconnect
+                sessionCreated = false;  // Reset session state
+                updateSendButtonState();
+            };
+
+            ws.onerror = function() {
+                addMessage("System", "⚠️ Connection error");
+            };
+        }
+
+        async function toggleVoice() {
+            if (!isRecording) {
+                await startVoice();
+            } else {
+                stopVoice();
+            }
+        }
+
+        async function startVoice() {
+            try {
+                // Check if recording button is disabled
+                const voiceBtn = document.getElementById("voiceBtn");
+                if (voiceBtn.disabled) {
+                    showError("⚠️ No model API keys configured. Please set at least one API key to start voice chat.");
+                    return;
+                }
+
+                // Validate instructions
+                const instructions = document.getElementById("instructions").value.trim();
+                if (!instructions) {
+                    showError("⚠️ Instructions cannot be empty! Please enter instructions before starting voice chat.");
+                    return;
+                }
+
+                // Check if WebSocket is connected
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    showError("⚠️ WebSocket is not connected! Please wait for connection.");
+                    return;
+                }
+
+                // Send session create event if not already created
+                if (!sessionCreated) {
+                    const agentName = document.getElementById("agentName").value.trim() || "Friday";
+                    const selectedModel = document.querySelector('input[name="modelProvider"]:checked');
+                    const modelProvider = selectedModel ? selectedModel.value : "dashscope";
+
+                    addMessage("System", "📝 Creating session with instructions...");
+                    ws.send(JSON.stringify({
+                        type: "client_session_create",
+                        config: {
+                            instructions: instructions,
+                            agent_name: agentName,
+                            model_provider: modelProvider
+                        }
+                    }));
+
+                    // Wait for session_created event before proceeding
+                    // We'll set a timeout to wait for session creation
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => {
+                            reject(new Error("Session creation timeout"));
+                        }, 5000);
+
+                        const checkSession = setInterval(() => {
+                            if (sessionCreated) {
+                                clearTimeout(timeout);
+                                clearInterval(checkSession);
+                                resolve();
+                            }
+                        }, 100);
+                    });
+                }
+
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 16000
+                    });
+                }
+
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 16000
+                    }
+                });
+
+                const source = audioContext.createMediaStreamSource(mediaStream);
+
+                // Use ScriptProcessorNode to process audio
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                let audioChunkCount = 0;
+                processor.onaudioprocess = function(e) {
+                    if (!isRecording) return;
+
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const pcmData = convertToPCM16(inputData);
+                    const base64Audio = arrayBufferToBase64(pcmData);
+
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        audioChunkCount++;
+                        if (audioChunkCount % 10 === 0) {
+                            console.log(`Sending audio chunk ${audioChunkCount}`);
+                        }
+                        // Send ClientAudioAppendEvent
+                        ws.send(JSON.stringify({
+                            type: "client_audio_append",
+                            session_id: sessionId,
+                            audio: base64Audio,
+                            format: {
+                                rate: 16000,
+                                type: "audio/pcm",
+                            }
+                        }));
+                    }
+                };
+
+                source.connect(processor);
+                const dummyGain = audioContext.createGain();
+                dummyGain.gain.value = 0;  // Mute to avoid feedback
+                processor.connect(dummyGain);
+                dummyGain.connect(audioContext.destination);
+
+                isRecording = true;
+                document.getElementById("voiceBtn").classList.add("recording");
+                document.getElementById("voiceBtn").innerText = "🔴 Voice Chat Active";
+                addMessage("System", "🎤 Voice chat started...");
+                updateSendButtonState();
+
+            } catch (err) {
+                console.error("Failed to start recording:", err);
+                if (err.message === "Session creation timeout") {
+                    showError("⚠️ Session creation timeout. Please try again.");
+                    addMessage("System", "⚠️ Session creation timeout");
+                } else {
+                    showError("⚠️ Unable to access microphone: " + err.message);
+                    addMessage("System", "⚠️ Unable to access microphone: " + err.message);
+                }
+            }
+        }
+
+        function stopVoice() {
+            isRecording = false;
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            // Notify server that recording has stopped - send ClientAudioCommitEvent
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: "client_audio_commit",
+                    session_id: sessionId
+                }));
+            }
+
+            document.getElementById("voiceBtn").classList.remove("recording");
+            document.getElementById("voiceBtn").innerText = "🎤 Start Voice Chat";
+            addMessage("System", "⏹️ Voice chat stopped");
+            updateSendButtonState();
+        }
+
+        function convertToPCM16(float32Array) {
+            const int16Array = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            return int16Array.buffer;
+        }
+
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        function queueAudioChunk(base64Audio) {
+            try {
+                // Decode base64 audio data and convert to Float32Array
+                const binaryString = atob(base64Audio);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                // Convert to Int16Array (PCM16), then to Float32Array
+                const int16Array = new Int16Array(bytes.buffer);
+                const float32Array = new Float32Array(int16Array.length);
+
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0;
+                }
+
+                // Add decoded audio data to queue
+                audioPlaybackQueue.push(float32Array);
+
+                // If not playing yet, start player
+                if (!isPlaying) {
+                    startAudioPlayback();
+                }
+            } catch (err) {
+                console.error("Failed to decode audio chunk:", err);
+            }
+        }
+
+        function startAudioPlayback() {
+            if (isPlaying) return;
+
+            try {
+                // Create separate AudioContext for playback
+                if (!playbackAudioContext) {
+                    playbackAudioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 24000
+                    });
+                }
+
+                // If AudioContext is suspended (browser policy), resume it
+                if (playbackAudioContext.state === 'suspended') {
+                    playbackAudioContext.resume();
+                }
+
+                isPlaying = true;
+                audioPlaybackIndex = 0;
+
+                // Use ScriptProcessorNode for streaming playback
+                const bufferSize = 4096;
+                const processor = playbackAudioContext.createScriptProcessor(bufferSize, 0, 1);
+
+                processor.onaudioprocess = function(e) {
+                    const output = e.outputBuffer.getChannelData(0);
+                    const samplesNeeded = output.length;
+                    let samplesWritten = 0;
+
+                    // Get audio data from queue and fill output buffer
+                    while (samplesWritten < samplesNeeded && audioPlaybackQueue.length > 0) {
+                        const chunk = audioPlaybackQueue[0];
+
+                        // Calculate number of samples to read from current chunk
+                        const samplesToRead = Math.min(
+                            samplesNeeded - samplesWritten,
+                            chunk.length - audioPlaybackIndex
+                        );
+
+                        // Directly copy Float32 data to output
+                        for (let i = 0; i < samplesToRead; i++) {
+                            output[samplesWritten + i] = chunk[audioPlaybackIndex + i];
+                        }
+
+                        samplesWritten += samplesToRead;
+                        audioPlaybackIndex += samplesToRead;
+
+                        // If current chunk is finished, remove it and reset index
+                        if (audioPlaybackIndex >= chunk.length) {
+                            audioPlaybackQueue.shift();
+                            audioPlaybackIndex = 0;
+                        }
+                    }
+
+                    // If queue is empty and no more data, fill with silence
+                    if (samplesWritten < samplesNeeded) {
+                        for (let i = samplesWritten; i < samplesNeeded; i++) {
+                            output[i] = 0;
+                        }
+
+                        // If queue continues to be empty for a while, stop playback
+                        if (audioPlaybackQueue.length === 0) {
+                            setTimeout(() => {
+                                if (audioPlaybackQueue.length === 0) {
+                                    stopAudioPlayback();
+                                }
+                            }, 100);
+                        }
+                    }
+                };
+
+                processor.connect(playbackAudioContext.destination);
+                audioPlaybackNode = processor;
+
+            } catch (err) {
+                console.error("Failed to start audio playback:", err);
+                isPlaying = false;
+            }
+        }
+
+        function stopAudioPlayback() {
+            if (audioPlaybackNode) {
+                audioPlaybackNode.disconnect();
+                audioPlaybackNode = null;
+            }
+            isPlaying = false;
+            audioPlaybackQueue = [];
+            audioPlaybackIndex = 0;
+        }
+
+
+        /**
+         * Toggles video recording on and off by calling the
+         * start or stop functions.
+         */
+        async function toggleVideo() {
+            if (!isRecordingVideo) {
+                await startVideoRecording();
+            } else {
+                stopVideoRecording();
+            }
+        }
+
+        /**
+         * Starts video recording by requesting camera access, displaying a
+         * live preview, and initiating frame capture to the server at 1 fps.
+         * Requires an active voice chat session (WebSocket connected and
+         * session created).
+         */
+        async function startVideoRecording() {
+            // Prevent duplicate starts
+            if (isRecordingVideo) {
+                return;
+            }
+
+            try {
+                const videoBtn = document.getElementById("videoBtn");
+                const videoPreview = document.getElementById("videoPreview");
+
+                // Check if WebSocket is connected
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    showError("⚠️ WebSocket is not connected! Please wait for connection.");
+                    return;
+                }
+
+                // Check if session is created
+                if (!sessionCreated) {
+                    showError("⚠️ Session not created yet! Please start voice chat first.");
+                    return;
+                }
+
+                // Request video stream only (audio is already captured by voice chat)
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: "user"
+                    },
+                    audio: false
+                });
+
+                // Show video preview
+                videoPreview.srcObject = videoStream;
+                videoPreview.classList.add("active");
+
+                // Start sending video frames to server at 1 fps
+                startSendingVideoFrames();
+
+                isRecordingVideo = true;
+                videoBtn.classList.add("recording-video");
+                videoBtn.innerText = "🔴 Stop Video Recording";
+                addMessage("System", "📹 Video recording started, sending frames to server at 1 fps...");
+
+            } catch (err) {
+                console.error("Failed to start video recording:", err);
+                showError("⚠️ Unable to access camera: " + err.message);
+                addMessage("System", "⚠️ Unable to access camera: " + err.message);
+            }
+        }
+
+        /**
+         * Captures video frames from the preview element at 1 fps and sends
+         * them to the server as base64-encoded JPEG images via WebSocket
+         * using the client_image_append event.
+         */
+        function startSendingVideoFrames() {
+            if (videoFrameInterval) {
+                clearInterval(videoFrameInterval);
+            }
+
+            const videoPreview = document.getElementById("videoPreview");
+
+            // Create canvas if needed
+            if (!videoCanvas) {
+                videoCanvas = document.createElement('canvas');
+                videoCanvasCtx = videoCanvas.getContext('2d');
+            }
+
+            // Send frame every second (1 fps)
+            videoFrameInterval = setInterval(function() {
+                if (!isRecordingVideo || !videoStream || !videoPreview) {
+                    return;
+                }
+
+                try {
+                    // Check if video is ready
+                    if (videoPreview.readyState < 2 || !videoPreview.videoWidth || !videoPreview.videoHeight) {
+                        return;
+                    }
+
+                    // Set canvas size to match video
+                    const videoWidth = videoPreview.videoWidth;
+                    const videoHeight = videoPreview.videoHeight;
+                    if (videoCanvas.width !== videoWidth || videoCanvas.height !== videoHeight) {
+                        videoCanvas.width = videoWidth;
+                        videoCanvas.height = videoHeight;
+                    }
+
+                    // Capture frame and convert to base64 JPEG
+                    videoCanvasCtx.drawImage(videoPreview, 0, 0, videoWidth, videoHeight);
+                    const base64Data = videoCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+                    // Send to server
+                    if (ws && ws.readyState === WebSocket.OPEN && sessionCreated) {
+                        ws.send(JSON.stringify({
+                            type: "client_image_append",
+                            session_id: sessionId,
+                            data: base64Data,
+                            format: {
+                                type: "image/jpeg",
+                                mime_type: "image/jpeg"
+                            }
+                        }));
+                    }
+                } catch (err) {
+                    console.error("Failed to capture video frame:", err);
+                }
+            }, 1000);
+        }
+
+        /**
+         * Stops video recording by clearing the frame capture interval,
+         * releasing the camera stream, and resetting the UI state.
+         */
+        function stopVideoRecording() {
+            if (videoFrameInterval) {
+                clearInterval(videoFrameInterval);
+                videoFrameInterval = null;
+            }
+
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+
+            const videoPreview = document.getElementById("videoPreview");
+            if (videoPreview) {
+                videoPreview.srcObject = null;
+                videoPreview.classList.remove("active");
+            }
+
+            const videoBtn = document.getElementById("videoBtn");
+            isRecordingVideo = false;
+            if (videoBtn) {
+                videoBtn.classList.remove("recording-video");
+                videoBtn.innerText = "📹 Start Video Recording";
+            }
+            addMessage("System", "⏹️ Video recording stopped");
+        }
+
+        function disconnect() {
+            stopVoice();
+            stopVideoRecording();
+            stopAudioPlayback();
+            if (ws) {
+                ws.close();
+            }
+            sessionCreated = false;  // Reset session state
+            updateSendButtonState();
+        }
+
+
+        function addMessage(sender, message) {
+            const messagesDiv = document.getElementById("messages");
+            const messageDiv = document.createElement("div");
+            messageDiv.className = "message";
+            const time = new Date().toLocaleTimeString();
+
+            // Check if message contains newlines (like JSON), use <pre> for formatting
+            if (message.includes('\n')) {
+                messageDiv.innerHTML = `<strong>[${time}] ${sender}:</strong><pre style="margin: 0.5rem 0; padding: 0.5rem; background: hsl(210, 40%, 96.1%); border-radius: 0.25rem; overflow-x: auto; font-size: 0.75rem;">${message}</pre>`;
+            } else {
+                messageDiv.innerHTML = `<strong>[${time}] ${sender}:</strong> ${message}`;
+            }
+
+            messagesDiv.insertBefore(messageDiv, messagesDiv.firstChild);
+            messagesDiv.scrollTop = 0;
+        }
+
+        function appendTranscript(sender, text) {
+            const messagesDiv = document.getElementById("messages");
+
+            // If there's no current message element yet, create a new one
+            if (!currentTranscriptElement) {
+                currentTranscript = "";
+                currentTranscriptElement = document.createElement("div");
+                currentTranscriptElement.className = "message";
+                const time = new Date().toLocaleTimeString();
+                currentTranscriptElement.innerHTML = `<strong>[${time}] ${sender}:</strong> <span class="transcript-content"></span>`;
+                messagesDiv.insertBefore(currentTranscriptElement, messagesDiv.firstChild);
+            }
+
+            // Accumulate text
+            currentTranscript += text;
+
+            // Update displayed content
+            const contentSpan = currentTranscriptElement.querySelector('.transcript-content');
+            if (contentSpan) {
+                contentSpan.textContent = currentTranscript;
+            }
+
+            // Scroll to top
+            messagesDiv.scrollTop = 0;
+        }
+
+        function finishTranscript() {
+            // Complete current transcript message, prepare for next one
+            currentTranscript = "";
+            currentTranscriptElement = null;
+        }
+
+        function appendResponseTranscript(sender, text) {
+            const messagesDiv = document.getElementById("messages");
+
+            // If there's no current response message element yet, create a new one
+            if (!currentResponseTranscriptElement) {
+                currentResponseTranscript = "";
+                currentResponseTranscriptElement = document.createElement("div");
+                currentResponseTranscriptElement.className = "message";
+                const time = new Date().toLocaleTimeString();
+                currentResponseTranscriptElement.innerHTML = `<strong>[${time}] ${sender}:</strong> <span class="response-transcript-content"></span>`;
+                messagesDiv.insertBefore(currentResponseTranscriptElement, messagesDiv.firstChild);
+            }
+
+            // Accumulate text
+            currentResponseTranscript += text;
+
+            // Update displayed content
+            const contentSpan = currentResponseTranscriptElement.querySelector('.response-transcript-content');
+            if (contentSpan) {
+                contentSpan.textContent = currentResponseTranscript;
+            }
+
+            // Scroll to top
+            messagesDiv.scrollTop = 0;
+        }
+
+        function finishResponseTranscript() {
+            // Complete current response transcript message, prepare for next one
+            currentResponseTranscript = "";
+            currentResponseTranscriptElement = null;
+        }
+
+
+        // Check available models and auto-connect when page loads
+        window.onload = async function() {
+            await checkAvailableModels();
+            connect();
+        };
+    </script>
+</body>
+</html>
