@@ -4,7 +4,7 @@
 from ._tune import tune
 from ._dataset import DatasetConfig
 from ._judge import JudgeType, JudgeOutput
-from ._workflow import WorkflowType, WorkflowOutput, PromptTuneWorkflowType
+from ._workflow import WorkflowType, WorkflowOutput
 from ._algorithm import AlgorithmConfig
 from ._model import TunerModelConfig, TinkerConfig
 from ._config import check_judge_function, check_workflow_function
@@ -17,7 +17,6 @@ __all__ = [
     "AlgorithmConfig",
     "WorkflowType",
     "WorkflowOutput",
-    "PromptTuneWorkflowType",
     "JudgeType",
     "JudgeOutput",
     "DatasetConfig",
