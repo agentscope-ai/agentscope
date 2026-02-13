@@ -8,16 +8,16 @@ from typing import Any
 from .._response import ToolResponse
 from ...message import TextBlock
 
-def smart_decode(data: bytes) -> str:  
-        if not data:  
-            return ""  
-        encodings = ["gbk", "gb2312", "cp936", "utf-8"]  
-        for encoding in encodings:  
-            try:  
-                return data.decode(encoding)  
-            except UnicodeDecodeError:  
-                continue  
-        return data.decode("utf-8", errors="replace")  
+def _smart_decode(data: bytes) -> str:
+    if not data:
+        return ""
+    encodings = ["gbk", "gb2312", "cp936", "utf-8"]
+    for encoding in encodings:
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
 async def execute_shell_command(
     command: str,
     timeout: int = 300,
