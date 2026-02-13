@@ -15,9 +15,6 @@ def as_studio_forward_message_pre_print_hook(
     run_id: str,
 ) -> None:
     """The pre-speak hook to forward messages to the studio."""
-    # Disable console output if needed
-    if self._disable_console_output:  # pylint: disable=protected-access
-        return
 
     msg = kwargs["msg"]
 
