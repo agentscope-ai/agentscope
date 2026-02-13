@@ -8,7 +8,16 @@ from typing import Any
 from .._response import ToolResponse
 from ...message import TextBlock
 
-
+def smart_decode(data: bytes) -> str:  
+        if not data:  
+            return ""  
+        encodings = ["gbk", "gb2312", "cp936", "utf-8"]  
+        for encoding in encodings:  
+            try:  
+                return data.decode(encoding)  
+            except UnicodeDecodeError:  
+                continue  
+        return data.decode("utf-8", errors="replace")  
 async def execute_shell_command(
     command: str,
     timeout: int = 300,
@@ -40,8 +49,8 @@ async def execute_shell_command(
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
         stdout, stderr = await proc.communicate()
-        stdout_str = stdout.decode("utf-8")
-        stderr_str = stderr.decode("utf-8")
+        stdout_str = smart_decode(stdout)  
+        stderr_str = smart_decode(stderr) 
         returncode = proc.returncode
 
     except asyncio.TimeoutError:
