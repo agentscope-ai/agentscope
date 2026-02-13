@@ -260,7 +260,8 @@ class BrowserAgent(ReActAgent):
                     )
                     tool_choice = "required"
 
-                if msg_hint and self.print_hint_msg:
+                if msg_hint:
+                    await self.memory.add(msg_hint)
                     await self.print(msg_hint)
 
             elif not msg_reasoning.has_content_blocks("tool_use"):
@@ -772,27 +773,6 @@ class BrowserAgent(ReActAgent):
         except Exception:
             image_data = None
         return image_data
-
-    def _get_tool_result_hint(self, raw_text: str) -> str:
-        """Return a short hint when tool output indicates wrong-page or empty-page issues."""
-        hint = ""
-        if "not found in the current page snapshot" in raw_text or re.search(
-            r"Ref\s+\S+\s+not found",
-            raw_text,
-            re.IGNORECASE,
-        ):
-            hint = (
-                "\n\n[IMPORTANT] Use only refs (e.g. ref=e36) from the **latest** "
-                "browser_snapshot for the current page. After browser_navigate, call "
-                "browser_snapshot first, then use a ref from that snapshot."
-            )
-        elif re.search(r"```yaml\s*```", raw_text):
-            hint = (
-                "\n\n[IMPORTANT] Page snapshot is empty or nearly empty; the page may "
-                "require login or the URL may be wrong. Try a different URL or call "
-                "browser_generate_final_response to explain that content is not accessible."
-            )
-        return hint
 
     @staticmethod
     def _filter_execution_text(
