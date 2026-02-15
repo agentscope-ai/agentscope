@@ -340,7 +340,7 @@ Message object can be serialized and deserialized by ``to_dict`` and ``from_dict
 
     <class 'dict'>
     {
-        "id": "6XwmjDq48F5Ra3ZmGjHA7X",
+        "id": "6mYtrw3w8y4EBCCu63DiKn",
         "name": "Jarvis",
         "role": "assistant",
         "content": [
@@ -374,7 +374,7 @@ Message object can be serialized and deserialized by ``to_dict`` and ``from_dict
             }
         ],
         "metadata": {},
-        "timestamp": "2026-02-12 10:02:26.181"
+        "timestamp": "2026-02-15 02:42:01.656"
     }
 
 
@@ -466,7 +466,7 @@ To ease the use of message object, AgentScope provides these functions:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.003 seconds)
+   **Total running time of the script:** (0 minutes 0.004 seconds)
 
 
 .. _sphx_glr_download_tutorial_quickstart_message.py:

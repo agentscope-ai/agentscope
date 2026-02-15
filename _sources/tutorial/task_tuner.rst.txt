@@ -182,77 +182,17 @@ You can directly run this workflow function with a task dictionary and a ``DashS
 
  .. code-block:: none
 
-    react_agent: To solve the problem of adding 123 and 456, follow these steps:
+    react_agent: To find the sum of 123 and 456, you simply add the two numbers together:
 
-    1. Write down the numbers one under the other, aligning them by place value:
-       ```
-         123
-       + 456
-       ```
+    \[ 123 + 456 = 579 \]
 
-    2. Add the digits in the ones place: 
-       \[
-       3 + 6 = 9
-       \]
-       Write down 9.
+    So, 123 plus 456 is 579.
 
-    3. Add the digits in the tens place:
-       \[
-       2 + 5 = 7
-       \]
-       Write down 7.
+    Workflow response: To find the sum of 123 and 456, you simply add the two numbers together:
 
-    4. Add the digits in the hundreds place:
-       \[
-       1 + 4 = 5
-       \]
-       Write down 5.
+    \[ 123 + 456 = 579 \]
 
-    Putting it all together, you get:
-       ```
-         123
-       + 456
-       ------
-         579
-       ```
-
-    So, 123 plus 456 is **579**.
-
-    Workflow response: To solve the problem of adding 123 and 456, follow these steps:
-
-    1. Write down the numbers one under the other, aligning them by place value:
-       ```
-         123
-       + 456
-       ```
-
-    2. Add the digits in the ones place: 
-       \[
-       3 + 6 = 9
-       \]
-       Write down 9.
-
-    3. Add the digits in the tens place:
-       \[
-       2 + 5 = 7
-       \]
-       Write down 7.
-
-    4. Add the digits in the hundreds place:
-       \[
-       1 + 4 = 5
-       \]
-       Write down 5.
-
-    Putting it all together, you get:
-       ```
-         123
-       + 456
-       ------
-         579
-       ```
-
-    So, 123 plus 456 is **579**.
+    So, 123 plus 456 is 579.
 
 
 
@@ -386,7 +326,7 @@ Checkpoints and logs are automatically saved to the ``checkpoints/AgentScope`` d
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 15.183 seconds)
+   **Total running time of the script:** (0 minutes 3.569 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tuner.py:
