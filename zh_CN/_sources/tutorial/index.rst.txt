@@ -11,23 +11,6 @@
 
 .. raw:: html
 
-    <div class="sphx-glr-thumbcontainer" tooltip="关于 AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 什么是AgentScope？     AgentScope 是一个多智能体框架，旨在提供一种简单高效的方式来构建基于大语言模型的智能体应用程序。">
-
-.. only:: html
-
-  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
-    :alt:
-
-  :doc:`/tutorial/faq`
-
-.. raw:: html
-
-      <div class="sphx-glr-thumbnail-title">常见问题</div>
-    </div>
-
-
-.. raw:: html
-
     <div class="sphx-glr-thumbcontainer" tooltip="AgentScope 实现了基于 OpenTelemetry 的追踪来监控和调试 智能体应用程序的执行，具有以下特性">
 
 .. only:: html
@@ -74,6 +57,23 @@
 .. raw:: html
 
       <div class="sphx-glr-thumbnail-title">AgentScope Studio</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="关于 AgentScope ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 什么是AgentScope？     AgentScope 是一个多智能体框架，旨在提供一种简单高效的方式来构建基于大语言模型的智能体应用程序。">
+
+.. only:: html
+
+  .. image:: /tutorial/images/thumb/sphx_glr_faq_thumb.png
+    :alt:
+
+  :doc:`/tutorial/faq`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">常见问题</div>
     </div>
 
 
@@ -597,10 +597,10 @@
 .. toctree::
    :hidden:
 
-   /tutorial/faq
    /tutorial/task_tracing
    /tutorial/quickstart_key_concept
    /tutorial/task_studio
+   /tutorial/faq
    /tutorial/quickstart_installation
    /tutorial/task_token
    /tutorial/workflow_concurrent_agents

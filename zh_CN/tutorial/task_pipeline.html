@@ -405,9 +405,9 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 您好，我叫Alice，今年50岁，我的职业是一名教师。很高兴认识您！请问有什么我可以帮到您的吗？
-Bob: 嗨，看起来这里有点小误会。我是Bob，一个35岁的工程师，并不是Alice。如果你有任何关于工程方面的问题，或者需要任何帮助，请告诉我！
-Charlie: 嗨，我是Charlie，今年28岁，我是一名设计师。如果你对设计有任何问题，或者需要一些创意上的帮助，随时可以找我聊聊！
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 您好，我叫Alice，今年50岁，是一名教师。我喜欢与学生分享知识，并帮助他们成长和发展。在我的职业生涯中，我一直致力于教育事业，希望能够激发学生的潜能，让他们成为社会上有用的人才。
+Bob: 嗨，我叫Bob，今年35岁，是一名工程师。我的工作主要集中在设计和开发新技术解决方案上。我对解决问题充满热情，并且喜欢通过创新来提高效率和性能。在我的空闲时间里，我喜欢钻研最新的科技趋势并尝试自己动手做一些项目。
+Charlie: 嗨，我叫Charlie，今年28岁，是一名设计师。我的工作主要围绕着创造视觉上吸引人的设计，无论是品牌标识、网页还是产品界面。我对色彩、形状和空间有着独特的理解，并且热衷于将这些元素融合在一起，以创造出既美观又实用的作品。在业余时间我喜欢旅行，从中汲取灵感，也喜欢参观各种艺术展览来拓宽我的视野。
 </pre></div>
 </div>
 <p>现在让我们检查 Bob、Charlie 和 David 是否收到了 Alice 的消息。</p>
@@ -427,9 +427,9 @@ Charlie: 嗨，我是Charlie，今年28岁，我是一名设计师。如果你�
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">check_broadcast_message</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice是一位50岁的教师，她之前在我们的对话中介绍过自己。如果你有关于教育的问题，或者需要教学方面的帮助，她应该能够提供支持。不过，目前只有我在和你交谈，如果你有任何工程相关的问题，我很乐意帮忙。
-Charlie: Alice 是一位50岁的教师，她之前在我们的对话中介绍过自己。如果你有关于教育的问题，或许可以向她咨询。不过现在你是在和我Charlie交谈，我是一名设计师。如果你有任何设计相关的问题，我很乐意帮忙。
-David: Alice这个名字很常见，没有更多的上下文信息的话，我无法确定你指的是哪位Alice。如果你能提供一些额外的信息，比如她的职业、她所在的领域或者你们是如何认识的，我可能能够更好地帮助你了解她是做什么的。你能给我更多关于Alice的细节吗？
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Bob: Alice 是一位50岁的教师。她热爱她的职业，致力于教育事业，喜欢与学生分享知识，并帮助他们成长和发展。她的目标是激发学生的潜能，让他们能够成为社会上有用的人才。
+Charlie: 当然，Alice是一位50岁的教师。她热爱她的工作，喜欢与学生分享知识，并致力于帮助他们成长和发展。她在教育领域有着丰富的经验，并且一直努力激发学生的潜能。
+David: Alice 可能是指很多人，因为这是一个常见的名字。如果你能提供更多的信息，比如她的姓氏、职业或她所在的领域，我就能更准确地告诉你 Alice 是谁以及她是做什么的。你有更多关于这位 Alice 的信息吗？
 </pre></div>
 </div>
 <p>现在我们观察到 Bob 和 Charlie 知道 Alice 和她的职业，而 David 对
@@ -569,14 +569,15 @@ Alice 一无所知，因为他没有包含在 <code class="docutils literal notr
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_example_pipeline</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名2&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名20岁的学生&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名20岁的学生。很高兴认识你！&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名20岁的学生。很高兴认识你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名20岁的学生。很高兴认识你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) False
-Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我是Alice，一名20岁的学生。很高兴认识你！有什么我可以帮助你的吗？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-12 10:10:32.810&#39;, invocation_id=&#39;None&#39;) True
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个20岁的学生。很高兴&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) False
+Msg(id=&#39;6iTShgYBfNeibHc78okLNJ&#39;, name=&#39;Alice&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;你好！我叫Alice，是一个20岁的学生。很高兴认识你！你是谁呢？&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-02-15 02:49:25.568&#39;, invocation_id=&#39;None&#39;) True
 </pre></div>
 </div>
 </section>
@@ -614,7 +615,7 @@ Msg(id=&#39;ZCcdfUUUMyUdZJgRqDjxCF&#39;, name=&#39;Alice&#39;, content=[{&#39;ty
 </pre></div>
 </div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 30.089 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 31.630 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-pipeline-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/a841049f564cf5f9c0fea523e59490f5/task_pipeline.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_pipeline.ipynb</span></code></a></p>
