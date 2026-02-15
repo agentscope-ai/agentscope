@@ -46,9 +46,9 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "在 Python 中编写并执行一个打印 'Hello, World!' 的简单脚本。"
+            "task_description": "使用 Python 编写并执行一个简单的 'Hello, World!' 程序，然后返回输出结果。"
         },
-        "id": "call_88107ce239fe469a954138"
+        "id": "call_78343d5507d5476f8a392b"
     }
     Worker: {
         "type": "tool_use",
@@ -57,11 +57,11 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
             "code": "print('Hello, World!')",
             "timeout": 5
         },
-        "id": "call_b182fbb073404deab10687"
+        "id": "call_d2aba02f2b074ed5830230"
     }
     system: {
         "type": "tool_result",
-        "id": "call_b182fbb073404deab10687",
+        "id": "call_d2aba02f2b074ed5830230",
         "name": "execute_python_code",
         "output": [
             {
@@ -70,19 +70,27 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
             }
         ]
     }
-    Worker: Python 脚本已成功执行，并打印出了 'Hello, World!'。
+    Worker: 运行的 'Hello, World!' Python 程序输出如下：
+
+    ```
+    Hello, World!
+    ```
     system: {
         "type": "tool_result",
-        "id": "call_88107ce239fe469a954138",
+        "id": "call_78343d5507d5476f8a392b",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "Python 脚本已成功执行，并打印出了 'Hello, World!'。"
+                "text": "运行的 'Hello, World!' Python 程序输出如下：\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: 子智能体已经成功地在 Python 中执行了 "Hello, World!" 脚本，并打印出了预期的结果。
+    Orchestrator: 创建的子智能体已经完成了在 Python 中执行 "Hello, World!" 程序的任务。程序的输出是：
+
+    ```
+    Hello, World!
+    ```
 
 
 
@@ -173,7 +181,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 14.697 seconds)
+   **Total running time of the script:** (0 minutes 12.273 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
