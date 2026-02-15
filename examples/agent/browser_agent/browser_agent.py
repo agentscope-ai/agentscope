@@ -249,7 +249,7 @@ class BrowserAgent(ReActAgent):
 
                 if not msg_reasoning.has_content_blocks("tool_use"):
                     # If structured output is required but no tool call is
-                    # made, remind the llm to go on the task
+                    # made, require tool call in the next reasoning step
                     msg_hint = Msg(
                         "user",
                         "<system-hint>Structured output is "
@@ -258,11 +258,10 @@ class BrowserAgent(ReActAgent):
                         f"required structured output.</system-hint>",
                         "user",
                     )
-                    await self._reasoning_hint_msgs.add(msg_hint)
-                    # Require tool call in the next reasoning step
                     tool_choice = "required"
 
-                if msg_hint and self.print_hint_msg:
+                if msg_hint:
+                    await self.memory.add(msg_hint)
                     await self.print(msg_hint)
 
             elif not msg_reasoning.has_content_blocks("tool_use"):
@@ -299,13 +298,8 @@ class BrowserAgent(ReActAgent):
                 Msg("system", self.sys_prompt, "system"),
                 *await self.memory.get_memory(),
                 msg,
-                # The hint messages to guide the agent's behavior, maybe empty
-                *await self._reasoning_hint_msgs.get_memory(),
             ],
         )
-
-        # Clear the hint messages after use
-        await self._reasoning_hint_msgs.clear()
 
         res = await self.model(
             prompt,
@@ -355,8 +349,9 @@ class BrowserAgent(ReActAgent):
         self.previous_chunkwise_information = ""
         self.snapshot_in_chunk = []
 
-        mem_len = await self.memory.size()
-        await self.memory.delete(mem_len - 1)
+        mem = await self.memory.get_memory()
+        if mem:
+            await self.memory.delete([mem[-1].id])
 
         self.snapshot_in_chunk = await self._get_snapshot_in_text()
         for _ in self.snapshot_in_chunk:

@@ -46,7 +46,7 @@ async def main(
             name="Browser-Use Agent",
             model=DashScopeChatModel(
                 api_key=os.environ.get("DASHSCOPE_API_KEY"),
-                model_name="qwen-max",
+                model_name="qwen3-max",
                 stream=False,
             ),
             formatter=DashScopeChatFormatter(),
@@ -63,6 +63,7 @@ async def main(
             if msg.get_text_content() == "exit":
                 break
             msg = await agent(msg, structured_model=FinalResult)
+            await agent.memory.clear()
 
     except Exception as e:
         traceback.print_exc()
