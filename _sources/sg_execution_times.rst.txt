@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**05:06.295** total execution time for 34 files **from all galleries**:
+**05:25.254** total execution time for 34 files **from all galleries**:
 
 .. container::
 
@@ -32,71 +32,71 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py` (``src/workflow_multiagent_debate.py``)
-     - 01:02.892
-     - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_routing.py` (``src/workflow_routing.py``)
-     - 00:55.294
+     - 00:56.920
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_workflow_multiagent_debate.py` (``src/workflow_multiagent_debate.py``)
+     - 00:52.715
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_rag.py` (``src/task_rag.py``)
-     - 00:32.509
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_task_agent.py` (``src/task_agent.py``)
-     - 00:31.340
+     - 00:41.604
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_long_term_memory.py` (``src/task_long_term_memory.py``)
-     - 00:28.608
+     - 00:34.840
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_agent.py` (``src/task_agent.py``)
+     - 00:26.962
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_pipeline.py` (``src/task_pipeline.py``)
-     - 00:18.936
+     - 00:22.584
      - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_conversation.py` (``src/workflow_conversation.py``)
-     - 00:12.222
+     - 00:16.661
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_model.py` (``src/task_model.py``)
-     - 00:10.613
+     - 00:12.283
      - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_handoffs.py` (``src/workflow_handoffs.py``)
-     - 00:09.084
+     - 00:12.237
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_eval.py` (``src/task_eval.py``)
-     - 00:08.735
-     - 0.0
-   * - :ref:`sphx_glr_tutorial_quickstart_agent.py` (``src/quickstart_agent.py``)
-     - 00:06.896
+     - 00:09.973
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_mcp.py` (``src/task_mcp.py``)
-     - 00:06.754
+     - 00:09.071
      - 0.0
-   * - :ref:`sphx_glr_tutorial_task_tts.py` (``src/task_tts.py``)
-     - 00:04.304
+   * - :ref:`sphx_glr_tutorial_quickstart_agent.py` (``src/quickstart_agent.py``)
+     - 00:06.506
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_state.py` (``src/task_state.py``)
-     - 00:04.003
+     - 00:05.056
      - 0.0
-   * - :ref:`sphx_glr_tutorial_task_tuner.py` (``src/task_tuner.py``)
-     - 00:03.569
+   * - :ref:`sphx_glr_tutorial_task_tts.py` (``src/task_tts.py``)
+     - 00:04.651
      - 0.0
    * - :ref:`sphx_glr_tutorial_workflow_concurrent_agents.py` (``src/workflow_concurrent_agents.py``)
      - 00:03.005
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_embedding.py` (``src/task_embedding.py``)
-     - 00:02.616
+     - 00:02.863
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_task_tuner.py` (``src/task_tuner.py``)
+     - 00:02.772
      - 0.0
    * - :ref:`sphx_glr_tutorial_quickstart_installation.py` (``src/quickstart_installation.py``)
-     - 00:01.631
+     - 00:01.556
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_tool.py` (``src/task_tool.py``)
-     - 00:01.022
+     - 00:01.021
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_token.py` (``src/task_token.py``)
-     - 00:00.992
+     - 00:00.918
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_a2a.py` (``src/task_a2a.py``)
-     - 00:00.805
+     - 00:00.593
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_eval_openjudge.py` (``src/task_eval_openjudge.py``)
-     - 00:00.322
+     - 00:00.319
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_memory.py` (``src/task_memory.py``)
      - 00:00.093
@@ -125,12 +125,12 @@ Computation times
    * - :ref:`sphx_glr_tutorial_task_tracing.py` (``src/task_tracing.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_tutorial_faq.py` (``src/faq.py``)
-     - 00:00.000
-     - 0.0
    * - :ref:`sphx_glr_tutorial_quickstart_key_concept.py` (``src/quickstart_key_concept.py``)
      - 00:00.000
      - 0.0
    * - :ref:`sphx_glr_tutorial_task_studio.py` (``src/task_studio.py``)
+     - 00:00.000
+     - 0.0
+   * - :ref:`sphx_glr_tutorial_faq.py` (``src/faq.py``)
      - 00:00.000
      - 0.0

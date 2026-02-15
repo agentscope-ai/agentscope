@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in both the sciences and the arts. I love exploring new ideas and am always up for a good discussion. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into technology and sports. I spend a lot of my free time either coding or playing basketball. It's great to meet someone who enjoys a mix of different things too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I have a passion for music and I play the guitar in a band. Besides that, I'm also really into history and philosophy. It's awesome to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve some of the big challenges facing our planet. What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and health sciences. I'm fascinated by how the human body works and how we can improve our physical performance. It's cool to meet someone who's passionate about tech and the environment!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a pretty diverse set of interests, but I'm really into music and psychology. I play a bit of guitar and I'm always curious about what makes people tick. It's great to meet both of you!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in both the sciences and the arts. I love exploring new ideas and am always up for a good discussion. How about you?
-    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into technology and sports. I spend a lot of my free time either coding or playing basketball. It's great to meet someone who enjoys a mix of different things too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I have a passion for music and I play the guitar in a band. Besides that, I'm also really into history and philosophy. It's awesome to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve some of the big challenges facing our planet. What about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and health sciences. I'm fascinated by how the human body works and how we can improve our physical performance. It's cool to meet someone who's passionate about tech and the environment!
+    Charlie: Hi Alice and Bob! I'm Charlie, and I'm a student too. I have a pretty diverse set of interests, but I'm really into music and psychology. I play a bit of guitar and I'm always curious about what makes people tick. It's great to meet both of you!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.222 seconds)
+   **Total running time of the script:** (0 minutes 16.661 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

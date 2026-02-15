@@ -606,9 +606,9 @@ They can be used as follows:</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Retrieved Documents:
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;AKzeiYJnxeJCx2XaJEjCub&#39;, embedding=None, score=0.5657136536003619)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;Ui9x66WkH65eiQX5fmZAE8&#39;, embedding=None, score=0.5657136536003619)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;acUHBSumiGZkpr3c5PpmTr&#39;, embedding=None, score=0.5062624400117309)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;jwxSiF5vVeQgubPBv9vW7R&#39;, embedding=None, score=0.5062624400117309)
 </pre></div>
 </div>
 <p>The knowledge base class provides two main methods: <code class="docutils literal notranslate"><span class="pre">add_documents</span></code> and
@@ -725,45 +725,33 @@ Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is t
 
 
 The second response:
-Friday: {
+Friday: I don&#39;t have any specific information about John Doe&#39;s father, as the details you&#39;ve provided are quite general and I don&#39;t have access to personal data unless it has been shared with me in this conversation. To find out more about John Doe&#39;s father, we would need to look up that information or you could ask John directly.
+
+If you have more context or details that you can share, such as the full name or any other identifying information, I could attempt to retrieve some public knowledge about John Doe&#39;s father. Would you like to proceed with that? If so, please provide a more specific query.
+{
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_f5609649f9c44194a050c0&quot;,
+    &quot;id&quot;: &quot;call_0bd281e0456840a0ad325f&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
-        &quot;query&quot;: &quot;John Doe father&quot;,
+        &quot;query&quot;: &quot;John Doe&#39;s father&quot;,
         &quot;limit&quot;: 5,
-        &quot;score_threshold&quot;: null
+        &quot;score_threshold&quot;: 0.5
     },
-    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;John Doe father\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: null}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;John Doe&#39;s father\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: 0.5}&quot;
 }
+
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_f5609649f9c44194a050c0&quot;,
+    &quot;id&quot;: &quot;call_0bd281e0456840a0ad325f&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Score: 0.5653893900693138, Content: My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;
-        },
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Score: 0.4790107771624694, Content: I&#39;m John Doe, 28 years old.&quot;
-        },
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Score: 0.2473851245249162, Content: My best friend is James Smith.&quot;
-        },
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Score: 0.15979023413058244, Content: I live in San Francisco. I work at OpenAI as a software engineer. I love hiking and photography.&quot;
-        },
-        {
-            &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Score: 0.15195164753879928, Content: I&#39;m now a PhD student at Stanford University, majoring in Computer Science. My advisor is Prof. Jane Williams, who is a leading expert in artificial intelligence. I have published several papers in top conferences, such as NeurIPS and ICML.&quot;
+            &quot;text&quot;: &quot;Score: 0.581536867689471, Content: My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;
         }
     ]
 }
-Friday: According to the information I found, John Doe&#39;s father is Michael Doe, who is a doctor. It seems that John is very proud of his father. If you need more information about John or his family, feel free to ask!
+Friday: Based on the information retrieved, John Doe&#39;s father is Michael Doe, who is a doctor. It seems that John is very proud of his father. If you need more specific or additional information, please let me know!
 </pre></div>
 </div>
 <p>In the above example, our question is “Do you know who his father is?”.
@@ -925,12 +913,12 @@ The example is the same as before, just using the <code class="docutils literal 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, your name is Tony Stank.
 
 The image is attached in the agent&#39;s memory:
-Msg(id=&#39;ZR3ndvVC4zdwzYHRthJ6Dx&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-15 02:46:03.734&#39;, invocation_id=&#39;None&#39;)
+Msg(id=&#39;kzXDca3CWY5NGtdxucwCFM&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-02-15 03:01:05.327&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>We can see that the agent can answer the question based on the retrieved
 image.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 32.509 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 41.604 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
