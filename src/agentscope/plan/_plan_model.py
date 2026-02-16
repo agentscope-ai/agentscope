@@ -38,7 +38,6 @@ class SubTask(BaseModel):
     state: Literal["todo", "in_progress", "done", "abandoned"] = Field(
         description="The state of the subtask.",
         default="todo",
-        exclude=True,
     )
     created_at: str = Field(
         description="The time the subtask was created.",

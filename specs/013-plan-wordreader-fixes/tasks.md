@@ -35,3 +35,6 @@ description: "Absorb main -> easy plan notebook + word reader bugfixes (58a4858)
 - [x] T010 Run focused pytest: `./.venv/bin/python -m pytest tests/plan_test.py` (local blocked: `RC:139`, no pytest output)
 - [x] T011 Run broader pytest or record local blocker; CI is final oracle
 - [x] T012 Update task checkmarks to reflect completed work
+- [x] T013 [US1] Hotfix `SubTask.state` serialization by removing `exclude=True` in `src/agentscope/plan/_plan_model.py`
+- [x] T014 Re-run gates: `pre-commit`, `ruff`, `pylint -E`
+- [x] T015 Re-run focused pytest and record local blocker (`RC:139`); add smoke validation for `state_dict` field presence
