@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The Qdrant local vector store implementation."""
 import json
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Dict, Literal, TYPE_CHECKING, Optional
 
 from .._reader import Document
 from ._store_base import VDBStoreBase
@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
 else:
     AsyncQdrantClient = "qdrant_client.AsyncQdrantClient"
+from qdrant_client import models
 
 
 class QdrantStore(VDBStoreBase):
@@ -123,6 +124,7 @@ class QdrantStore(VDBStoreBase):
         query_embedding: Embedding,
         limit: int,
         score_threshold: float | None = None,
+        filter: dict | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Search relevant documents from the Qdrant vector store.
@@ -134,6 +136,8 @@ class QdrantStore(VDBStoreBase):
                 The number of relevant documents to retrieve.
             score_threshold (`float | None`, optional):
                 The threshold of the score to filter the results.
+            filter (`dict | None`, optional):
+                The filter to apply when searching the vector database.
             **kwargs (`Any`):
                 Other keyword arguments for the Qdrant client search API.
         """
@@ -142,6 +146,7 @@ class QdrantStore(VDBStoreBase):
             query=query_embedding,
             limit=limit,
             score_threshold=score_threshold,
+            query_filter=self._format_filters(filter),
             **kwargs,
         )
 
@@ -171,3 +176,33 @@ class QdrantStore(VDBStoreBase):
                 The underlying Qdrant client.
         """
         return self._client
+
+    def _format_filters(
+        self,
+        filters: Optional[Dict[str, Any]],
+    ) -> Optional[models.Filter]:
+        if filters:
+            filter_conditions = []
+            for key, value in filters.items():
+                if isinstance(value, dict):
+                    # Handle nested dictionaries
+                    for sub_key, sub_value in value.items():
+                        filter_conditions.append(
+                            models.FieldCondition(
+                                key=f"{key}.{sub_key}",
+                                match=models.MatchValue(value=sub_value),
+                            ),
+                        )
+                else:
+                    # Handle direct key-value pairs
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key=key,
+                            match=models.MatchValue(value=value),
+                        ),
+                    )
+
+            if filter_conditions:
+                return models.Filter(must=filter_conditions)  # type: ignore
+
+        return None
