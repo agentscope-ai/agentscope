@@ -56,6 +56,7 @@ class DashScopeChatModel(ChatModelBase):
         enable_thinking: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
+        **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
 
@@ -78,6 +79,8 @@ class DashScopeChatModel(ChatModelBase):
             base_http_api_url (`str | None`, optional):
                 The base URL for DashScope API requests. If not provided,
                 the default base URL from the DashScope SDK will be used.
+            **_kwargs (`Any`):
+                Additional keyword arguments.
         """
         if enable_thinking and not stream:
             logger.info(
