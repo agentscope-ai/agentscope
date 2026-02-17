@@ -197,20 +197,27 @@ class DeepResearchAgent(ReActAgent):
         structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The reply method of the agent."""
+        if isinstance(msg, list):
+            if len(msg) == 0:
+                raise ValueError("Message list cannot be empty")
+            current_msg = msg[-1]
+        else:
+            current_msg = msg
+
         # Maintain the subtask list
-        self.user_query = msg.get_text_content()
+        self.user_query = current_msg.get_text_content()
         self.current_subtask.append(
             SubTaskItem(objective=self.user_query),
         )
 
         # Identify the expected output and generate a plan
         await self.decompose_and_expand_subtask()
-        msg.content += (
+        current_msg.content += (
             f"\nExpected Output:\n{self.current_subtask[0].knowledge_gaps}"
         )
 
         # Add user query message to memory
-        await self.memory.add(msg)  # type: ignore
+        await self.memory.add(current_msg)  # type: ignore
 
         # Record structured output model if provided
         if structured_model:
@@ -800,7 +807,7 @@ class DeepResearchAgent(ReActAgent):
         intermediate_report_path = os.path.join(
             self.tmp_file_storage_dir,
             f"{self.report_path_based}_"
-            f"inprocess_report_{self.report_index}.md",
+            f"{self.user_query}_inprocess_report_{self.report_index}.md",
         )
         self.report_index += 1
         params = {
@@ -875,7 +882,7 @@ class DeepResearchAgent(ReActAgent):
                     "file_path": os.path.join(
                         self.tmp_file_storage_dir,
                         f"{self.report_path_based}_"
-                        f"inprocess_report_{index + 1}.md",
+                        f"{self.user_query}_inprocess_report_{index + 1}.md",
                     ),
                 }
                 _, read_draft_tool_res_msg = await self.call_specific_tool(
@@ -945,7 +952,7 @@ class DeepResearchAgent(ReActAgent):
         ) = await self._generate_deepresearch_report(
             checklist=self.current_subtask[0].knowledge_gaps,
         )
-        return Msg(
+        summarize_result = Msg(
             name=self.name,
             role="assistant",
             content=json.dumps(
@@ -954,6 +961,8 @@ class DeepResearchAgent(ReActAgent):
                 ensure_ascii=False,
             ),
         )
+        self.memory.add(summarize_result)
+        return summarize_result
 
     async def reflect_failure(self) -> ToolResponse:
         """Reflect on the failure of the action and determine to rephrase

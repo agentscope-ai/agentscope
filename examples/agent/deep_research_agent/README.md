@@ -22,11 +22,25 @@ This example shows a **DeepResearch Agent** implementation using the AgentScope 
     npx -y tavily-mcp@latest
     ```
 
-2. **Run the script**:
+3. **Run the script**:
     ```bash
    python main.py
    ```
 
+If you want to have multi-turn conversations with the Deep Research Agent, you can modify the code as follows:
+```python
+from agentscope.agent import UserAgent
+user = UserAgent("User")
+user_msg = None
+msg = []
+while True:
+    user_msg = await user(user_msg)
+    if user_msg.get_text_content() == "exit":
+        break
+    msg.append(user_msg)
+    assistant_msg = await agent(user_msg)
+    msg.append(assistant_msg)
+```
 ## Connect to Web Search MCP client
 The DeepResearch Agent only supports web search through the Tavily MCP client currently. To use this feature, you need to start the MCP server locally and establish a connection to it.
 ```
