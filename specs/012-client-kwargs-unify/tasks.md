@@ -32,4 +32,4 @@ description: "Absorb main -> easy model client_kwargs unification (DashScope/Oll
 - [x] T007 Run `./.venv/bin/python -m pylint -E src`
 - [x] T008 Run focused runtime checks for signature binding and kwargs merge
 - [x] T009 Run pytest in CI (local blocked: `pytest RC:139`, no output; CI is final oracle)
-- [ ] T010 Commit task checkmarks
+- [x] T010 Commit task checkmarks
