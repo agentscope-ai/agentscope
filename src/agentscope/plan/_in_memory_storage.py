@@ -14,6 +14,15 @@ class InMemoryPlanStorage(PlanStorageBase):
         super().__init__()
         self.plans = OrderedDict()
 
+        # Support historical plan serialization and deserialization
+        self.register_state(
+            "plans",
+            lambda plans: {k: v.model_dump() for k, v in plans.items()},
+            lambda json_data: OrderedDict(
+                (k, Plan.model_validate(v)) for k, v in json_data.items()
+            ),
+        )
+
     async def add_plan(self, plan: Plan, override: bool = True) -> None:
         """Add a plan to the storage.
 

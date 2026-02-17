@@ -239,11 +239,10 @@ class WordReader(ReaderBase):
         """Return a list of data blocks extracted from the Word document."""
         try:
             from docx import Document as DocxDocument
-            from docx.oxml.ns import qn
-            from docx.oxml.text.paragraph import CT_P
-            from docx.oxml.table import CT_Tbl
+            from docx.oxml import CT_P, CT_Tbl
             from docx.text.paragraph import Paragraph
             from docx.table import Table
+            from docx.oxml.ns import qn
         except ImportError as e:
             raise ImportError(
                 "Please install python-docx to use the Word reader. "
