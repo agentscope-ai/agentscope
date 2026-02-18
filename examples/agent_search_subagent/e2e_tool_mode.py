@@ -76,7 +76,7 @@ async def main() -> None:
         model=OpenAIChatModel(
             model_name=model_name,
             stream=False,
-            client_args={"base_url": base_url} if base_url else None,
+            client_kwargs={"base_url": base_url} if base_url else None,
         ),
         formatter=OpenAIChatFormatter(),
         memory=InMemoryMemory(),

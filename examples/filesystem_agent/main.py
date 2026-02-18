@@ -119,7 +119,7 @@ def build_agent(toolkit: Toolkit) -> ReActAgent:
         model_name=model_name,
         api_key=api_key,
         stream=False,
-        client_args={"base_url": base_url},
+        client_kwargs={"base_url": base_url},
         generate_kwargs={
             "tool_choice": "auto",
             "max_tokens": 1024,

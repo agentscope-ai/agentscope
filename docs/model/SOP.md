@@ -39,7 +39,7 @@ graph TD
 ### 4. 关键设计模式
 - **适配器模式**：每个具体模型类适配各自 SDK，统一输出 `ChatResponse`。
 - **生成器/异步迭代器**：流式调用通过 `AsyncGenerator[ChatResponse]` 暴露增量数据。
-- **策略模式**：`tool_choice` 与 `structured_model` 控制输出策略；`generate_kwargs`/`client_args` 允许注入额外配置。
+- **策略模式**：`tool_choice` 与 `structured_model` 控制输出策略；`generate_kwargs`/`client_kwargs` 允许注入额外配置。
 - **装饰器**：`@trace_llm` 记录调用的输入/输出和异常（OpenTelemetry）。
 
 ### 5. 其他组件的交互
@@ -84,7 +84,7 @@ graph TD
 - `ChatUsage`
   - `input_tokens: int`、`output_tokens: int`、`time: float`、`type: Literal["chat"]`。
 - 各模型构造函数示例：
-  - `OpenAIChatModel(model_name: str, api_key: str | None = None, stream: bool = True, reasoning_effort: Literal["low","medium","high"] | None = None, organization: str | None = None, client_args: dict | None = None, generate_kwargs: dict[str, JSONSerializableObject] | None = None)`.
+  - `OpenAIChatModel(model_name: str, api_key: str | None = None, stream: bool = True, reasoning_effort: Literal["low","medium","high"] | None = None, organization: str | None = None, client_kwargs: dict | None = None, generate_kwargs: dict[str, JSONSerializableObject] | None = None)`.
   - 其他模型有类似参数（DashScope 需要 `api_key` 与模型名；Gemini/Ollama/Anthropic 各自接受客户端配置）。
 - 异常约束
   - `_validate_tool_choice` 若传入非法字符串，将抛 `TypeError` 或 `ValueError`。

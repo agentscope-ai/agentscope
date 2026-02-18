@@ -56,11 +56,11 @@ The supported model APIs and providers include:
 
 .. note:: When using vLLM, you need to configure the appropriate tool calling parameters for different models during deployment, such as ``--enable-auto-tool-choice``, ``--tool-call-parser``, etc. For more details, refer to the `official vLLM documentation <https://docs.vllm.ai/en/latest/features/tool_calling.html>`_.
 
-.. note:: For OpenAI-compatible models (e.g. vLLM, Deepseek), developers can use the ``OpenAIChatModel`` class, and specify the API endpoint by the ``client_args`` parameter: ``client_args={"base_url": "http://your-api-endpoint"}``. For example:
+.. note:: For OpenAI-compatible models (e.g. vLLM, Deepseek), developers can use the ``OpenAIChatModel`` class, and specify the API endpoint by the ``client_kwargs`` parameter: ``client_kwargs={"base_url": "http://your-api-endpoint"}``. For example:
 
     .. code-block:: python
 
-        OpenAIChatModel(client_args={"base_url": "http://localhost:8000/v1"})
+        OpenAIChatModel(client_kwargs={"base_url": "http://localhost:8000/v1"})
 
 .. note:: Model behavior parameters (such as temperature, maximum length, etc.) can be preset in the constructor function via the ``generate_kwargs`` parameter. For example:
 
@@ -78,7 +78,6 @@ To provide unified model interfaces, the above model classes has the following c
 The ``ChatResponse`` instance contains the generated thinking/text/tool use content, identity, created time and usage information.
 """
 import asyncio
-import json
 import os
 
 from agentscope.message import TextBlock, ToolUseBlock, ThinkingBlock, Msg

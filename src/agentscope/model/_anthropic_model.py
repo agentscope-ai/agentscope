@@ -45,7 +45,7 @@ class AnthropicChatModel(ChatModelBase):
         max_tokens: int = 2048,
         stream: bool = True,
         thinking: dict | None = None,
-        client_args: dict | None = None,
+        client_kwargs: dict | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
         """Initialize the Anthropic chat model.
@@ -70,7 +70,7 @@ class AnthropicChatModel(ChatModelBase):
                         "budget_tokens": 1024
                     }
 
-            client_args (`dict | None`, optional):
+            client_kwargs (`dict | None`, optional):
                 The extra keyword arguments to initialize the Anthropic client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
@@ -90,7 +90,7 @@ class AnthropicChatModel(ChatModelBase):
 
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key,
-            **(client_args or {}),
+            **(client_kwargs or {}),
         )
         self.max_tokens = max_tokens
         self.thinking = thinking

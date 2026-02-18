@@ -38,7 +38,7 @@ class GeminiChatModel(ChatModelBase):
         api_key: str,
         stream: bool = True,
         thinking_config: dict | None = None,
-        client_args: dict = None,
+        client_kwargs: dict = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
         """Initialize the Gemini chat model.
@@ -63,8 +63,8 @@ class GeminiChatModel(ChatModelBase):
                         "thinking_budget": 1024   # Max tokens for reasoning
                     }
 
-            client_args (`dict`, default `None`):
-                The extra keyword arguments to initialize the OpenAI client.
+            client_kwargs (`dict`, default `None`):
+                The extra keyword arguments to initialize the Gemini client.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                The extra keyword arguments used in Gemini API generation,
@@ -82,7 +82,7 @@ class GeminiChatModel(ChatModelBase):
 
         self.client = genai.Client(
             api_key=api_key,
-            **(client_args or {}),
+            **(client_kwargs or {}),
         )
         self.thinking_config = thinking_config
         self.generate_kwargs = generate_kwargs or {}

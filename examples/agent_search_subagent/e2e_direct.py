@@ -64,11 +64,11 @@ async def main() -> None:
     model_name = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     base_url = os.environ.get("OPENAI_BASE_URL")
 
-    client_args = {"base_url": base_url} if base_url else None
+    client_kwargs = {"base_url": base_url} if base_url else None
     host_model = OpenAIChatModel(
         model_name=model_name,
         stream=False,
-        client_args=client_args,
+        client_kwargs=client_kwargs,
     )
 
     # 2) 子代理权限束（最小必需字段）
