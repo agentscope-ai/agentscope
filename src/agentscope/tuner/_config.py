@@ -179,9 +179,9 @@ def _load_config_from_path_or_default(
                 delete=False,
                 encoding="utf-8",
             ) as tmp:
-                yaml.dump(default_config, tmp)
                 tmp_path = tmp.name
-
+                yaml.dump(default_config, tmp)
+                tmp.flush()
             config = load_config(tmp_path)
         finally:
             if tmp_path is not None:
