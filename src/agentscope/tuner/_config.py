@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """Configuration conversion for tuner."""
-import contextlib
-import inspect
-import os
 from datetime import datetime
 from typing import Any, Callable, List, Tuple
+import inspect
 
 from ._algorithm import AlgorithmConfig
 from ._dataset import DatasetConfig
@@ -138,6 +136,8 @@ def _load_config_from_path_or_default(
         Config,
         load_config,
     )
+    import contextlib
+    import os
     import tempfile
     import yaml
 
@@ -184,7 +184,7 @@ def _load_config_from_path_or_default(
 
             config = load_config(tmp_path)
         finally:
-            if tmp_path:
+            if tmp_path is not None:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp_path)
         template_used = True
