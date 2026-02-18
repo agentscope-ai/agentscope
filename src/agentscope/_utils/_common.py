@@ -170,10 +170,10 @@ def _save_base64_data(
     Args:
         media_type (`str`):
             The MIME type of the data, e.g. "image/png", "audio/mpeg".
-        base64_data (`str):
+        base64_data (`str`):
             The base64 data to be saved.
     """
-    extension = "." + media_type.split("/")[-1]
+    extension = media_type.split("/")[-1]
 
     with tempfile.NamedTemporaryFile(
         suffix=f".{extension}",
