@@ -472,3 +472,72 @@ def _resample_pcm_delta(
     resampled_base64 = base64.b64encode(resampled_bytes).decode("utf-8")
 
     return resampled_base64
+
+
+def _validate_function_schema(schema: dict) -> None:
+    """Validate the function schema to ensure it conforms to the expected
+    structure.
+
+    Args:
+        schema (`dict`):
+            The function schema to validate.
+
+    Raises:
+        ValueError: If the schema is invalid.
+    """
+    if not isinstance(schema, dict):
+        raise ValueError(
+            f"The schema must be a dictionary, got {type(schema)}.",
+        )
+
+    if schema.get("type") != "function":
+        raise ValueError("The schema type must be 'function'.")
+
+    if not isinstance(schema.get("function"), dict):
+        raise ValueError(
+            "The 'function' field must be a dictionary, got "
+            f"{type(schema.get('function'))}.",
+        )
+
+    # name field
+    if "name" not in schema["function"]:
+        raise ValueError(
+            "The function schema must have a 'name' field.",
+        )
+
+
+def _base_model_to_json(cls: Type[BaseModel] | None) -> str:
+    """Convert a pydantic BaseModel class to a JSON string.
+
+    Args:
+        cls (`Type[BaseModel] | None`):
+            The pydantic BaseModel class to convert.
+
+    Returns:
+        `str`:
+            The JSON string representation of the BaseModel class.
+    """
+    if issubclass(cls, BaseModel):
+        return f"{cls.__module__}.{cls.__qualname__}"
+    return json.dumps(None)
+
+
+def _base_model_from_json(x: str) -> Type[BaseModel] | None:
+    """Convert a JSON string to a pydantic BaseModel class.
+
+    Args:
+        x (`str`):
+            The JSON string representation of the BaseModel class.
+
+    Returns:
+        `Type[BaseModel] | None`:
+            The pydantic BaseModel class or `None`.
+    """
+    if x == "null" or x == json.dumps(None):
+        return None
+    module_name, class_name = x.rsplit(".", 1)
+    module = __import__(module_name, fromlist=[class_name])
+    cls = getattr(module, class_name)
+    if issubclass(cls, BaseModel):
+        return cls
+    return None
