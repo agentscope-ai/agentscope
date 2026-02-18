@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """Configuration conversion for tuner."""
-from typing import Any, Callable, List, Tuple
-from datetime import datetime
+import contextlib
 import inspect
+import os
+from datetime import datetime
+from typing import Any, Callable, List, Tuple
 
-from ._workflow import WorkflowType
+from ._algorithm import AlgorithmConfig
+from ._dataset import DatasetConfig
 from ._judge import JudgeType
 from ._model import TunerModelConfig
-from ._dataset import DatasetConfig
-from ._algorithm import AlgorithmConfig
+from ._workflow import WorkflowType
 
 
 def _set_if_not_none(obj: Any, field: str, value: Any) -> None:
@@ -169,10 +171,22 @@ def _load_config_from_path_or_default(
                 "monitor_type": "tensorboard",
             },
         }
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as tmp:
-            yaml.dump(default_config, tmp)
-            tmp.flush()
-            config = load_config(tmp.name)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".yaml",
+                delete=False,
+                encoding="utf-8",
+            ) as tmp:
+                yaml.dump(default_config, tmp)
+                tmp_path = tmp.name
+
+            config = load_config(tmp_path)
+        finally:
+            if tmp_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
         template_used = True
     else:
         config = load_config(config_path)
