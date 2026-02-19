@@ -385,12 +385,20 @@ class GeminiChatModel(ChatModelBase):
 
             usage = None
             if chunk.usage_metadata:
-                usage = ChatUsage(
-                    input_tokens=chunk.usage_metadata.prompt_token_count,
-                    output_tokens=chunk.usage_metadata.total_token_count
-                    - chunk.usage_metadata.prompt_token_count,
-                    time=(datetime.now() - start_datetime).total_seconds(),
-                )
+                 prompt_tokens = chunk.usage_metadata.prompt_token_count
+                 total_tokens = chunk.usage_metadata.total_token_count
+
+                 if (
+                    prompt_tokens is not None
+                    and total_tokens is not None
+    ):
+                    usage = ChatUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=total_tokens - prompt_tokens,
+            time=(datetime.now() - start_datetime).total_seconds(),
+        )
+
+
 
             # The content blocks for the current chunk
             content_blocks: list = []
@@ -502,13 +510,21 @@ class GeminiChatModel(ChatModelBase):
         if response.text and structured_model:
             metadata = _json_loads_with_repair(response.text)
 
+        usage = None
         if response.usage_metadata:
-            usage = ChatUsage(
-                input_tokens=response.usage_metadata.prompt_token_count,
-                output_tokens=response.usage_metadata.total_token_count
-                - response.usage_metadata.prompt_token_count,
-                time=(datetime.now() - start_datetime).total_seconds(),
-            )
+            prompt_tokens = response.usage_metadata.prompt_token_count
+            total_tokens = response.usage_metadata.total_token_count
+
+            if (
+        prompt_tokens is not None
+        and total_tokens is not None
+    ):
+             usage = ChatUsage(
+            input_tokens=prompt_tokens,
+            output_tokens=total_tokens - prompt_tokens,
+            time=(datetime.now() - start_datetime).total_seconds(),
+        )
+
 
         else:
             usage = None
