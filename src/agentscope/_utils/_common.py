@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
-import asyncio
 import base64
 import functools
 import inspect
@@ -83,22 +82,6 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
         timestamp += f"_{os.urandom(3).hex()}"
 
     return timestamp
-
-
-async def _is_async_func(func: Callable) -> bool:
-    """Check if the given function is an async function, including
-    coroutine functions, async generators, and coroutine objects.
-    """
-
-    return (
-        inspect.iscoroutinefunction(func)
-        or inspect.isasyncgenfunction(func)
-        or isinstance(func, types.CoroutineType)
-        or isinstance(func, types.GeneratorType)
-        and asyncio.iscoroutine(func)
-        or isinstance(func, functools.partial)
-        and await _is_async_func(func.func)
-    )
 
 
 async def _execute_async_or_sync_func(
