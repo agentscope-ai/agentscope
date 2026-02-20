@@ -3,10 +3,11 @@
 from contextlib import _AsyncGeneratorContextManager
 from typing import Any, Callable, Awaitable, Literal, List
 
+import httpx
 import mcp.types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from . import MCPToolFunction
 from ._client_base import MCPClientBase
@@ -65,24 +66,39 @@ class HttpStatelessClient(MCPClientBase):
         assert transport in ["streamable_http", "sse"]
 
         self.transport = transport
-
-        self.client_config = {
-            "url": url,
-            "headers": headers or {},
-            "timeout": timeout,
-            "sse_read_timeout": sse_read_timeout,
-            **client_kwargs,
-        }
+        self.url = url
+        self.headers = headers
+        self.timeout = timeout
+        self.sse_read_timeout = sse_read_timeout
+        self.client_kwargs = client_kwargs
 
         self._tools = None
 
     def get_client(self) -> _AsyncGeneratorContextManager[Any]:
         """The disposable MCP client object, which is a context manager."""
         if self.transport == "sse":
-            return sse_client(**self.client_config)
+            return sse_client(
+                url=self.url,
+                headers=self.headers,
+                timeout=self.timeout,
+                sse_read_timeout=self.sse_read_timeout,
+                **self.client_kwargs,
+            )
 
         if self.transport == "streamable_http":
-            return streamablehttp_client(**self.client_config)
+            # Create httpx.AsyncClient for v2 API
+            http_client = httpx.AsyncClient(
+                headers=self.headers,
+                timeout=httpx.Timeout(
+                    self.timeout,
+                    read=self.sse_read_timeout,
+                ),
+                **self.client_kwargs,
+            )
+            return streamable_http_client(
+                url=self.url,
+                http_client=http_client,
+            )
 
         raise ValueError(
             f"Unsupported transport type: {self.transport}. "
