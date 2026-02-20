@@ -875,7 +875,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
-            execution_timeout (`float | None`, defaults to `None`):
+            execution_timeout (`float | None`, optional):
                 The timeout in seconds for executing tool functions. If `None`,
                 no timeout is applied.
         """

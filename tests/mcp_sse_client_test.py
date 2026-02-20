@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The MCP client test module in agentscope."""
 import asyncio
+import time
 from multiprocessing import Process
 from unittest.async_case import IsolatedAsyncioTestCase
 
@@ -24,10 +25,22 @@ async def tool_1(arg1: str, arg2: list[int]) -> str:
     return f"arg1: {arg1}, arg2: {arg2}"
 
 
+async def slow_tool(delay: float = 3.0) -> str:
+    """A slow tool that simulates timeout.
+
+    Args:
+        delay (`float`):
+            Sleep duration in seconds.
+    """
+    await asyncio.sleep(delay)
+    return f"Completed after {delay} seconds"
+
+
 def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("SSE", port=8003)
     sse_server.tool(description="A test tool function.")(tool_1)
+    sse_server.tool(description="A slow tool for timeout testing.")(slow_tool)
     sse_server.run(transport="sse")
 
 
@@ -210,7 +223,10 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(self.toolkit.tools, {})
 
         # Try to add the mcp client
-        await self.toolkit.register_mcp_client(stateless_client)
+        await self.toolkit.register_mcp_client(
+            stateless_client,
+            disable_funcs=["slow_tool"],
+        )
         self.assertListEqual(
             self.toolkit.get_json_schemas(),
             self.schemas,
@@ -219,6 +235,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.toolkit.clear()
         await self.toolkit.register_mcp_client(
             stateless_client,
+            disable_funcs=["slow_tool"],
             preset_kwargs_mapping={
                 "tool_1": {
                     "arg1": "default_value",
@@ -361,7 +378,10 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.toolkit.clear()
         self.assertDictEqual(self.toolkit.tools, {})
 
-        await self.toolkit.register_mcp_client(stateful_client)
+        await self.toolkit.register_mcp_client(
+            stateful_client,
+            disable_funcs=["slow_tool"],
+        )
         self.assertListEqual(
             self.toolkit.get_json_schemas(),
             self.schemas,
@@ -370,6 +390,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.toolkit.clear()
         await self.toolkit.register_mcp_client(
             stateful_client,
+            disable_funcs=["slow_tool"],
             preset_kwargs_mapping={
                 "tool_1": {
                     "arg1": "default_value",
@@ -406,3 +427,76 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         await stateful_client.close()
         self.assertFalse(stateful_client.is_connected)
+
+    async def test_execution_timeout_with_register_mcp_client(self) -> None:
+        """Test execution_timeout parameter in register_mcp_client."""
+        stateless_client = HttpStatelessClient(
+            name="test_timeout_stateless",
+            transport="sse",
+            url=f"http://127.0.0.1:{self.port}/sse",
+        )
+
+        # Register with execution_timeout=1.0 second
+        await self.toolkit.register_mcp_client(
+            stateless_client,
+            execution_timeout=1.0,
+        )
+
+        # Call slow_tool should timeout in ~1 second
+        start_time = time.time()
+        res_gen = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                id="timeout_test",
+                type="tool_use",
+                name="slow_tool",
+                input={"delay": 3.0},
+            ),
+        )
+
+        response_received = False
+        async for chunk in res_gen:
+            response_received = True
+            self.assertIsInstance(chunk, ToolResponse)
+
+        elapsed = time.time() - start_time
+        self.assertTrue(response_received, "Should receive error response")
+        # Should timeout around 1 second, allow 0.5s tolerance
+        self.assertLess(elapsed, 2.0, f"Should timeout in ~1s, got {elapsed:.2f}s")
+        self.assertGreater(elapsed, 0.5, f"Should take at least 0.5s, got {elapsed:.2f}s")
+
+        # Test stateful client
+        self.toolkit.clear()
+        stateful_client = HttpStatefulClient(
+            name="test_timeout_stateful",
+            transport="sse",
+            url=f"http://127.0.0.1:{self.port}/sse",
+        )
+        await stateful_client.connect()
+
+        await self.toolkit.register_mcp_client(
+            stateful_client,
+            execution_timeout=1.0,
+        )
+
+        start_time = time.time()
+        res_gen = await self.toolkit.call_tool_function(
+            ToolUseBlock(
+                id="timeout_test_stateful",
+                type="tool_use",
+                name="slow_tool",
+                input={"delay": 3.0},
+            ),
+        )
+
+        response_received = False
+        async for chunk in res_gen:
+            response_received = True
+            self.assertIsInstance(chunk, ToolResponse)
+
+        elapsed = time.time() - start_time
+        self.assertTrue(response_received, "Should receive error response")
+        self.assertLess(elapsed, 2.0, f"Should timeout in ~1s, got {elapsed:.2f}s")
+        self.assertGreater(elapsed, 0.5, f"Should take at least 0.5s, got {elapsed:.2f}s")
+
+        await stateful_client.close()
+
