@@ -689,6 +689,11 @@ class ReActAgent(ReActAgentBase):
                     "output"
                 ] = chunk.content
 
+                # Human in the loop may alternate the tool call
+                tool_res_msg.content[0][  # type: ignore[index]
+                    "name"
+                ] = tool_call["name"]
+
                 await self.print(tool_res_msg, chunk.is_last)
 
                 # Raise the CancelledError to handle the interruption in the

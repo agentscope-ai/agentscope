@@ -54,6 +54,11 @@ class RegisteredToolFunction:
     returns `None`, the tool result will be returned as is. If it returns a
     `ToolResponse`, the returned block will be used as the final tool
     response."""
+    human_permit_func: (Callable[[ToolUseBlock], bool]) | None = None
+    """The human permit function that will be called to determine whether to
+    permit the tool function to be called. If it returns `True`, the tool
+    function will be called normally. If it returns `False`, the tool function
+    will be rejected."""
 
     @property
     def extended_json_schema(self) -> dict:
