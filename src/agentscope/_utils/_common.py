@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """The common utilities for agentscope library."""
 import base64
-import functools
 import inspect
 import json
 import os
 import tempfile
-import types
 import typing
 import uuid
 from datetime import datetime
-from typing import Any, Callable, Type, Dict
+from typing import Any, Type, Dict
 
 import numpy as np
 import requests
@@ -85,29 +83,36 @@ def _get_timestamp(add_random_suffix: bool = False) -> str:
 
 
 async def _execute_async_or_sync_func(
-    func: Callable,
+    func: Any,
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    """Execute an async or sync function based on its type.
+    """Execute a callable or awaitable safely.
 
-    Args:
-        func (`Callable`):
-            The function to be executed, which can be either async or sync.
-        *args (`Any`):
-            Positional arguments to be passed to the function.
-        **kwargs (`Any`):
-            Keyword arguments to be passed to the function.
-
-    Returns:
-        `Any`:
-            The result of the function execution.
+    If `func` is an awaitable object (coroutine, Task, Future), it is awaited
+    directly and must not receive args/kwargs. Otherwise, `func` must be
+    callable. The callable is invoked and, if the result is awaitable, the
+    result is awaited.
     """
+    # Awaitable object (coroutine / Task / Future) passed directly.
+    if inspect.isawaitable(func) and not callable(func):
+        if args or kwargs:
+            raise TypeError(
+                "Awaitable object cannot be called with args/kwargs; "
+                "pass a callable instead.",
+            )
+        return await func
 
-    if await _is_async_func(func):
-        return await func(*args, **kwargs)
+    if not callable(func):
+        type_name = type(func).__name__
+        raise TypeError(
+            f"Expected a callable or awaitable, got {type_name}.",
+        )
 
-    return func(*args, **kwargs)
+    result = func(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
 
 
 def _get_bytes_from_web_url(
