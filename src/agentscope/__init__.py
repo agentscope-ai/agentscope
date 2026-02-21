@@ -77,6 +77,7 @@ def init(
     logging_level: str = "INFO",
     studio_url: str | None = None,
     tracing_url: str | None = None,
+    tracing_protocol: str = "http/protobuf",
 ) -> None:
     """Initialize the agentscope library.
 
@@ -101,6 +102,11 @@ def init(
             OpenTelemetry tracing platforms like Arize-Phoenix and Langfuse.
             If not provided and `studio_url` is provided, it will send traces
             to the AgentScope Studio's tracing endpoint.
+        tracing_protocol (`str`, optional):
+            The protocol to use for the trace exporter. Supported values are:
+            - "grpc": Use gRPC protocol
+            - "http/protobuf": Use HTTP protocol with protobuf encoding
+            Defaults to "http/protobuf".
     """
 
     if project:
@@ -152,7 +158,7 @@ def init(
     if endpoint:
         from .tracing import setup_tracing
 
-        setup_tracing(endpoint=endpoint)
+        setup_tracing(endpoint=endpoint, protocol=tracing_protocol)
         _config.trace_enabled = True
 
 
