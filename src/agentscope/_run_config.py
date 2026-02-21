@@ -21,6 +21,8 @@ class _ConfigCls:
         self._project = project
         self._name = name
         self._trace_enabled = trace_enabled
+        # Global tracing enable flag - defaults to False
+        self._global_trace_enabled = False
 
     @property
     def run_id(self) -> str:
@@ -71,3 +73,13 @@ class _ConfigCls:
     def trace_enabled(self, value: bool) -> None:
         """Set whether tracing is enabled."""
         self._trace_enabled.set(value)
+
+    @property
+    def global_trace_enabled(self) -> bool:
+        """Get global tracing enable flag."""
+        return self._global_trace_enabled
+
+    @global_trace_enabled.setter
+    def global_trace_enabled(self, value: bool) -> None:
+        """Set global tracing enable flag."""
+        self._global_trace_enabled = value

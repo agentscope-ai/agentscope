@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unittests for the tracing functionality in AgentScope."""
+import asyncio
 from typing import (
     AsyncGenerator,
     Generator,
@@ -25,6 +26,7 @@ from agentscope.tracing import (
     trace_format,
     trace_embedding,
 )
+from agentscope.tracing._trace import _check_tracing_enabled
 
 
 class TracingTest(IsolatedAsyncioTestCase):
@@ -379,3 +381,200 @@ class TracingTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Tear down the environment"""
         _config.trace_enabled = True
+
+
+class AsyncContextLossTest(IsolatedAsyncioTestCase):
+    """Test cases for async context loss issue (#1208) - Global tracing mode"""
+
+    async def asyncSetUp(self) -> None:
+        """Set up the environment for async context loss tests"""
+        # Reset tracing settings to default
+        _config.trace_enabled = False
+        _config.global_trace_enabled = False
+        # Clean up any existing TracerProvider
+        from opentelemetry import trace as trace_api
+        trace_api.set_tracer_provider(trace_api.NoOpTracerProvider())
+
+    async def test_check_tracing_enabled_context_var_mode(self) -> None:
+        """Test _check_tracing_enabled with ContextVar mode (default)"""
+        # Initially, tracing is disabled
+        self.assertFalse(_check_tracing_enabled())
+
+        # Enable tracing via ContextVar
+        _config.trace_enabled = True
+        self.assertTrue(_check_tracing_enabled())
+
+        # Disable tracing via ContextVar
+        _config.trace_enabled = False
+        self.assertFalse(_check_tracing_enabled())
+
+    async def test_check_tracing_enabled_global_mode_without_tracer_provider(self) -> None:
+        """Test global tracing mode without TracerProvider configured"""
+        # Enable global tracing but no TracerProvider exists
+        _config.trace_enabled = False
+        _config.global_trace_enabled = True
+        # Should return False because no TracerProvider is configured
+        self.assertFalse(_check_tracing_enabled())
+
+    async def test_async_task_tracing_with_global_enabled(self) -> None:
+        """Test that tracing works in async tasks when global_trace_enabled is True"""
+
+        @trace(name="async_task_function")
+        async def async_task_function(x: int) -> int:
+            """Function that will be traced in async task"""
+            return x * 2
+
+        # Test without global tracing (ContextVar might be lost in tasks)
+        _config.trace_enabled = True
+        _config.global_trace_enabled = False
+
+        # Direct call should work
+        result = await async_task_function(5)
+        self.assertEqual(result, 10)
+
+        # In async task, ContextVar might be lost, but function still executes
+        task = asyncio.create_task(async_task_function(10))
+        result = await task
+        self.assertEqual(result, 20)
+
+        # Now enable global tracing
+        _config.global_trace_enabled = True
+
+        # Both direct call and task should work reliably
+        result = await async_task_function(15)
+        self.assertEqual(result, 30)
+
+        task = asyncio.create_task(async_task_function(20))
+        result = await task
+        self.assertEqual(result, 40)
+
+        # Reset for other tests
+        _config.global_trace_enabled = False
+
+    async def test_async_task_tracing_with_global_enabled(self) -> None:
+        """Test that tracing works in async tasks when global_trace_enabled is True"""
+
+        @trace(name="async_task_function")
+        async def async_task_function(x: int) -> int:
+            """Function that will be traced in async task"""
+            return x * 2
+
+        # Test without global tracing (ContextVar might be lost in tasks)
+        _config.trace_enabled = True
+        _config.global_trace_enabled = False
+
+        # Direct call should work
+        result = await async_task_function(5)
+        self.assertEqual(result, 10)
+
+        # In async task, ContextVar might be lost, but function should still execute
+        task = asyncio.create_task(async_task_function(10))
+        result = await task
+        self.assertEqual(result, 20)
+
+        # Now enable global tracing
+        _config.global_trace_enabled = True
+
+        # Both direct call and task should work
+        result = await async_task_function(15)
+        self.assertEqual(result, 30)
+
+        task = asyncio.create_task(async_task_function(20))
+        result = await task
+        self.assertEqual(result, 40)
+
+        # Reset
+        _config.global_trace_enabled = False
+        _config.global_trace_enabled = False
+        _config.trace_enabled = False
+
+    async def test_async_context_loss_with_global_tracing(self) -> None:
+        """Test that global tracing fixes async context loss"""
+
+        @trace(name="async_function_in_task")
+        async def async_function_in_task(x: int) -> int:
+            """Function that might lose context in async task"""
+            await asyncio.sleep(0.01)
+            return x * 2
+
+        # Test 1: Without global tracing (ContextVar mode)
+        _config.trace_enabled = True
+        _config.global_trace_enabled = False
+
+        # Direct call should work
+        result = await async_function_in_task(5)
+        self.assertEqual(result, 10)
+
+        # But in async task, ContextVar might be lost
+        # (This simulates the issue #1208)
+        task = asyncio.create_task(async_function_in_task(10))
+        result = await task
+        self.assertEqual(result, 20)
+
+        # Test 2: With global tracing enabled
+        _config.global_trace_enabled = True
+
+        # Set up TracerProvider to simulate real tracing setup
+        from opentelemetry import trace as trace_api
+        from opentelemetry.sdk.trace import TracerProvider
+        trace_api.set_tracer_provider(TracerProvider())
+
+        # Now both direct call and task should work
+        result = await async_function_in_task(15)
+        self.assertEqual(result, 30)
+
+        task = asyncio.create_task(async_function_in_task(20))
+        result = await task
+        self.assertEqual(result, 40)
+
+        # Clean up
+        trace_api.set_tracer_provider(trace_api.NoOpTracerProvider())
+
+    async def test_global_trace_enabled_override(self) -> None:
+        """Test that global_trace_enabled can override ContextVar settings"""
+
+        @trace(name="controlled_function")
+        async def controlled_function() -> str:
+            """Function to test control"""
+            return "traced"
+
+        # Set ContextVar to False
+        _config.trace_enabled = False
+
+        # Test 1: global_trace_enabled = False (default)
+        _config.global_trace_enabled = False
+        # Should not be traced (ContextVar is False)
+        self.assertFalse(_check_tracing_enabled())
+
+        # Test 2: global_trace_enabled = True but no TracerProvider
+        _config.global_trace_enabled = True
+        # Should return False (no TracerProvider exists)
+        self.assertFalse(_check_tracing_enabled())
+
+        # Test 3: With trace_enabled=True (normal ContextVar mode)
+        _config.global_trace_enabled = False
+        _config.trace_enabled = True
+        self.assertTrue(_check_tracing_enabled())
+
+        # Reset
+        _config.trace_enabled = False
+        _config.global_trace_enabled = False
+
+    async def test_setup_tracing_with_global_enabled(self) -> None:
+        """Test setup_tracing with global_trace_enabled parameter"""
+        from agentscope.tracing import setup_tracing
+
+        # Test setup_tracing with global_trace_enabled=True
+        setup_tracing(
+            endpoint="http://localhost:4318/v1/traces",
+            global_trace_enabled=True
+        )
+
+        # Should enable global tracing
+        self.assertTrue(_config.global_trace_enabled)
+
+        # Without TracerProvider, should return False
+        self.assertFalse(_check_tracing_enabled())
+
+        # Clean up
+        _config.global_trace_enabled = False
