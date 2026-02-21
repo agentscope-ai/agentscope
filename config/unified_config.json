@@ -1,0 +1,69 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "financial_analysis",
+    "user": "postgres",
+    "password": "",
+    "pool_size": 10,
+    "max_overflow": 20
+  },
+  "api": {
+    "alpha_vantage_key": "",
+    "finnhub_key": "",
+    "quandl_key": "",
+    "fred_key": "",
+    "base_url": "https://api.example.com",
+    "timeout": 30,
+    "retry_attempts": 3
+  },
+  "tools": {
+    "enabled_tools": [
+      "data_fetcher",
+      "analyzer",
+      "validator"
+    ],
+    "tool_timeout": 60,
+    "max_concurrent_tools": 5,
+    "tool_cache_size": 100,
+    "fallback_enabled": true
+  },
+  "agent": {
+    "name": "FinancialAnalysisAgent",
+    "version": "2.0.0",
+    "model_name": "gpt-4",
+    "max_tokens": 4096,
+    "temperature": 0.8,
+    "memory_limit": 1000,
+    "log_level": "INFO"
+  },
+  "mcp": {
+    "enabled": false,
+    "server_url": "ws://localhost:8080",
+    "api_key": "",
+    "timeout": 30,
+    "max_connections": 10,
+    "heartbeat_interval": 60
+  },
+  "a2a": {
+    "enabled": true,
+    "message_timeout": 30,
+    "max_message_size": 1048576,
+    "retry_attempts": 3,
+    "workflow_timeout": 300
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file_path": null,
+    "max_file_size": 10485760,
+    "backup_count": 5
+  },
+  "security": {
+    "encryption_enabled": false,
+    "api_key_rotation_days": 90,
+    "max_login_attempts": 5,
+    "session_timeout": 3600,
+    "audit_enabled": true
+  }
+}

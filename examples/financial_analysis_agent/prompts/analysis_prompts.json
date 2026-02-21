@@ -1,0 +1,18 @@
+[
+  {
+    "name": "data_collection_task",
+    "template": "请收集 {{ company_name }}（{{ company_symbol }}）的财务数据：\n\n## 数据要求\n- 财务报表：利润表、资产负债表、现金流量表\n- 时间范围：{{ time_period or '最近3年' }}\n- 数据来源：{{ data_sources or '公开数据源' }}\n\n## 数据验证\n- 确保数据完整性和准确性\n- 标注数据来源和获取时间\n- 识别并处理异常值\n\n请提供结构化的数据输出。",
+    "description": "数据收集任务提示词",
+    "parameters": ["company_name", "company_symbol", "time_period", "data_sources"],
+    "category": "data",
+    "language": "zh"
+  },
+  {
+    "name": "trend_analysis_report", 
+    "template": "基于以下数据，请进行趋势分析：\n\n## 分析对象\n- 公司：{{ company_name }}（{{ company_symbol }}）\n- 分析指标：{{ metrics }}\n- 时间期间：{{ time_period }}\n\n## 分析要求\n1. 识别主要趋势\n2. 计算增长率\n3. 分析周期性波动\n4. 预测未来趋势\n5. 识别关键转折点\n\n## 输出格式\n请提供详细的分析报告，包含数据图表和趋势说明。",
+    "description": "趋势分析报告提示词",
+    "parameters": ["company_name", "company_symbol", "metrics", "time_period"],
+    "category": "analysis",
+    "language": "zh"
+  }
+]
