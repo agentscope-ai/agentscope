@@ -127,7 +127,7 @@ class ReflectFailure(BaseModel):
                         "the failed subtask should "
                         "be further decomposed; otherwise, 'false'.",
                     },
-                    "rephrased_plan": {
+                    "failed_subtask": {
                         "type": "string",
                         "description": "Information about whether "
                         "the failed subtask requires "
