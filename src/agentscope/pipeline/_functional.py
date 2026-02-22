@@ -98,8 +98,13 @@ async def fanout_pipeline(
             asyncio.create_task(agent(deepcopy(msg), **kwargs))
             for agent in agents
         ]
-
-        return await asyncio.gather(*tasks)
+        try:
+            return await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()  # Cancel the task if it's still running
+            await asyncio.gather(*tasks, return_exceptions=True)  # Wait for all tasks to complete
     else:
         return [await agent(deepcopy(msg), **kwargs) for agent in agents]
 
