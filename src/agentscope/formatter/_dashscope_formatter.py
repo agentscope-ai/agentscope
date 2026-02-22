@@ -6,7 +6,7 @@ import base64
 import json
 import mimetypes
 import os.path
-from typing import Any
+from typing import Any, cast
 
 from ._truncated_formatter_base import TruncatedFormatterBase
 from .._logging import logger
@@ -25,17 +25,17 @@ from ..token import TokenCounterBase
 
 
 def _format_dashscope_media_block(
-    block: ImageBlock | AudioBlock,
+    block: ImageBlock | AudioBlock | VideoBlock,
 ) -> dict[str, str]:
-    """Format an image or audio block for DashScope API.
+    """Format an image, audio, or video block for DashScope API.
 
     Args:
-        block (`ImageBlock` | `AudioBlock`):
-            The image or audio block to format.
+        block (`ImageBlock | AudioBlock | VideoBlock`):
+            The media block to format.
 
     Returns:
         `dict[str, str]`:
-            A dictionary with "image" or "audio" key and the formatted URL or
+            A dictionary with the media type key and the formatted URL or
             data URI as value.
 
     Raises:
@@ -278,7 +278,10 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                 elif typ in ["image", "audio", "video"]:
                     content_blocks.append(
                         _format_dashscope_media_block(
-                            block,  # type: ignore[arg-type]
+                            cast(
+                                ImageBlock | AudioBlock | VideoBlock,
+                                block,
+                            ),
                         ),
                     )
 
@@ -577,7 +580,12 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
                         accumulated_text.clear()
 
                     conversation_blocks.append(
-                        _format_dashscope_media_block(block),
+                        _format_dashscope_media_block(
+                            cast(
+                                ImageBlock | AudioBlock | VideoBlock,
+                                block,
+                            ),
+                        ),
                     )
 
         if accumulated_text:
