@@ -2,7 +2,9 @@
 # pylint: disable=too-many-branches
 """The dashscope formatter module."""
 
+import base64
 import json
+import mimetypes
 import os.path
 from typing import Any
 
@@ -45,7 +47,17 @@ def _format_dashscope_media_block(
     if source["type"] == "url":
         url = source["url"]
         if _is_accessible_local_file(url):
-            return {typ: "file://" + os.path.abspath(url)}
+            abs_path = os.path.abspath(url)
+            media_type = mimetypes.guess_type(abs_path)[0]
+            if not media_type:
+                raise ValueError(
+                    f"Cannot determine the media type of '{abs_path}'. "
+                    "Please use a file with a recognized extension "
+                    "(e.g., .png, .jpg, .mp3, .mp4).",
+                )
+            with open(abs_path, "rb") as f:
+                base64_data = base64.b64encode(f.read()).decode("utf-8")
+            return {typ: f"data:{media_type};base64,{base64_data}"}
         else:
             # treat as web url
             return {typ: url}
@@ -564,35 +576,9 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
                         )
                         accumulated_text.clear()
 
-                    if block["source"]["type"] == "url":
-                        url = block["source"]["url"]
-                        if _is_accessible_local_file(url):
-                            conversation_blocks.append(
-                                {
-                                    block["type"]: "file://"
-                                    + os.path.abspath(url),
-                                },
-                            )
-                        else:
-                            conversation_blocks.append({block["type"]: url})
-
-                    elif block["source"]["type"] == "base64":
-                        media_type = block["source"]["media_type"]
-                        base64_data = block["source"]["data"]
-                        conversation_blocks.append(
-                            {
-                                block[
-                                    "type"
-                                ]: f"data:{media_type};base64,{base64_data}",
-                            },
-                        )
-
-                    else:
-                        logger.warning(
-                            "Unsupported block type %s in the message, "
-                            "skipped.",
-                            block["type"],
-                        )
+                    conversation_blocks.append(
+                        _format_dashscope_media_block(block),
+                    )
 
         if accumulated_text:
             conversation_blocks.append({"text": "\n".join(accumulated_text)})
