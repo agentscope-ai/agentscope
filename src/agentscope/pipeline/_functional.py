@@ -164,29 +164,35 @@ async def stream_printing_messages(
 
     # Execute the agent asynchronously
     task = asyncio.create_task(coroutine_task)
+    task.add_done_callback(lambda _: queue.put_nowait(end_signal))
 
-    if task.done():
-        await queue.put(end_signal)
-    else:
-        task.add_done_callback(lambda _: queue.put_nowait(end_signal))
+    try:
+        # Receive the messages from the agent's message queue
+        while True:
+            # The message obj, and a boolean indicating whether it's the last chunk
+            # in a streaming message
+            printing_msg = await queue.get()
 
-    # Receive the messages from the agent's message queue
-    while True:
-        # The message obj, and a boolean indicating whether it's the last chunk
-        # in a streaming message
-        printing_msg = await queue.get()
+            # Check if this is the end signal
+            if isinstance(printing_msg, str) and printing_msg == end_signal:
+                break
 
-        # Check if this is the end signal
-        if isinstance(printing_msg, str) and printing_msg == end_signal:
-            break
+            if yield_speech:
+                yield printing_msg
+            else:
+                msg, last, _ = printing_msg
+                yield msg, last
 
-        if yield_speech:
-            yield printing_msg
-        else:
-            msg, last, _ = printing_msg
-            yield msg, last
-
-    # Check exception after processing all messages
-    exception = task.exception()
-    if exception is not None:
-        raise exception from None
+        # Check exception after processing all messages
+        exception = task.exception()
+        if exception is not None:
+            raise exception from None
+    finally:
+        # Cancel the task if it's still running when the generator is closed
+        if not task.done():
+            task.cancel()
+            try:
+                # Ensure the task exits before returning
+                await task
+            except:
+                pass
