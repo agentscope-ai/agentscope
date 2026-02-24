@@ -47,36 +47,6 @@ def check_judge_function(
     )
 
 
-def check_workflow_function(
-    func: Callable,
-) -> None:
-    """Check if the given function is a valid JudgeType.
-
-    Args:
-        func (Callable): The function to check.
-    """
-    essential_params = ["task", "model"]
-    _check_function_signature(
-        func,
-        essential_params,
-    )
-
-
-def check_judge_function(
-    func: Callable,
-) -> None:
-    """Check if the given function is a valid JudgeType.
-
-    Args:
-        func (Callable): The function to check.
-    """
-    essential_params = ["task", "response"]
-    _check_function_signature(
-        func,
-        essential_params,
-    )
-
-
 async def select_model(
     *,
     workflow_func: WorkflowType,
