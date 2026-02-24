@@ -1123,12 +1123,12 @@ class ReActAgent(ReActAgentBase):
 
             # Format the compressed memory summary
             if last_chunk.metadata:
-                # Update the compressed summary in the memory storage
-                await self.memory.update_compressed_summary(
-                    self.compression_config.summary_template.format(
-                        **last_chunk.metadata,
-                    ),
+                summary_text = self.compression_config.summary_template.format(
+                    **last_chunk.metadata,
                 )
+
+                # Update the compressed summary in the memory storage
+                await self.memory.update_compressed_summary(summary_text)
 
                 # Mark the compressed messages in the memory storage
                 await self.memory.update_messages_mark(
@@ -1144,11 +1144,6 @@ class ReActAgent(ReActAgentBase):
 
                 # Offload compressed messages to searchable storage
                 if self.compression_config.offload_storage is not None:
-                    summary_text = (
-                        self.compression_config.summary_template.format(
-                            **last_chunk.metadata,
-                        )
-                    )
                     await self.compression_config.offload_storage.store(
                         to_compressed_msgs,
                         summary_text,

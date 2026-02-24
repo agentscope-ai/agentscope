@@ -164,9 +164,7 @@ class InMemorySearchableStorage(MemoryOffloadingBase):
             return True
 
         # Check message content
-        for msg in chunk.messages:
-            text = msg.get_text_content()
-            if text and query_lower in text.lower():
-                return True
-
-        return False
+        return any(
+            (text := msg.get_text_content()) and query_lower in text.lower()
+            for msg in chunk.messages
+        )
