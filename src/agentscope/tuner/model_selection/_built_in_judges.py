@@ -15,9 +15,6 @@ async def avg_time_judge(
     This function returns a negative reward (since smaller time usage is better,
     making it a bigger-is-better metric), and includes the original metric
     in the metrics field.
-    This function returns a negative reward (since smaller time usage is better,
-    making it a bigger-is-better metric), and includes the original metric
-    in the metrics field.
 
     Args:
         response (`WorkflowOutput`):
@@ -25,8 +22,6 @@ async def avg_time_judge(
 
     Returns:
         `JudgeOutput`:
-            The negative time taken (making smaller time a bigger reward),
-            and metrics containing the original time value.
             The negative time taken (making smaller time a bigger reward),
             and metrics containing the original time value.
     """
@@ -47,12 +42,8 @@ async def avg_time_judge(
     # Return negative reward to make it bigger-is-better (smaller time = higher reward)
     reward = -time_taken
 
-    # Return negative reward to make it bigger-is-better (smaller time = higher reward)
-    reward = -time_taken
-
     return JudgeOutput(
         reward=reward,
-        metrics={"avg_time_seconds": time_taken},
         metrics={"avg_time_seconds": time_taken},
     )
 
@@ -77,8 +68,6 @@ async def avg_token_consumption_judge(
 
     Returns:
         `JudgeOutput`:
-            The negative token consumption (making smaller consumption a bigger reward),
-            and metrics containing the original token consumption value.
             The negative token consumption (making smaller consumption a bigger reward),
             and metrics containing the original token consumption value.
     """
@@ -109,7 +98,6 @@ async def avg_token_consumption_judge(
     return JudgeOutput(
         reward=reward,
         metrics={
-            "token_consumed": original_reward,
             "token_consumed": original_reward,
         },
     )

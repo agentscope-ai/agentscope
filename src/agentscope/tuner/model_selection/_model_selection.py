@@ -4,10 +4,8 @@ candidates based on evaluation metrics."""
 import asyncio
 import logging
 from typing import Callable, Sequence, Tuple
-from typing import Callable, Sequence, Tuple
 from ...model import ChatModelBase
 from .._workflow import WorkflowType, WorkflowOutput
-from .._config import _check_function_signature
 from .._config import _check_function_signature
 from .._judge import JudgeType, JudgeOutput
 from .._dataset import DatasetConfig
@@ -49,43 +47,12 @@ def check_judge_function(
     )
 
 
-def check_workflow_function(
-    func: Callable,
-) -> None:
-    """Check if the given function is a valid JudgeType.
-
-    Args:
-        func (Callable): The function to check.
-    """
-    essential_params = ["task", "model"]
-    _check_function_signature(
-        func,
-        essential_params,
-    )
-
-
-def check_judge_function(
-    func: Callable,
-) -> None:
-    """Check if the given function is a valid JudgeType.
-
-    Args:
-        func (Callable): The function to check.
-    """
-    essential_params = ["task", "response"]
-    _check_function_signature(
-        func,
-        essential_params,
-    )
-
-
 async def select_model(
     *,
     workflow_func: WorkflowType,
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
-) -> Tuple[ChatModelBase, dict[str, float]]:
 ) -> Tuple[ChatModelBase, dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
@@ -104,23 +71,12 @@ async def select_model(
             function is user-defined and needs to parse the corresponding
             WorkflowOutput. The function should return reward values where
             higher values indicate better performance by default.
-            higher values indicate better performance by default.
         train_dataset (`DatasetConfig`):
             Configuration of the dataset used for model evaluation.
         candidate_models (`Sequence[ChatModelBase]`):
             A sequence of candidate models to evaluate.
 
     Returns:
-        `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
-            - The model that achieved the best performance across the dataset
-              (with the highest average reward)
-            - Dictionary of aggregated metrics collected during evaluation
-    """
-    check_workflow_function(workflow_func)
-    check_judge_function(judge_func)
-
-    if len(candidate_models) < 2:
-        raise ValueError("At least two candidate models must be provided.")
         `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
             - The model that achieved the best performance across the dataset
               (with the highest average reward)
@@ -185,10 +141,6 @@ async def select_model(
             str,
             float,
         ] = {}  # Store accumulated metrics for this model
-        model_metrics: dict[
-            str,
-            float,
-        ] = {}  # Store accumulated metrics for this model
 
         # Process dataset samples with async function calls
         for idx, sample in enumerate(dataset):
@@ -209,14 +161,6 @@ async def select_model(
             
             total_reward += judge_output.reward
             num_samples += 1
-
-            # Aggregate metrics from this sample
-            if judge_output.metrics:
-                for key, value in judge_output.metrics.items():
-                    if key in model_metrics:
-                        model_metrics[key] += value
-                    else:
-                        model_metrics[key] = value
 
             # Aggregate metrics from this sample
             if judge_output.metrics:
@@ -249,12 +193,8 @@ async def select_model(
 
         # Update best model if current model performs better
         if avg_reward > best_avg_reward:
-        if avg_reward > best_avg_reward:
             best_avg_reward = avg_reward
             best_model = model
-            all_metrics = (
-                averaged_model_metrics  # Store the metrics of the best model
-            )
             all_metrics = (
                 averaged_model_metrics  # Store the metrics of the best model
             )
