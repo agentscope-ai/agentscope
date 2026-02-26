@@ -205,6 +205,21 @@ print("456")"""
                 res.content[0]["text"],
             )
 
+        # Test tilde expansion: path with ~ should resolve to user home
+        home = os.path.expanduser("~")
+        test_name = f".agentscope_tool_test_{shortuuid.uuid()}.txt"
+        tilde_path = f"~/{test_name}"
+        real_path = os.path.join(home, test_name)
+        try:
+            with open(real_path, "w", encoding="utf-8") as f:
+                f.write("tilde expansion works\n")
+            res = await view_text_file(file_path=tilde_path)
+            self.assertIn("tilde expansion works", res.content[0]["text"])
+            self.assertIn("1: tilde expansion works", res.content[0]["text"])
+        finally:
+            if os.path.exists(real_path):
+                os.remove(real_path)
+
     async def test_write_text_file(self) -> None:
         """Test writing to text file."""
         # create and write a new file

@@ -41,6 +41,7 @@ async def insert_text_file(
             ],
         )
 
+    file_path = os.path.expanduser(file_path)
     if not os.path.exists(file_path):
         return ToolResponse(
             content=[
@@ -124,7 +125,7 @@ async def write_text_file(
         `ToolResponse`:
             The tool response containing the result of the writing operation.
     """
-
+    file_path = os.path.expanduser(file_path)
     if not os.path.exists(file_path):
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(content)
