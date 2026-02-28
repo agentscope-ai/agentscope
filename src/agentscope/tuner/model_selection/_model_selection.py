@@ -53,6 +53,7 @@ async def select_model(
     judge_func: JudgeType,
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
+    max_threads: int = 2,
 ) -> Tuple[ChatModelBase, dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
@@ -62,10 +63,8 @@ async def select_model(
         workflow_func (`WorkflowType`):
             The workflow function that executes the task with a given model.
             The workflow may contain multiple nodes that use different models.
-            Models to be selected by select_model should be defined with
-            "model" as the main parameter in the workflow_func. Other models
-            that don't require optimization should be passed via
-            auxiliary_models parameter.
+            Models to be selected should be defined with
+            "model" as the main parameter in the workflow_func. 
         judge_func (`JudgeType`):
             The judge function that evaluates the output of the workflow. This
             function is user-defined and needs to parse the corresponding
@@ -75,6 +74,8 @@ async def select_model(
             Configuration of the dataset used for model evaluation.
         candidate_models (`Sequence[ChatModelBase]`):
             A sequence of candidate models to evaluate.
+        max_threads (`int`, optional):
+            Maximum number of concurrent evaluations. Defaults to 2.
 
     Returns:
         `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
@@ -107,7 +108,7 @@ async def select_model(
     # Set our custom tracer provider for this evaluation
     trace.set_tracer_provider(tracer_provider)
 
-    # Set up initial best value to look for the highest reward (always maximize)
+  
     best_avg_reward = float("-inf")  # Look for largest reward
 
     # Load dataset
@@ -142,28 +143,59 @@ async def select_model(
         ] = {}  # Store accumulated metrics for this model
 
         # Process dataset samples with async function calls
-        for idx, sample in enumerate(dataset):
-            if (
-                train_dataset.total_steps is not None
-                and idx >= train_dataset.total_steps
-            ):
-                break
-
-            # Process this sample using the new async function
-            judge_output = await _evaluate_single_sample(
-                sample=sample,
-                model=model,
-                workflow_func=workflow_func,
-                judge_func=judge_func,
-                exporter=exporter,
-            )
+        semaphore = asyncio.Semaphore(max_threads)
+        
+        async def evaluate_with_semaphore(idx, sample):
+            async with semaphore:
+                try:
+                    # Process this sample using the new async function
+                    judge_output = await _evaluate_single_sample(
+                        sample=sample,
+                        model=model,
+                        workflow_func=workflow_func,
+                        judge_func=judge_func,
+                        exporter=exporter,
+                    )
+                    return judge_output
+                
+                except Exception as e:
+                    logger.warning(
+                        "Skipping sample %d for model %s due to error: %s",
+                        idx,
+                        model.model_name,
+                        str(e),
+                    )
+                    return None
             
-            total_reward += judge_output.reward
+        
+        # Create tasks for all samples
+        tasks = [
+            evaluate_with_semaphore(idx, sample)
+            for idx, sample in enumerate(dataset)
+            if train_dataset.total_steps is None 
+            or idx < train_dataset.total_steps
+        ]
+        
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process results
+        for result in results:
+            if result is None or isinstance(result, Exception):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "Sample evaluation failed: %s", 
+                        str(result)
+                    )
+                continue  # Skip failed evaluations and don't count in num_samples
+            
+            # Only count results that are not None toward num_samples
+            total_reward += result.reward
             num_samples += 1
 
             # Aggregate metrics from this sample
-            if judge_output.metrics:
-                for key, value in judge_output.metrics.items():
+            if result.metrics:
+                for key, value in result.metrics.items():
                     if key in model_metrics:
                         model_metrics[key] += value
                     else:
@@ -197,6 +229,8 @@ async def select_model(
             all_metrics = (
                 averaged_model_metrics  # Store the metrics of the best model
             )
+
+
 
     # Report final scores and detailed metrics for all models
     logger.info("Model evaluation results:")

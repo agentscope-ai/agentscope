@@ -54,8 +54,6 @@ async def avg_token_consumption_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average token consumption of a model.
-    NOTE: The response parameter must include a 'metrics.usage' field containing token
-    information or have a 'usage' attribute in the response object.
     This function returns a negative reward (since smaller token usage is better,
     making it a bigger-is-better metric), and includes the original metric
     in the metrics field.

@@ -87,7 +87,7 @@ async def translation_workflow(
 
 async def bleu_judge(
     task: Dict[str, Any],
-    response: Any,
+    response: WorkflowOutput,
 ) -> JudgeOutput:
     """A judge function to calculate BLEU score for translation quality.
     
