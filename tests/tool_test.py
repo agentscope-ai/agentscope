@@ -152,6 +152,25 @@ print("456")"""
             actual,
         )
 
+    async def test_execute_shell_command_large_output(self) -> None:
+        """Test that large stdout does not cause deadlock (#1255)."""
+        if platform.system() == "Windows":
+            return
+
+        # Generate ~1MB of stdout to exceed pipe buffer (~64KB-256KB)
+        cmd = (
+            f'{sys.executable} -c "'
+            f"import sys; "
+            f"[sys.stdout.write(str(i) * 1000 + chr(10)) "
+            f"for i in range(1000)]"
+            f'"'
+        )
+
+        res = await execute_shell_command(command=cmd, timeout=10)
+        text = res.content[0]["text"]
+        self.assertIn("<returncode>0</returncode>", text)
+        self.assertIn("0" * 100, text)
+
     async def test_view_text_file(self) -> None:
         """Test viewing text file."""
         with tempfile.TemporaryDirectory() as temp_dir:
