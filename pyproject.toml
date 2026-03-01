@@ -189,8 +189,8 @@ build-backend = "setuptools.build_meta"
 version = {attr = "agentscope._version.__version__"}
 
 [tool.uv]
-# Override py-openjudge's numpy<2.0.0 constraint to resolve conflict
-# with qdrant-client's numpy>=2.1.0 requirement on Python>=3.13
+# Override py-openjudge's numpy<2.0.0 constraint to resolve conflicts
+# with dependencies requiring newer numpy (e.g., qdrant-client on Python>=3.13).
 override-dependencies = [
     "numpy>=1.22.0",
 ]
