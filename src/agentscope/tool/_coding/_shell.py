@@ -37,14 +37,22 @@ async def execute_shell_command(
         bufsize=0,
     )
 
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-        stdout, stderr = await proc.communicate()
+    # Use asyncio.wait instead of wait_for to avoid cancelling communicate()
+    # which would close the pipe readers and lose buffered data.
+    communicate_task = asyncio.create_task(proc.communicate())
+    done, pending = await asyncio.wait(
+        [communicate_task],
+        timeout=timeout,
+    )
+
+    if communicate_task in done:
+        # Process completed within timeout
+        stdout, stderr = communicate_task.result()
         stdout_str = stdout.decode("utf-8")
         stderr_str = stderr.decode("utf-8")
         returncode = proc.returncode
-
-    except asyncio.TimeoutError:
+    else:
+        # Timeout: terminate process and collect output
         stderr_suffix = (
             f"TimeoutError: The command execution exceeded "
             f"the timeout of {timeout} seconds."
@@ -52,7 +60,8 @@ async def execute_shell_command(
         returncode = -1
         try:
             proc.terminate()
-            stdout, stderr = await proc.communicate()
+            # Wait for communicate() to finish after termination
+            stdout, stderr = await communicate_task
             stdout_str = stdout.decode("utf-8")
             stderr_str = stderr.decode("utf-8")
             if stderr_str:
