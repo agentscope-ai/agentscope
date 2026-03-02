@@ -13,6 +13,7 @@ from agentscope.message import (
     ToolUseBlock,
     ToolResultBlock,
     TextBlock,
+    ThinkingBlock,
     ImageBlock,
     AudioBlock,
     VideoBlock,
@@ -901,6 +902,47 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
 
         self.maxDiff = None
         self.assertListEqual(expected_result, res)
+
+    async def test_thinking_block_support(self) -> None:
+        """Test that DashScope formatter supports ThinkingBlock (issue #1067)."""
+        formatter = DashScopeChatFormatter()
+
+        # Test with ThinkingBlock in assistant message
+        msg_with_thinking = Msg(
+            name="assistant",
+            role="assistant",
+            content=[
+                ThinkingBlock(
+                    type="thinking",
+                    thinking="Let me analyze this problem step by step...",
+                ),
+                TextBlock(
+                    type="text",
+                    text="Based on my analysis, the answer is 42.",
+                ),
+            ],
+        )
+
+        res = await formatter.format([msg_with_thinking])
+
+        # Verify thinking block is preserved in the output
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["role"], "assistant")
+        self.assertIsInstance(res[0]["content"], list)
+        self.assertEqual(len(res[0]["content"]), 2)
+
+        # Check thinking block
+        self.assertEqual(res[0]["content"][0]["type"], "thinking")
+        self.assertEqual(
+            res[0]["content"][0]["thinking"],
+            "Let me analyze this problem step by step...",
+        )
+
+        # Check text block
+        self.assertEqual(
+            res[0]["content"][1]["text"],
+            "Based on my analysis, the answer is 42.",
+        )
 
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""

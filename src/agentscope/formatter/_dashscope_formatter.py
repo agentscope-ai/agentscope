@@ -12,6 +12,7 @@ from .._utils._common import _is_accessible_local_file
 from ..message import (
     Msg,
     TextBlock,
+    ThinkingBlock,
     ImageBlock,
     AudioBlock,
     VideoBlock,
@@ -179,6 +180,7 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
 
     supported_blocks: list[type] = [
         TextBlock,
+        ThinkingBlock,
         ImageBlock,
         AudioBlock,
         VideoBlock,
@@ -260,6 +262,14 @@ class DashScopeChatFormatter(TruncatedFormatterBase):
                     content_blocks.append(
                         {
                             "text": block.get("text"),
+                        },
+                    )
+
+                elif typ == "thinking":
+                    content_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": block.get("thinking"),
                         },
                     )
 
@@ -440,6 +450,7 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
 
     supported_blocks: list[type] = [
         TextBlock,
+        ThinkingBlock,
         # Multimodal
         ImageBlock,
         AudioBlock,
@@ -555,6 +566,22 @@ class DashScopeMultiAgentFormatter(TruncatedFormatterBase):
             for block in msg.get_content_blocks():
                 if block["type"] == "text":
                     accumulated_text.append(f"{msg.name}: {block['text']}")
+
+                elif block["type"] == "thinking":
+                    # Handle the accumulated text as a single block
+                    if accumulated_text:
+                        conversation_blocks.append(
+                            {"text": "\n".join(accumulated_text)},
+                        )
+                        accumulated_text.clear()
+
+                    # Add thinking block
+                    conversation_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": block.get("thinking"),
+                        },
+                    )
 
                 elif block["type"] in ["image", "audio", "video"]:
                     # Handle the accumulated text as a single block
