@@ -49,7 +49,7 @@ def _json_loads_with_repair(
             Returns an empty dict if all repair attempts fail.
     """
     try:
-        repaired = repair_json(json_str, stream_stable=True)
+        repaired = repair_json(json_str)
         result = json.loads(repaired)
         if isinstance(result, dict):
             return result
