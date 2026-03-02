@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""In-memory searchable storage for memory offloading.
+"""In-memory implementation of memory offloading.
 
 This module provides a default, dependency-free implementation of
 `MemoryOffloadingBase` that stores offloaded memory chunks in a
@@ -11,9 +11,10 @@ backend based on vector databases or embedding-based search.
 """
 import datetime
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, Coroutine
 
-from ...message import Msg
+from ...message import Msg, TextBlock
+from ...tool import ToolResponse
 from ._offloading_base import MemoryOffloadingBase
 
 
@@ -34,8 +35,8 @@ class OffloadedChunk:
     """Extracted keywords for search (auto-generated from summary)."""
 
 
-class InMemorySearchableStorage(MemoryOffloadingBase):
-    """Default in-memory implementation of memory offloading storage.
+class InMemoryMemoryOffloading(MemoryOffloadingBase):
+    """Default in-memory implementation of memory offloading.
 
     Stores offloaded chunks in a Python list and performs substring-based
     search across summaries and message content. No external dependencies
@@ -44,24 +45,23 @@ class InMemorySearchableStorage(MemoryOffloadingBase):
     Example:
         .. code-block:: python
 
-            from agentscope.memory import InMemorySearchableStorage
+            from agentscope.memory import InMemoryMemoryOffloading
 
-            storage = InMemorySearchableStorage()
+            offloading = InMemoryMemoryOffloading()
 
             # Store compressed messages
-            await storage.store(
+            await offloading.store(
                 msgs=[msg1, msg2, msg3],
                 summary="User asked about Python async patterns",
             )
 
-            # Search offloaded memory
-            results = await storage.search("async", limit=3)
-            for result in results:
-                print(result["summary"])
+            # Get tools to register with agent
+            tools = offloading.list_tools()
     """
 
     def __init__(self) -> None:
-        """Initialize the in-memory searchable storage."""
+        """Initialize the in-memory memory offloading."""
+        super().__init__()
         self._chunks: list[OffloadedChunk] = []
 
     async def store(
@@ -87,30 +87,29 @@ class InMemorySearchableStorage(MemoryOffloadingBase):
         )
         self._chunks.append(chunk)
 
-    async def search(
+    async def search_memory(
         self,
         query: str,
         limit: int = 5,
-        **kwargs: Any,
-    ) -> list[dict]:
-        """Search offloaded memories by substring matching.
+    ) -> ToolResponse:
+        """Search your compressed conversation history for relevant
+        information.
 
-        Searches across both the summary text and the text content of
-        the original messages. Results are returned in reverse
-        chronological order (most recent first).
+        Use this tool when you need to recall details from earlier in
+        the conversation that may have been compressed. This searches
+        through summaries and original message content of previously
+        compressed memory chunks.
 
         Args:
             query (`str`):
-                The search query string. Case-insensitive substring
-                matching is used.
+                The search query. Use specific keywords related to
+                the information you're looking for.
             limit (`int`, optional):
                 Maximum number of results to return. Defaults to 5.
-            **kwargs (`Any`):
-                Additional keyword arguments (unused in this backend).
 
         Returns:
-            `list[dict]`:
-                A list of matching result dictionaries.
+            `ToolResponse`:
+                The search results from offloaded memory.
         """
         query_lower = query.lower()
         results = []
@@ -128,7 +127,50 @@ class InMemorySearchableStorage(MemoryOffloadingBase):
                 if len(results) >= limit:
                     break
 
-        return results
+        if not results:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=(
+                            f"No offloaded memories found matching "
+                            f"'{query}'."
+                        ),
+                    ),
+                ],
+            )
+
+        # Format results
+        formatted_parts = []
+        for i, result in enumerate(results, 1):
+            formatted_parts.append(
+                f"--- Memory Chunk {i} "
+                f"(offloaded at {result['timestamp']}, "
+                f"{result['num_messages']} original messages) ---\n"
+                f"{result['summary']}",
+            )
+
+        combined_text = "\n\n".join(formatted_parts)
+
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=combined_text,
+                ),
+            ],
+        )
+
+    def list_tools(
+        self,
+    ) -> list[Callable[..., Coroutine[Any, Any, ToolResponse]]]:
+        """List tool functions provided to the agent.
+
+        Returns:
+            `list[Callable[..., Coroutine[Any, Any, ToolResponse]]]`:
+                A list containing the search_memory tool.
+        """
+        return [self.search_memory]
 
     async def clear(self) -> None:
         """Clear all offloaded data."""
@@ -142,6 +184,39 @@ class InMemorySearchableStorage(MemoryOffloadingBase):
                 The number of offloaded chunks stored.
         """
         return len(self._chunks)
+
+    def state_dict(self) -> dict:
+        """Get the state dictionary for serialization."""
+        return {
+            **super().state_dict(),
+            "_chunks": [
+                {
+                    "summary": chunk.summary,
+                    "messages": [msg.to_dict() for msg in chunk.messages],
+                    "timestamp": chunk.timestamp,
+                    "keywords": chunk.keywords,
+                }
+                for chunk in self._chunks
+            ],
+        }
+
+    def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """Load the state dictionary for deserialization."""
+        if strict and "_chunks" not in state_dict:
+            raise KeyError(
+                "The state_dict does not contain '_chunks' key "
+                "required for InMemoryMemoryOffloading.",
+            )
+
+        self._chunks = []
+        for item in state_dict.get("_chunks", []):
+            chunk = OffloadedChunk(
+                summary=item["summary"],
+                messages=[Msg.from_dict(m) for m in item["messages"]],
+                timestamp=item["timestamp"],
+                keywords=item.get("keywords", []),
+            )
+            self._chunks.append(chunk)
 
     @staticmethod
     def _matches(chunk: OffloadedChunk, query_lower: str) -> bool:

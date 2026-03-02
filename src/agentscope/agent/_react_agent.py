@@ -174,7 +174,7 @@ class ReActAgent(ReActAgentBase):
         offload_storage: MemoryOffloadingBase | None = None
         """The storage backend to offload compressed messages to. If
         provided, compressed messages will be stored in this backend
-        and searchable via the `search_offloaded_memory` tool.
+        and tools from `list_tools()` will be registered with the agent.
         When not provided, compressed messages are only summarized
         and not offloaded."""
 
@@ -292,6 +292,11 @@ class ReActAgent(ReActAgentBase):
         # in the beginning of each reply, and the result will be added to the
         # system prompt
         self.long_term_memory = long_term_memory
+        # Extract offload_storage as a direct attribute for StateModule
+        # auto-tracking (serialization/deserialization)
+        self.offload_storage = (
+            compression_config.offload_storage if compression_config else None
+        )
 
         # The long-term memory mode
         self._static_control = long_term_memory and long_term_memory_mode in [
@@ -320,14 +325,10 @@ class ReActAgent(ReActAgentBase):
                 self.toolkit.reset_equipped_tools,
             )
 
-        # Register the search tool for offloaded compressed memory
-        if (
-            compression_config
-            and compression_config.offload_storage is not None
-        ):
-            self.toolkit.register_tool_function(
-                self.search_offloaded_memory,
-            )
+        # Register tools from offloading backend (list_tools pattern)
+        if self.offload_storage is not None:
+            for tool in self.offload_storage.list_tools():
+                self.toolkit.register_tool_function(tool)
 
         self.parallel_tool_calls = parallel_tool_calls
 
@@ -1142,15 +1143,15 @@ class ReActAgent(ReActAgentBase):
                     self.name,
                 )
 
-                # Offload compressed messages to searchable storage
-                if self.compression_config.offload_storage is not None:
-                    await self.compression_config.offload_storage.store(
+                # Offload compressed messages to storage
+                if self.offload_storage is not None:
+                    await self.offload_storage.store(
                         to_compressed_msgs,
                         summary_text,
                     )
                     logger.info(
                         "Offloaded %d compressed messages to "
-                        "searchable storage for agent %s.",
+                        "storage for agent %s.",
                         len(to_compressed_msgs),
                         self.name,
                     )
@@ -1161,79 +1162,3 @@ class ReActAgent(ReActAgentBase):
                     "structured output in agent %s.",
                     self.name,
                 )
-
-    async def search_offloaded_memory(
-        self,
-        query: str,
-        limit: int = 5,
-    ) -> ToolResponse:
-        """Search your compressed conversation history for relevant
-        information.
-
-        Use this tool when you need to recall details from earlier in
-        the conversation that may have been compressed. This searches
-        through summaries and original message content of previously
-        compressed memory chunks.
-
-        Args:
-            query (`str`):
-                The search query. Use specific keywords related to
-                the information you're looking for.
-            limit (`int`, optional):
-                Maximum number of results to return. Defaults to 5.
-
-        Returns:
-            `ToolResponse`:
-                The search results from offloaded memory.
-        """
-        if (
-            self.compression_config is None
-            or self.compression_config.offload_storage is None
-        ):
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="Memory offloading is not configured.",
-                    ),
-                ],
-            )
-
-        results = await self.compression_config.offload_storage.search(
-            query=query,
-            limit=limit,
-        )
-
-        if not results:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=(
-                            f"No offloaded memories found matching "
-                            f"'{query}'."
-                        ),
-                    ),
-                ],
-            )
-
-        # Format results
-        formatted_parts = []
-        for i, result in enumerate(results, 1):
-            formatted_parts.append(
-                f"--- Memory Chunk {i} "
-                f"(offloaded at {result['timestamp']}, "
-                f"{result['num_messages']} original messages) ---\n"
-                f"{result['summary']}",
-            )
-
-        combined_text = "\n\n".join(formatted_parts)
-
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=combined_text,
-                ),
-            ],
-        )

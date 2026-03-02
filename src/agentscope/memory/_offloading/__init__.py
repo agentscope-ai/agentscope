@@ -2,9 +2,9 @@
 """The memory offloading module."""
 
 from ._offloading_base import MemoryOffloadingBase
-from ._in_memory_offloading import InMemorySearchableStorage
+from ._in_memory_offloading import InMemoryMemoryOffloading
 
 __all__ = [
     "MemoryOffloadingBase",
-    "InMemorySearchableStorage",
+    "InMemoryMemoryOffloading",
 ]

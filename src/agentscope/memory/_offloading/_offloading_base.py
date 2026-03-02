@@ -1,37 +1,43 @@
 # -*- coding: utf-8 -*-
-"""The base class for memory offloading storage backends.
+"""The base class for memory offloading backends.
 
 This module provides a unified abstraction for offloading compressed
-memory to searchable storage. When an agent compresses its working
-memory, the original messages and their summary can be stored in an
-offloading backend for later retrieval via search.
+memory to storage. When an agent compresses its working memory, the
+original messages and their summary can be stored in an offloading
+backend for later retrieval.
 
 The offloading system is designed to be:
 - **Unified**: A single abstraction reusable across different modules
-- **Extensible**: New backends (e.g., vector databases, embedding-based
-  search) can be implemented by subclassing `MemoryOffloadingBase`
+- **Extensible**: New backends (e.g., vector databases, file-based
+  storage) can be implemented by subclassing `MemoryOffloadingBase`
+- **Tool-driven**: Each backend decides which tools to expose via
+  `list_tools`
 - **Async-first**: All operations are asynchronous
 
 Example:
     .. code-block:: python
 
-        from agentscope.memory import InMemorySearchableStorage
+        from agentscope.memory import InMemoryMemoryOffloading
 
-        storage = InMemorySearchableStorage()
-        await storage.store(messages, summary="User discussed travel plans")
-        results = await storage.search("travel", limit=3)
+        offloading = InMemoryMemoryOffloading()
+        await offloading.store(messages, summary="User discussed travel")
+        tools = offloading.list_tools()  # returns tool callables
 """
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable, Coroutine
 
 from ...message import Msg
+from ...module import StateModule
+from ...tool import ToolResponse
 
 
-class MemoryOffloadingBase(ABC):
-    """Base class for memory offloading storage backends.
+class MemoryOffloadingBase(StateModule, ABC):
+    """Base class for memory offloading backends.
 
-    Subclasses must implement `store`, `search`, and `clear` methods
-    to provide different storage and retrieval strategies.
+    Subclasses must implement `store`, `clear`, and `list_tools` methods.
+    The `list_tools` method allows each backend to expose its own set of
+    tool functions (e.g., search, browse) to the agent, rather than
+    fixing a specific retrieval interface.
     """
 
     @abstractmethod
@@ -53,33 +59,23 @@ class MemoryOffloadingBase(ABC):
         """
 
     @abstractmethod
-    async def search(
-        self,
-        query: str,
-        limit: int = 5,
-        **kwargs: Any,
-    ) -> list[dict]:
-        """Search the offloaded memories by query.
-
-        Args:
-            query (`str`):
-                The search query string.
-            limit (`int`, optional):
-                The maximum number of results to return. Defaults to 5.
-            **kwargs (`Any`):
-                Additional keyword arguments for the search operation.
-
-        Returns:
-            `list[dict]`:
-                A list of result dictionaries, each containing:
-                - ``summary`` (`str`): The summary of the compressed chunk
-                - ``timestamp`` (`str`): When the chunk was offloaded
-                - ``num_messages`` (`int`): Number of original messages
-        """
-
-    @abstractmethod
     async def clear(self) -> None:
         """Clear all offloaded data from the backend."""
+
+    @abstractmethod
+    def list_tools(
+        self,
+    ) -> list[Callable[..., Coroutine[Any, Any, ToolResponse]]]:
+        """List all tool functions provided to the agent.
+
+        Each backend decides which tools to expose. For example, an
+        in-memory backend may expose a search tool, while a file-based
+        backend may rely on existing file tools and return an empty list.
+
+        Returns:
+            `list[Callable[..., Coroutine[Any, Any, ToolResponse]]]`:
+                A list of async tool functions that return `ToolResponse`.
+        """
 
     async def size(self) -> int:
         """Return the number of offloaded chunks.

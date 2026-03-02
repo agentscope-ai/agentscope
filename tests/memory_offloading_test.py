@@ -6,7 +6,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import FormatterBase
-from agentscope.memory import InMemorySearchableStorage
+from agentscope.memory import InMemoryMemoryOffloading
 from agentscope.message import Msg, TextBlock
 from agentscope.model import ChatModelBase, ChatResponse
 from agentscope.token import CharTokenCounter
@@ -59,12 +59,12 @@ class MockFormatter(FormatterBase):
         return [{"name": _.name, "content": _.content} for _ in msgs]
 
 
-class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
-    """Unit tests for InMemorySearchableStorage."""
+class InMemoryMemoryOffloadingTest(IsolatedAsyncioTestCase):
+    """Unit tests for InMemoryMemoryOffloading."""
 
     async def asyncSetUp(self) -> None:
         """Set up the storage for testing."""
-        self.storage = InMemorySearchableStorage()
+        self.storage = InMemoryMemoryOffloading()
 
     async def test_store_and_search(self) -> None:
         """Test storing and searching memory chunks."""
@@ -81,29 +81,32 @@ class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
         await self.storage.store(msgs2, "User's food preference is sushi")
 
         # Search should find travel-related chunk
-        results = await self.storage.search("travel")
-        self.assertEqual(len(results), 1)
-        self.assertIn("Japan", results[0]["summary"])
+        response = await self.storage.search_memory("travel")
+        text = response.content[0]["text"]
+        self.assertIn("Japan", text)
 
         # Search should find food-related chunk
-        results = await self.storage.search("sushi")
-        self.assertEqual(len(results), 1)
-        self.assertIn("sushi", results[0]["summary"])
+        response = await self.storage.search_memory("sushi")
+        text = response.content[0]["text"]
+        self.assertIn("sushi", text)
 
         # Search in message content (not just summary)
-        results = await self.storage.search("destination")
-        self.assertEqual(len(results), 1)
+        response = await self.storage.search_memory("destination")
+        text = response.content[0]["text"]
+        self.assertIn("Memory Chunk", text)
 
     async def test_search_case_insensitive(self) -> None:
         """Test that search is case-insensitive."""
         msgs = [Msg("user", "Python programming", "user")]
         await self.storage.store(msgs, "Discussion about Python")
 
-        results = await self.storage.search("python")
-        self.assertEqual(len(results), 1)
+        response = await self.storage.search_memory("python")
+        text = response.content[0]["text"]
+        self.assertIn("Python", text)
 
-        results = await self.storage.search("PYTHON")
-        self.assertEqual(len(results), 1)
+        response = await self.storage.search_memory("PYTHON")
+        text = response.content[0]["text"]
+        self.assertIn("Python", text)
 
     async def test_search_limit(self) -> None:
         """Test that search respects the limit parameter."""
@@ -111,8 +114,10 @@ class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
             msgs = [Msg("user", f"Topic {i} about testing", "user")]
             await self.storage.store(msgs, f"Summary about testing topic {i}")
 
-        results = await self.storage.search("testing", limit=3)
-        self.assertEqual(len(results), 3)
+        response = await self.storage.search_memory("testing", limit=3)
+        text = response.content[0]["text"]
+        # Should contain exactly 3 chunks
+        self.assertEqual(text.count("Memory Chunk"), 3)
 
     async def test_search_most_recent_first(self) -> None:
         """Test that search results are returned most recent first."""
@@ -122,19 +127,21 @@ class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
         msgs2 = [Msg("user", "Second topic about AI", "user")]
         await self.storage.store(msgs2, "Second AI discussion")
 
-        results = await self.storage.search("AI", limit=2)
-        self.assertEqual(len(results), 2)
+        response = await self.storage.search_memory("AI", limit=2)
+        text = response.content[0]["text"]
         # Most recent should come first
-        self.assertIn("Second", results[0]["summary"])
-        self.assertIn("First", results[1]["summary"])
+        second_pos = text.index("Second")
+        first_pos = text.index("First")
+        self.assertLess(second_pos, first_pos)
 
     async def test_search_no_results(self) -> None:
         """Test search with no matching results."""
         msgs = [Msg("user", "Hello", "user")]
         await self.storage.store(msgs, "Greeting")
 
-        results = await self.storage.search("quantum_physics_xyz")
-        self.assertEqual(len(results), 0)
+        response = await self.storage.search_memory("quantum_physics_xyz")
+        text = response.content[0]["text"]
+        self.assertIn("No offloaded memories found", text)
 
     async def test_clear(self) -> None:
         """Test clearing all offloaded data."""
@@ -145,8 +152,9 @@ class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
         await self.storage.clear()
         self.assertEqual(await self.storage.size(), 0)
 
-        results = await self.storage.search("test")
-        self.assertEqual(len(results), 0)
+        response = await self.storage.search_memory("test")
+        text = response.content[0]["text"]
+        self.assertIn("No offloaded memories found", text)
 
     async def test_size(self) -> None:
         """Test the size method."""
@@ -158,23 +166,33 @@ class InMemorySearchableStorageTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(await self.storage.size(), 5)
 
-    async def test_result_dict_format(self) -> None:
-        """Test that search results contain the expected keys."""
+    async def test_list_tools(self) -> None:
+        """Test that list_tools returns the search_memory tool."""
+        tools = self.storage.list_tools()
+        self.assertEqual(len(tools), 1)
+        self.assertEqual(tools[0].__name__, "search_memory")
+
+    async def test_state_dict_and_load(self) -> None:
+        """Test serialization and deserialization."""
         msgs = [
             Msg("user", "test", "user"),
             Msg("assistant", "response", "assistant"),
         ]
         await self.storage.store(msgs, "test summary")
 
-        results = await self.storage.search("test")
-        self.assertEqual(len(results), 1)
+        # Serialize
+        state = self.storage.state_dict()
+        self.assertIn("_chunks", state)
+        self.assertEqual(len(state["_chunks"]), 1)
 
-        result = results[0]
-        self.assertIn("summary", result)
-        self.assertIn("timestamp", result)
-        self.assertIn("num_messages", result)
-        self.assertEqual(result["summary"], "test summary")
-        self.assertEqual(result["num_messages"], 2)
+        # Deserialize into a new instance
+        new_storage = InMemoryMemoryOffloading()
+        new_storage.load_state_dict(state)
+
+        self.assertEqual(await new_storage.size(), 1)
+        response = await new_storage.search_memory("test")
+        text = response.content[0]["text"]
+        self.assertIn("test summary", text)
 
 
 class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
@@ -189,7 +207,7 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
         2. The offloaded data is searchable
         3. The compressed summary and offloaded summary are consistent
         """
-        storage = InMemorySearchableStorage()
+        storage = InMemoryMemoryOffloading()
         model = MockChatModel(model_name="mock-model", stream=False)
         agent = ReActAgent(
             name="TestAgent",
@@ -223,9 +241,9 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
         )
 
         # Verify searchability
-        results = await storage.search("compressed")
-        self.assertEqual(len(results), 1)
-        self.assertIn("compressed summary", results[0]["summary"])
+        response = await storage.search_memory("compressed")
+        text = response.content[0]["text"]
+        self.assertIn("compressed summary", text)
 
     async def test_no_offloading_without_config(self) -> None:
         """Test that compression works normally without offload_storage.
@@ -277,9 +295,9 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
         )
 
     async def test_search_tool_registration(self) -> None:
-        """Test that search_offloaded_memory tool is registered when
+        """Test that search_memory tool is registered when
         offload_storage is configured."""
-        storage = InMemorySearchableStorage()
+        storage = InMemoryMemoryOffloading()
         model = MockChatModel(model_name="mock-model", stream=False)
         agent = ReActAgent(
             name="TestAgent",
@@ -296,13 +314,13 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
 
         # The search tool should be registered
         self.assertIn(
-            "search_offloaded_memory",
+            "search_memory",
             agent.toolkit.tools,
-            "search_offloaded_memory tool should be registered",
+            "search_memory tool should be registered",
         )
 
     async def test_no_search_tool_without_offloading(self) -> None:
-        """Test that search_offloaded_memory tool is NOT registered when
+        """Test that search_memory tool is NOT registered when
         offload_storage is not configured."""
         model = MockChatModel(model_name="mock-model", stream=False)
         agent = ReActAgent(
@@ -319,16 +337,16 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
         )
 
         self.assertNotIn(
-            "search_offloaded_memory",
+            "search_memory",
             agent.toolkit.tools,
-            "search_offloaded_memory tool should NOT be registered",
+            "search_memory tool should NOT be registered",
         )
 
     async def test_search_tool_returns_results(self) -> None:
-        """Test the search_offloaded_memory tool function directly."""
-        storage = InMemorySearchableStorage()
+        """Test the search_memory tool function directly."""
+        storage = InMemoryMemoryOffloading()
         model = MockChatModel(model_name="mock-model", stream=False)
-        agent = ReActAgent(
+        ReActAgent(
             name="TestAgent",
             sys_prompt="You are a helpful assistant.",
             model=model,
@@ -345,17 +363,17 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
         msgs = [Msg("user", "I love Python programming", "user")]
         await storage.store(msgs, "User loves Python programming")
 
-        # Call the search tool
-        response = await agent.search_offloaded_memory("Python")
+        # Call the search tool directly on the storage
+        response = await storage.search_memory("Python")
         text = response.content[0]["text"]
         self.assertIn("Python", text)
         self.assertIn("Memory Chunk 1", text)
 
     async def test_search_tool_no_results(self) -> None:
-        """Test the search_offloaded_memory tool when no results match."""
-        storage = InMemorySearchableStorage()
+        """Test the search_memory tool when no results match."""
+        storage = InMemoryMemoryOffloading()
         model = MockChatModel(model_name="mock-model", stream=False)
-        agent = ReActAgent(
+        ReActAgent(
             name="TestAgent",
             sys_prompt="You are a helpful assistant.",
             model=model,
@@ -368,6 +386,6 @@ class OffloadingIntegrationTest(IsolatedAsyncioTestCase):
             ),
         )
 
-        response = await agent.search_offloaded_memory("nonexistent_topic")
+        response = await storage.search_memory("nonexistent_topic")
         text = response.content[0]["text"]
         self.assertIn("No offloaded memories found", text)

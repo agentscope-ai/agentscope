@@ -16,7 +16,7 @@ from ._long_term_memory import (
 )
 from ._offloading import (
     MemoryOffloadingBase,
-    InMemorySearchableStorage,
+    InMemoryMemoryOffloading,
 )
 
 
@@ -34,5 +34,5 @@ __all__ = [
     "ReMeToolLongTermMemory",
     # Memory offloading
     "MemoryOffloadingBase",
-    "InMemorySearchableStorage",
+    "InMemoryMemoryOffloading",
 ]
