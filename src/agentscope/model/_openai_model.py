@@ -375,7 +375,9 @@ class OpenAIChatModel(ChatModelBase):
                 choice = chunk.choices[0]
 
                 thinking += (
-                    getattr(choice.delta, "reasoning_content", None) or ""
+                    getattr(choice.delta, "reasoning_content", None) 
+                    or getattr(choice.delta, "reasoning", None)
+                    or ""
                 )
                 text += getattr(choice.delta, "content", None) or ""
 
@@ -538,14 +540,16 @@ class OpenAIChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
-            if (
-                hasattr(choice.message, "reasoning_content")
-                and choice.message.reasoning_content is not None
-            ):
+            reasoning = (
+                getattr(choice.message, "reasoning_content", None)
+                or getattr(choice.message, "reasoning", None)
+            )
+
+            if reasoning is not None:
                 content_blocks.append(
                     ThinkingBlock(
                         type="thinking",
-                        thinking=response.choices[0].message.reasoning_content,
+                        thinking=reasoning,
                     ),
                 )
 
