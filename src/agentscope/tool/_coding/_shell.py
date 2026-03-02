@@ -40,7 +40,7 @@ async def execute_shell_command(
     # Use asyncio.wait instead of wait_for to avoid cancelling communicate()
     # which would close the pipe readers and lose buffered data.
     communicate_task = asyncio.create_task(proc.communicate())
-    done, pending = await asyncio.wait(
+    done, _ = await asyncio.wait(
         [communicate_task],
         timeout=timeout,
     )
