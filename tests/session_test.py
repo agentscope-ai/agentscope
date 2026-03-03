@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Session module tests."""
 import os
+import tempfile
 from typing import Union
 from unittest import IsolatedAsyncioTestCase
 
@@ -79,9 +80,31 @@ class SessionTest(IsolatedAsyncioTestCase):
             agent2=agent2,
         )
 
+    async def test_jsonsession_rejects_path_traversal(self) -> None:
+        """JSONSession should reject path traversal via session_id/user_id."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session = JSONSession(save_dir=tmpdir)
+
+            # session_id traversal attempt
+            with self.assertRaises(ValueError):
+                await session.save_session_state(session_id="../evil")
+
+            # user_id traversal attempt
+            with self.assertRaises(ValueError):
+                await session.save_session_state(
+                    session_id="ok",
+                    user_id="../../etc/passwd",
+                )
+
+            # load should also be protected
+            with self.assertRaises(ValueError):
+                await session.load_session_state(
+                    session_id="../evil",
+                    allow_not_exist=True,
+                )
+
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""
-        # Remove the session file if it exists
         session_file = "./user_1.json"
         if os.path.exists(session_file):
             os.remove(session_file)
@@ -91,7 +114,6 @@ class RedisSessionTest(IsolatedAsyncioTestCase):
     """Test cases for the redis session module (with fake redis)."""
 
     async def asyncSetUp(self) -> None:
-        # Use fakeredis (async)
         try:
             import fakeredis.aioredis  # type: ignore
         except ImportError as e:
@@ -126,7 +148,7 @@ class RedisSessionTest(IsolatedAsyncioTestCase):
             agent2=agent2,
         )
 
-        # Mutate local state to verify load really works
+        # Mutate local state
         agent1.name = "Changed"
         agent2.sys_prompt = "Changed prompt"
 
@@ -141,6 +163,5 @@ class RedisSessionTest(IsolatedAsyncioTestCase):
         self.assertEqual(agent2.sys_prompt, "A helpful assistant.")
 
     async def asyncTearDown(self) -> None:
-        # close clients
         await self.session.close()
         await self._redis.close()
