@@ -375,7 +375,9 @@ class OpenAIChatModel(ChatModelBase):
                 choice = chunk.choices[0]
 
                 delta_reasoning = getattr(
-                    choice.delta, "reasoning_content", None
+                    choice.delta,
+                    "reasoning_content",
+                    None,
                 )
                 if not isinstance(delta_reasoning, str):
                     delta_reasoning = getattr(choice.delta, "reasoning", None)
