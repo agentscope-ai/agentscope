@@ -606,9 +606,9 @@ They can be used as follows:</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Retrieved Documents:
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;ehfBBc7xMRcfvZX7eqmNhC&#39;, embedding=None, score=0.5657136536003619)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;U6ivSFvijFLck3vRUmbqKf&#39;, embedding=None, score=0.5657136536003619)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;DdA6K8DGsqQqET2L5WU44u&#39;, embedding=None, score=0.5062624400117309)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;Gaa423q3zTkFWj9nUwkvNc&#39;, embedding=None, score=0.5062624400117309)
 </pre></div>
 </div>
 <p>The knowledge base class provides two main methods: <code class="docutils literal notranslate"><span class="pre">add_documents</span></code> and
@@ -721,25 +721,26 @@ and providing a proper description for the tool.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The first response:
-Friday: That&#39;s great to hear! Having a best friend like John Doe can make life more enjoyable and fulfilling. Is there anything specific you&#39;d like to share about your friendship or any particular questions you have?
+Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any special memories you two have together? Or is there something in particular you need help with regarding your friendship?
 
 
 The second response:
-Friday: I don&#39;t have any specific information about John Doe&#39;s father. To find out, we would need to look up more details or for you to provide additional information. If you have a more detailed query or context, I can try to help you find the relevant information. Would you like me to search for information on John Doe&#39;s father?
+Friday: I don&#39;t have specific information about John Doe&#39;s father. To find out, I can try to look up some information if you&#39;d like. Should I proceed with a search for details on John Doe&#39;s father?
 {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_5caa63d5852b4325bca4cd&quot;,
+    &quot;id&quot;: &quot;call_df351ad9ffdb46939082f1&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
         &quot;query&quot;: &quot;John Doe father&quot;,
-        &quot;limit&quot;: 5
+        &quot;limit&quot;: 5,
+        &quot;score_threshold&quot;: null
     },
-    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;John Doe father\&quot;, \&quot;limit\&quot;: 5}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;John Doe father\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: null}&quot;
 }
 
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_5caa63d5852b4325bca4cd&quot;,
+    &quot;id&quot;: &quot;call_df351ad9ffdb46939082f1&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -764,7 +765,7 @@ system: {
         }
     ]
 }
-Friday: Based on the information retrieved, John Doe&#39;s father is Michael Doe, who is a doctor. If you need more details or have another question about John or his family, feel free to ask!
+Friday: From the information I found, it appears that John Doe&#39;s father is Michael Doe, who is a doctor. If this is not the John Doe you&#39;re referring to, or if you need more specific details, please let me know and I can try to find more information.
 </pre></div>
 </div>
 <p>In the above example, our question is “Do you know who his father is?”.
@@ -809,7 +810,7 @@ will automatically retrieve knowledge at the beginning of each reply.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_generic_manner</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: According to the information provided, John Doe&#39;s father is Michael Doe, who is a doctor.
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: According to the information, John Doe&#39;s father is Michael Doe, who is a doctor.
 Take a look at the agent&#39;s memory:
 [
   {
@@ -926,12 +927,12 @@ The example is the same as before, just using the <code class="docutils literal 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, your name is Tony Stank.
 
 The image is attached in the agent&#39;s memory:
-Msg(id=&#39;mmfdKSkjKdE34m8GAunaF4&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-03-02 15:32:39.217&#39;, invocation_id=&#39;None&#39;)
+Msg(id=&#39;Tq5RDshctSZvgxXWV9kX5x&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-03-03 02:31:19.088&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>We can see that the agent can answer the question based on the retrieved
 image.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 33.207 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 42.539 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
