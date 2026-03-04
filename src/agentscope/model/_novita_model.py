@@ -10,7 +10,18 @@ from ..types import JSONSerializableObject
 
 
 class NovitaChatModel(OpenAIChatModel):
-    """The Novita chat model class."""
+    """The Novita chat model class.
+
+    Novita AI provides OpenAI-compatible API for various LLM models.
+    Supported models include:
+        - deepseek/deepseek-v3.2
+        - deepseek/deepseek-r1
+        - zai-org/glm-5
+        - minimax/minimax-m2.5
+        - meta-llama/llama-3.3-70b-instruct
+
+    See https://novita.ai for full model list.
+    """
 
     def __init__(
         self,
@@ -18,7 +29,7 @@ class NovitaChatModel(OpenAIChatModel):
         api_key: str | None = None,
         stream: bool = True,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
-        organization: str = None,
+        organization: str | None = None,
         stream_tool_parsing: bool = True,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
@@ -62,7 +73,9 @@ class NovitaChatModel(OpenAIChatModel):
             client_kwargs = {}
 
         if "base_url" not in client_kwargs:
-            client_kwargs["base_url"] = "https://api.novita.ai/openai"
+            client_kwargs["base_url"] = os.environ.get(
+                "NOVITA_BASE_URL", "https://api.novita.ai/openai"
+            )
 
         super().__init__(
             model_name=model_name,

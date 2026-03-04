@@ -44,7 +44,9 @@ class NovitaTextEmbedding(OpenAITextEmbedding):
             )
 
         if "base_url" not in kwargs:
-            kwargs["base_url"] = "https://api.novita.ai/openai"
+            kwargs["base_url"] = os.environ.get(
+                "NOVITA_BASE_URL", "https://api.novita.ai/openai"
+            )
 
         super().__init__(
             api_key=api_key,
