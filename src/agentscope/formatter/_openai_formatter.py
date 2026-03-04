@@ -98,7 +98,7 @@ def _to_openai_image_url(url: str) -> str:
         return url
 
     raise ValueError(
-        f'Invalid image URL: "{url}". It should be a local file or a web URL.'
+        f'Invalid image URL: "{url}". It should be a local file or a web URL.',
     )
 
 
