@@ -159,6 +159,9 @@ class ProviderNameValues:
     OLLAMA = "ollama"
     """The ollama provider name."""
 
+    NOVITA = "novita"
+    """The novita provider name."""
+
     DEEPSEEK = GenAIAttributes.GenAiProviderNameValues.DEEPSEEK.value
     """The deepseek provider name."""
 

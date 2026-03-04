@@ -7,6 +7,7 @@ from ._embedding_response import EmbeddingResponse
 from ._dashscope_embedding import DashScopeTextEmbedding
 from ._dashscope_multimodal_embedding import DashScopeMultiModalEmbedding
 from ._openai_embedding import OpenAITextEmbedding
+from ._novita_embedding import NovitaTextEmbedding
 from ._gemini_embedding import GeminiTextEmbedding
 from ._ollama_embedding import OllamaTextEmbedding
 from ._cache_base import EmbeddingCacheBase
@@ -20,6 +21,7 @@ __all__ = [
     "DashScopeTextEmbedding",
     "DashScopeMultiModalEmbedding",
     "OpenAITextEmbedding",
+    "NovitaTextEmbedding",
     "GeminiTextEmbedding",
     "OllamaTextEmbedding",
     "EmbeddingCacheBase",

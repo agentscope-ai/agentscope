@@ -31,6 +31,7 @@ _CLASS_NAME_MAP = {
     "dashscope": ProviderNameValues.DASHSCOPE,
     "openai": ProviderNameValues.OPENAI,
     "anthropic": ProviderNameValues.ANTHROPIC,
+    "novita": ProviderNameValues.NOVITA,
     "gemini": ProviderNameValues.GCP_GEMINI,
     "ollama": ProviderNameValues.OLLAMA,
     "deepseek": ProviderNameValues.DEEPSEEK,
@@ -40,6 +41,7 @@ _CLASS_NAME_MAP = {
 # Map base URL fragments to provider names for OpenAI-compatible APIs
 _BASE_URL_PROVIDER_MAP = [
     ("api.openai.com", ProviderNameValues.OPENAI),
+    ("api.novita.ai", ProviderNameValues.NOVITA),
     ("dashscope", ProviderNameValues.DASHSCOPE),
     ("deepseek", ProviderNameValues.DEEPSEEK),
     ("moonshot", ProviderNameValues.MOONSHOT),
