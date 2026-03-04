@@ -70,28 +70,35 @@ async def avg_token_consumption_judge(
             and metrics containing the original token consumption value.
     """
     original_reward = 0.0
-    
+
     # First, try to get usage from response.metrics["usage"] (new approach)
     if isinstance(response, WorkflowOutput):
         if response.metrics and "usage" in response.metrics:
             usage = response.metrics["usage"]
             if isinstance(usage, dict):
-                if "total_tokens" in usage and usage["total_tokens"] is not None:
+                if (
+                    "total_tokens" in usage
+                    and usage["total_tokens"] is not None
+                ):
                     original_reward = float(usage["total_tokens"])
-                elif "output_tokens" in usage and usage["output_tokens"] is not None:
+                elif (
+                    "output_tokens" in usage
+                    and usage["output_tokens"] is not None
+                ):
                     original_reward = float(usage["output_tokens"])
                 else:
                     raise ValueError(
-                        "Neither 'total_tokens' nor 'output_tokens' found in usage field"
+                        "Neither 'total_tokens' nor 'output_tokens' found in usage field",
                     )
             else:
-                raise ValueError("Usage field in response.metrics is not a dictionary")
+                raise ValueError(
+                    "Usage field in response.metrics is not a dictionary",
+                )
     else:
         raise ValueError("Response is not a WorkflowOutput")
 
     # Return negative reward to make it bigger-is-better (smaller token usage = higher reward)
     reward = -original_reward
-
 
     return JudgeOutput(
         reward=reward,

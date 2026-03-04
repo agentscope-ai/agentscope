@@ -3,7 +3,7 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import Callable, Sequence, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 from ...model import ChatModelBase
 from .._workflow import WorkflowType, WorkflowOutput
 from .._config import _check_function_signature
@@ -64,7 +64,7 @@ async def select_model(
             The workflow function that executes the task with a given model.
             The workflow may contain multiple nodes that use different models.
             Models to be selected should be defined with
-            "model" as the main parameter in the workflow_func. 
+            "model" as the main parameter in the workflow_func.
         judge_func (`JudgeType`):
             The judge function that evaluates the output of the workflow. This
             function is user-defined and needs to parse the corresponding
@@ -97,18 +97,17 @@ async def select_model(
     # Setup OpenTelemetry tracing with the in-memory exporter once globally
     exporter = _InMemoryExporter()
     span_processor = SimpleSpanProcessor(exporter)
-    
+
     # Get the current tracer provider before making changes
     original_provider = trace.get_tracer_provider()
-    
+
     # Create and configure tracer provider for the entire evaluation
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(span_processor)
-    
+
     # Set our custom tracer provider for this evaluation
     trace.set_tracer_provider(tracer_provider)
 
-  
     best_avg_reward = float("-inf")  # Look for largest reward
 
     # Load dataset
@@ -144,8 +143,11 @@ async def select_model(
 
         # Process dataset samples with async function calls
         semaphore = asyncio.Semaphore(max_threads)
-        
-        async def evaluate_with_semaphore(idx, sample):
+
+        async def evaluate_with_semaphore(
+            idx: int,
+            sample: dict,
+        ) -> Optional[JudgeOutput]:
             async with semaphore:
                 try:
                     # Process this sample using the new async function
@@ -157,7 +159,7 @@ async def select_model(
                         exporter=exporter,
                     )
                     return judge_output
-                
+
                 except Exception as e:
                     logger.warning(
                         "Skipping sample %d for model %s due to error: %s",
@@ -166,29 +168,28 @@ async def select_model(
                         str(e),
                     )
                     return None
-            
-        
+
         # Create tasks for all samples
         tasks = [
             evaluate_with_semaphore(idx, sample)
             for idx, sample in enumerate(dataset)
-            if train_dataset.total_steps is None 
+            if train_dataset.total_steps is None
             or idx < train_dataset.total_steps
         ]
-        
+
         # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Process results
         for result in results:
             if result is None or isinstance(result, Exception):
                 if isinstance(result, Exception):
                     logger.warning(
-                        "Sample evaluation failed: %s", 
-                        str(result)
+                        "Sample evaluation failed: %s",
+                        str(result),
                     )
                 continue  # Skip failed evaluations and don't count in num_samples
-            
+
             # Only count results that are not None toward num_samples
             total_reward += result.reward
             num_samples += 1
@@ -208,11 +209,13 @@ async def select_model(
         averaged_model_metrics = {}
         for key, value in model_metrics.items():
             import numbers
+
             if isinstance(value, numbers.Number):
+                num_val = value.real if hasattr(value, "real") else 0.0
                 averaged_model_metrics[f"{key}_avg"] = (
-                    float(value) / num_samples if num_samples > 0 else 0.0
+                    float(num_val) / num_samples if num_samples > 0 else 0.0
                 )
-        
+
         # Save detailed metrics for this model
         model_detailed_metrics[model.model_name] = averaged_model_metrics
 
@@ -230,19 +233,16 @@ async def select_model(
                 averaged_model_metrics  # Store the metrics of the best model
             )
 
-
-
     # Report final scores and detailed metrics for all models
     logger.info("Model evaluation results:")
     for model_name, avg_score in model_scores.items():
         logger.info(f"  {model_name}: {avg_score:.4f}")
-    
+
     logger.info("Detailed metrics for all models:")
     for model_name, metrics in model_detailed_metrics.items():
         logger.info(f"Metrics for {model_name}:")
         for metric_name, metric_value in metrics.items():
             logger.info(f"  {metric_name}: {metric_value}")
-    
 
     # Show the selected best model
     if best_model is not None:
@@ -261,14 +261,14 @@ async def _evaluate_single_sample(
 ) -> JudgeOutput:
     """
     Evaluate a single sample with the given model and workflow/judge functions.
-    
+
     Args:
         sample (dict): The sample to evaluate
         model (ChatModelBase): The model to use for evaluation
         workflow_func (WorkflowType): The workflow function to execute
         judge_func (JudgeType): The judge function to evaluate the result
         exporter (_InMemoryExporter): The exporter to collect traces
-        
+
     Returns:
         JudgeOutput: The output from the judge function
     """
@@ -276,13 +276,13 @@ async def _evaluate_single_sample(
     import uuid
     from opentelemetry import baggage
     from opentelemetry.context import attach, detach
-    
+
     task_id = f"eval_task_{uuid.uuid4().hex[:8]}"
     repeat_id = "0"
-    
+
     # Execute workflow with current model and measure execution time
     start_time = asyncio.get_event_loop().time()
-    
+
     # Setup the tracer with baggage for the exporter to track this task
     tracer = trace.get_tracer(__name__)
 
@@ -298,6 +298,7 @@ async def _evaluate_single_sample(
             name=f"Solution_{task_id}_{repeat_id}",
         ):
             from ... import _config
+
             _config.trace_enabled = True
 
             # Execute workflow with current model
@@ -307,7 +308,7 @@ async def _evaluate_single_sample(
             )
     finally:
         detach(token)
-        
+
     end_time = asyncio.get_event_loop().time()
 
     # Add timing information to metrics
@@ -315,29 +316,31 @@ async def _evaluate_single_sample(
     if workflow_output.metrics is None:
         workflow_output.metrics = {}
     workflow_output.metrics["execution_time"] = execution_time
-    
+
     # Extract token usage information from the exporter
     total_input_tokens = 0
     total_output_tokens = 0
     total_tokens = 0
-    
+
     # Get the chat usage data from the exporter
     if task_id in exporter.cnt and repeat_id in exporter.cnt[task_id]:
-        chat_usage_data = exporter.cnt[task_id][repeat_id].get("chat_usage", {})
+        chat_usage_data = exporter.cnt[task_id][repeat_id].get(
+            "chat_usage",
+            {},
+        )
         # Sum up token usage across all models used in this task
         for _, usage in chat_usage_data.items():  # Fixed: unused variable
             total_input_tokens += usage.get("input_tokens", 0)
             total_output_tokens += usage.get("output_tokens", 0)
-    
+
     total_tokens = total_input_tokens + total_output_tokens
-    
+
     # Add usage information to workflow_output metrics
     workflow_output.metrics["usage"] = {
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
-        "total_tokens": total_tokens
+        "total_tokens": total_tokens,
     }
-
 
     # Evaluate the workflow output using judge function
     judge_output: JudgeOutput = await judge_func(

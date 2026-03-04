@@ -26,7 +26,7 @@ models = [
         max_tokens=512,
     ),
     DashScopeChatModel(
-        "qwen-plus", 
+        "qwen-plus",
         api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
         max_tokens=512,
     ),
@@ -74,12 +74,12 @@ async def workflow(
     )
 
 
-async def main():
+async def main() -> None:
     # Configure the GSM8K dataset
     dataset_config = DatasetConfig(
         path="openai/gsm8k",
         name="main",
-        split="test", 
+        split="test",
         total_steps=20,  # Limit for testing purposes
     )
 
@@ -97,4 +97,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())

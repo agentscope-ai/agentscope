@@ -110,7 +110,7 @@ async def translation_workflow(
 
     # Extract source text from task
     source_text = task.get("question", "") if isinstance(task, dict) else str(task)
-    
+
     # Create a message with the translation request
     prompt = f"Translate the following text between English and Chinese: {source_text}"
     msg = Msg(name="user", content=prompt, role="user")
@@ -150,24 +150,24 @@ Here is an example implementation for translation tasks using BLEU score:
 from agentscope.tuner import JudgeOutput
 
 async def bleu_judge(
-    task: Dict, 
+    task: Dict,
     response: WorkflowOutput,
 ) -> JudgeOutput:
     """Calculate BLEU score for translation quality."""
     # Lazy import to follow the requirement
     import sacrebleu
-    
+
     # Extract response text
     response_str = response.response.get_text_content()
-    
+
     # Extract reference translation
     reference_translation = task.get("answer", "") if isinstance(task, dict) else ""
-    
+
     # Calculate BLEU score
     ref = reference_translation.strip()
     pred = response_str.strip()
     bleu_score = sacrebleu.sentence_bleu(pred, [ref])
-    
+
     return JudgeOutput(
         reward=bleu_score.score,
         metrics={
@@ -186,7 +186,7 @@ from agentscope.tuner.model_selection import avg_time_judge, avg_token_consumpti
 # For selecting based on fastest execution time
 judge_function = avg_time_judge
 
-# For selecting based on lowest token consumption  
+# For selecting based on lowest token consumption
 judge_function = avg_token_consumption_judge
 ```
 
@@ -205,16 +205,16 @@ import os
 if __name__ == "__main__":
     # Define your candidate models
     model1 = DashScopeChatModel(
-        "qwen3-max-2025-09-23", 
+        "qwen3-max-2025-09-23",
         api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
         max_tokens=1024,
     )
     model2 = DashScopeChatModel(
-        "deepseek-r1", 
+        "deepseek-r1",
         api_key=os.environ.get("DASHSCOPE_API_KEY", ""),
         max_tokens=1024,
     )
-    
+
     best_model, metrics = select_model(
         workflow_func=translation_workflow,
         judge_func=bleu_judge,
