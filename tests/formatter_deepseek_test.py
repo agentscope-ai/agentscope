@@ -373,6 +373,51 @@ class TestDeepSeekFormatter(IsolatedAsyncioTestCase):
             self.ground_truth_chat[: -len(self.msgs_tools)],
         )
 
+    async def test_chat_formatter_with_text_and_tool_use(
+        self,
+    ) -> None:
+        """Test that when a message contains both TextBlock and ToolUseBlock,
+        the content field is set to None to avoid DeepSeek API issue.
+
+        DeepSeek API doesn't allow assistant message to have both content and
+        tool_calls. When both exist, DeepSeek interprets it as "interrupted
+        speech" and may repeat the content in the next iteration.
+        """
+        formatter = DeepSeekChatFormatter()
+
+        # Message with both TextBlock and ToolUseBlock
+        msgs_with_both = [
+            Msg(
+                "user",
+                "What is the capital of Japan?",
+                "user",
+            ),
+            Msg(
+                "assistant",
+                [
+                    TextBlock(
+                        type="text",
+                        text="Let me check that for you.",
+                    ),
+                    ToolUseBlock(
+                        type="tool_use",
+                        id="1",
+                        name="get_capital",
+                        input={"country": "Japan"},
+                    ),
+                ],
+                "assistant",
+            ),
+        ]
+
+        res = await formatter.format(msgs_with_both)
+
+        # The assistant message should have content=None when tool_calls exists
+        self.assertEqual(res[1]["role"], "assistant")
+        self.assertIsNone(res[1]["content"])
+        self.assertIn("tool_calls", res[1])
+        self.assertEqual(res[1]["tool_calls"][0]["function"]["name"], "get_capital")
+
     async def test_multi_agent_formatter(
         self,
     ) -> None:
