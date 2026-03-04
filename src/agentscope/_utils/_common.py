@@ -71,6 +71,10 @@ def _json_loads_with_repair(
 
 def _is_accessible_local_file(url: str) -> bool:
     """Check if the given URL is a local URL."""
+    # First identify if it's an uri with 'file://' schema,
+    if url.startswith("file://"):
+        local_path = url.removeprefix("file://")
+        return os.path.isfile(local_path)
     return os.path.isfile(url)
 
 
