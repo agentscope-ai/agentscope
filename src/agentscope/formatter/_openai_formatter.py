@@ -80,28 +80,26 @@ def _to_openai_image_url(url: str) -> str:
         ".webp",
     )
 
-    parsed_url = urlparse(url)
-
-    lower_url = url.lower()
-
-    # Web url
-    if not os.path.exists(url) and parsed_url.scheme != "":
-        path_lower = parsed_url.path if parsed_url.path else parsed_url.netloc
-        if any(path_lower.endswith(_) for _ in support_image_extensions):
-            return url
-
-    # Check if it is a local file
-    elif os.path.exists(url) and os.path.isfile(url):
-        if any(lower_url.endswith(_) for _ in support_image_extensions):
-            with open(url, "rb") as image_file:
+    raw_url = url.removeprefix("file://")
+    # For local files
+    if os.path.exists(raw_url) and os.path.isfile(raw_url):
+        if any(raw_url.endswith(_) for _ in support_image_extensions):
+            with open(raw_url, "rb") as image_file:
                 base64_image = base64.b64encode(image_file.read()).decode(
                     "utf-8",
                 )
-            extension = parsed_url.path.lower().split(".")[-1]
+            extension = raw_url.lower().split(".")[-1]
             mime_type = f"image/{extension}"
             return f"data:{mime_type};base64,{base64_image}"
 
-    raise TypeError(f'"{url}" should end with {support_image_extensions}.')
+    # For web urls
+    parsed_url = urlparse(raw_url)
+    if parsed_url.scheme not in ["", "file"]:
+        return url
+
+    raise ValueError(
+        f'Invalid image URL: "{url}". It should be a local file or a web URL.',
+    )
 
 
 def _to_openai_audio_data(source: URLSource | Base64Source) -> dict:
