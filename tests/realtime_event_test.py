@@ -409,7 +409,7 @@ class TestClientEventsFromJson(IsolatedAsyncioTestCase):
         json_data = {
             "type": "client_image_append",
             "session_id": "session_001",
-            "data": "base64_image_data",
+            "image": "base64_image_data",
             "format": {"mime_type": "image/png"},
         }
 
@@ -418,7 +418,7 @@ class TestClientEventsFromJson(IsolatedAsyncioTestCase):
         self.assertIsInstance(event, ClientEvents.ClientImageAppendEvent)
         self.assertEqual(event.type, "client_image_append")
         self.assertEqual(event.session_id, "session_001")
-        self.assertEqual(event.data, "base64_image_data")
+        self.assertEqual(event.image, "base64_image_data")
         self.assertEqual(event.format, {"mime_type": "image/png"})
 
     async def test_client_text_append_event(self) -> None:

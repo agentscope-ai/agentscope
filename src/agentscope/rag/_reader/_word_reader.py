@@ -20,6 +20,11 @@ else:
     DocxTable = "docx.table.Table"
     DocxParagraph = "docx.text.paragraph.Paragraph"
 
+# VML (Vector Markup Language) namespace URI.
+# Not registered in python-docx's default nsmap, so we define it here
+# instead of relying on qn("v:...") which may fail in some versions.
+_VML_NS = "{urn:schemas-microsoft-com:vml}"
+
 
 def _extract_text_from_paragraph(para: DocxParagraph) -> str:
     """Extract text from a paragraph, including text in text boxes and shapes.
@@ -58,9 +63,8 @@ def _extract_text_from_paragraph(para: DocxParagraph) -> str:
                     if t_elem.text:
                         text += t_elem.text
 
-        # Check for VML text boxes - use full namespace URI
-        vml_ns = "{urn:schemas-microsoft-com:vml}"
-        vml_textboxes = para._element.findall(".//" + vml_ns + "textbox")
+        # Check for VML text boxes
+        vml_textboxes = para._element.findall(".//" + _VML_NS + "textbox")
         for vml_tb in vml_textboxes:
             for p_elem in vml_tb.findall(".//" + qn("w:p")):
                 for t_elem in p_elem.findall(".//" + qn("w:t")):
@@ -173,7 +177,7 @@ def _extract_image_data(para: DocxParagraph) -> list[ImageBlock]:
     picts = para._element.findall(".//" + qn("w:pict"))
 
     for pict in picts:
-        imagedatas = pict.findall(".//" + qn("v:imagedata"))
+        imagedatas = pict.findall(".//" + _VML_NS + "imagedata")
 
         for imagedata in imagedatas:
             rel_id = imagedata.get(qn("r:id"))

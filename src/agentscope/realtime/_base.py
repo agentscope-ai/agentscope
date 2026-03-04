@@ -6,9 +6,6 @@ from abc import abstractmethod
 from asyncio import Queue
 from typing import Any
 
-import websockets
-from websockets import ClientConnection
-
 from ._events import ModelEvents
 from ..message import AudioBlock, TextBlock, ImageBlock, ToolResultBlock
 
@@ -52,6 +49,8 @@ class RealtimeModelBase:
         self._incoming_queue = Queue()
         self._incoming_task = None
 
+        from websockets import ClientConnection
+
         self._websocket: ClientConnection | None = None
 
     @abstractmethod
@@ -82,6 +81,7 @@ class RealtimeModelBase:
             tools (`list[dict]`, *optional*):
                 The list of tools JSON schemas.
         """
+        import websockets
 
         self._websocket = await websockets.connect(
             self.websocket_url,

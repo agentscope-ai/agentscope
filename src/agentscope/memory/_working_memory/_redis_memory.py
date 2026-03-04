@@ -26,6 +26,18 @@ class RedisMemory(MemoryBase):
     .. note:: All Redis keys used by this class will be prefixed by `prefix`
     (if provided) to support multi-tenant / multi-app isolation.
 
+    **Mark Index Storage:**
+
+    This class maintains a `marks_index` (Redis Set) to efficiently track all
+    mark names within a session. When a mark is created via `add_mark()`, the
+    mark name is added to this set. This allows quick retrieval of all marks
+    without scanning all Redis keys. The marks_index key pattern is:
+    ``user_id:{user_id}:session:{session_id}:marks_index``
+
+    Each individual mark stores its associated message IDs in a separate Redis
+    List with the key pattern:
+    ``user_id:{user_id}:session:{session_id}:mark:{mark}``
+
     """
 
     SESSION_KEY = "user_id:{user_id}:session:{session_id}:messages"
@@ -44,6 +56,11 @@ class RedisMemory(MemoryBase):
 
     MESSAGE_KEY = "user_id:{user_id}:session:{session_id}:msg:{msg_id}"
     """Redis key pattern (without prefix) for storing message payload data."""
+
+    MARKS_INDEX_KEY = "user_id:{user_id}:session:{session_id}:marks_index"
+    """Redis key pattern (without prefix) for storing all mark names as a set.
+    This is used to avoid scanning all keys to find marks.
+    """
 
     def __init__(
         self,
@@ -125,6 +142,35 @@ class RedisMemory(MemoryBase):
         """
         return self._client
 
+    def _decode_if_bytes(self, data: Any) -> Any:
+        """Helper method to decode bytes to str if needed.
+
+        Args:
+            data (`Any`):
+                The data to decode, which may be bytes, bytearray, or str.
+
+        Returns:
+            `Any`:
+                The decoded string if input was bytes/bytearray, otherwise
+                the original data.
+        """
+        if isinstance(data, (bytes, bytearray)):
+            return data.decode("utf-8")
+        return data
+
+    def _decode_list(self, data_list: list) -> list:
+        """Helper method to decode a list of potential bytes.
+
+        Args:
+            data_list (`list`):
+                A list that may contain bytes, bytearray, or str elements.
+
+        Returns:
+            `list`:
+                A list with all bytes/bytearray elements decoded to str.
+        """
+        return [self._decode_if_bytes(item) for item in data_list]
+
     def _get_session_key(self) -> str:
         """Get the Redis key for the current session.
 
@@ -179,6 +225,38 @@ class RedisMemory(MemoryBase):
             mark="*",
         )
 
+    def _get_marks_index_key(self) -> str:
+        """Get the Redis key for the marks index set.
+
+        Returns:
+            `str`:
+                The Redis key for storing all mark names as a set.
+        """
+        return self.key_prefix + self.MARKS_INDEX_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+        )
+
+    def _extract_mark_from_key(self, mark_key: str) -> str:
+        """Extract the mark name from a full mark key.
+
+        Args:
+            mark_key (`str`):
+                The full Redis key for a mark.
+
+        Returns:
+            `str`:
+                The mark name extracted from the key.
+        """
+        # Remove the prefix and the base pattern to get the mark name
+        # Example: "prefix:user_id:xxx:session:yyy:mark:my_mark" -> "my_mark"
+        prefix_pattern = self.key_prefix + self.MARK_KEY.format(
+            user_id=self.user_id,
+            session_id=self.session_id,
+            mark="",
+        )
+        return mark_key.replace(prefix_pattern, "")
+
     def _get_message_key(self, msg_id: str) -> str:
         """Get the Redis key for a specific message.
 
@@ -224,6 +302,8 @@ class RedisMemory(MemoryBase):
                 match=self._get_session_pattern(),
                 count=100,
             )
+            # Decode keys if they are bytes
+            keys = self._decode_list(keys)
             for key in keys:
                 await pipe.expire(key, self.key_ttl)
             if cursor == 0:
@@ -231,6 +311,70 @@ class RedisMemory(MemoryBase):
 
         if should_execute:
             await pipe.execute()
+
+    async def _scan_and_migrate_marks(self) -> list[str]:
+        """Scan all mark keys and migrate them to the marks index.
+
+        This method is only called once for old data that doesn't have
+        a marks index yet. After migration, the marks index will be
+        maintained automatically.
+
+        Returns:
+            `list[str]`:
+                The list of all mark keys found.
+        """
+        mark_keys = []
+        cursor = 0
+        while True:
+            cursor, keys = await self._client.scan(
+                cursor,
+                match=self._get_mark_pattern(),
+                count=50,
+            )
+            keys = self._decode_list(keys)
+            mark_keys.extend(keys)
+            if cursor == 0:
+                break
+
+        # Build the marks index
+        if mark_keys:
+            pipe = self._client.pipeline()
+            for mark_key in mark_keys:
+                mark = self._extract_mark_from_key(mark_key)
+                await pipe.sadd(self._get_marks_index_key(), mark)
+            await pipe.execute()
+
+        return mark_keys
+
+    async def _get_all_mark_keys(self) -> list[str]:
+        """Get all mark keys, compatible with both old and new data.
+
+        For new data (with marks index), this method uses the index directly.
+        For old data (without marks index), this method scans once and
+        migrates to the new structure.
+
+        Returns:
+            `list[str]`:
+                The list of all mark keys.
+        """
+        marks_index_key = self._get_marks_index_key()
+
+        # Try to read from the index first
+        marks = await self._client.smembers(marks_index_key)
+        if marks:
+            # Index exists, use it
+            marks = self._decode_list(list(marks))
+            return [self._get_mark_key(mark) for mark in marks]
+
+        # Index doesn't exist, check if this is a new session
+        session_exists = await self._client.exists(self._get_session_key())
+        if not session_exists:
+            # New session, no data at all, return empty
+            return []
+
+        # Old session without index, need to scan and migrate (only once)
+        mark_keys = await self._scan_and_migrate_marks()
+        return mark_keys
 
     async def get_memory(
         self,
@@ -284,6 +428,8 @@ class RedisMemory(MemoryBase):
                 -1,
             )
 
+        msg_ids = self._decode_list(msg_ids)
+
         # Exclude messages by exclude_mark
         if exclude_mark:
             exclude_msg_ids = await self._client.lrange(
@@ -291,6 +437,7 @@ class RedisMemory(MemoryBase):
                 0,
                 -1,
             )
+            exclude_msg_ids = self._decode_list(exclude_msg_ids)
             msg_ids = [_ for _ in msg_ids if _ not in exclude_msg_ids]
 
         # Use mget for batch retrieval to avoid N+1 queries
@@ -301,8 +448,8 @@ class RedisMemory(MemoryBase):
 
             for msg_data in msg_data_list:
                 if msg_data is not None:
-                    if isinstance(msg_data, (bytes, bytearray)):
-                        msg_data = msg_data.decode("utf-8")
+                    # Decode if bytes
+                    msg_data = self._decode_if_bytes(msg_data)
                     msg_dict = json.loads(msg_data)
                     messages.append(Msg.from_dict(msg_dict))
 
@@ -365,6 +512,7 @@ class RedisMemory(MemoryBase):
                 0,
                 -1,
             )
+            existing_msg_ids = self._decode_list(existing_msg_ids)
             existing_msg_ids_set = set(existing_msg_ids)
 
             # Filter out messages that already exist
@@ -397,6 +545,8 @@ class RedisMemory(MemoryBase):
             # Record the marks if provided
             for mark in mark_list:
                 await pipe.rpush(self._get_mark_key(mark), m.id)
+                # Maintain the marks index
+                await pipe.sadd(self._get_marks_index_key(), mark)
 
         # Refresh TTLs
         await self._refresh_session_ttl(pipe=pipe)
@@ -421,18 +571,8 @@ class RedisMemory(MemoryBase):
         if not msg_ids:
             return 0
 
-        # Get all mark keys once before the pipeline
-        mark_keys = []
-        cursor = 0
-        while True:
-            cursor, keys = await self._client.scan(
-                cursor,
-                match=self._get_mark_pattern(),
-                count=50,
-            )
-            mark_keys.extend(keys)
-            if cursor == 0:
-                break
+        # Get all mark keys using the new method (compatible with old data)
+        mark_keys = await self._get_all_mark_keys()
 
         pipe = self._client.pipeline()
         for msg_id in msg_ids:
@@ -488,6 +628,7 @@ class RedisMemory(MemoryBase):
         for m in mark:
             mark_key = self._get_mark_key(m)
             msg_ids = await self._client.lrange(mark_key, 0, -1)
+            msg_ids = self._decode_list(msg_ids)
 
             if not msg_ids:
                 continue
@@ -501,6 +642,9 @@ class RedisMemory(MemoryBase):
             # Delete the mark list
             await self._client.delete(mark_key)
 
+            # Remove from the marks index
+            await self._client.srem(self._get_marks_index_key(), m)
+
         # Refresh TTLs
         await self._refresh_session_ttl()
 
@@ -509,19 +653,10 @@ class RedisMemory(MemoryBase):
     async def clear(self) -> None:
         """Clear all messages belong to this session from the storage."""
         msg_ids = await self._client.lrange(self._get_session_key(), 0, -1)
+        msg_ids = self._decode_list(msg_ids)
 
-        # Get all mark keys using SCAN
-        mark_keys = []
-        cursor = 0
-        while True:
-            cursor, keys = await self._client.scan(
-                cursor,
-                match=self._get_mark_pattern(),
-                count=50,
-            )
-            mark_keys.extend(keys)
-            if cursor == 0:
-                break
+        # Get all mark keys using the new method (compatible with old data)
+        mark_keys = await self._get_all_mark_keys()
 
         pipe = self._client.pipeline()
 
@@ -535,6 +670,9 @@ class RedisMemory(MemoryBase):
         # Delete all mark lists
         for mark_key in mark_keys:
             await pipe.delete(mark_key)
+
+        # Delete the marks index
+        await pipe.delete(self._get_marks_index_key())
 
         await pipe.execute()
 
@@ -581,20 +719,19 @@ class RedisMemory(MemoryBase):
                 The number of messages updated.
         """
         # Determine which message IDs to update
-        if old_mark is not None:
-            # Get message IDs from the old mark list
-            mark_msg_ids = await self._client.lrange(
-                self._get_mark_key(old_mark),
-                0,
-                -1,
-            )
-        else:
-            # Get all message IDs from the session
-            mark_msg_ids = await self._client.lrange(
-                self._get_session_key(),
-                0,
-                -1,
-            )
+        # Get source key based on old_mark
+        source_key = (
+            self._get_mark_key(old_mark)
+            if old_mark is not None
+            else self._get_session_key()
+        )
+        mark_msg_ids = await self._client.lrange(source_key, 0, -1)
+        mark_msg_ids = self._decode_list(mark_msg_ids)
+
+        # Check if we're removing all messages from old_mark
+        removing_all_from_old_mark = old_mark is not None and (
+            msg_ids is None or all(mid in set(msg_ids) for mid in mark_msg_ids)
+        )
 
         # Filter by msg_ids if provided
         if msg_ids is not None:
@@ -610,6 +747,7 @@ class RedisMemory(MemoryBase):
         if new_mark is not None:
             new_mark_key = self._get_mark_key(new_mark)
             existing_ids = await self._client.lrange(new_mark_key, 0, -1)
+            existing_ids = self._decode_list(existing_ids)
             existing_ids_set = set(existing_ids)
 
         # Use pipeline for batch operations
@@ -617,30 +755,32 @@ class RedisMemory(MemoryBase):
         updated_count = 0
 
         for msg_id in mark_msg_ids:
-            # If new_mark is None, remove the old_mark
-            if new_mark is None:
-                if old_mark is not None:
-                    await pipe.lrem(
-                        self._get_mark_key(old_mark),
-                        0,
-                        msg_id,
-                    )
-                    updated_count += 1
-            else:
-                # Remove from old_mark list if applicable
-                if old_mark is not None:
-                    await pipe.lrem(
-                        self._get_mark_key(old_mark),
-                        0,
-                        msg_id,
-                    )
+            # Remove from old_mark list if applicable
+            if old_mark is not None:
+                await pipe.lrem(
+                    self._get_mark_key(old_mark),
+                    0,
+                    msg_id,
+                )
 
-                # Add to new_mark list only if not already present
-                if msg_id not in existing_ids_set and new_mark_key is not None:
-                    await pipe.rpush(new_mark_key, msg_id)
-                    existing_ids_set.add(msg_id)
+            # Add to new_mark list only if not already present
+            if new_mark is not None and msg_id not in existing_ids_set:
+                await pipe.rpush(new_mark_key, msg_id)
+                existing_ids_set.add(msg_id)
+                # Maintain the marks index
+                await pipe.sadd(self._get_marks_index_key(), new_mark)
 
+            # Count update only if we actually did something
+            if old_mark is not None or new_mark is not None:
                 updated_count += 1
+
+        # Clean up old_mark only if we removed ALL messages from it
+        if old_mark is not None and removing_all_from_old_mark:
+            old_mark_key = self._get_mark_key(old_mark)
+            # After lrem operations, the old mark list will be empty
+            # Delete the mark key and remove from index
+            await pipe.delete(old_mark_key)
+            await pipe.srem(self._get_marks_index_key(), old_mark)
 
         await self._refresh_session_ttl(pipe=pipe)
 

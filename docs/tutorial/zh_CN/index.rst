@@ -57,6 +57,7 @@ Welcome to AgentScope's documentation!
    tutorial/task_agent
    tutorial/task_state
    tutorial/task_hook
+   tutorial/task_middleware
    tutorial/task_a2a
    tutorial/task_realtime
 
@@ -74,27 +75,3 @@ Welcome to AgentScope's documentation!
    tutorial/task_embedding
    tutorial/task_tts
    tutorial/task_tuner
-
-.. toctree::
-   :maxdepth: 1
-   :caption: API Docs
-
-   api/agentscope
-   api/agentscope.message
-   api/agentscope.model
-   api/agentscope.formatter
-   api/agentscope.module
-   api/agentscope.pipeline
-   api/agentscope.agent
-   api/agentscope.memory
-   api/agentscope.tool
-   api/agentscope.mcp
-   api/agentscope.embedding
-   api/agentscope.evaluate
-   api/agentscope.plan
-   api/agentscope.rag
-   api/agentscope.token
-   api/agentscope.tracing
-   api/agentscope.session
-   api/agentscope.exception
-   api/agentscope.tts

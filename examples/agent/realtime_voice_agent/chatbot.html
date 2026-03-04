@@ -139,13 +139,15 @@
             border-color: hsl(221.2, 83.2%, 45%);
         }
 
-        button.btn-primary.recording {
+        button.btn-primary.recording,
+        button.btn-primary.recording-video {
             background: hsl(0, 84.2%, 60.2%);
             border-color: hsl(0, 84.2%, 60.2%);
             animation: pulse 1.5s ease-in-out infinite;
         }
 
-        button.btn-primary.recording:hover:not(:disabled) {
+        button.btn-primary.recording:hover:not(:disabled),
+        button.btn-primary.recording-video:hover:not(:disabled) {
             background: hsl(0, 84.2%, 50%);
             border-color: hsl(0, 84.2%, 50%);
         }
@@ -194,11 +196,12 @@
             flex-shrink: 0;
         }
 
-        .controls #voiceBtn {
+        .controls #voiceBtn,
+        .controls #videoBtn {
             flex: 1;
         }
 
-        .controls button:not(#voiceBtn) {
+        .controls button:not(#voiceBtn):not(#videoBtn) {
             width: 140px;
             flex-shrink: 0;
         }
@@ -425,6 +428,28 @@
             border-color: hsl(214.3, 31.8%, 91.4%);
             opacity: 0.6;
         }
+
+        #videoPreview {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 0.5rem;
+            border: 1px solid hsl(214.3, 31.8%, 91.4%);
+            background: hsl(0, 0%, 0%);
+            display: none;
+            margin: 1rem 0;
+            flex-shrink: 0;
+        }
+
+        #videoPreview.active {
+            display: block;
+        }
+
+        .video-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -515,7 +540,12 @@
 
     <div class="controls">
         <button id="voiceBtn" class="btn-primary" onclick="toggleVoice()">🎤 Start Voice Chat</button>
+        <button id="videoBtn" class="btn-primary" onclick="toggleVideo()">📹 Start Video Recording</button>
         <button class="btn-secondary" onclick="disconnect()">❌ Disconnect</button>
+    </div>
+
+    <div class="video-container">
+        <video id="videoPreview" autoplay muted playsinline></video>
     </div>
 
     <div class="text-input-container">
@@ -531,7 +561,12 @@
         let audioContext = null;  // For recording, 16kHz
         let playbackAudioContext = null;  // For playback, 24kHz
         let mediaStream = null;
+        let videoStream = null;  // For video recording
+        let videoFrameInterval = null;  // Interval for sending video frames
+        let videoCanvas = null;  // Canvas for capturing video frames
+        let videoCanvasCtx = null;  // Canvas context
         let isRecording = false;
+        let isRecordingVideo = false;
         let isPlaying = false;
         let audioPlaybackNode = null;
         let audioPlaybackQueue = [];  // Store decoded Float32Array
@@ -825,6 +860,7 @@
             ws.onclose = function() {
                 addMessage("System", "❌ Disconnected");
                 stopVoice();
+                stopVideoRecording();  // Also stop video recording on disconnect
                 sessionCreated = false;  // Reset session state
                 updateSendButtonState();
             };
@@ -1125,8 +1161,168 @@
         }
 
 
+        /**
+         * Toggles video recording on and off by calling the
+         * start or stop functions.
+         */
+        async function toggleVideo() {
+            if (!isRecordingVideo) {
+                await startVideoRecording();
+            } else {
+                stopVideoRecording();
+            }
+        }
+
+        /**
+         * Starts video recording by requesting camera access, displaying a
+         * live preview, and initiating frame capture to the server at 1 fps.
+         * Requires an active voice chat session (WebSocket connected and
+         * session created).
+         */
+        async function startVideoRecording() {
+            // Prevent duplicate starts
+            if (isRecordingVideo) {
+                return;
+            }
+
+            try {
+                const videoBtn = document.getElementById("videoBtn");
+                const videoPreview = document.getElementById("videoPreview");
+
+                // Check if WebSocket is connected
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    showError("⚠️ WebSocket is not connected! Please wait for connection.");
+                    return;
+                }
+
+                // Check if session is created
+                if (!sessionCreated) {
+                    showError("⚠️ Session not created yet! Please start voice chat first.");
+                    return;
+                }
+
+                // Request video stream only (audio is already captured by voice chat)
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        facingMode: "user"
+                    },
+                    audio: false
+                });
+
+                // Show video preview
+                videoPreview.srcObject = videoStream;
+                videoPreview.classList.add("active");
+
+                // Start sending video frames to server at 1 fps
+                startSendingVideoFrames();
+
+                isRecordingVideo = true;
+                videoBtn.classList.add("recording-video");
+                videoBtn.innerText = "🔴 Stop Video Recording";
+                addMessage("System", "📹 Video recording started, sending frames to server at 1 fps...");
+
+            } catch (err) {
+                console.error("Failed to start video recording:", err);
+                showError("⚠️ Unable to access camera: " + err.message);
+                addMessage("System", "⚠️ Unable to access camera: " + err.message);
+            }
+        }
+
+        /**
+         * Captures video frames from the preview element at 1 fps and sends
+         * them to the server as base64-encoded JPEG images via WebSocket
+         * using the client_image_append event.
+         */
+        function startSendingVideoFrames() {
+            if (videoFrameInterval) {
+                clearInterval(videoFrameInterval);
+            }
+
+            const videoPreview = document.getElementById("videoPreview");
+
+            // Create canvas if needed
+            if (!videoCanvas) {
+                videoCanvas = document.createElement('canvas');
+                videoCanvasCtx = videoCanvas.getContext('2d');
+            }
+
+            // Send frame every second (1 fps)
+            videoFrameInterval = setInterval(function() {
+                if (!isRecordingVideo || !videoStream || !videoPreview) {
+                    return;
+                }
+
+                try {
+                    // Check if video is ready
+                    if (videoPreview.readyState < 2 || !videoPreview.videoWidth || !videoPreview.videoHeight) {
+                        return;
+                    }
+
+                    // Set canvas size to match video
+                    const videoWidth = videoPreview.videoWidth;
+                    const videoHeight = videoPreview.videoHeight;
+                    if (videoCanvas.width !== videoWidth || videoCanvas.height !== videoHeight) {
+                        videoCanvas.width = videoWidth;
+                        videoCanvas.height = videoHeight;
+                    }
+
+                    // Capture frame and convert to base64 JPEG
+                    videoCanvasCtx.drawImage(videoPreview, 0, 0, videoWidth, videoHeight);
+                    const base64Data = videoCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+                    // Send to server
+                    if (ws && ws.readyState === WebSocket.OPEN && sessionCreated) {
+                        ws.send(JSON.stringify({
+                            type: "client_image_append",
+                            session_id: sessionId,
+                            data: base64Data,
+                            format: {
+                                type: "image/jpeg",
+                                mime_type: "image/jpeg"
+                            }
+                        }));
+                    }
+                } catch (err) {
+                    console.error("Failed to capture video frame:", err);
+                }
+            }, 1000);
+        }
+
+        /**
+         * Stops video recording by clearing the frame capture interval,
+         * releasing the camera stream, and resetting the UI state.
+         */
+        function stopVideoRecording() {
+            if (videoFrameInterval) {
+                clearInterval(videoFrameInterval);
+                videoFrameInterval = null;
+            }
+
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+
+            const videoPreview = document.getElementById("videoPreview");
+            if (videoPreview) {
+                videoPreview.srcObject = null;
+                videoPreview.classList.remove("active");
+            }
+
+            const videoBtn = document.getElementById("videoBtn");
+            isRecordingVideo = false;
+            if (videoBtn) {
+                videoBtn.classList.remove("recording-video");
+                videoBtn.innerText = "📹 Start Video Recording";
+            }
+            addMessage("System", "⏹️ Video recording stopped");
+        }
+
         function disconnect() {
             stopVoice();
+            stopVideoRecording();
             stopAudioPlayback();
             if (ws) {
                 ws.close();

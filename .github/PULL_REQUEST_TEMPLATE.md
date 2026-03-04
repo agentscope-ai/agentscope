@@ -1,3 +1,11 @@
+## PR Title Format
+
+Please ensure your PR title follows the Conventional Commits format:
+- Format: `<type>(<scope>): <description>`
+- Example: `feat(memory): add redis cache support`
+- Allowed types: `feat`, `fix`, `docs`, `ci`, `refactor`, `test`, `chore`, `perf`, `style`, `build`, `revert`
+- Description should start with a lowercase letter
+
 ## AgentScope Version
 
 [The version of AgentScope you are working on, e.g. `import agentscope; print(agentscope.__version__)`]

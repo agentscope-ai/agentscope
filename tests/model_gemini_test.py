@@ -25,7 +25,30 @@ class GeminiResponseMock:
         self.usage_metadata = (
             self._create_usage_mock(usage_metadata) if usage_metadata else None
         )
-        self.candidates = candidates or []
+
+        if candidates:
+            # Use provided candidates structure
+            self.candidates = candidates
+        else:
+            # Build default candidate structure
+            part = Mock()
+            part.text = text
+            part.thought = False
+            part.function_call = None
+
+            first_candidate = Mock()
+            first_candidate.content = Mock()
+            first_candidate.content.parts = [part]
+
+            for function_call in function_calls or []:
+                part = Mock()
+                part.text = None
+                part.thought = False
+                part.function_call = function_call
+                part.thought_signature = None
+                first_candidate.content.parts.append(part)
+
+            self.candidates = [first_candidate]
 
     def _create_usage_mock(self, usage_data: dict) -> Mock:
         usage_mock = Mock()
@@ -49,6 +72,8 @@ class GeminiPartMock:
     def __init__(self, text: str = "", thought: bool = False):
         self.text = text
         self.thought = thought
+        self.function_call = None
+        self.thought_signature = None
 
 
 class GeminiCandidateMock:
@@ -127,6 +152,7 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
             call_args = mock_client.aio.models.generate_content.call_args[1]
             self.assertEqual(call_args["model"], "gemini-2.5-flash")
             self.assertEqual(call_args["contents"], messages)
+            self.assertIn("config", call_args)
             self.assertIsInstance(result, ChatResponse)
             expected_content = [
                 TextBlock(type="text", text="Hello! How can I help you?"),
@@ -232,7 +258,11 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                 text="Let me analyze this step by step...",
                 thought=True,
             )
-            candidate = GeminiCandidateMock(parts=[thinking_part])
+            text_part = GeminiPartMock(
+                text="Here's my analysis",
+                thought=False,
+            )
+            candidate = GeminiCandidateMock(parts=[thinking_part, text_part])
             mock_response = self._create_mock_response_with_thinking(
                 "Here's my analysis",
                 candidates=[candidate],

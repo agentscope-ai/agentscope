@@ -103,7 +103,7 @@ class OpenAITTSModel(TTSModelBase):
                         model=self.model_name,
                         voice=self.voice,
                         input=text,
-                        response_format="mp3",
+                        response_format="pcm",
                         **self.generate_kwargs,
                         **kwargs,
                     )

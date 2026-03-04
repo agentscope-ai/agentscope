@@ -54,7 +54,42 @@ refactor(formatter): simplify message formatting logic
 ci(models): add unit tests for OpenAI integration
 ```
 
-### 3. Code Development Guidelines
+### 3. Pull Request Title Format
+
+Pull request titles must follow the same [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+**Format:**
+```
+<type>(<scope>): <description>
+```
+
+**Requirements:**
+- The title must start with one of the allowed types: `feat`, `fix`, `docs`, `ci`, `refactor`, `test`, `chore`, `perf`, `style`, `build`, `revert`
+- Scope is optional but recommended
+- **Scope must be lowercase** - only lowercase letters, numbers, hyphens (`-`), and underscores (`_`) are allowed
+- Description should start with a lowercase letter
+- Keep the title concise and descriptive
+
+**Examples:**
+```
+✅ Valid:
+feat(memory): add redis cache support
+fix(agent): resolve memory leak in ReActAgent
+docs(tutorial): update installation guide
+ci(workflow): add PR title validation
+refactor(my-feature): simplify logic
+
+❌ Invalid:
+feat(Memory): add cache          # Scope must be lowercase
+feat(MEMORY): add cache          # Scope must be lowercase
+feat(MyFeature): add feature     # Scope must be lowercase
+```
+
+**Automated Validation:**
+- PR titles targeting the `main` branch are automatically validated by GitHub Actions
+- PRs with invalid titles will be blocked until the title is corrected
+
+### 4. Code Development Guidelines
 
 #### a. Pre-commit Checks
 

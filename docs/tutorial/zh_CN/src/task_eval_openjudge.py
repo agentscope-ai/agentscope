@@ -288,14 +288,12 @@ class QABenchmark(BenchmarkBase):
 import asyncio
 from typing import Callable
 
-from agentscope.agent._react_agent import ReActAgent
-from agentscope.evaluate._evaluator._general_evaluator import GeneralEvaluator
-from agentscope.evaluate._evaluator_storage._file_evaluator_storage import (
-    FileEvaluatorStorage,
-)
-from agentscope.formatter._dashscope_formatter import DashScopeChatFormatter
-from agentscope.message._message_base import Msg
-from agentscope.model._openai_model import OpenAIChatModel
+from agentscope.agent import ReActAgent
+from agentscope.evaluate import GeneralEvaluator
+from agentscope.evaluate import FileEvaluatorStorage
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.message import Msg
+from agentscope.model import OpenAIChatModel
 
 
 async def qa_agent(task: Task, pre_hook: Callable) -> SolutionOutput:
@@ -340,8 +338,6 @@ async def main() -> None:
 
     await evaluator.run(qa_agent)
 
-
-asyncio.run(main())
 
 # %% [markdown]
 #

@@ -19,7 +19,7 @@ from ..message import (
 class OpenAIRealtimeModel(RealtimeModelBase):
     """The OpenAI realtime model class."""
 
-    support_input_modalities: list[str] = ["audio", "text"]
+    support_input_modalities: list[str] = ["audio", "text", "tool_result"]
     """The supported input modalities of the OpenAI realtime model."""
 
     support_tools: bool = True
@@ -28,10 +28,7 @@ class OpenAIRealtimeModel(RealtimeModelBase):
     websocket_url: str = "wss://api.openai.com/v1/realtime?model={model_name}"
     """The websocket URL of the OpenAI realtime model API."""
 
-    websocket_headers: dict[str, str] = {
-        "Authorization": "Bearer {api_key}",
-        "OpenAI-Beta": "realtime=v1",
-    }
+    websocket_headers: dict[str, str]
     """The websocket headers of the OpenAI realtime model API."""
 
     input_sample_rate: int
@@ -75,9 +72,10 @@ class OpenAIRealtimeModel(RealtimeModelBase):
         self.websocket_url = self.websocket_url.format(model_name=model_name)
 
         # Set the API key in the websocket headers.
-        self.websocket_headers["Authorization"] = self.websocket_headers[
-            "Authorization"
-        ].format(api_key=api_key)
+        self.websocket_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "OpenAI-Beta": "realtime=v1",
+        }
 
         # Record the response ID for the current session.
         self._response_id = ""
@@ -119,13 +117,36 @@ class OpenAIRealtimeModel(RealtimeModelBase):
 
         # Tools configuration
         if tools:
-            # TODO: format the tools
-            session_config["tools"] = tools
+            session_config["tools"] = self._format_toolkit_schema(tools)
 
         return {
             "type": "session.update",
             "session": session_config,
         }
+
+    def _format_toolkit_schema(
+        self,
+        schemas: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Format the tools JSON schema into OpenAI realtime model format.
+
+        Args:
+            schemas (`list[dict[str, Any]]`):
+                The tool schemas.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The formatted tools for OpenAI realtime model.
+
+        .. note::
+            The OpenAI Realtime API uses a different tool format compared to
+            the regular Chat Completions API. While the Chat API expects tools
+            to be wrapped in ``{"type": "function", "function": {...}}``, the
+            Realtime API expects a flattened structure where the function
+            definition is directly at the top level with an added ``"type":
+            "function"`` field.
+        """
+        return [{"type": "function", **tool["function"]} for tool in schemas]
 
     async def send(
         self,
@@ -230,7 +251,6 @@ class OpenAIRealtimeModel(RealtimeModelBase):
 
             # ================ Response related events ================
             case "response.created":
-                # TODO: @qbc we create one shortuuid here?
                 self._response_id = data.get("response", {}).get("id", "")
                 model_event = ModelEvents.ModelResponseCreatedEvent(
                     response_id=self._response_id,

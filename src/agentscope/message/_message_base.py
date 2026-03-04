@@ -61,7 +61,7 @@ class Msg:
         assert role in ["user", "assistant", "system"]
         self.role = role
 
-        self.metadata = metadata
+        self.metadata = metadata or {}
 
         self.id = shortuuid.uuid()
         self.timestamp = (

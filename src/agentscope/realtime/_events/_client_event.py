@@ -94,7 +94,7 @@ class ClientEvents:
         session_id: str
         """The session ID."""
 
-        data: str
+        image: str
         """The image data, encoded as base64 string."""
 
         format: dict

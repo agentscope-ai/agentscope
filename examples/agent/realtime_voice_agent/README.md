@@ -39,8 +39,10 @@ http://localhost:8000
 You will see a web interface with:
 - Configuration panel (instructions and user name)
 - Voice control buttons (Start Recording, Stop Recording, Disconnect)
+- Video recording button (Start Video Recording)
 - Text input field
 - Message display area
+- Video preview area (when video recording is active)
 
 ### 3. Start Conversation
 
@@ -57,6 +59,13 @@ You will see a web interface with:
 3. **Stop Recording**:
    - Click "⏹️ Stop Recording" to pause voice input
 
+4. **Video Recording** (Optional):
+   - Click the "📹 Start Video Recording" button to start video recording
+   - Allow camera access when prompted by your browser
+   - The system will automatically capture and send video frames to the server at 1 frame per second (1 fps)
+   - A video preview will be displayed while recording
+   - Click "🔴 Stop Video Recording" to stop recording
+   - **Note**: Video recording requires an active voice chat session. Please start voice chat first before starting video recording.
 
 ## Switching Models
 

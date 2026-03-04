@@ -59,32 +59,35 @@ from agentscope.realtime import (
 #
 #
 # 以下是初始化不同实时模型的示例：
-
-# DashScope 实时模型
-dashscope_model = DashScopeRealtimeModel(
-    model_name="qwen3-omni-flash-realtime",
-    api_key=os.getenv("DASHSCOPE_API_KEY"),
-    voice="Cherry",  # 可选项: "Cherry", "Serena", "Ethan", "Chelsie"
-    enable_input_audio_transcription=True,
-)
-
-# OpenAI 实时模型
-openai_model = OpenAIRealtimeModel(
-    model_name="gpt-4o-realtime-preview",
-    api_key=os.getenv("OPENAI_API_KEY"),
-    voice="alloy",  # 可选项: "alloy", "echo", "marin", "cedar"
-    enable_input_audio_transcription=True,
-)
-
-# Gemini 实时模型
-gemini_model = GeminiRealtimeModel(
-    model_name="gemini-2.5-flash-native-audio-preview-09-2025",
-    api_key=os.getenv("GEMINI_API_KEY"),
-    voice="Puck",  # 可选项: "Puck", "Charon", "Kore", "Fenrir"
-    enable_input_audio_transcription=True,
-)
-
-# %%
+#
+# .. code-block:: python
+#     :caption: 初始化不同实时模型的示例
+#
+#     # DashScope 实时模型
+#     dashscope_model = DashScopeRealtimeModel(
+#         model_name="qwen3-omni-flash-realtime",
+#         api_key=os.getenv("DASHSCOPE_API_KEY"),
+#         voice="Cherry",  # 可选项: "Cherry", "Serena", "Ethan", "Chelsie"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # OpenAI 实时模型
+#     openai_model = OpenAIRealtimeModel(
+#         model_name="gpt-4o-realtime-preview",
+#         api_key=os.getenv("OPENAI_API_KEY"),
+#         voice="alloy",  # 可选项: "alloy", "echo", "marin", "cedar"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#     # Gemini 实时模型
+#     gemini_model = GeminiRealtimeModel(
+#         model_name="gemini-2.5-flash-native-audio-preview-09-2025",
+#         api_key=os.getenv("GEMINI_API_KEY"),
+#         voice="Puck",  # 可选项: "Puck", "Charon", "Kore", "Fenrir"
+#         enable_input_audio_transcription=True,
+#     )
+#
+#
 #
 # 实时模型提供以下核心方法：
 #

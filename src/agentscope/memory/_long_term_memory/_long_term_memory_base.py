@@ -25,7 +25,7 @@ class LongTermMemoryBase(StateModule):
         self,
         msgs: list[Msg | None],
         **kwargs: Any,
-    ) -> None:
+    ) -> Any:
         """A developer-designed method to record information from the given
         input message(s) to the long-term memory."""
         raise NotImplementedError(

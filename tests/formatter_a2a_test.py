@@ -378,7 +378,7 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "unknown content'}",
                     },
                 ],
-                "metadata": None,
+                "metadata": {},
                 "timestamp": as_msgs[0].timestamp,
             },
         )
@@ -398,7 +398,7 @@ class A2AFormatterTest(IsolatedAsyncioTestCase):
                         "output": "Artifact tool output.",
                     },
                 ],
-                "metadata": None,
+                "metadata": {},
                 "timestamp": as_msgs[1].timestamp,
             },
         )

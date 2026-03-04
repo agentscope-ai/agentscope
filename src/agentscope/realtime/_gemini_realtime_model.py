@@ -32,7 +32,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
     websocket_url: str = (
         "wss://generativelanguage.googleapis.com/ws/"
         "google.ai.generativelanguage.v1alpha.GenerativeService."
-        "BidiGenerateContent?key={api_key}"
+        "BidiGenerateContent?key="
     )
     """The websocket URL of the Gemini realtime model API."""
 
@@ -82,7 +82,7 @@ class GeminiRealtimeModel(RealtimeModelBase):
         self.output_sample_rate = 24000
 
         # Set the API key in the websocket URL.
-        self.websocket_url = self.websocket_url.format(api_key=api_key)
+        self.websocket_url = self.websocket_url + api_key
 
         # Response tracking state.
         # Note: Unlike DashScope/OpenAI which send explicit `response.created`

@@ -222,6 +222,10 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         """
         if not self._disable_msg_queue:
             await self.msg_queue.put((deepcopy(msg), last, speech))
+            # Yield control to the event loop, allowing consumer coroutines
+            # to process messages from the queue. This prevents the producer
+            # from monopolizing the event loop.
+            await asyncio.sleep(0)
 
         if self._disable_console_output:
             return

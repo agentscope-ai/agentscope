@@ -49,7 +49,25 @@ else:
 
 class DashScopeChatModel(ChatModelBase):
     """The DashScope chat model class, which unifies the Generation and
-    MultimodalConversation APIs into one method."""
+    MultimodalConversation APIs into one method.
+
+    This class provides a unified interface for DashScope API by automatically
+    selecting between text-only (Generation API) and multimodal
+    (MultiModalConversation API) endpoints. The `multimodality` parameter
+    allows explicit control over API selection:
+
+    - When `multimodality=True`: Forces use of MultiModalConversation API
+      for handling images, videos, and other multimodal inputs
+    - When `multimodality=False`: Forces use of Generation API for
+      text-only processing
+    - When `multimodality=None` (default): Automatically selects the API
+      based on model name (e.g., models with "-vl" suffix or starting
+      with "qvq" will use MultiModalConversation API)
+
+    This design enables seamless switching between text and multimodal
+    models without changing code structure, making it easier to work with
+    DashScope's diverse model offerings.
+    """
 
     def __init__(
         self,
@@ -57,6 +75,7 @@ class DashScopeChatModel(ChatModelBase):
         api_key: str,
         stream: bool = True,
         enable_thinking: bool | None = None,
+        multimodality: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
         stream_tool_parsing: bool = True,
@@ -76,6 +95,14 @@ class DashScopeChatModel(ChatModelBase):
                 Refer to `DashScope documentation
                 <https://help.aliyun.com/zh/model-studio/deep-thinking>`_
                 for more details.
+            multimodality (`bool | None`, optional):
+                Whether to use multimodal conversation API. If `True`,
+                it will use `dashscope.MultiModalConversation.call`
+                to process multimodal inputs such as images and text. If
+                `False`, it will use
+                `dashscope.aigc.generation.AioGeneration.call` to process
+                text inputs. If `None` (default), the choice is based on
+                the model name.
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
             optional):
                The extra keyword arguments used in DashScope API generation,
@@ -103,6 +130,7 @@ class DashScopeChatModel(ChatModelBase):
 
         self.api_key = api_key
         self.enable_thinking = enable_thinking
+        self.multimodality = multimodality
         self.generate_kwargs = generate_kwargs or {}
         self.stream_tool_parsing = stream_tool_parsing
 
@@ -233,7 +261,15 @@ class DashScopeChatModel(ChatModelBase):
             )
 
         start_datetime = datetime.now()
-        if self.model_name.startswith("qvq") or "-vl" in self.model_name:
+        if self.multimodality or (
+            self.multimodality is None
+            and (
+                self.model_name.startswith(
+                    "qvq",
+                )
+                or "-vl" in self.model_name
+            )
+        ):
             response = dashscope.MultiModalConversation.call(
                 api_key=self.api_key,
                 **kwargs,
