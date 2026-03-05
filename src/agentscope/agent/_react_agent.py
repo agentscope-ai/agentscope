@@ -191,6 +191,7 @@ class ReActAgent(ReActAgentBase):
         enable_meta_tool: bool = False,
         parallel_tool_calls: bool = False,
         knowledge: KnowledgeBase | list[KnowledgeBase] | None = None,
+        knowledge_filter: dict[str, Any] | None = None,
         enable_rewrite_query: bool = True,
         plan_notebook: PlanNotebook | None = None,
         print_hint_msg: bool = False,
@@ -240,6 +241,9 @@ class ReActAgent(ReActAgentBase):
             knowledge (`KnowledgeBase | list[KnowledgeBase] | None`, optional):
                 The knowledge object(s) used by the agent to retrieve
                 relevant documents at the beginning of each reply.
+            knowledge_filter (`dict[str, Any] | None`, optional):
+                The filter to apply when retrieving documents from the
+                knowledge base.
             enable_rewrite_query (`bool`, defaults to `True`):
                 Whether ask the agent to rewrite the user input query before
                 retrieving from the knowledge base(s), e.g. rewrite "Who am I"
@@ -975,7 +979,10 @@ class ReActAgent(ReActAgentBase):
             for kb in self.knowledge:
                 # retrieve the user input query
                 docs.extend(
-                    await kb.retrieve(query=query),
+                    await kb.retrieve(
+                        query=query,
+                        search_filter=self.knowledge_filter,
+                    ),
                 )
             if docs:
                 # Rerank by the relevance score
