@@ -176,7 +176,7 @@ def _save_base64_data(
     extension = "." + media_type.split("/")[-1]
 
     with tempfile.NamedTemporaryFile(
-        suffix=f".{extension}",
+        suffix=extension,
         delete=False,
     ) as temp_file:
         decoded_data = base64.b64decode(base64_data)
