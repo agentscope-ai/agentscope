@@ -77,10 +77,12 @@ mem0ai = [
     "packaging"
 ]
 reme = ["reme-ai>=0.2.0.3"]
+powermem = ["powermem==0.3.1"]
 memory = [
     "agentscope[redis_memory]",
     "agentscope[mem0ai]",
     "agentscope[reme]",
+    "agentscope[powermem]",
 ]
 
 # ------------ RAG ------------
