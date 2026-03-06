@@ -97,7 +97,7 @@ class DashScopeChatModel(ChatModelBase):
                 for more details.
             multimodality (`bool | None`, optional):
                 Whether to use multimodal conversation API. If `True`,
-                it will use `dashscope.MultiModalConversation.call`
+                it will use `dashscope.AioMultiModalConversation.call`
                 to process multimodal inputs such as images and text. If
                 `False`, it will use
                 `dashscope.aigc.generation.AioGeneration.call` to process
@@ -270,7 +270,7 @@ class DashScopeChatModel(ChatModelBase):
                 or "-vl" in self.model_name
             )
         ):
-            response = dashscope.MultiModalConversation.call(
+            response = await dashscope.AioMultiModalConversation.call(
                 api_key=self.api_key,
                 **kwargs,
             )
@@ -302,6 +302,7 @@ class DashScopeChatModel(ChatModelBase):
         start_datetime: datetime,
         response: Union[
             AsyncGenerator[GenerationResponse, None],
+            AsyncGenerator[MultiModalConversationResponse, None],
             Generator[MultiModalConversationResponse, None, None],
         ],
         structured_model: Type[BaseModel] | None = None,
@@ -313,11 +314,12 @@ class DashScopeChatModel(ChatModelBase):
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (
-                `Union[AsyncGenerator[GenerationResponse, None], Generator[ \
-                MultiModalConversationResponse, None, None]]`
+                `Union[AsyncGenerator[GenerationResponse, None], \
+                AsyncGenerator[MultiModalConversationResponse, None], \
+                Generator[MultiModalConversationResponse, None, None]]`
             ):
-                DashScope streaming response generator (GenerationResponse or
-                MultiModalConversationResponse) to parse.
+                DashScope streaming response (async) generator
+                (GenerationResponse or MultiModalConversationResponse).
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
