@@ -6,6 +6,7 @@ import requests
 import shortuuid
 
 from ..agent import AgentBase, UserAgent
+from .._logging import logger
 
 
 def as_studio_forward_message_pre_print_hook(
@@ -50,4 +51,11 @@ def as_studio_forward_message_pre_print_hook(
                 n_retry += 1
                 continue
 
-            raise e from None
+            # 静默降级：打印警告并返回，避免 Agent 进程崩溃
+            logger.warning(
+                "Failed to forward message to Studio after %d retries: %s. "
+                "Agent will continue running without Studio forwarding.",
+                n_retry,
+                e,
+            )
+            return
