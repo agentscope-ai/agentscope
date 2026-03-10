@@ -1,0 +1,478 @@
+# -*- coding: utf-8 -*-
+"""Tests for the Tablestore memory implementation."""
+# pylint: disable=protected-access,too-many-public-methods
+import json
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+
+from agentscope.memory._working_memory._tablestore_memory import (
+    TablestoreMemory,
+)
+from agentscope.message import Msg
+
+
+def _create_mock_document(
+    msg: Msg,
+    marks: "list[str] | None" = None,
+    user_id: str = "default",
+    session_id: str = "default",
+) -> MagicMock:
+    """Create a mock Tablestore document from a Msg."""
+    if marks is None:
+        marks = []
+
+    content = msg.content
+    text_content = None
+    if isinstance(content, str):
+        text_content = content
+
+    doc = MagicMock()
+    doc.document_id = msg.id
+    doc.text = text_content
+    doc.metadata = {
+        "user_id": user_id,
+        "session_id": session_id,
+        "msg_id": msg.id,
+        "name": msg.name,
+        "role": msg.role,
+        "content_json": json.dumps(
+            msg.content,
+            ensure_ascii=False,
+            default=str,
+        ),
+        "metadata_json": json.dumps(
+            msg.metadata,
+            ensure_ascii=False,
+            default=str,
+        ),
+        "timestamp": msg.timestamp or "",
+        "marks_json": json.dumps(marks, ensure_ascii=False),
+    }
+    return doc
+
+
+def _create_memory_with_mocks() -> "TablestoreMemory":
+    """Create a TablestoreMemory instance with mocked dependencies."""
+    memory = object.__new__(TablestoreMemory)
+    # Initialize StateModule base
+    from collections import OrderedDict
+
+    memory._module_dict = OrderedDict()
+    memory._attribute_dict = OrderedDict()
+    memory._compressed_summary = ""
+    memory.register_state("_compressed_summary")
+
+    memory._user_id = "test_user"
+    memory._session_id = "test_session"
+    memory._table_name = "test_memory"
+    memory._text_field = "text"
+    memory._embedding_field = "embedding"
+    memory._tablestore_client = MagicMock()
+    memory._search_index_schema = []
+    memory._knowledge_store = AsyncMock()
+    memory._knowledge_store_kwargs = {}
+    memory._initialized = True
+    return memory
+
+
+class TablestoreMemoryTest(IsolatedAsyncioTestCase):
+    """Test cases for the Tablestore memory module."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.memory = _create_memory_with_mocks()
+        self.msgs = []
+        for i in range(10):
+            msg = Msg("user", f"message {i}", "user")
+            msg.id = str(i)
+            self.msgs.append(msg)
+
+    async def test_add_messages(self) -> None:
+        """Test adding messages to Tablestore memory."""
+        # Mock _get_all_msg_ids to return empty set (no duplicates)
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+
+        await self.memory.add(self.msgs[:3])
+
+        # Verify put_document was called 3 times
+        self.assertEqual(
+            self.memory._knowledge_store.put_document.call_count,
+            3,
+        )
+
+    async def test_add_single_message(self) -> None:
+        """Test adding a single message."""
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+
+        await self.memory.add(self.msgs[0])
+
+        self.memory._knowledge_store.put_document.assert_called_once()
+
+    async def test_add_none(self) -> None:
+        """Test adding None does nothing."""
+        await self.memory.add(None)
+
+        self.memory._knowledge_store.put_document.assert_not_called()
+
+    async def test_add_with_marks(self) -> None:
+        """Test adding messages with marks."""
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+
+        await self.memory.add(self.msgs[:2], marks=["important", "todo"])
+
+        self.assertEqual(
+            self.memory._knowledge_store.put_document.call_count,
+            2,
+        )
+
+        # Verify marks are included in the document
+        call_args = self.memory._knowledge_store.put_document.call_args_list
+        for call in call_args:
+            doc = call[0][0]
+            marks = json.loads(doc.metadata["marks_json"])
+            self.assertIn("important", marks)
+            self.assertIn("todo", marks)
+
+    async def test_add_no_duplicates(self) -> None:
+        """Test that duplicate messages are filtered out."""
+        self.memory._get_all_msg_ids = AsyncMock(
+            return_value={"0", "1"},
+        )
+
+        await self.memory.add(self.msgs[:5])
+
+        # Only messages 2, 3, 4 should be added
+        self.assertEqual(
+            self.memory._knowledge_store.put_document.call_count,
+            3,
+        )
+
+    async def test_add_allow_duplicates(self) -> None:
+        """Test adding with allow_duplicates=True."""
+        self.memory._get_all_msg_ids = AsyncMock(
+            return_value={"0", "1"},
+        )
+
+        await self.memory.add(self.msgs[:5], allow_duplicates=True)
+
+        # All 5 messages should be added
+        self.assertEqual(
+            self.memory._knowledge_store.put_document.call_count,
+            5,
+        )
+
+    async def test_delete_messages(self) -> None:
+        """Test deleting messages by ID."""
+        # Mock search_documents to return matching documents
+        mock_doc = MagicMock()
+        mock_doc.document_id = "0"
+        mock_doc.metadata = {"msg_id": "0"}
+
+        mock_hit = MagicMock()
+        mock_hit.document = mock_doc
+
+        mock_result = MagicMock()
+        mock_result.hits = [mock_hit]
+
+        self.memory._knowledge_store.search_documents = AsyncMock(
+            return_value=mock_result,
+        )
+
+        deleted = await self.memory.delete(msg_ids=["0"])
+
+        self.assertEqual(deleted, 1)
+        self.memory._knowledge_store.delete_document.assert_called_once_with(
+            "0",
+        )
+
+    async def test_delete_nonexistent(self) -> None:
+        """Test deleting non-existent messages."""
+        mock_result = MagicMock()
+        mock_result.hits = []
+
+        self.memory._knowledge_store.search_documents = AsyncMock(
+            return_value=mock_result,
+        )
+
+        deleted = await self.memory.delete(msg_ids=["nonexistent"])
+
+        self.assertEqual(deleted, 0)
+        self.memory._knowledge_store.delete_document.assert_not_called()
+
+    async def test_get_memory_all(self) -> None:
+        """Test getting all messages from memory."""
+        docs = [
+            _create_mock_document(
+                self.msgs[i],
+                user_id="test_user",
+                session_id="test_session",
+            )
+            for i in range(5)
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        result = await self.memory.get_memory(prepend_summary=False)
+
+        self.assertEqual(len(result), 5)
+        for i, msg in enumerate(result):
+            self.assertEqual(msg.id, str(i))
+
+    async def test_get_memory_with_mark_filter(self) -> None:
+        """Test getting messages filtered by mark."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=[]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+            _create_mock_document(self.msgs[2], marks=["important", "todo"]),
+            _create_mock_document(self.msgs[3], marks=[]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        result = await self.memory.get_memory(
+            mark="important",
+            prepend_summary=False,
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].id, "1")
+        self.assertEqual(result[1].id, "2")
+
+    async def test_get_memory_with_exclude_mark(self) -> None:
+        """Test getting messages with excluded mark."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=[]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+            _create_mock_document(self.msgs[2], marks=["important", "todo"]),
+            _create_mock_document(self.msgs[3], marks=[]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        result = await self.memory.get_memory(
+            exclude_mark="important",
+            prepend_summary=False,
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].id, "0")
+        self.assertEqual(result[1].id, "3")
+
+    async def test_get_memory_with_summary(self) -> None:
+        """Test that compressed summary is prepended when available."""
+        docs = [
+            _create_mock_document(self.msgs[0]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._compressed_summary = "Previous conversation summary."
+
+        result = await self.memory.get_memory(prepend_summary=True)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(
+            result[0].content,
+            "Previous conversation summary.",
+        )
+        self.assertEqual(result[1].id, "0")
+
+    async def test_size(self) -> None:
+        """Test getting the size of memory."""
+        docs = [MagicMock() for _ in range(7)]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        result = await self.memory.size()
+
+        self.assertEqual(result, 7)
+
+    async def test_clear(self) -> None:
+        """Test clearing all messages."""
+        mock_docs = []
+        for i in range(3):
+            doc = MagicMock()
+            doc.document_id = str(i)
+            mock_docs.append(doc)
+
+        self.memory._get_all_documents = AsyncMock(return_value=mock_docs)
+
+        await self.memory.clear()
+
+        self.assertEqual(
+            self.memory._knowledge_store.delete_document.call_count,
+            3,
+        )
+
+    async def test_clear_empty(self) -> None:
+        """Test clearing when memory is already empty."""
+        self.memory._get_all_documents = AsyncMock(return_value=[])
+
+        await self.memory.clear()
+
+        self.memory._knowledge_store.delete_document.assert_not_called()
+
+    async def test_delete_by_mark(self) -> None:
+        """Test deleting messages by mark."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=[]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+            _create_mock_document(self.msgs[2], marks=["important", "todo"]),
+            _create_mock_document(self.msgs[3], marks=["todo"]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        deleted = await self.memory.delete_by_mark("important")
+
+        self.assertEqual(deleted, 2)
+
+    async def test_delete_by_mark_list(self) -> None:
+        """Test deleting messages by multiple marks."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=[]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+            _create_mock_document(self.msgs[2], marks=["todo"]),
+            _create_mock_document(self.msgs[3], marks=[]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        deleted = await self.memory.delete_by_mark(["important", "todo"])
+
+        self.assertEqual(deleted, 2)
+
+    async def test_update_messages_mark_add(self) -> None:
+        """Test adding a mark to messages."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=[]),
+            _create_mock_document(self.msgs[1], marks=[]),
+            _create_mock_document(self.msgs[2], marks=[]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        updated = await self.memory.update_messages_mark(
+            msg_ids=["0", "1"],
+            new_mark="review",
+        )
+
+        self.assertEqual(updated, 2)
+
+    async def test_update_messages_mark_remove(self) -> None:
+        """Test removing a mark from messages."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=["important"]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+            _create_mock_document(self.msgs[2], marks=[]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        updated = await self.memory.update_messages_mark(
+            msg_ids=["0"],
+            old_mark="important",
+            new_mark=None,
+        )
+
+        self.assertEqual(updated, 1)
+
+    async def test_update_messages_mark_replace(self) -> None:
+        """Test replacing a mark on messages."""
+        docs = [
+            _create_mock_document(self.msgs[0], marks=["important"]),
+            _create_mock_document(self.msgs[1], marks=["important"]),
+        ]
+        self.memory._get_all_documents = AsyncMock(return_value=docs)
+
+        updated = await self.memory.update_messages_mark(
+            msg_ids=["0", "1"],
+            old_mark="important",
+            new_mark="archived",
+        )
+
+        self.assertEqual(updated, 2)
+
+    async def test_state_dict(self) -> None:
+        """Test state_dict serialization."""
+        self.memory._compressed_summary = "Test summary"
+
+        state = self.memory.state_dict()
+
+        self.assertEqual(state["_compressed_summary"], "Test summary")
+
+    async def test_load_state_dict(self) -> None:
+        """Test load_state_dict deserialization."""
+        self.memory.load_state_dict(
+            {
+                "_compressed_summary": "Loaded summary",
+            },
+        )
+
+        self.assertEqual(
+            self.memory._compressed_summary,
+            "Loaded summary",
+        )
+
+    async def test_close(self) -> None:
+        """Test closing the Tablestore memory."""
+        mock_store = self.memory._knowledge_store
+        await self.memory.close()
+
+        mock_store.close.assert_called_once()
+        self.assertIsNone(self.memory._knowledge_store)
+        self.assertFalse(self.memory._initialized)
+
+    async def test_close_when_not_initialized(self) -> None:
+        """Test closing when not initialized."""
+        self.memory._knowledge_store = None
+        self.memory._initialized = False
+
+        # Should not raise
+        await self.memory.close()
+
+    async def test_msg_to_document_string_content(self) -> None:
+        """Test converting a Msg with string content to document."""
+        msg = Msg("Alice", "Hello world!", "user")
+
+        doc = self.memory._msg_to_document(msg, ["mark1"])
+
+        self.assertEqual(doc.document_id, msg.id)
+        self.assertEqual(doc.text, "Hello world!")
+        self.assertEqual(doc.metadata["name"], "Alice")
+        self.assertEqual(doc.metadata["role"], "user")
+        marks = json.loads(doc.metadata["marks_json"])
+        self.assertIn("mark1", marks)
+
+    async def test_msg_to_document_list_content(self) -> None:
+        """Test converting a Msg with list content to document."""
+        content = [{"type": "text", "text": "Hello from blocks!"}]
+        msg = Msg("Bob", content, "assistant")
+
+        doc = self.memory._msg_to_document(msg, [])
+
+        self.assertEqual(doc.text, "Hello from blocks!")
+
+    async def test_document_to_msg_roundtrip(self) -> None:
+        """Test roundtrip conversion Msg -> Document -> Msg."""
+        original_msg = Msg("Alice", "Test content", "user")
+        original_marks = ["important", "todo"]
+
+        doc = self.memory._msg_to_document(original_msg, original_marks)
+        (
+            restored_msg,
+            restored_marks,
+        ) = TablestoreMemory._document_to_msg_and_marks(doc)
+
+        self.assertEqual(restored_msg.name, original_msg.name)
+        self.assertEqual(restored_msg.content, original_msg.content)
+        self.assertEqual(restored_msg.role, original_msg.role)
+        self.assertEqual(restored_msg.id, original_msg.id)
+        self.assertListEqual(restored_marks, original_marks)
+
+    async def test_invalid_mark_type(self) -> None:
+        """Test that invalid mark types raise TypeError."""
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+
+        with self.assertRaises(TypeError):
+            await self.memory.add(self.msgs[0], marks=123)
+
+    async def test_get_memory_invalid_mark_type(self) -> None:
+        """Test that invalid mark type in get_memory raises TypeError."""
+        with self.assertRaises(TypeError):
+            await self.memory.get_memory(mark=123)
+
+    async def test_delete_by_mark_invalid_type(self) -> None:
+        """Test that invalid mark type in delete_by_mark raises TypeError."""
+        with self.assertRaises(TypeError):
+            await self.memory.delete_by_mark(123)

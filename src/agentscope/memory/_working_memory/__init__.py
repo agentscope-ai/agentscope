@@ -7,10 +7,12 @@ from ._base import MemoryBase
 from ._in_memory_memory import InMemoryMemory
 from ._redis_memory import RedisMemory
 from ._sqlalchemy_memory import AsyncSQLAlchemyMemory
+from ._tablestore_memory import TablestoreMemory
 
 __all__ = [
     "MemoryBase",
     "InMemoryMemory",
     "RedisMemory",
     "AsyncSQLAlchemyMemory",
+    "TablestoreMemory",
 ]
