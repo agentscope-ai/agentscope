@@ -117,13 +117,13 @@ Initialize a routing agent
         "name": "generate_response",
         "input": {
             "your_choice": "Content Generation",
-            "task_description": "Help me to write a poem"
+            "task_description": "Write a poem"
         },
-        "id": "call_69e7a6473bd343c6bbdf92"
+        "id": "call_7d942818acd74827891dde"
     }
     system: {
         "type": "tool_result",
-        "id": "call_69e7a6473bd343c6bbdf92",
+        "id": "call_7d942818acd74827891dde",
         "name": "generate_response",
         "output": [
             {
@@ -132,11 +132,11 @@ Initialize a routing agent
             }
         ]
     }
-    Router: Sure, I can help with that! Could you please tell me a bit more about what kind of poem you'd like to write? For example, do you have a specific theme, style, or form in mind? Any particular emotions or messages you want to convey?
+    Router: Sure, I can help with that! Could you please share some more details? Like the theme of the poem, any specific style you prefer, or if there are particular emotions or messages you'd like to convey?
     The structured output:
     {
         "your_choice": "Content Generation",
-        "task_description": "Help me to write a poem"
+        "task_description": "Write a poem"
     }
 
 
@@ -269,7 +269,7 @@ After that, we define a routing agent and equip it with the above tool functions
         "input": {
             "demand": "a quick sort function"
         },
-        "id": "call_faedc7c455ca475599b4d8"
+        "id": "call_aed1087e1d494f31b7d556"
     }
     PythonAgent: Certainly! Here's a Python implementation of the Quick Sort algorithm:
 
@@ -291,28 +291,47 @@ After that, we define a routing agent and equip it with the above tool functions
     print("Sorted array:", sorted_arr)
     ```
 
-    ### Explanation:
-    - **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.
-    - **Pivot Selection**: We choose the middle element of the array as the pivot.
-    - **Partitioning**: We create three lists:
-      - `left`: All elements less than the pivot.
-      - `middle`: All elements equal to the pivot.
-      - `right`: All elements greater than the pivot.
-    - **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` lists and concatenate the results with the `middle` list.
+    This implementation uses the "divide and conquer" approach. It selects a pivot element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.
 
-    This implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more efficient.
+    If you need an in-place version of Quick Sort, which is more space-efficient, here it is:
+
+    ```python
+    def quick_sort_in_place(arr, low, high):
+        if low < high:
+            pi = partition(arr, low, high)
+            quick_sort_in_place(arr, low, pi - 1)
+            quick_sort_in_place(arr, pi + 1, high)
+
+    def partition(arr, low, high):
+        pivot = arr[high]
+        i = low - 1
+        for j in range(low, high):
+            if arr[j] < pivot:
+                i += 1
+                arr[i], arr[j] = arr[j], arr[i]
+        arr[i + 1], arr[high] = arr[high], arr[i + 1]
+        return i + 1
+
+    # Example usage:
+    arr = [3, 6, 8, 10, 1, 2, 1]
+    print("Original array:", arr)
+    quick_sort_in_place(arr, 0, len(arr) - 1)
+    print("Sorted array:", arr)
+    ```
+
+    This in-place version of Quick Sort modifies the array in place and does not require additional space for the left, middle, and right sub-arrays.
     system: {
         "type": "tool_result",
-        "id": "call_faedc7c455ca475599b4d8",
+        "id": "call_aed1087e1d494f31b7d556",
         "name": "generate_python",
         "output": [
             {
                 "type": "text",
-                "text": "Certainly! Here's a Python implementation of the Quick Sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nprint(\"Original array:\", arr)\nsorted_arr = quick_sort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\n### Explanation:\n- **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.\n- **Pivot Selection**: We choose the middle element of the array as the pivot.\n- **Partitioning**: We create three lists:\n  - `left`: All elements less than the pivot.\n  - `middle`: All elements equal to the pivot.\n  - `right`: All elements greater than the pivot.\n- **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` lists and concatenate the results with the `middle` list.\n\nThis implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more efficient."
+                "text": "Certainly! Here's a Python implementation of the Quick Sort algorithm:\n\n```python\ndef quick_sort(arr):\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[len(arr) // 2]\n        left = [x for x in arr if x < pivot]\n        middle = [x for x in arr if x == pivot]\n        right = [x for x in arr if x > pivot]\n        return quick_sort(left) + middle + quick_sort(right)\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nprint(\"Original array:\", arr)\nsorted_arr = quick_sort(arr)\nprint(\"Sorted array:\", sorted_arr)\n```\n\nThis implementation uses the \"divide and conquer\" approach. It selects a pivot element from the array and partitions the other elements into two sub-arrays, according to whether they are less than or greater than the pivot. The sub-arrays are then recursively sorted.\n\nIf you need an in-place version of Quick Sort, which is more space-efficient, here it is:\n\n```python\ndef quick_sort_in_place(arr, low, high):\n    if low < high:\n        pi = partition(arr, low, high)\n        quick_sort_in_place(arr, low, pi - 1)\n        quick_sort_in_place(arr, pi + 1, high)\n\ndef partition(arr, low, high):\n    pivot = arr[high]\n    i = low - 1\n    for j in range(low, high):\n        if arr[j] < pivot:\n            i += 1\n            arr[i], arr[j] = arr[j], arr[i]\n    arr[i + 1], arr[high] = arr[high], arr[i + 1]\n    return i + 1\n\n# Example usage:\narr = [3, 6, 8, 10, 1, 2, 1]\nprint(\"Original array:\", arr)\nquick_sort_in_place(arr, 0, len(arr) - 1)\nprint(\"Sorted array:\", arr)\n```\n\nThis in-place version of Quick Sort modifies the array in place and does not require additional space for the left, middle, and right sub-arrays."
             }
         ]
     }
-    Router: Here is the Python implementation of the Quick Sort algorithm:
+    Router: The Python code for a quick sort function has been generated. Here's the implementation:
 
     ```python
     def quick_sort(arr):
@@ -332,16 +351,9 @@ After that, we define a routing agent and equip it with the above tool functions
     print("Sorted array:", sorted_arr)
     ```
 
-    ### Explanation:
-    - **Base Case**: If the array has 0 or 1 elements, it is already sorted, so we return it as is.
-    - **Pivot Selection**: We choose the middle element of the array as the pivot.
-    - **Partitioning**: We create three lists:
-      - `left`: All elements less than the pivot.
-      - `middle`: All elements equal to the pivot.
-      - `right`: All elements greater than the pivot.
-    - **Recursive Sorting**: We recursively apply the `quick_sort` function to the `left` and `right` lists and concatenate the results with the `middle` list.
+    This is a simple and clear version of Quick Sort that uses extra space to create the `left`, `middle`, and `right` sub-arrays.
 
-    This implementation is simple and easy to understand, but it may not be the most efficient in terms of space complexity due to the use of additional lists. For large datasets, an in-place version of Quick Sort would be more efficient.
+    Additionally, an in-place version of Quick Sort was provided, which is more space-efficient as it sorts the array without using additional space for sub-arrays. If you need the in-place version, please let me know, and I can provide you with that code as well.
 
 
 
@@ -349,7 +361,7 @@ After that, we define a routing agent and equip it with the above tool functions
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 54.349 seconds)
+   **Total running time of the script:** (0 minutes 56.015 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_routing.py:
