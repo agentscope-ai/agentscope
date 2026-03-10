@@ -51,10 +51,10 @@ def as_studio_forward_message_pre_print_hook(
                 n_retry += 1
                 continue
 
-            # Graceful degradation: log warning and return to avoid crashing the Agent
+            # Graceful degradation: log warning and return to avoid crashing
             logger.warning(
                 "Failed to forward message to Studio after %d retries: %s. "
-                "Agent will continue running without Studio forwarding.",
+                "Agent will continue without Studio forwarding.",
                 n_retry,
                 e,
             )
