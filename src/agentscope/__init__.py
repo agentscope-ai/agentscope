@@ -40,7 +40,6 @@ _config = _ConfigCls(
     ),
 )
 
-
 from . import exception
 from . import module
 from . import message
@@ -56,6 +55,8 @@ from . import evaluate
 from . import pipeline
 from . import tracing
 from . import rag
+from . import a2a
+from . import realtime
 
 from ._logging import (
     logger,
@@ -173,6 +174,7 @@ __all__ = [
     "pipeline",
     "tracing",
     "rag",
+    "a2a",
     # functions
     "init",
     "setup_logger",

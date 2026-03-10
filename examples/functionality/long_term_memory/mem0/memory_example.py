@@ -133,8 +133,8 @@ async def main() -> None:
     )
     print(f"Retrieved preference memories: {preference_memories}\n")
 
-    # Example 5: ReActAgent with long term memory
-    print("5. ReActAgent with long term memory")
+    # Example 3: ReActAgent with long term memory
+    print("3. ReActAgent with long term memory")
     print("-" * 40)
 
     toolkit = Toolkit()

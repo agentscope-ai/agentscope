@@ -318,7 +318,7 @@ class TestAnthropicChatModel(IsolatedAsyncioTestCase):
             async for response in result:
                 responses.append(response)
 
-            self.assertGreater(len(responses), 0)
+            self.assertEqual(len(responses), 2)
             final_response = responses[-1]
             self.assertIsInstance(final_response, ChatResponse)
             expected_content = [

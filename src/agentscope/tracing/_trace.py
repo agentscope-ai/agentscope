@@ -320,10 +320,7 @@ def trace(
 
 
 def trace_toolkit(
-    func: Callable[
-        ...,
-        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
-    ],
+    func: Callable[..., AsyncGenerator[ToolResponse, None]],
 ) -> Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]]]:
     """Trace the toolkit `call_tool_function` method with OpenTelemetry."""
 
@@ -335,7 +332,7 @@ def trace_toolkit(
         """The wrapper function for tracing the toolkit call_tool_function
         method."""
         if not _check_tracing_enabled():
-            return await func(self, tool_call=tool_call)
+            return func(self, tool_call=tool_call)
 
         tracer = _get_tracer()
 
@@ -352,10 +349,11 @@ def trace_toolkit(
             end_on_exit=False,
         ) as span:
             try:
-                # Call the toolkit function
-                res = await func(self, tool_call=tool_call)
+                # Call the toolkit function (returns AsyncGenerator)
+                res = func(self, tool_call=tool_call)
 
-                # The result must be an AsyncGenerator of ToolResponse objects
+                # The result must be an AsyncGenerator
+                # Return the wrapped generator
                 return _trace_async_generator_wrapper(res, span)
 
             except Exception as e:

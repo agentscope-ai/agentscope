@@ -54,7 +54,42 @@ refactor(formatter): simplify message formatting logic
 ci(models): add unit tests for OpenAI integration
 ```
 
-### 3. Code Development Guidelines
+### 3. Pull Request Title Format
+
+Pull request titles must follow the same [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+**Format:**
+```
+<type>(<scope>): <description>
+```
+
+**Requirements:**
+- The title must start with one of the allowed types: `feat`, `fix`, `docs`, `ci`, `refactor`, `test`, `chore`, `perf`, `style`, `build`, `revert`
+- Scope is optional but recommended
+- **Scope must be lowercase** - only lowercase letters, numbers, hyphens (`-`), and underscores (`_`) are allowed
+- Description should start with a lowercase letter
+- Keep the title concise and descriptive
+
+**Examples:**
+```
+✅ Valid:
+feat(memory): add redis cache support
+fix(agent): resolve memory leak in ReActAgent
+docs(tutorial): update installation guide
+ci(workflow): add PR title validation
+refactor(my-feature): simplify logic
+
+❌ Invalid:
+feat(Memory): add cache          # Scope must be lowercase
+feat(MEMORY): add cache          # Scope must be lowercase
+feat(MyFeature): add feature     # Scope must be lowercase
+```
+
+**Automated Validation:**
+- PR titles targeting the `main` branch are automatically validated by GitHub Actions
+- PRs with invalid titles will be blocked until the title is corrected
+
+### 4. Code Development Guidelines
 
 #### a. Pre-commit Checks
 
@@ -185,17 +220,34 @@ examples/
 
 ### Adding New Examples
 
-We highly encourage contributions of new examples that showcase the capabilities of AgentScope.
-Please add them to the `examples/` directory with a clear README explaining the purpose and usage of the example.
+We highly encourage contributions of new examples that showcase the capabilities of AgentScope! Your examples help others learn and get inspired.
 
-Now our examples are organized into subdirectories based on their type:
+**📝 About the Examples Directory:**
+
+To maintain code quality and keep the repository accessible for everyone, we've designed the `examples/` directory in the main AgentScope repository to focus on **demonstrating AgentScope's functionalities**. Think of these as educational references and feature showcases that help developers quickly understand what AgentScope can do.
+
+**What makes a great example here:**
+- Clearly demonstrates specific AgentScope features or capabilities
+- Easy to understand and follow along
+- Serves as a learning material or reference implementation
+- Focused and concise
+
+**For More Complex Applications:**
+
+Have you built something amazing with AgentScope? Perhaps a more sophisticated, production-ready application? That's fantastic! 🎉
+
+We'd love to see your work in our **[agentscope-samples](https://github.com/agentscope-ai/agentscope-samples)** repository. This dedicated space is perfect for showcasing complete, real-world applications and sharing your AgentScope-based projects with the community. It's a great way to inspire others and demonstrate the full potential of the AgentScope ecosystem!
+
+**Example Organization:**
+
+Examples in the main repository are organized into subdirectories based on their type:
 
 - `examples/agent/` for specialized agents
 - `examples/functionality/` for showcasing specific functionalities of AgentScope
 - `examples/game/` for game-related examples
 - `examples/evaluation/` for evaluation scripts
 - `examples/workflows/` for workflow demonstrations
-- `examples/training/` for training-related examples
+- `examples/tuner/` for tuning-related examples
 
 An example structure could be:
 
@@ -207,6 +259,31 @@ examples/
         ├── README.md  # Explain the example's purpose and usage
         └── ... # The other scripts
 ```
+
+### Adding New Memory Databases
+
+The memory module in AgentScope currently supports:
+
+- **In-memory storage**: For lightweight, temporary memory needs
+- **Relational databases via SQLAlchemy**: For persistent, structured data storage
+- **NoSQL databases**: For flexible schema requirements (e.g., Redis)
+
+**⚠️ Important Notice:**
+
+For **relational databases**, we use **SQLAlchemy** as a unified abstraction layer. SQLAlchemy already supports a wide
+range of SQL databases including PostgreSQL, MySQL, SQLite, Oracle, Microsoft SQL Server, and many others.
+
+**Therefore, we do not accept separate implementations for relational databases that are already supported by SQLAlchemy.**
+If you need support for a specific relational database, please ensure it works through the existing SQLAlchemy integration.
+
+**If you wish to contribute a new memory database implementation**, please consider:
+
+1. **For relational databases**: Use the existing SQLAlchemy integration.
+
+2. **For NoSQL databases**: If you're adding support for a new NoSQL database (e.g., MongoDB, Cassandra), please:
+   - Implement a new memory class that extends the appropriate base class
+   - Add comprehensive unit tests
+   - Update documentation accordingly
 
 
 ## Do's and Don'ts

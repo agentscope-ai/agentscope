@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for Ollama API model class."""
+import json
 from typing import AsyncGenerator, Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch, AsyncMock
@@ -187,6 +188,7 @@ class TestOllamaChatModel(IsolatedAsyncioTestCase):
                     id="0_get_weather",
                     name="get_weather",
                     input={"location": "Beijing"},
+                    raw_input=json.dumps({"location": "Beijing"}),
                 ),
             ]
             self.assertEqual(result.content, expected_content)
@@ -281,7 +283,7 @@ class TestOllamaChatModel(IsolatedAsyncioTestCase):
             async for response in result:
                 responses.append(response)
 
-            self.assertGreaterEqual(len(responses), 1)
+            self.assertEqual(len(responses), 2)
             final_response = responses[-1]
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)

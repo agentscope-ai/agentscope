@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches
 """OpenAI Chat model class."""
+import copy
+import json
 import warnings
 from datetime import datetime
 from typing import (
@@ -73,6 +75,8 @@ class OpenAIChatModel(ChatModelBase):
         stream: bool = True,
         reasoning_effort: Literal["low", "medium", "high"] | None = None,
         organization: str = None,
+        stream_tool_parsing: bool = True,
+        client_type: Literal["openai", "azure"] = "openai",
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         max_retries: int = 0,
@@ -100,6 +104,14 @@ class OpenAIChatModel(ChatModelBase):
             organization (`str`, default `None`):
                 The organization ID for OpenAI API. If not specified, it will
                 be read from the environment variable `OPENAI_ORGANIZATION`.
+            stream_tool_parsing (`bool`, default to `True`):
+                Whether to parse incomplete tool use JSON during streaming
+                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
+                is repaired to valid dicts ({"a": "x"}) in real-time for
+                immediate tool function input. Otherwise, the input field
+                remains {} until the final chunk arrives.
+            client_type (`Literal["openai", "azure"]`, default `openai`):
+                Selects which OpenAI-compatible client to initialize.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the OpenAI client.
@@ -156,13 +168,26 @@ class OpenAIChatModel(ChatModelBase):
 
         import openai
 
-        self.client = openai.AsyncClient(
-            api_key=api_key,
-            organization=organization,
-            **(client_kwargs or {}),
-        )
+        if client_type not in ("openai", "azure"):
+            raise ValueError(
+                "Invalid client_type. Supported values: 'openai', 'azure'.",
+            )
+
+        if client_type == "azure":
+            self.client = openai.AsyncAzureOpenAI(
+                api_key=api_key,
+                organization=organization,
+                **(client_kwargs or {}),
+            )
+        else:
+            self.client = openai.AsyncClient(
+                api_key=api_key,
+                organization=organization,
+                **(client_kwargs or {}),
+            )
 
         self.reasoning_effort = reasoning_effort
+        self.stream_tool_parsing = stream_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
@@ -307,6 +332,7 @@ class OpenAIChatModel(ChatModelBase):
 
         return parsed_response
 
+    # pylint: disable=too-many-statements
     async def _parse_openai_stream_response(
         self,
         start_datetime: datetime,
@@ -340,10 +366,12 @@ class OpenAIChatModel(ChatModelBase):
         thinking = ""
         audio = ""
         tool_calls = OrderedDict()
+        last_input_objs = {}  # Store last input_obj for each tool_call
         metadata: dict | None = None
         contents: List[
             TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock
         ] = []
+        last_contents = None
 
         async with response as stream:
             async for item in stream:
@@ -359,6 +387,7 @@ class OpenAIChatModel(ChatModelBase):
                         input_tokens=chunk.usage.prompt_tokens,
                         output_tokens=chunk.usage.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
+                        metadata=chunk.usage,
                     )
 
                 if not chunk.choices:
@@ -373,9 +402,17 @@ class OpenAIChatModel(ChatModelBase):
 
                 choice = chunk.choices[0]
 
-                thinking += (
-                    getattr(choice.delta, "reasoning_content", None) or ""
+                delta_reasoning = getattr(
+                    choice.delta,
+                    "reasoning_content",
+                    None,
                 )
+                if not isinstance(delta_reasoning, str):
+                    delta_reasoning = getattr(choice.delta, "reasoning", None)
+                if not isinstance(delta_reasoning, str):
+                    delta_reasoning = ""
+
+                thinking += delta_reasoning
                 text += getattr(choice.delta, "content", None) or ""
 
                 if (
@@ -389,7 +426,9 @@ class OpenAIChatModel(ChatModelBase):
                 ):
                     text += choice.delta.audio["transcript"]
 
-                for tool_call in choice.delta.tool_calls or []:
+                for tool_call in (
+                    getattr(choice.delta, "tool_calls", None) or []
+                ):
                     if tool_call.index in tool_calls:
                         if tool_call.function.arguments is not None:
                             tool_calls[tool_call.index][
@@ -442,26 +481,65 @@ class OpenAIChatModel(ChatModelBase):
                         metadata = _json_loads_with_repair(text)
 
                 for tool_call in tool_calls.values():
+                    input_str = tool_call["input"]
+                    tool_id = tool_call["id"]
+
+                    # If parsing the tool input in streaming mode
+                    if self.stream_tool_parsing:
+                        repaired_input = _json_loads_with_repair(
+                            input_str or "{}",
+                        )
+                        # If the new repaired input is shorter than one in the
+                        # last chunk, use the last one to avoid regression
+                        last_input = last_input_objs.get(tool_id, {})
+                        if len(json.dumps(last_input)) > len(
+                            json.dumps(repaired_input),
+                        ):
+                            repaired_input = last_input
+                        last_input_objs[tool_id] = repaired_input
+
+                    else:
+                        # Otherwise, keep input as empty dict until the final
+                        # chunk
+                        repaired_input = {}
+
                     contents.append(
                         ToolUseBlock(
                             type=tool_call["type"],
-                            id=tool_call["id"],
+                            id=tool_id,
                             name=tool_call["name"],
-                            input=_json_loads_with_repair(
-                                tool_call["input"] or "{}",
-                            ),
+                            input=repaired_input,
+                            raw_input=input_str,
                         ),
                     )
 
-                if not contents:
-                    continue
+                if contents:
+                    res = ChatResponse(
+                        content=contents,
+                        usage=usage,
+                        metadata=metadata,
+                    )
+                    yield res
+                    last_contents = copy.deepcopy(contents)
 
-                res = ChatResponse(
-                    content=contents,
-                    usage=usage,
-                    metadata=metadata,
-                )
-                yield res
+        # If stream_tool_parsing is False, yield last contents
+        if not self.stream_tool_parsing and tool_calls and last_contents:
+            metadata = None
+            # Update tool use blocks in last_contents inplace
+            for block in last_contents:
+                if block.get("type") == "tool_use":
+                    block["input"] = input_obj = _json_loads_with_repair(
+                        str(block.get("raw_input") or "{}"),
+                    )
+
+                    if structured_model:
+                        metadata = input_obj
+
+            yield ChatResponse(
+                content=last_contents,
+                usage=usage,
+                metadata=metadata,
+            )
 
     def _parse_openai_completion_response(
         self,
@@ -496,14 +574,17 @@ class OpenAIChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
-            if (
-                hasattr(choice.message, "reasoning_content")
-                and choice.message.reasoning_content is not None
-            ):
+            reasoning = getattr(choice.message, "reasoning_content", None)
+            if not isinstance(reasoning, str):
+                reasoning = getattr(choice.message, "reasoning", None)
+            if not isinstance(reasoning, str):
+                reasoning = None
+
+            if reasoning is not None:
                 content_blocks.append(
                     ThinkingBlock(
                         type="thinking",
-                        thinking=response.choices[0].message.reasoning_content,
+                        thinking=reasoning,
                     ),
                 )
 
@@ -559,6 +640,7 @@ class OpenAIChatModel(ChatModelBase):
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                metadata=response.usage,
             )
 
         parsed_response = ChatResponse(

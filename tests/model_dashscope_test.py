@@ -2,7 +2,7 @@
 """Unit tests for DashScope API model class."""
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from http import HTTPStatus
 from pydantic import BaseModel
 
@@ -285,15 +285,28 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
                 tool_calls=[],
             ),
             self._create_mock_chunk(
-                content=" there!",
-                reasoning_content=" the user",
+                content=" there",
+                reasoning_content=" the",
                 tool_calls=[
                     {
                         "index": 0,
                         "id": "call_123",
                         "function": {
                             "name": "greet",
-                            "arguments": '{"name": "user"}',
+                            "arguments": '{"name": ',
+                        },
+                    },
+                ],
+            ),
+            self._create_mock_chunk(
+                content="!",
+                reasoning_content=" user",
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "arguments": '"user"}',
                         },
                     },
                 ],
@@ -309,7 +322,7 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             responses = []
             async for response in result:
                 responses.append(response)
-            self.assertEqual(len(responses), 2)
+            self.assertEqual(len(responses), 3)
             final_response = responses[-1]
 
             expected_content = [
@@ -323,6 +336,7 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
                     name="greet",
                     input={"name": "user"},
                     type="tool_use",
+                    raw_input='{"name": "user"}',
                 ),
             ]
             self.assertEqual(final_response.content, expected_content)
@@ -368,6 +382,32 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             except Exception as e:
                 if "schema must be a dict" in str(e):
                     self.fail("Valid tools schema was rejected")
+
+    async def test_call_with_multimodal_model(self) -> None:
+        """Test multimodal model uses AioMultiModalConversation (async)."""
+        model = DashScopeChatModel(
+            model_name="qwen-vl-plus",
+            api_key="test_key",
+            stream=False,
+            multimodality=True,
+        )
+        messages = [{"role": "user", "content": "Describe this image."}]
+        mock_response = self._create_mock_response("This is a test image.")
+        with patch(
+            "dashscope.AioMultiModalConversation.call",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = mock_response
+            result = await model(messages)
+            mock_call.assert_called_once()
+            call_kwargs = mock_call.call_args[1]
+            self.assertEqual(call_kwargs["messages"], messages)
+            self.assertEqual(call_kwargs["model"], "qwen-vl-plus")
+            self.assertIsInstance(result, ChatResponse)
+            self.assertEqual(
+                result.content,
+                [TextBlock(type="text", text="This is a test image.")],
+            )
 
     async def test_error_handling_scenarios(self) -> None:
         """Test various error handling scenarios."""
