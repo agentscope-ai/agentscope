@@ -71,6 +71,10 @@ def _json_loads_with_repair(
 
 def _is_accessible_local_file(url: str) -> bool:
     """Check if the given URL is a local URL."""
+    # First identify if it's an uri with 'file://' schema,
+    if url.startswith("file://"):
+        local_path = url.removeprefix("file://")
+        return os.path.isfile(local_path)
     return os.path.isfile(url)
 
 
@@ -176,7 +180,7 @@ def _save_base64_data(
     extension = media_type.split("/")[-1]
 
     with tempfile.NamedTemporaryFile(
-        suffix=f".{extension}",
+        suffix=extension,
         delete=False,
     ) as temp_file:
         decoded_data = base64.b64decode(base64_data)

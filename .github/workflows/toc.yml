@@ -17,7 +17,7 @@ jobs:
     name: TOC Generator
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
 
       - uses: technote-space/toc-generator@v4
         with:
