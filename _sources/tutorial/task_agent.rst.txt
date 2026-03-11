@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_a63edbb2c90d46c1a59b76",
+        "id": "call_29f02e8b10f74266b073e2",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_d76b2e1b505b4e97b5a406",
+        "id": "call_0c3e53dc791a4e8eaddecd",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,30 +363,33 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_a63edbb2c90d46c1a59b76",
+        "id": "call_29f02e8b10f74266b073e2",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 01:48:09.258879 and ended at 01:48:12.262126. "
+                "text": "Tag tag1 started at 01:49:53.005387 and ended at 01:49:56.008628. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_d76b2e1b505b4e97b5a406",
+        "id": "call_0c3e53dc791a4e8eaddecd",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 01:48:09.258971 and ended at 01:48:12.262734. "
+                "text": "Tag tag2 started at 01:49:53.005479 and ended at 01:49:56.009348. "
             }
         ]
     }
-    Jarvis: The two function calls executed in parallel. Here are the results:
+    Jarvis: The 'example_tool_function' was called in parallel with two different tags, 'tag1' and 'tag2'. 
 
-    - For 'tag1', the process started at 01:48:09.258879 and ended at 01:48:12.262126.
-    - For 'tag2', the process started at 01:48:09.258971 and ended at 01:48:12.262734.
+    For 'tag1', the function started at 01:49:53.005387 and ended at 01:49:56.008628.
+
+    For 'tag2', it started at 01:49:53.005479 and ended at 01:49:56.009348. 
+
+    Both calls have completed their execution.
 
 
 
@@ -465,11 +468,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_b15fab2dbdfa4f9c9aa0be",
+        "id": "call_3758b6f0d6c84885ab6582",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
-            "description": "A renowned theoretical physicist, best known for developing the theory of relativity.",
+            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -477,11 +480,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned theoretical physicist, best known for developing the theory of relativity.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_b15fab2dbdfa4f9c9aa0be",
+        "id": "call_3758b6f0d6c84885ab6582",
         "name": "generate_response",
         "output": [
             {
@@ -490,12 +493,14 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned theoretical physicist, celebrated for his groundbreaking contributions to the field of physics, most notably the development of the theory of relativity. Born in 1879 and passing away in 1955 at the age of 76, Einstein's work has had a profound and lasting impact on our understanding of the universe. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, primarily for his explanation of the photoelectric effect, which was pivotal in the evolution of quantum theory. Additionally, he received the Copley Medal in 1925 and the Max Planck Medal in 1929, further cementing his status as one of the most influential scientists of the 20th century.
+    Jarvis: Albert Einstein was a theoretical physicist renowned for developing the theory of relativity, which is one of the two pillars of modern physics. Born in 1879, he lived to be 76 years old, during which time he made significant contributions to the field of science. His work not only revolutionized our understanding of space, time, and gravity but also laid the groundwork for many technological advancements we see today.
+
+    Einstein's achievements were widely recognized through numerous honors, including the Nobel Prize in Physics in 1921, which he received for his services to Theoretical Physics, and especially for his discovery of the law of the photoelectric effect. He was further honored with the Copley Medal in 1925 and the Max Planck Medal in 1929, among other accolades. These awards reflect the profound impact of his work on both the scientific community and the broader world.
 
     The structured output:
     {
         "name": "Albert Einstein",
-        "description": "A renowned theoretical physicist, best known for developing the theory of relativity.",
+        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -579,7 +584,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 39.968 seconds)
+   **Total running time of the script:** (0 minutes 32.847 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
