@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """The AgentLoop benchmark class for loading evaluation datasets from CMS."""
-import json
-from typing import Generator, Callable, Any
 
+import json
+import uuid
+from typing import Any, Generator
+
+from ..._logging import logger
 from .._benchmark_base import BenchmarkBase
 from .._task import Task
 from .._agentloop_config import AgentLoopConfig
@@ -49,10 +52,10 @@ class AgentLoopBenchmark(BenchmarkBase):
 
         # Define task_converter
         def task_converter(log_record: dict) -> Task:
-            import uuid
             # Generate a random ID for each task
             task_id = str(uuid.uuid4())
-            # Get ground_truth from configured field, empty string if not configured
+            # Get ground_truth from configured field,
+            # empty string if not configured
             ground_truth = ""
             if config.ground_truth_field:
                 ground_truth = log_record.get(config.ground_truth_field, "")
@@ -64,6 +67,7 @@ class AgentLoopBenchmark(BenchmarkBase):
                 metrics=[],
                 metadata={},
             )
+
         # Load dataset from CMS and convert to Task objects
         # Convert once and cache to ensure stable task IDs
         raw_dataset = self._load_data_from_cms()
@@ -125,8 +129,8 @@ class AgentLoopBenchmark(BenchmarkBase):
             query=self.config.query,
         )
 
-        print(f"CMS query: {self.config.query}")
-        print(
+        logger.info(f"CMS query: {self.config.query}")
+        logger.info(
             f"CMS workspace: {self.config.workspace}, "
             f"dataset: {self.config.dataset}",
         )
@@ -136,7 +140,7 @@ class AgentLoopBenchmark(BenchmarkBase):
             self.config.dataset,
             req,
         )
-        print(json.dumps(resp.to_map(), default=str, indent=2))
+        logger.debug(json.dumps(resp.to_map(), default=str, indent=2))
 
         # Parse response data
         dataset = []

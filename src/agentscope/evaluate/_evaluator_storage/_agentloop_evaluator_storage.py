@@ -5,11 +5,13 @@ to additionally write evaluation results to Alibaba Cloud SLS.
 Refer to:
 https://help.aliyun.com/zh/sls/developer-reference/write-log
 """
+
 import json
 import time
 import uuid
 from typing import Any
 
+from ..._logging import logger
 from ._file_evaluator_storage import FileEvaluatorStorage
 from .._solution import SolutionOutput
 from .._agentloop_config import AgentLoopConfig
@@ -20,7 +22,8 @@ EXPERIMENT_LOGSTORE = "experiment_detail"
 
 
 class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
-    """AgentLoop (SLS) based evaluator storage that extends FileEvaluatorStorage.
+    """AgentLoop (SLS) based evaluator storage that extends
+    FileEvaluatorStorage.
 
     This storage implementation inherits all functionality from
     FileEvaluatorStorage for local file operations, and additionally writes
@@ -144,7 +147,7 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
             headers,
             runtime,
         )
-        print(
+        logger.debug(
             f"CMS workspace response: "
             f"{json.dumps(resp.to_map(), default=str, indent=2)}",
         )
@@ -339,7 +342,8 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
         task_id: str,
         meta_info: dict[str, JSONSerializableObject],
     ) -> None:
-        """Save the task meta information to local file and cache for later use.
+        """Save the task meta information to local file and cache for
+        later use.
 
         The task meta (experiment_data) is cached and will be written to SLS
         together with the solution result in save_solution_result().

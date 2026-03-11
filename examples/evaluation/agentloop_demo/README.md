@@ -1,7 +1,7 @@
 # AgentLoop Integration Example
 
 This example demonstrates how to use the AgentLoop integration:
-1. Load evaluation datasets from Alibaba Cloud AgentLoop 
+1. Load evaluation datasets from Alibaba Cloud AgentLoop
 2. Write Experiment results to SLS (Log Service)
 
 ## Quick Start
@@ -12,6 +12,15 @@ This example demonstrates how to use the AgentLoop integration:
 
 ```bash
 pip install agentscope
+
+# For writing results to SLS (Log Service)
+pip install aliyun-log-python-sdk
+
+# For loading datasets from AgentLoop CMS (requires Alibaba internal PyPI)
+pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ \
+    --extra-index-url http://yum.tbsite.net/pypi/simple/ \
+    --trusted-host=yum.tbsite.net \
+    alibabacloud-cms20240330-inner==6.0.8
 ```
 
 2. **Prepare your credentials**
@@ -64,7 +73,7 @@ async def http_agent_solution(
     pre_hook: Callable,
 ) -> SolutionOutput:
     output = ""  # Call your agent and get the output
-    
+
     return SolutionOutput(
         success=True,
         output=output,

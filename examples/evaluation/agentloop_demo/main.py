@@ -24,16 +24,20 @@ PYTHONPATH=/Users/wu.cc/Code/python/agentscope/src python main.py
 If you don't have a real SLS environment, use --mock parameter for mock mode:
     python main.py --mock
 """
+
 import asyncio
-import uuid
+import logging
 from typing import Callable
 
 from agentscope.evaluate import (
-    Task,
-    SolutionOutput,
-    RayEvaluator,
     AgentLoopConfig,
+    RayEvaluator,
+    SolutionOutput,
+    Task,
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # ============ HTTP Agent Solution ============
@@ -43,7 +47,7 @@ async def http_agent_solution(
 ) -> SolutionOutput:
     pre_hook(task)
 
-    output = "" # call your agent and get the output
+    output = ""  # call your agent and get the output
 
     return SolutionOutput(
         success=True,
@@ -53,7 +57,6 @@ async def http_agent_solution(
             "task": task,
         },
     )
-
 
 
 async def run_agentloop_experiment(
@@ -66,19 +69,19 @@ async def run_agentloop_experiment(
     # Local storage
     result_dir: str,
 ) -> None:
-    """Run evaluation using AgentLoop
+    """Run evaluation using AgentLoop.
 
     Args:
-        workspace: CMS workspace name where the dataset is located
-        dataset: CMS dataset name
-        region_id: Region ID for dataset (used to construct CMS endpoint)
-        result_workspace: CMS workspace name for result upload
-        result_region_id: Region ID for result upload (used to construct CMS/SLS endpoint)
-        result_dir: Local result storage directory
+        ak: Alibaba Cloud access key ID.
+        sk: Alibaba Cloud access key secret.
+        workspace: CMS workspace name where the dataset is located.
+        dataset: CMS dataset name.
+        region_id: Region ID for dataset (constructs CMS endpoint).
+        result_dir: Local result storage directory.
     """
-    print("=" * 60)
-    print("Running AgentLoop Evaluation")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Running AgentLoop Evaluation")
+    logger.info("=" * 60)
 
     try:
         from agentscope.evaluate import (
@@ -86,11 +89,16 @@ async def run_agentloop_experiment(
             AgentLoopEvaluatorStorage,
         )
     except ImportError as e:
-        print(f"Import error: {e}")
-        print("Please install aliyun-log-python-sdk: pip install aliyun-log-python-sdk")
+        logger.error("Import error: %s", e)
+        logger.error(
+            "Please install the required Alibaba Cloud SDKs:\n"
+            "  pip install aliyun-log-python-sdk\n"
+            "  pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ "
+            "--extra-index-url http://yum.tbsite.net/pypi/simple/ "
+            "--trusted-host=yum.tbsite.net "
+            "alibabacloud-cms20240330-inner==6.0.8",
+        )
         return
-    exp_id = str(uuid.uuid4())
-
     # Create AgentLoopConfig for Benchmark
     agentloop_config = AgentLoopConfig(
         workspace=workspace,
@@ -103,22 +111,22 @@ async def run_agentloop_experiment(
     experiment_config = {"agent_name": "MockAgent"}
 
     # Load dataset from CMS Dataset
-    print(f"\nLoading dataset from CMS:")
-    print(f"  Workspace: {agentloop_config.workspace}")
-    print(f"  Dataset:   {agentloop_config.dataset}")
-    print(f"  Region ID: {agentloop_config.region_id}")
+    logger.info("Loading dataset from CMS:")
+    logger.info("  Workspace: %s", agentloop_config.workspace)
+    logger.info("  Dataset:   %s", agentloop_config.dataset)
+    logger.info("  Region ID: %s", agentloop_config.region_id)
     benchmark = AgentLoopBenchmark(
         config=agentloop_config,
         name="AgentLoop Benchmark",
         description=f"Benchmark from CMS: {workspace}/{dataset}",
     )
-    print(f"Loaded {len(benchmark)} tasks")
+    logger.info("Loaded %d tasks", len(benchmark))
 
     # Configure storage
-    print(f"\nUsing SLS to store results:")
-    print(f"  Result Workspace: {agentloop_config.workspace}")
-    print(f"  Result Region ID: {agentloop_config.region_id}")
-    print(f"Also saving locally to: {result_dir}")
+    logger.info("Using SLS to store results:")
+    logger.info("  Result Workspace: %s", agentloop_config.workspace)
+    logger.info("  Result Region ID: %s", agentloop_config.region_id)
+    logger.info("Also saving locally to: %s", result_dir)
     storage = AgentLoopEvaluatorStorage(
         save_dir=result_dir,
         config=agentloop_config,
@@ -127,10 +135,10 @@ async def run_agentloop_experiment(
         experiment_metadata={"run_env": "local_run"},
         experiment_config=experiment_config,
     )
-    print(f"  Project:  {storage.config.project}")
-    print(f"  SLS Endpoint: {storage.config.sls_endpoint}")
-    print(f"  Logstore: {storage.logstore}")
-    print(f"Experiment ID: {storage.experiment_id}")
+    logger.info("  Project:      %s", storage.config.project)
+    logger.info("  SLS Endpoint: %s", storage.config.sls_endpoint)
+    logger.info("  Logstore:     %s", storage.logstore)
+    logger.info("Experiment ID: %s", storage.experiment_id)
 
     # Run experiment
     evaluator = RayEvaluator(
@@ -141,9 +149,9 @@ async def run_agentloop_experiment(
         n_workers=4,
     )
 
-    print("\nStarting experiment...")
+    logger.info("Starting experiment...")
     await evaluator.run(http_agent_solution)
-    print("\nExperiment completed!")
+    logger.info("Experiment completed!")
 
 
 async def main() -> None:
