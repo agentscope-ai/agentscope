@@ -185,19 +185,21 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique way to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who often have great tips about hidden gems in the city.
+    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed provide a unique opportunity to immerse yourself in the local culture, enjoy home-cooked meals, and interact with friendly hosts who often have great recommendations for exploring the city.
 
-    If you're looking for recommendations or tips on finding the best homestays in Hangzhou, I can help suggest some neighborhoods or platforms where you might discover your perfect stay. For example:
+    If you're planning another trip to Hangzhou, here are some tips for finding the perfect homestay:
 
-    1. **West Lake (Xi Hu) Area**: Staying near West Lake is ideal for exploring its scenic beauty, tea plantations, and nearby historical sites. Many homestays here offer stunning views of the lake.
-   
-    2. **Longjing Tea Village**: If you love tea, this area is famous for its dragon well tea farms. A homestay here could give you an authentic taste of rural Hangzhou life while being close to nature.
+    1. **Location**: Look for homestays near West Lake (Xi Hu), as it’s one of Hangzhou’s most iconic attractions. Staying nearby allows you to enjoy early morning or late evening walks around the lake without the crowds.
 
-    3. **Hefang Street**: This ancient street is bustling with traditional shops and eateries. Homestays around this area let you experience old Hangzhou charm alongside modern conveniences.
+    2. **Host Reviews**: Check reviews from previous guests to ensure the host is welcoming and attentive. Many travelers appreciate hosts who share insights about hidden gems in Hangzhou.
 
-    4. **Qiantang New Town**: For a more contemporary vibe, consider staying in this newer part of the city, which still offers easy access to attractions but with sleeker accommodations.
+    3. **Local Experience**: Some homestays offer cultural activities such as tea ceremonies, calligraphy lessons, or traditional Chinese cooking classes. If this interests you, seek out places that highlight these experiences.
 
-    Would you like me to guide you further on booking platforms or specific places?
+    4. **Transportation Access**: Ensure your chosen homestay has good access to public transportation so you can easily explore other parts of Hangzhou, like Lingyin Temple or Longjing Tea Village.
+
+    5. **Budget**: Homestays often range from budget-friendly options to more luxurious accommodations. Decide what suits your travel style best while keeping comfort in mind.
+
+    Would you like me to recommend specific neighborhoods or platforms where you can find excellent homestays in Hangzhou?
 
 
 
@@ -233,7 +235,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You enjoy homestays for their cozy and personalized experience. You appreciate the scenic beauty and historical sites around West Lake (Xi Hu), the contemporary vibe of Qiantang New Town, the old Hangzhou charm of Hefang Street, and the rural tea culture in Longjing Tea Village.
+    Friday: You prefer staying in homestays for their cozy, personalized experience, enjoy home-cooked meals and friendly hosts, and value local cultural immersion.
 
 
 
@@ -535,7 +537,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 33.642 seconds)
+   **Total running time of the script:** (0 minutes 58.698 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:

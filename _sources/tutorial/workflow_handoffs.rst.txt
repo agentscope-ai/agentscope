@@ -44,9 +44,9 @@ First, we create a function to allow the orchestrator to create workers dynamica
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "Print 'Hello, World!' using Python"
+            "task_description": "Execute 'Hello, World!' in Python and return the output."
         },
-        "id": "call_b3b6ac3992e84149a19871"
+        "id": "call_85150ed3c194439d803d11"
     }
     Worker: {
         "type": "tool_use",
@@ -55,11 +55,11 @@ First, we create a function to allow the orchestrator to create workers dynamica
             "code": "print('Hello, World!')",
             "timeout": 300
         },
-        "id": "call_d8248aa05b6b47b9a3321d"
+        "id": "call_06695c2cf38e46c5a09eec"
     }
     system: {
         "type": "tool_result",
-        "id": "call_d8248aa05b6b47b9a3321d",
+        "id": "call_06695c2cf38e46c5a09eec",
         "name": "execute_python_code",
         "output": [
             {
@@ -68,23 +68,23 @@ First, we create a function to allow the orchestrator to create workers dynamica
             }
         ]
     }
-    Worker: The Python code has been executed and it printed:
+    Worker: The Python code executed successfully and the output is:
 
     ```
     Hello, World!
     ```
     system: {
         "type": "tool_result",
-        "id": "call_b3b6ac3992e84149a19871",
+        "id": "call_85150ed3c194439d803d11",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "The Python code has been executed and it printed:\n\n```\nHello, World!\n```"
+                "text": "The Python code executed successfully and the output is:\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: The worker has successfully executed the Python code, and it printed:
+    Orchestrator: The Python code has been executed successfully and the output is:
 
     ```
     Hello, World!
@@ -179,7 +179,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 13.276 seconds)
+   **Total running time of the script:** (0 minutes 10.846 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
