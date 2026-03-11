@@ -181,7 +181,9 @@ def _load_config_from_path_or_default(
             ) as tmp:
                 tmp_path = tmp.name
                 yaml.dump(default_config, tmp)
-                tmp.flush()
+
+            # After the `with` block, the file handle is closed.
+            # Windows can safely reopen it by path.
             config = load_config(tmp_path)
         finally:
             if tmp_path is not None:
