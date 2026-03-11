@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
 from agentscope.module import StateModule
-from agentscope.session._tablestore_session import TablestoreSession
+from agentscope.session import TablestoreSession
 
 
 class SimpleStateModule(StateModule):
@@ -286,3 +286,131 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
         saved_state = json.loads(saved_session.metadata["__state__"])
         self.assertIn("memory", saved_state)
         self.assertIn("content", saved_state["memory"])
+
+    async def test_empty_user_id_defaults_to_default(self) -> None:
+        """Test that empty user_id falls back to 'default'."""
+        session = self._create_session_with_mocks()
+
+        session._memory_store.update_session = AsyncMock()
+
+        agent = SimpleStateModule()
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            await session.save_session_state(
+                session_id="test_session_1",
+                user_id="",
+                agent=agent,
+            )
+
+        saved_session = session._memory_store.update_session.call_args[0][0]
+        self.assertEqual(saved_session.user_id, "default")
+
+        # Also verify load uses "default" for empty user_id
+        mock_session = MagicMock()
+        mock_session.metadata = {
+            "__state__": '{"agent": {"name": "X", "value": 1}}',
+        }
+        session._memory_store.get_session = AsyncMock(
+            return_value=mock_session,
+        )
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            await session.load_session_state(
+                session_id="test_session_1",
+                user_id="",
+                agent=agent,
+            )
+
+        session._memory_store.get_session.assert_called_once_with(
+            user_id="default",
+            session_id="test_session_1",
+        )
+
+    async def test_load_session_no_state_raises_when_disallowed(self) -> None:
+        """Test loading session with no state data raises when disallowed."""
+        session = self._create_session_with_mocks()
+
+        mock_session = MagicMock()
+        mock_session.metadata = {}
+        session._memory_store.get_session = AsyncMock(
+            return_value=mock_session,
+        )
+
+        agent = SimpleStateModule()
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            with self.assertRaises(ValueError):
+                await session.load_session_state(
+                    session_id="test_session_1",
+                    user_id="user_1",
+                    allow_not_exist=False,
+                    agent=agent,
+                )
+
+    async def test_load_partial_modules(self) -> None:
+        """Test loading only a subset of saved modules works correctly."""
+        session = self._create_session_with_mocks()
+
+        state_data = {
+            "agent1": {"name": "Agent1", "value": 10},
+            "agent2": {"name": "Agent2", "value": 20},
+        }
+
+        mock_session = MagicMock()
+        mock_session.metadata = {
+            "__state__": json.dumps(state_data),
+        }
+        session._memory_store.get_session = AsyncMock(
+            return_value=mock_session,
+        )
+
+        # Only load agent1, skip agent2
+        loaded = SimpleStateModule()
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            await session.load_session_state(
+                session_id="test_session_1",
+                user_id="user_1",
+                agent1=loaded,
+            )
+
+        self.assertEqual(loaded.name, "Agent1")
+        self.assertEqual(loaded.value, 10)
+
+    async def test_async_context_manager(self) -> None:
+        """Test the async context manager protocol."""
+        session = self._create_session_with_mocks()
+
+        mock_store = AsyncMock()
+        mock_store.close = AsyncMock()
+        session._memory_store = mock_store
+        session._initialized = True
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            async with session as entered:
+                self.assertIs(entered, session)
+
+        # close() sets _memory_store to None, so check the saved reference
+        mock_store.close.assert_called_once()
+        self.assertIsNone(session._memory_store)
+        self.assertFalse(session._initialized)

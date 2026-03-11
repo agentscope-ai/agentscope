@@ -150,15 +150,7 @@ async def test_save_and_load_session_state(
     assert loaded_agent.name == "Friday"
     assert loaded_agent.value == 100
 
-    # Cleanup: delete the session data
-    messages = await session._memory_store.list_messages(
-        session_id=session_id,
-    )
-    async for msg in messages:
-        await session._memory_store.delete_message(
-            session_id=session_id,
-            message_id=msg.message_id,
-        )
+    # Cleanup
     await session._memory_store.delete_session(
         user_id=user_id,
         session_id=session_id,
@@ -207,14 +199,6 @@ async def test_save_overwrites_existing_state(
     assert loaded_agent.value == 2
 
     # Cleanup
-    messages = await session._memory_store.list_messages(
-        session_id=session_id,
-    )
-    async for msg in messages:
-        await session._memory_store.delete_message(
-            session_id=session_id,
-            message_id=msg.message_id,
-        )
     await session._memory_store.delete_session(
         user_id=user_id,
         session_id=session_id,
@@ -304,14 +288,6 @@ async def test_save_and_load_multiple_modules(
     assert loaded2.value == 20
 
     # Cleanup
-    messages = await session._memory_store.list_messages(
-        session_id=session_id,
-    )
-    async for msg in messages:
-        await session._memory_store.delete_message(
-            session_id=session_id,
-            message_id=msg.message_id,
-        )
     await session._memory_store.delete_session(
         user_id=user_id,
         session_id=session_id,
@@ -354,14 +330,6 @@ async def test_save_and_load_with_memory_module(
     assert loaded_msgs[1].content == "Hi there!"
 
     # Cleanup
-    messages = await session._memory_store.list_messages(
-        session_id=session_id,
-    )
-    async for msg in messages:
-        await session._memory_store.delete_message(
-            session_id=session_id,
-            message_id=msg.message_id,
-        )
     await session._memory_store.delete_session(
         user_id=user_id,
         session_id=session_id,
