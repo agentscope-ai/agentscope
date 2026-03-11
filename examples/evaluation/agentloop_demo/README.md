@@ -11,16 +11,7 @@ This example demonstrates how to use the AgentLoop integration:
 1. **Install dependencies**
 
 ```bash
-pip install agentscope
-
-# For writing results to SLS (Log Service)
-pip install aliyun-log-python-sdk
-
-# For loading datasets from AgentLoop CMS (requires Alibaba internal PyPI)
-pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ \
-    --extra-index-url http://yum.tbsite.net/pypi/simple/ \
-    --trusted-host=yum.tbsite.net \
-    alibabacloud-cms20240330-inner==6.0.8
+pip install agentscope[agentloop]
 ```
 
 2. **Prepare your credentials**
@@ -42,7 +33,24 @@ await run_agentloop_experiment(
 )
 ```
 
-2. **Run the evaluation**
+2. **Implement your agent logic in the solution function**:
+
+```python
+async def http_agent_solution(
+    task: Task,
+    pre_hook: Callable,
+) -> SolutionOutput:
+    output = ""  # Call your agent and get the output
+
+    return SolutionOutput(
+        success=True,
+        output=output,
+        trajectory=[],
+        meta={"task": task},
+    )
+```
+
+3. **Run the evaluation**
 
 ```bash
 cd examples/evaluation/agentloop_demo
@@ -60,24 +68,3 @@ The `AgentLoopConfig` class is used to configure both dataset loading and result
 | `region_id` | Yes | Alibaba Cloud region ID (e.g., `cn-hangzhou`) |
 | `access_key_id` | Yes | Alibaba Cloud Access Key ID |
 | `access_key_secret` | Yes | Alibaba Cloud Access Key Secret |
-
-## Code Structure
-
-### Solution Function
-
-Implement your agent logic in the solution function:
-
-```python
-async def http_agent_solution(
-    task: Task,
-    pre_hook: Callable,
-) -> SolutionOutput:
-    output = ""  # Call your agent and get the output
-
-    return SolutionOutput(
-        success=True,
-        output=output,
-        trajectory=[],
-        meta={"task": task},
-    )
-```
