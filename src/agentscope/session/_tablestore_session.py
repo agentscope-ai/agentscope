@@ -12,8 +12,9 @@ class TablestoreSession(SessionBase):
     """A Tablestore-based session implementation using
     ``tablestore_for_agent_memory``'s ``AsyncMemoryStore``.
 
-    This session stores and retrieves agent state as messages in Tablestore,
-    enabling persistent session management across distributed environments.
+    This session stores and retrieves agent state via the session table's
+    metadata field in Tablestore, enabling persistent session management
+    across distributed environments.
     """
 
     _SESSION_SECONDARY_INDEX_NAME = "agentscope_session_secondary_index"
@@ -118,7 +119,8 @@ class TablestoreSession(SessionBase):
         """Save the session state to Tablestore.
 
         Each state module's ``state_dict()`` is serialized to JSON and stored
-        as a message in Tablestore, keyed by the module name.
+        in the session table's metadata field under the key
+        ``"__state__"``.
 
         Args:
             session_id (`str`):
@@ -130,48 +132,23 @@ class TablestoreSession(SessionBase):
         """
         from tablestore_for_agent_memory.base.base_memory_store import (
             Session as TablestoreSessionModel,
-            Message as TablestoreMessage,
         )
 
         await self._ensure_initialized()
 
-        tablestore_session = await self._memory_store.get_session(
-            user_id=user_id or "default",
-            session_id=session_id,
-        )
-
-        if not tablestore_session:
-            tablestore_session = TablestoreSessionModel(
-                session_id=session_id,
-                user_id=user_id or "default",
-            )
-            await self._memory_store.put_session(tablestore_session)
-
-        # Delete existing state message to avoid stale data
-        existing_messages = await self._memory_store.list_messages(
-            session_id=session_id,
-        )
-        async for existing_msg in existing_messages:
-            if existing_msg.message_id == "__state__":
-                await self._memory_store.delete_message(
-                    session_id=session_id,
-                    message_id=existing_msg.message_id,
-                )
-                break
-
-        # Save each state module as a separate message
         state_dicts = {
             name: state_module.state_dict()
             for name, state_module in state_modules_mapping.items()
         }
         serialized_state = json.dumps(state_dicts, ensure_ascii=False)
 
-        state_message = TablestoreMessage(
+        # Create a session model
+        tablestore_session = TablestoreSessionModel(
             session_id=session_id,
-            message_id="__state__",
-            content=serialized_state,
+            user_id=user_id or "default",
+            metadata={"__state__": serialized_state},
         )
-        await self._memory_store.put_message(state_message)
+        await self._memory_store.update_session(tablestore_session)
 
         logger.info(
             "Saved session state to Tablestore for session '%s'.",
@@ -186,6 +163,9 @@ class TablestoreSession(SessionBase):
         **state_modules_mapping: StateModule,
     ) -> None:
         """Load the session state from Tablestore.
+
+        The state is read from the session table's metadata field
+        under the key ``"__state__"``.
 
         Args:
             session_id (`str`):
@@ -217,16 +197,7 @@ class TablestoreSession(SessionBase):
                 f"'{session_id}' does not exist in Tablestore.",
             )
 
-        # Read the state message
-        messages = await self._memory_store.list_messages(
-            session_id=session_id,
-        )
-
-        state_content = None
-        async for msg in messages:
-            if msg.message_id == "__state__":
-                state_content = msg.content
-                break
+        state_content = (tablestore_session.metadata or {}).get("__state__")
 
         if state_content is None:
             if allow_not_exist:

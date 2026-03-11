@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
-from typing import Any
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -51,19 +49,7 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
         """Test saving session state to Tablestore."""
         session = self._create_session_with_mocks()
 
-        # Mock get_session to return None (new session)
-        session._memory_store.get_session = AsyncMock(return_value=None)
-        session._memory_store.put_session = AsyncMock()
-        session._memory_store.put_message = AsyncMock()
-
-        # Mock list_messages to return empty iterator
-        async def empty_iterator() -> AsyncGenerator[None, None]:
-            return
-            yield  # make it an async generator
-
-        session._memory_store.list_messages = AsyncMock(
-            return_value=empty_iterator(),
-        )
+        session._memory_store.update_session = AsyncMock()
 
         # Create test state modules
         agent = SimpleStateModule()
@@ -81,42 +67,26 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
                 agent=agent,
             )
 
-        # Verify put_session was called (new session created)
-        session._memory_store.put_session.assert_called_once()
+        # Verify update_session was called with metadata containing state
+        session._memory_store.update_session.assert_called_once()
+        saved_session = session._memory_store.update_session.call_args[0][0]
+        self.assertEqual(saved_session.session_id, "test_session_1")
+        self.assertEqual(saved_session.user_id, "user_1")
+        self.assertIn("__state__", saved_session.metadata)
 
-        # Verify put_message was called with serialized state
-        session._memory_store.put_message.assert_called_once()
-        saved_message = session._memory_store.put_message.call_args[0][0]
-        self.assertEqual(saved_message.message_id, "__state__")
-
-        saved_state = json.loads(saved_message.content)
+        saved_state = json.loads(saved_session.metadata["__state__"])
         self.assertEqual(saved_state["agent"]["name"], "Friday")
         self.assertEqual(saved_state["agent"]["value"], 100)
 
     async def test_save_session_state_existing_session(self) -> None:
-        """Test saving state to an existing session clears old messages."""
+        """Test saving state to an existing session overwrites old state."""
         session = self._create_session_with_mocks()
 
-        # Mock get_session to return existing session
-        mock_existing_session = MagicMock()
-        session._memory_store.get_session = AsyncMock(
-            return_value=mock_existing_session,
-        )
-        session._memory_store.put_message = AsyncMock()
-        session._memory_store.delete_message = AsyncMock()
+        session._memory_store.update_session = AsyncMock()
 
-        # Mock list_messages to return one existing message
-        existing_msg = MagicMock()
-        existing_msg.message_id = "__state__"
-
-        async def existing_iterator() -> AsyncGenerator[Any, None]:
-            yield existing_msg
-
-        session._memory_store.list_messages = AsyncMock(
-            return_value=existing_iterator(),
-        )
-
+        # First save
         agent = SimpleStateModule()
+        agent.name = "OriginalName"
 
         with patch(
             "agentscope.session._tablestore_session.TablestoreSession"
@@ -129,40 +99,50 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
                 agent=agent,
             )
 
-        # Verify old message was deleted
-        session._memory_store.delete_message.assert_called_once_with(
-            session_id="test_session_1",
-            message_id="__state__",
+        # Second save with updated state
+        agent.name = "UpdatedName"
+
+        with patch(
+            "agentscope.session._tablestore_session.TablestoreSession"
+            "._ensure_initialized",
+            new_callable=AsyncMock,
+        ):
+            await session.save_session_state(
+                session_id="test_session_1",
+                user_id="user_1",
+                agent=agent,
+            )
+
+        # Verify update_session was called twice (upsert semantics)
+        self.assertEqual(
+            session._memory_store.update_session.call_count,
+            2,
         )
 
-        # Verify put_session was NOT called (session already exists)
-        session._memory_store.put_session.assert_not_called()
+        # Verify the second call contains the updated state
+        second_call_session = (
+            session._memory_store.update_session.call_args_list[1][0][0]
+        )
+        saved_state = json.loads(
+            second_call_session.metadata["__state__"],
+        )
+        self.assertEqual(saved_state["agent"]["name"], "UpdatedName")
 
     async def test_load_session_state(self) -> None:
         """Test loading session state from Tablestore."""
         session = self._create_session_with_mocks()
 
-        # Mock get_session to return existing session
-        mock_session = MagicMock()
-        session._memory_store.get_session = AsyncMock(
-            return_value=mock_session,
-        )
-
-        # Create state data
+        # Create state data stored in session metadata
         state_data = {
             "agent": {"name": "Friday", "value": 100},
         }
 
-        # Mock list_messages to return state message
-        state_msg = MagicMock()
-        state_msg.message_id = "__state__"
-        state_msg.content = json.dumps(state_data)
-
-        async def message_iterator() -> AsyncGenerator[Any, None]:
-            yield state_msg
-
-        session._memory_store.list_messages = AsyncMock(
-            return_value=message_iterator(),
+        mock_session = MagicMock()
+        mock_session.metadata = {
+            "__state__": json.dumps(state_data),
+        }
+        session._memory_store.get_session = AsyncMock(
+            return_value=mock_session,
         )
 
         # Create agent and load state
@@ -235,18 +215,11 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
         """Test loading session that exists but has no state data."""
         session = self._create_session_with_mocks()
 
+        # Session exists but metadata has no __state__ key
         mock_session = MagicMock()
+        mock_session.metadata = {}
         session._memory_store.get_session = AsyncMock(
             return_value=mock_session,
-        )
-
-        # Empty message list
-        async def empty_iterator() -> AsyncGenerator[None, None]:
-            return
-            yield
-
-        session._memory_store.list_messages = AsyncMock(
-            return_value=empty_iterator(),
         )
 
         agent = SimpleStateModule()
@@ -291,18 +264,7 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
         """Test saving and loading a state module that contains memory."""
         session = self._create_session_with_mocks()
 
-        # Mock for save
-        session._memory_store.get_session = AsyncMock(return_value=None)
-        session._memory_store.put_session = AsyncMock()
-        session._memory_store.put_message = AsyncMock()
-
-        async def empty_iterator() -> AsyncGenerator[None, None]:
-            return
-            yield
-
-        session._memory_store.list_messages = AsyncMock(
-            return_value=empty_iterator(),
-        )
+        session._memory_store.update_session = AsyncMock()
 
         # Create a memory module with messages
         memory = InMemoryMemory()
@@ -319,8 +281,8 @@ class TablestoreSessionTest(IsolatedAsyncioTestCase):
                 memory=memory,
             )
 
-        # Verify the state was serialized correctly
-        saved_message = session._memory_store.put_message.call_args[0][0]
-        saved_state = json.loads(saved_message.content)
+        # Verify the state was serialized correctly in session metadata
+        saved_session = session._memory_store.update_session.call_args[0][0]
+        saved_state = json.loads(saved_session.metadata["__state__"])
         self.assertIn("memory", saved_state)
         self.assertIn("content", saved_state["memory"])
