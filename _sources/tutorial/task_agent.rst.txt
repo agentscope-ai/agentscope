@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_ef0a452a536641b5b52604",
+        "id": "call_33066ca93dde4d41a86378",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_32c115890610468496db43",
+        "id": "call_41e18b8177a34a2aa5b495",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,32 +363,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_ef0a452a536641b5b52604",
+        "id": "call_33066ca93dde4d41a86378",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 09:36:26.011606 and ended at 09:36:29.014883. "
+                "text": "Tag tag1 started at 09:40:19.843328 and ended at 09:40:22.846579. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_32c115890610468496db43",
+        "id": "call_41e18b8177a34a2aa5b495",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 09:36:26.011703 and ended at 09:36:29.015558. "
+                "text": "Tag tag2 started at 09:40:19.843401 and ended at 09:40:22.847236. "
             }
         ]
     }
-    Jarvis: The 'example_tool_function' has been called with two tags 'tag1' and 'tag2' in parallel. Here are the details:
+    Jarvis: The 'example_tool_function' was called in parallel with two different tags, 'tag1' and 'tag2'. Here are the results:
 
-    - For 'tag1', the function started at 09:36:26.011606 and ended at 09:36:29.014883.
-    - For 'tag2', the function started at 09:36:26.011703 and ended at 09:36:29.015558.
+    - For 'tag1': The function started at 09:40:19.843328 and ended at 09:40:22.846579.
+    - For 'tag2': The function started at 09:40:19.843401 and ended at 09:40:22.847236.
 
-    Both calls have executed concurrently, as you can see from the start and end times.
+    Both functions executed concurrently over approximately the same time period.
 
 
 
@@ -467,11 +467,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_6dcdcb59365a4a84b0a693",
+        "id": "call_22c02721be754a33b5cec2",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
-            "description": "A renowned physicist who developed the theory of relativity",
+            "description": "A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -479,11 +479,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_6dcdcb59365a4a84b0a693",
+        "id": "call_22c02721be754a33b5cec2",
         "name": "generate_response",
         "output": [
             {
@@ -492,12 +492,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Allow me to introduce Albert Einstein, a renowned physicist celebrated for developing the theory of relativity. Born in 1879 and passing away at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. His work not only revolutionized physics but also inspired generations of scientists and thinkers.
+    Jarvis: Albert Einstein was a renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century. Born in 1879, Einstein made significant contributions to the field of physics, fundamentally changing our understanding of space, time, and gravity. He was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, which was pivotal in establishing the field of quantum theory. Throughout his career, Einstein received numerous honors, including the Copley Medal in 1925 and the Max Planck Medal in 1929. His insights and discoveries continue to influence scientific thought and research even today. Einstein passed away in 1955 at the age of 76, leaving behind a legacy that profoundly shaped modern physics.
 
     The structured output:
     {
         "name": "Albert Einstein",
-        "description": "A renowned physicist who developed the theory of relativity",
+        "description": "A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 26.950 seconds)
+   **Total running time of the script:** (0 minutes 53.923 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
