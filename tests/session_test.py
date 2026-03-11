@@ -79,6 +79,20 @@ class SessionTest(IsolatedAsyncioTestCase):
             agent2=agent2,
         )
 
+        # Mutate local state to verify load really works
+        agent1.name = "Changed"
+        agent2.sys_prompt = "Changed prompt"
+
+        # Load back
+        await session.load_session_state(
+            session_id="user_1",
+            agent1=agent1,
+            agent2=agent2,
+        )
+
+        self.assertEqual(agent1.name, "Friday")
+        self.assertEqual(agent2.sys_prompt, "A helpful assistant.")
+
     async def asyncTearDown(self) -> None:
         """Clean up after the test."""
         # Remove the session file if it exists
