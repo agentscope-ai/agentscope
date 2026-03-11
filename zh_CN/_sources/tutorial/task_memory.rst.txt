@@ -175,30 +175,30 @@ AgentScope 中的记忆模块负责：
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='6spmc42fy8v9ovKqZmx3m2', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 01:59:10.064', invocation_id='None')
+    - Msg(id='7GcT2LyVZuUTDdMq7nPK4F', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 02:00:08.383', invocation_id='None')
     记忆的状态字典：
     {
       "_compressed_summary": "",
       "content": [
         [
           {
-            "id": "S36PHFppekAv2qtFJwpaCU",
+            "id": "Nji7TrZ8Yg3efyQbZFX6MM",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-03-11 01:59:10.064"
+            "timestamp": "2026-03-11 02:00:08.383"
           },
           []
         ],
         [
           {
-            "id": "6spmc42fy8v9ovKqZmx3m2",
+            "id": "7GcT2LyVZuUTDdMq7nPK4F",
             "name": "system",
             "role": "system",
             "content": "<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>",
             "metadata": {},
-            "timestamp": "2026-03-11 01:59:10.064"
+            "timestamp": "2026-03-11 02:00:08.383"
           },
           [
             "hint"
@@ -213,12 +213,12 @@ AgentScope 中的记忆模块负责：
       "content": [
         [
           {
-            "id": "S36PHFppekAv2qtFJwpaCU",
+            "id": "Nji7TrZ8Yg3efyQbZFX6MM",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-03-11 01:59:10.064"
+            "timestamp": "2026-03-11 02:00:08.383"
           },
           []
         ]
@@ -295,7 +295,7 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='jwyA3gy55dh7QXGsDFdFH9', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 01:59:10.104', invocation_id='None')
+    - Msg(id='FBp5n6ozj2C9vje9SQtYsX', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 02:00:08.426', invocation_id='None')
 
 
 
@@ -339,9 +339,9 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     记忆中的所有消息：
-    - Msg(id='3JRWYhvLVzt7RwDv6r77dX', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-03-11 01:59:10.074', invocation_id='None')
-    - Msg(id='jwyA3gy55dh7QXGsDFdFH9', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 01:59:10.104', invocation_id='None')
-    - Msg(id='7jMm5d8unjTNHbfdpQoQJG', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-03-11 01:59:10.112', invocation_id='None')
+    - Msg(id='3FRQ5eN4UBYjQEb4SxMSBe', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-03-11 02:00:08.393', invocation_id='None')
+    - Msg(id='FBp5n6ozj2C9vje9SQtYsX', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 02:00:08.426', invocation_id='None')
+    - Msg(id='QrAaR6MtEGJ6Aqe5aB3Kuy', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-03-11 02:00:08.434', invocation_id='None')
 
 
 
@@ -487,12 +487,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='TXGqW2FjdL8Mkfig5wPhjP', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 01:59:10.132', invocation_id='None')
-    Exception in thread Thread-34 (_connection_worker_thread):
-    Traceback (most recent call last):
-      File "/opt/hostedtoolcache/Python/3.10.19/x64/lib/python3.10/site-packages/aiosqlite/core.py", line 66, in _connection_worker_thread
-        future.get_loop().call_soon_threadsafe(set_result, future, result)
-      File "/opt/hostedtoolcache/Python/3.10.19/x64/lib/python3.10/asyncio/base_events.py", line 798, in call_soon_threadsafe
+    - Msg(id='6kMMYSxovJhQVh8sQ7RpiQ', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-03-11 02:00:08.452', invocation_id='None')
 
 
 
