@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_3cacd8b321af4ae48d339e",
+        "id": "call_a2c534adfeb549f68f6e17",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_6f019cbdc3e646cf9d30bf",
+        "id": "call_468e6a4ff7d54d4ca8e269",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,30 +363,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_3cacd8b321af4ae48d339e",
+        "id": "call_a2c534adfeb549f68f6e17",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 01:51:15.498047 and ended at 01:51:18.501289. "
+                "text": "Tag tag1 started at 05:03:37.425960 and ended at 05:03:40.429276. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_6f019cbdc3e646cf9d30bf",
+        "id": "call_468e6a4ff7d54d4ca8e269",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 01:51:15.498139 and ended at 01:51:18.501955. "
+                "text": "Tag tag2 started at 05:03:37.426051 and ended at 05:03:40.429908. "
             }
         ]
     }
-    Jarvis: The function 'example_tool_function' was called in parallel with the tags 'tag1' and 'tag2'. Here are the results:
+    Jarvis: The function 'example_tool_function' was called in parallel with two different tags. 
 
-    - For tag1, the function started at 01:51:15.498047 and ended at 01:51:18.501289.
-    - For tag2, the function started at 01:51:15.498139 and ended at 01:51:18.501955.
+    - For the tag 'tag1', it started at 05:03:37.425960 and ended at 05:03:40.429276.
+    - For the tag 'tag2', it started at 05:03:37.426051 and ended at 05:03:40.429908.
+
+    Both calls executed concurrently, as evidenced by their overlapping start and end times.
 
 
 
@@ -465,7 +467,7 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_5183544a9a304701a1b483",
+        "id": "call_115267dea6b44de1b19e0d",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
@@ -481,7 +483,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_5183544a9a304701a1b483",
+        "id": "call_115267dea6b44de1b19e0d",
         "name": "generate_response",
         "output": [
             {
@@ -490,7 +492,7 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Allow me to introduce Albert Einstein, a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two cornerstones of modern physics. Born in 1879, Einstein's work profoundly influenced the way we understand the universe. He was awarded the Nobel Prize in Physics in 1921, among other prestigious honors such as the Copley Medal in 1925 and the Max Planck Medal in 1929. Einstein lived a life dedicated to unraveling the mysteries of the cosmos until his death at the age of 76. His contributions continue to shape the field of physics and inspire generations of scientists.
+    Jarvis: Allow me to introduce Albert Einstein, a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two cornerstones of modern physics. Born in 1879 and passing away at the age of 76, Einstein's contributions to science have left an indelible mark on our understanding of the universe. Among his many accolades, he was honored with the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. His work continues to influence scientific thought and exploration to this day.
 
     The structured output:
     {
@@ -579,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 31.576 seconds)
+   **Total running time of the script:** (0 minutes 35.152 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:

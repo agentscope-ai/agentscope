@@ -187,9 +187,7 @@ manage long-term memory through tool calls.
 
     Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can be a wonderful way to immerse yourself in the local culture, enjoy home-cooked meals, and connect with friendly hosts who can share insider tips about the city.
 
-    If you're looking for recommendations or tips on finding great homestays in Hangzhou, I can help suggest some popular neighborhoods or platforms to explore. Areas like **West Lake (Xihu)**, **Lingyin Temple**, or **Hefang Street** are charming and might have lovely homestay options with beautiful views or convenient access to attractions.
-
-    Would you like more detailed suggestions or help planning your next trip? 😊
+    If you're looking for recommendations or tips on finding great homestays in Hangzhou, I can help suggest some neighborhoods or platforms to explore. For example, **West Lake (Xi Hu)** is a popular area due to its proximity to the famous scenic spot, while **Hefang Street** offers a more traditional vibe with access to historic sites and local markets. Would you like more detailed suggestions tailored to your preferences?
 
 
 
@@ -225,7 +223,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You enjoy cozy and personalized homestay experiences, particularly in charming areas like West Lake, Lingyin Temple, and Hefang Street.
+    Friday: You enjoy cozy, personalized homestay experiences and are interested in neighborhoods like West Lake and Hefang Street in Hangzhou. You also appreciate recommendations for platforms or areas to find such accommodations.
 
 
 
@@ -527,7 +525,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 1.054 seconds)
+   **Total running time of the script:** (0 minutes 59.945 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
