@@ -16,9 +16,6 @@ def as_studio_forward_message_pre_print_hook(
     run_id: str,
 ) -> None:
     """The pre-speak hook to forward messages to the studio."""
-    # Disable console output if needed
-    if self._disable_console_output:  # pylint: disable=protected-access
-        return
 
     msg = kwargs["msg"]
 
@@ -51,10 +48,10 @@ def as_studio_forward_message_pre_print_hook(
                 n_retry += 1
                 continue
 
-            # 静默降级：打印警告并返回，避免 Agent 进程崩溃
+            # Graceful degradation: log warning and return to avoid crashing
             logger.warning(
                 "Failed to forward message to Studio after %d retries: %s. "
-                "Agent will continue running without Studio forwarding.",
+                "Agent will continue without Studio forwarding.",
                 n_retry,
                 e,
             )

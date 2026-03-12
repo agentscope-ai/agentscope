@@ -40,6 +40,7 @@ dependencies = [
     "sounddevice",
     "sqlalchemy",
     "python-frontmatter",
+    "aiofiles",
 ]
 
 [project.optional-dependencies]

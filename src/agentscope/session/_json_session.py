@@ -2,6 +2,7 @@
 """The JSON session class."""
 import json
 import os
+import aiofiles
 
 from ._session_base import SessionBase
 from .._logging import logger
@@ -63,13 +64,19 @@ class JSONSession(SessionBase):
             name: state_module.state_dict()
             for name, state_module in state_modules_mapping.items()
         }
-        with open(
-            self._get_save_path(session_id, user_id=user_id),
+        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        async with aiofiles.open(
+            session_save_path,
             "w",
             encoding="utf-8",
             errors="surrogatepass",
-        ) as file:
-            json.dump(state_dicts, file, ensure_ascii=False)
+        ) as f:
+            await f.write(json.dumps(state_dicts, ensure_ascii=False))
+
+        logger.info(
+            "Saved session state to %s successfully.",
+            session_save_path,
+        )
 
     async def load_session_state(
         self,
@@ -93,13 +100,14 @@ class JSONSession(SessionBase):
         """
         session_save_path = self._get_save_path(session_id, user_id=user_id)
         if os.path.exists(session_save_path):
-            with open(
+            async with aiofiles.open(
                 session_save_path,
                 "r",
                 encoding="utf-8",
                 errors="surrogatepass",
-            ) as file:
-                states = json.load(file)
+            ) as f:
+                content = await f.read()
+                states = json.loads(content)
 
             for name, state_module in state_modules_mapping.items():
                 if name in states:
