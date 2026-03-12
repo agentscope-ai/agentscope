@@ -11,7 +11,7 @@ This example demonstrates how to use the AgentLoop integration:
 1. **Install dependencies**
 
 ```bash
-pip install agentscope[agentloop]
+pip install agentscope aliyun-log-python-sdk alibabacloud-cms20240330-inner
 ```
 
 2. **Prepare your credentials**

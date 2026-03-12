@@ -1,28 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-AgentLoop Integration Example - Load dataset from SLS and write results to SLS
-
-Before running, set the following environment variables:
-    # Dataset SLS configuration
-    export SLS_DATASET_ENDPOINT="cn-hangzhou.log.aliyuncs.com"
-    export SLS_DATASET_PROJECT="your-dataset-project"
-    export SLS_DATASET_LOGSTORE="your-dataset-logstore"
-
-    # Result upload SLS configuration (can be different from dataset)
-    export SLS_RESULT_ENDPOINT="cn-shanghai.log.aliyuncs.com"
-    export SLS_RESULT_PROJECT="your-result-project"
-    export SLS_RESULT_LOGSTORE="experiment_detail"
-
-    # Alibaba Cloud credentials
-    export ALIBABA_CLOUD_ACCESS_KEY_ID="your-access-key-id"
-    export ALIBABA_CLOUD_ACCESS_KEY_SECRET="your-access-key-secret"
-
-How to run:
-cd  /Users/wu.cc/Code/python/agentscope/examples/evaluation/agentloop_demo
-PYTHONPATH=/Users/wu.cc/Code/python/agentscope/src python main.py
-
-If you don't have a real SLS environment, use --mock parameter for mock mode:
-    python main.py --mock
+AgentLoop Integration Example - Load dataset from Agentloop dataset and write results to SLS
 """
 
 import asyncio
@@ -91,13 +69,8 @@ async def run_agentloop_experiment(
     except ImportError as e:
         logger.error("Import error: %s", e)
         logger.error(
-            "Please install the required Alibaba Cloud SDKs:\n"
-            "  pip install aliyun-log-python-sdk\n"
-            "  pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ "
-            "--extra-index-url http://yum.tbsite.net/pypi/simple/ "
-            "--trusted-host=yum.tbsite.net "
-            "alibabacloud-cms20240330-inner==6.0.8",
-        )
+            "Please install the required Agentloop SDKs:\n"
+            "  pip install aliyun-log-python-sdk alibabacloud-cms20240330-inner")
         return
     # Create AgentLoopConfig for Benchmark
     agentloop_config = AgentLoopConfig(

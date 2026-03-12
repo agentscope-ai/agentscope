@@ -93,7 +93,7 @@ class AgentLoopBenchmark(BenchmarkBase):
             raise ImportError(
                 "The alibabacloud-cms20240330-inner package is required for "
                 "AgentLoopBenchmark. Install it with: "
-                "pip install alibabacloud-cms20240330-inner==6.0.8",
+                "pip install alibabacloud-cms20240330-inner",
             ) from e
 
         client_config = open_api_models.Config(
@@ -119,7 +119,7 @@ class AgentLoopBenchmark(BenchmarkBase):
             raise ImportError(
                 "The alibabacloud-cms20240330-inner package is required for "
                 "AgentLoopBenchmark. Install it with: "
-                "pip install alibabacloud-cms20240330-inner==6.0.8",
+                "pip install alibabacloud-cms20240330-inner",
             ) from e
 
         client = self._get_client()

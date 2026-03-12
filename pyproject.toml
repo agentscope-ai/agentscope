@@ -137,12 +137,6 @@ rag = [
 # ------------ Evaluation ------------
 evaluate = ["ray"]
 
-# ------------ AgentLoop (SLS) ------------
-agentloop = [
-    "aliyun-log-python-sdk",
-    "alibabacloud-cms20240330-inner"
-    ]
-
 # ------------ Full ------------
 full = [
     "agentscope[a2a]",
@@ -152,7 +146,6 @@ full = [
     "agentscope[rag]",
     "agentscope[evaluate]",
     "agentscope[realtime]",
-    "agentscope[agentloop]",
 ]
 
 # ------------ Development ------------
