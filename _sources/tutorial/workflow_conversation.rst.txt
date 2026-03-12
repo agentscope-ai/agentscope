@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. It's nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob! I'm also a student and I'm really into sports and history. It's great to meet you too!
-    Charlie: Hey Alice and Bob, I'm Charlie! I'm a student with a passion for music and literature. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. I love exploring new books and visiting art galleries whenever I can. It's nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. It's great to meet you! I'm really into sports and technology. I play basketball a lot and in my free time, I like to tinker with computers and learn about the latest tech gadgets. What's your favorite book or artwork?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into science and music. I play the guitar and love to experiment with different genres. When I'm not playing music, I enjoy reading about physics and astronomy. It's great to meet you both! Alice, since you're into literature and art, do you have a favorite book or painting?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. It's nice to meet you! What about you?
-    Bob: Hey Alice, I'm Bob! I'm also a student and I'm really into sports and history. It's great to meet you too!
-    Charlie: Hey Alice and Bob, I'm Charlie! I'm a student with a passion for music and literature. It's great to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. I love exploring new books and visiting art galleries whenever I can. It's nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. It's great to meet you! I'm really into sports and technology. I play basketball a lot and in my free time, I like to tinker with computers and learn about the latest tech gadgets. What's your favorite book or artwork?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into science and music. I play the guitar and love to experiment with different genres. When I'm not playing music, I enjoy reading about physics and astronomy. It's great to meet you both! Alice, since you're into literature and art, do you have a favorite book or painting?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 7.806 seconds)
+   **Total running time of the script:** (0 minutes 11.380 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
