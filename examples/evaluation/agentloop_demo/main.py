@@ -9,7 +9,7 @@ from typing import Callable
 
 from agentscope.evaluate import (
     AgentLoopConfig,
-    RayEvaluator,
+    GeneralEvaluator,
     SolutionOutput,
     Task,
 )
@@ -23,8 +23,6 @@ async def http_agent_solution(
     task: Task,
     pre_hook: Callable,
 ) -> SolutionOutput:
-    pre_hook(task)
-
     output = ""  # call your agent and get the output
 
     return SolutionOutput(
@@ -32,7 +30,7 @@ async def http_agent_solution(
         output=output,
         trajectory=[],
         meta={
-            "task": task,
+            "task": task.input,
         },
     )
 
@@ -114,7 +112,7 @@ async def run_agentloop_experiment(
     logger.info("Experiment ID: %s", storage.experiment_id)
 
     # Run experiment
-    evaluator = RayEvaluator(
+    evaluator = GeneralEvaluator(
         name="AgentLoop Evaluation",
         benchmark=benchmark,
         n_repeat=1,

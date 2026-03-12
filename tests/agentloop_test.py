@@ -64,9 +64,46 @@ class TestAgentLoopConfig(unittest.TestCase):
         self.assertEqual(config.access_key_id, "test_key_id")
         self.assertEqual(config.access_key_secret, "test_key_secret")
 
-    def test_default_query_generated_from_dataset(self) -> None:
+    def test_default_query_is_empty(self) -> None:
         config = _make_config(query="")
-        self.assertEqual(config.query, "* | select * from test_dataset")
+        self.assertEqual(config.query, "")
+
+    def test_default_max_rows(self) -> None:
+        config = _make_config()
+        self.assertEqual(config.max_rows, 1000)
+
+    def test_custom_max_rows(self) -> None:
+        config = AgentLoopConfig(
+            workspace="ws",
+            dataset="ds",
+            region_id="cn-hangzhou",
+            max_rows=500,
+            access_key_id="k",
+            access_key_secret="s",
+        )
+        self.assertEqual(config.max_rows, 500)
+
+    def test_invalid_max_rows_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            AgentLoopConfig(
+                workspace="ws",
+                dataset="ds",
+                region_id="cn-hangzhou",
+                max_rows=0,
+                access_key_id="k",
+                access_key_secret="s",
+            )
+
+    def test_negative_max_rows_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            AgentLoopConfig(
+                workspace="ws",
+                dataset="ds",
+                region_id="cn-hangzhou",
+                max_rows=-1,
+                access_key_id="k",
+                access_key_secret="s",
+            )
 
     def test_custom_query_preserved(self) -> None:
         custom_query = "* | select col1 from test_dataset limit 10"
@@ -317,7 +354,11 @@ class TestAgentLoopBenchmark(unittest.TestCase):
         return mock_client
 
     def _call_load_data(self, data: object) -> list[dict]:
-        """Call _load_data_from_cms with a mocked client and SDK module."""
+        """Call _load_data_from_cms in single-query mode with a mocked client.
+
+        A custom query is set on the config so that _load_data_from_cms takes
+        the single-call path, which exercises _parse_response_data directly.
+        """
         mock_client = self._make_mock_execute_query(data)
         mock_cms_models = MagicMock()
         mock_cms_models.ExecuteQueryRequest.return_value = MagicMock()
@@ -330,19 +371,20 @@ class TestAgentLoopBenchmark(unittest.TestCase):
         ):
             with patch.object(
                 AgentLoopBenchmark,
-                "_get_client",
-                return_value=mock_client,
+                "_load_data_from_cms",
+                return_value=[],
             ):
-                with patch.object(
-                    AgentLoopBenchmark,
-                    "_load_data_from_cms",
-                    return_value=[],
-                ):
-                    benchmark = AgentLoopBenchmark(config=_make_config())
+                benchmark = AgentLoopBenchmark(config=_make_config())
 
-                # Now call the real _load_data_from_cms
-                benchmark._get_client = MagicMock(return_value=mock_client)  # type: ignore[method-assign]
-                return AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+            # Force single-call mode by providing a custom query
+            benchmark.config.query = "* | select * from test_dataset"
+            benchmark._get_client = MagicMock(return_value=mock_client)  # type: ignore[method-assign]
+            return AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+    def _make_paginated_benchmark(self) -> AgentLoopBenchmark:
+        """Create a benchmark with no custom query (paginated mode)."""
+        with patch.object(AgentLoopBenchmark, "_load_data_from_cms", return_value=[]):
+            return AgentLoopBenchmark(config=_make_config())
 
     def test_load_data_list_response(self) -> None:
         records = [{"a": 1}, {"a": 2}]
@@ -386,6 +428,169 @@ class TestAgentLoopBenchmark(unittest.TestCase):
     def test_load_data_none_data(self) -> None:
         result = self._call_load_data(None)
         self.assertEqual(result, [])
+
+    # ------------------------------------------------------------------
+    # Paginated loading (_load_data_from_cms with no custom query)
+    # ------------------------------------------------------------------
+
+    def test_paginated_stops_on_empty_response(self) -> None:
+        """When a page returns [], pagination terminates immediately."""
+        benchmark = self._make_paginated_benchmark()
+        with patch.object(
+            benchmark,
+            "_execute_query_request",
+            return_value=[],
+        ):
+            result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+        # Benchmark needs SDK import mocked
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(benchmark, "_execute_query_request", return_value=[]):
+                    result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+        self.assertEqual(result, [])
+
+    def test_paginated_stops_on_error(self) -> None:
+        """When a page raises RuntimeError, pagination stops and returns
+        whatever was collected so far."""
+        benchmark = self._make_paginated_benchmark()
+        first_page = [{"q": "1"}, {"q": "2"}]
+        call_count = 0
+
+        def side_effect(*_args: object, **_kwargs: object) -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return first_page
+            raise RuntimeError("simulated API error")
+
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(
+                    benchmark,
+                    "_execute_query_request",
+                    side_effect=side_effect,
+                ):
+                    result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+        self.assertEqual(result, first_page)
+        self.assertEqual(call_count, 2)
+
+    def test_paginated_respects_max_rows(self) -> None:
+        """Pagination stops once max_rows records have been collected."""
+        benchmark = self._make_paginated_benchmark()
+        benchmark.config.max_rows = 5
+        page = [{"i": i} for i in range(3)]  # 3 records per page
+
+        call_count = 0
+
+        def side_effect(*_args: object, **_kwargs: object) -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            return page
+
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(
+                    benchmark,
+                    "_execute_query_request",
+                    side_effect=side_effect,
+                ):
+                    result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+        # Page 1: LIMIT 5 OFFSET 0 → mock returns 3; page 2: LIMIT 2 OFFSET 3
+        # → mock returns 3 but result is truncated to max_rows=5
+        self.assertEqual(len(result), 5)
+        self.assertEqual(call_count, 2)
+
+    def test_paginated_multiple_pages_collected(self) -> None:
+        """All records from multiple pages are concatenated."""
+        benchmark = self._make_paginated_benchmark()
+        benchmark.config.max_rows = 10
+        pages = [
+            [{"n": 0}, {"n": 1}, {"n": 2}],
+            [{"n": 3}, {"n": 4}, {"n": 5}],
+            [],  # empty → stop
+        ]
+        call_count = 0
+
+        def side_effect(*_args: object, **_kwargs: object) -> list[dict]:
+            nonlocal call_count
+            result_page = pages[call_count]
+            call_count += 1
+            return result_page
+
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(
+                    benchmark,
+                    "_execute_query_request",
+                    side_effect=side_effect,
+                ):
+                    result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+        self.assertEqual(len(result), 6)
+        self.assertEqual(result, pages[0] + pages[1])
+        self.assertEqual(call_count, 3)
+
+    def test_paginated_uses_correct_limit_offset_in_query(self) -> None:
+        """Verify the page_query contains correct LIMIT and OFFSET values."""
+        benchmark = self._make_paginated_benchmark()
+        benchmark.config.max_rows = 3
+
+        captured_queries: list[str] = []
+        pages = [[{"n": 0}, {"n": 1}], [{"n": 2}], []]
+
+        call_count = 0
+
+        def side_effect(
+            _client: object,
+            _models: object,
+            query: str,
+        ) -> list[dict]:
+            nonlocal call_count
+            captured_queries.append(query)
+            page = pages[call_count]
+            call_count += 1
+            return page
+
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(
+                    benchmark,
+                    "_execute_query_request",
+                    side_effect=side_effect,
+                ):
+                    AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+        # First page: LIMIT 3 OFFSET 0; second: LIMIT 1 OFFSET 2
+        self.assertIn("LIMIT 3", captured_queries[0])
+        self.assertIn("OFFSET 0", captured_queries[0])
+        self.assertIn("LIMIT 1", captured_queries[1])
+        self.assertIn("OFFSET 2", captured_queries[1])
+
+    def test_custom_query_uses_single_call(self) -> None:
+        """When config.query is set, _execute_query_request is called exactly once."""
+        benchmark = self._make_paginated_benchmark()
+        benchmark.config.query = "* | select * from test_dataset"
+        records = [{"a": 1}]
+
+        mock_cms_pkg = MagicMock()
+        with patch.dict("sys.modules", {"alibabacloud_cms20240330": mock_cms_pkg}):
+            with patch.object(benchmark, "_get_client", return_value=MagicMock()):
+                with patch.object(
+                    benchmark,
+                    "_execute_query_request",
+                    return_value=records,
+                ) as mock_exec:
+                    result = AgentLoopBenchmark._load_data_from_cms(benchmark)  # type: ignore[arg-type]
+
+        mock_exec.assert_called_once()
+        self.assertEqual(result, records)
 
     # ------------------------------------------------------------------
     # ImportError handling

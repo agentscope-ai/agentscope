@@ -21,10 +21,7 @@ class AgentLoopBenchmark(BenchmarkBase):
     converter function.
 
     Install the required SDK:
-        pip install -i http://yum.tbsite.net/aliyun-pypi/simple/ \\
-            --extra-index-url http://yum.tbsite.net/pypi/simple/ \\
-            --trusted-host=yum.tbsite.net \\
-            alibabacloud-cms20240330-inner==6.0.8
+        pip install alibabacloud-cms20240330-inner
     """
 
     def __init__(
@@ -104,12 +101,103 @@ class AgentLoopBenchmark(BenchmarkBase):
 
         return Client(client_config)
 
+    def _parse_response_data(self, data: Any) -> list[dict]:
+        """Parse the data field from a CMS ExecuteQuery response.
+
+        Args:
+            data:
+                The ``resp.body.data`` value returned by the CMS API.
+
+        Returns:
+            `list[dict]`:
+                A list of parsed data records.
+        """
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            if "rows" in data:
+                return data["rows"]
+            if "records" in data:
+                return data["records"]
+            logger.warning(
+                "CMS response data is a dict but contains neither 'rows' nor "
+                "'records' key. Treating the entire dict as a single record. "
+                f"Keys present: {list(data.keys())}",
+            )
+            return [data]
+        logger.warning(
+            "Unexpected CMS response data type: %s. Returning empty dataset.",
+            type(data).__name__,
+        )
+        return []
+
+    # Number of records fetched per paginated request
+    _PAGE_SIZE: int = 100
+
+    def _execute_query_request(
+        self,
+        client: Any,
+        cms_20240330_models: Any,
+        query: str,
+    ) -> list[dict]:
+        """Execute a single CMS ExecuteQuery request and return parsed records.
+
+        Args:
+            client:
+                The CMS client instance.
+            cms_20240330_models:
+                The CMS models module.
+            query (`str`):
+                The SQL query string to execute.
+
+        Returns:
+            `list[dict]`:
+                Parsed records from the response, or an empty list if the
+                response contains no data.
+
+        Raises:
+            `RuntimeError`:
+                If the CMS API call fails.
+        """
+        req = cms_20240330_models.ExecuteQueryRequest(
+            type="SQL",
+            query=query,
+        )
+        try:
+            resp = client.execute_query(
+                self.config.workspace,
+                self.config.dataset,
+                req,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to query CMS dataset '{self.config.dataset}' "
+                f"in workspace '{self.config.workspace}': {e}",
+            ) from e
+
+        logger.debug(json.dumps(resp.to_map(), default=str, indent=2))
+
+        if resp.body and resp.body.data:
+            return self._parse_response_data(resp.body.data)
+        return []
+
     def _load_data_from_cms(self) -> list[dict]:
-        """Load the dataset from CMS using ExecuteQuery API.
+        """Load the dataset from CMS.
+
+        - If ``config.query`` is set, executes it as-is in a single call.
+        - Otherwise, uses LIMIT/OFFSET pagination to load up to
+          ``config.max_rows`` records, stopping early when a page returns
+          no data or the API raises an error.
 
         Returns:
             `list[dict]`:
                 A list of data records loaded from CMS.
+
+        Raises:
+            `ImportError`:
+                If the alibabacloud-cms20240330-inner package is not installed.
+            `RuntimeError`:
+                If the CMS API call fails (single-query mode only).
         """
         try:
             from alibabacloud_cms20240330 import (
@@ -124,40 +212,61 @@ class AgentLoopBenchmark(BenchmarkBase):
 
         client = self._get_client()
 
-        req = cms_20240330_models.ExecuteQueryRequest(
-            type="SQL",
-            query=self.config.query,
-        )
-
-        logger.info(f"CMS query: {self.config.query}")
         logger.info(
             f"CMS workspace: {self.config.workspace}, "
             f"dataset: {self.config.dataset}",
         )
 
-        resp = client.execute_query(
-            self.config.workspace,
-            self.config.dataset,
-            req,
-        )
-        logger.debug(json.dumps(resp.to_map(), default=str, indent=2))
+        if self.config.query:
+            # User-provided custom query: execute as-is in a single call
+            logger.info(f"CMS custom query: {self.config.query}")
+            return self._execute_query_request(
+                client,
+                cms_20240330_models,
+                self.config.query,
+            )
 
-        # Parse response data
-        dataset = []
-        if resp.body and resp.body.data:
-            # The response data structure may vary, handle accordingly
-            data = resp.body.data
-            if isinstance(data, list):
-                dataset = data
-            elif isinstance(data, dict):
-                # If data is a dict with rows/records
-                if "rows" in data:
-                    dataset = data["rows"]
-                elif "records" in data:
-                    dataset = data["records"]
-                else:
-                    dataset = [data]
+        # No custom query: paginate with LIMIT/OFFSET up to max_rows
+        escaped_dataset = self.config.dataset.replace("`", "``")
+        dataset: list[dict] = []
 
+        while len(dataset) < self.config.max_rows:
+            remaining = self.config.max_rows - len(dataset)
+            page_size = min(self._PAGE_SIZE, remaining)
+            offset = len(dataset)
+            page_query = (
+                f"* | select * from `{escaped_dataset}` "
+                f"LIMIT {offset}, {page_size}"
+            )
+            logger.info(
+                f"CMS paginated query "
+                f"(offset={offset}, limit={page_size}): {page_query}",
+            )
+            try:
+                page = self._execute_query_request(
+                    client,
+                    cms_20240330_models,
+                    page_query,
+                )
+            except RuntimeError as e:
+                logger.warning(
+                    f"Paginated query failed at offset {offset}, "
+                    f"stopping early: {e}",
+                )
+                break
+
+            if not page:
+                logger.info(
+                    f"Empty response at offset {offset}, stopping pagination.",
+                )
+                break
+
+            dataset.extend(page)
+            if len(dataset) >= self.config.max_rows:
+                dataset = dataset[: self.config.max_rows]
+                break
+
+        logger.info(f"Loaded {len(dataset)} records from CMS.")
         return dataset
 
     def __iter__(self) -> Generator[Task, None, None]:

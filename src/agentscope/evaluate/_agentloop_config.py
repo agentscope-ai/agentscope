@@ -24,8 +24,14 @@ class AgentLoopConfig:
             The SLS project name. If not provided, will be queried from
             the workspace at runtime.
         query (`str`):
-            Custom SQL query for loading data. If not provided, defaults to
-            "* | select * from {dataset}".
+            Custom SQL query for loading data. When provided, the query is
+            executed as-is in a single call. When empty (the default),
+            automatic LIMIT/OFFSET pagination is used to load up to
+            ``max_rows`` records.
+        max_rows (`int`):
+            Maximum number of records to load when using automatic pagination
+            (i.e., when ``query`` is empty). Defaults to 1000. Ignored when
+            a custom ``query`` is provided.
         ground_truth_field (`str`):
             The field name in the dataset that contains the ground truth.
             If not provided, ground_truth will be empty string.
@@ -42,6 +48,7 @@ class AgentLoopConfig:
     region_id: str
     project: str = ""
     query: str = ""
+    max_rows: int = 1000
     ground_truth_field: str = ""
     access_key_id: str = field(default="", repr=False)
     access_key_secret: str = field(default="", repr=False)
@@ -58,8 +65,10 @@ class AgentLoopConfig:
                 "ALIBABA_CLOUD_ACCESS_KEY_SECRET",
                 "",
             )
-        if not self.query:
-            self.query = f"* | select * from {self.dataset}"
+        if self.max_rows <= 0:
+            raise ValueError(
+                f"`max_rows` must be a positive integer, got {self.max_rows}.",
+            )
 
     def validate_credentials(self) -> None:
         """Validate that required credentials are present.

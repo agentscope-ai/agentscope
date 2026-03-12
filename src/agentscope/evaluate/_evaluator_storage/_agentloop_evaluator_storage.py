@@ -77,6 +77,10 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
 
         self.logstore = EXPERIMENT_LOGSTORE
 
+        # Lazily-initialized cached clients (created on first use)
+        self._cms_client: Any = None
+        self._sls_client: Any = None
+
         # Query project from workspace if not provided in config
         if not self.config.project:
             self.config.project = self._get_workspace_project()
@@ -85,7 +89,7 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
         self.experiment_id = experiment_id or str(uuid.uuid4())
         self.experiment_name = experiment_name or (
             f"experiment_{self.experiment_id[:8]}_"
-            f"{time.strftime('%Y-%m-%d %H:%M:%S')}"
+            f"{time.strftime('%Y%m%d_%H%M%S')}"
         )
         self.experiment_type = experiment_type
         self.experiment_start_time = int(time.time() * 1000)
@@ -98,12 +102,15 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
         self._task_meta_cache: dict[str, dict] = {}
 
     def _get_cms_client(self) -> Any:
-        """Get the CMS client instance.
+        """Get the CMS client instance, creating and caching it on first call.
 
         Returns:
             `Cms20240330Client`:
                 The CMS client instance.
         """
+        if self._cms_client is not None:
+            return self._cms_client
+
         try:
             from alibabacloud_cms20240330.client import Client
             from alibabacloud_tea_openapi import models as open_api_models
@@ -120,7 +127,8 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
         )
         client_config.endpoint = self.config.cms_endpoint
 
-        return Client(client_config)
+        self._cms_client = Client(client_config)
+        return self._cms_client
 
     def _get_workspace_project(self) -> str:
         """Get the SLS project from workspace.
@@ -164,12 +172,16 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
         )
 
     def _get_sls_client(self) -> Any:
-        """Get the SLS LogClient instance.
+        """Get the SLS LogClient instance, creating and caching it on first
+        call.
 
         Returns:
             `LogClient`:
                 The SLS LogClient instance.
         """
+        if self._sls_client is not None:
+            return self._sls_client
+
         try:
             from aliyun.log import LogClient
         except ImportError as e:
@@ -179,11 +191,12 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
                 "pip install aliyun-log-python-sdk",
             ) from e
 
-        return LogClient(
+        self._sls_client = LogClient(
             self.config.sls_endpoint,
             self.config.access_key_id,
             self.config.access_key_secret,
         )
+        return self._sls_client
 
     def _put_log(self, contents: list[tuple[str, str]]) -> None:
         """Write a log entry to SLS.
@@ -277,7 +290,8 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
             output (`SolutionOutput`):
                 The solution output to be saved.
         """
-        # First, save to local file using parent class
+        # First, save to local file using parent class.
+        # This must succeed before attempting the SLS write.
         super().save_solution_result(
             task_id=task_id,
             repeat_id=repeat_id,
@@ -285,57 +299,67 @@ class AgentLoopEvaluatorStorage(FileEvaluatorStorage):
             **kwargs,
         )
 
-        # Then, write to SLS
-        contents = self._build_base_log_contents(
-            task_id=task_id,
-            repeat_id=repeat_id,
-        )
-        # Get cached experiment_data
-        experiment_data = self._task_meta_cache.get(task_id, {})
+        # Then, write to SLS. Failures are logged as warnings so that a
+        # transient network / permission issue does not abort the evaluation.
+        try:
+            contents = self._build_base_log_contents(
+                task_id=task_id,
+                repeat_id=repeat_id,
+            )
+            # Get cached experiment_data
+            experiment_data = self._task_meta_cache.get(task_id, {})
 
-        # Add data_config field
-        data_config = {
-            "data_type": "dataset",
-            "project": self.config.project,
-            "dataset_id": self.config.dataset,
-            "dataset_item_id": experiment_data.get("input", {}).get(
-                "id",
-                task_id,
-            ),
-        }
-        contents.append(
-            (
-                "data_config",
-                json.dumps(data_config, ensure_ascii=False),
-            ),
-        )
-
-        # Add experiment_data field
-        contents.append(
-            (
-                "experiment_data",
-                json.dumps(
-                    experiment_data.get("input", {}),
-                    ensure_ascii=False,
-                    default=str,
+            # Add data_config field
+            data_config = {
+                "data_type": "dataset",
+                "project": self.config.project,
+                "dataset_id": self.config.dataset,
+                "dataset_item_id": experiment_data.get("input", {}).get(
+                    "id",
+                    task_id,
                 ),
-            ),
-        )
+            }
+            contents.append(
+                (
+                    "data_config",
+                    json.dumps(data_config, ensure_ascii=False),
+                ),
+            )
 
-        # Add experiment_result field with output data
-        result_data = {
-            "success": output.success,
-            "output": output.output,
-            "trajectory": output.trajectory,
-            "meta": output.meta,
-        }
-        contents.append(
-            (
-                "experiment_output",
-                json.dumps(result_data, ensure_ascii=False, default=str),
-            ),
-        )
-        self._put_log(contents)
+            # Add experiment_data field
+            contents.append(
+                (
+                    "experiment_data",
+                    json.dumps(
+                        experiment_data.get("input", {}),
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                ),
+            )
+
+            # Add experiment_result field with output data
+            result_data = {
+                "success": output.success,
+                "output": output.output,
+                "trajectory": output.trajectory,
+                "meta": output.meta,
+            }
+            contents.append(
+                (
+                    "experiment_output",
+                    json.dumps(result_data, ensure_ascii=False, default=str),
+                ),
+            )
+            self._put_log(contents)
+        except Exception as e:
+            logger.warning(
+                f"Failed to write task '{task_id}' result to SLS "
+                f"(local file already saved): {e}",
+            )
+        finally:
+            # Release cached task meta to avoid unbounded memory growth
+            self._task_meta_cache.pop(task_id, None)
 
     def save_task_meta(
         self,
