@@ -27,8 +27,14 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """Set up the test environment."""
         self.image_path = "./image.png"
+        self.image_content = b"fake image content"
         with open(self.image_path, "wb") as f:
-            f.write(b"fake image content")
+            f.write(self.image_content)
+
+        import base64
+
+        b64 = base64.b64encode(self.image_content).decode("utf-8")
+        self.image_data_uri = f"data:image/png;base64,{b64}"
 
         self.mock_audio_path = (
             "/var/folders/gf/krg8x_ws409cpw_46b2s6rjc0000gn/T/tmpfymnv2w9.wav"
@@ -228,7 +234,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "text": "What is the capital of France?",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                 ],
             },
@@ -301,7 +307,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         " is the capital of France?",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                     {
                         "text": "assistant: The capital of France is Paris."
@@ -403,7 +409,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "France?",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                     {
                         "text": "assistant: The capital of France is Paris."
@@ -583,7 +589,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "text": "What is the capital of France?",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                 ],
             },
@@ -647,7 +653,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "text": "\n- The image from './image.png': ",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                     {
                         "text": "\n- The audio from "
@@ -818,7 +824,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         " is the capital of France?",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                     {
                         "text": "assistant: The capital of France is Paris."
@@ -871,7 +877,7 @@ class TestDashScopeFormatter(IsolatedAsyncioTestCase):
                         "text": "\n- The image from './image.png': ",
                     },
                     {
-                        "image": f"file://{os.path.abspath(self.image_path)}",
+                        "image": self.image_data_uri,
                     },
                     {
                         "text": "\n- The audio from "
