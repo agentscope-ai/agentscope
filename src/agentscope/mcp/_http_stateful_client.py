@@ -2,8 +2,9 @@
 """The MCP stateful HTTP client module in AgentScope."""
 from typing import Any, Literal
 
+import httpx
+from mcp.client.streamable_http import streamable_http_client
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
 
 from ._stateful_client_base import StatefulClientBase
 
@@ -67,12 +68,14 @@ class HttpStatefulClient(StatefulClientBase):
         self.transport = transport
 
         if self.transport == "streamable_http":
-            self.client = streamablehttp_client(
-                url=url,
+            http_client = httpx.AsyncClient(
                 headers=headers,
-                timeout=timeout,
-                sse_read_timeout=sse_read_timeout,
+                timeout=httpx.Timeout(timeout, read=sse_read_timeout),
                 **client_kwargs,
+            )
+            self.client = streamable_http_client(
+                url=url,
+                http_client=http_client,
             )
         else:
             self.client = sse_client(
