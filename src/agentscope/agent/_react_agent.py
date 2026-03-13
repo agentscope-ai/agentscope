@@ -450,11 +450,35 @@ class ReActAgent(ReActAgentBase):
                 # Sequential tool calls
                 structured_outputs = [await _ for _ in futures]
 
+            # -------------- Check for return_direct --------------
+            # Check if any tool returned with return_direct flag
+            for output in structured_outputs:
+                if (
+                    isinstance(output, dict)
+                    and output.get("_return_direct", False)
+                ):
+                    # Return the tool result directly to the user
+                    reply_msg = Msg(
+                        self.name,
+                        output.get("_return_direct_content", []),
+                        "assistant",
+                    )
+                    break
+
+            # Exit the loop if return_direct was triggered
+            if reply_msg is not None:
+                break
+
             # -------------- Check for exit condition --------------
             # If structured output is still not satisfied
             if self._required_structured_model:
-                # Remove None results
-                structured_outputs = [_ for _ in structured_outputs if _]
+                # Remove None results and return_direct results
+                structured_outputs = [
+                    _ for _ in structured_outputs
+                    if _ is not None and not (
+                        isinstance(_, dict) and _.get("_return_direct", False)
+                    )
+                ]
 
                 msg_hint = None
                 # If the acting step generates structured outputs
@@ -654,7 +678,9 @@ class ReActAgent(ReActAgentBase):
 
     async def _acting(self, tool_call: ToolUseBlock) -> dict | None:
         """Perform the acting process, and return the structured output if
-        it's generated and verified in the finish function call.
+        it's generated and verified in the finish function call, or return
+        a special dict with '_return_direct' key if the tool has return_direct
+        enabled.
 
         Args:
             tool_call (`ToolUseBlock`):
@@ -663,7 +689,9 @@ class ReActAgent(ReActAgentBase):
         Returns:
             `Union[dict, None]`:
                 Return the structured output if it's verified in the finish
-                function call, otherwise return None.
+                function call, or a dict with '_return_direct' and
+                '_return_direct_content' keys if return_direct is enabled,
+                otherwise return None.
         """
 
         tool_res_msg = Msg(
@@ -678,12 +706,21 @@ class ReActAgent(ReActAgentBase):
             ],
             "system",
         )
+
+        # Check if the tool has return_direct enabled
+        tool_name = tool_call["name"]
+        return_direct = False
+        if tool_name in self.toolkit.tools:
+            return_direct = self.toolkit.tools[tool_name].return_direct
+
         try:
             # Execute the tool call
             tool_res = await self.toolkit.call_tool_function(tool_call)
 
             # Async generator handling
+            last_chunk = None
             async for chunk in tool_res:
+                last_chunk = chunk
                 # Turn into a tool result block
                 tool_res_msg.content[0][  # type: ignore[index]
                     "output"
@@ -704,6 +741,17 @@ class ReActAgent(ReActAgentBase):
                 ):
                     # Only return the structured output
                     return chunk.metadata.get("structured_output")
+
+            # Check return_direct from tool registration or from ToolResponse
+            should_return_direct = return_direct or (
+                last_chunk is not None and last_chunk.return_direct
+            )
+
+            if should_return_direct and last_chunk is not None:
+                return {
+                    "_return_direct": True,
+                    "_return_direct_content": last_chunk.content,
+                }
 
             return None
 
