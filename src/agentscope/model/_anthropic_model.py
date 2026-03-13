@@ -451,6 +451,13 @@ class AnthropicChatModel(ChatModelBase):
 
             elif event.type == "message_delta":
                 if event.usage and usage:
+                    final_input_tokens = getattr(
+                        event.usage,
+                        "input_tokens",
+                        0,
+                    )
+                    if final_input_tokens > usage.input_tokens:
+                        usage.input_tokens = final_input_tokens
                     usage.output_tokens = event.usage.output_tokens
 
             if (thinking_changed or content_changed) and usage:
