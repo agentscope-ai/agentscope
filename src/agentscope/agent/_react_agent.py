@@ -14,6 +14,7 @@ from ._react_agent_base import ReActAgentBase
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..memory import MemoryBase, LongTermMemoryBase, InMemoryMemory
+from ..memory._offloading import MemoryOffloadingBase
 from ..message import (
     Msg,
     ToolUseBlock,
@@ -170,6 +171,13 @@ class ReActAgent(ReActAgentBase):
         `compression_model` is provided, the `compression_formatter` must also
         be provided."""
 
+        offload_storage: MemoryOffloadingBase | None = None
+        """The storage backend to offload compressed messages to. If
+        provided, compressed messages will be stored in this backend
+        and tools from `list_tools()` will be registered with the agent.
+        When not provided, compressed messages are only summarized
+        and not offloaded."""
+
     finish_function_name: str = "generate_response"
     """The name of the function used to generate structured output. Only
     registered when structured output model is provided in the reply call."""
@@ -284,6 +292,11 @@ class ReActAgent(ReActAgentBase):
         # in the beginning of each reply, and the result will be added to the
         # system prompt
         self.long_term_memory = long_term_memory
+        # Extract offload_storage as a direct attribute for StateModule
+        # auto-tracking (serialization/deserialization)
+        self.offload_storage = (
+            compression_config.offload_storage if compression_config else None
+        )
 
         # The long-term memory mode
         self._static_control = long_term_memory and long_term_memory_mode in [
@@ -311,6 +324,11 @@ class ReActAgent(ReActAgentBase):
             self.toolkit.register_tool_function(
                 self.toolkit.reset_equipped_tools,
             )
+
+        # Register tools from offloading backend (list_tools pattern)
+        if self.offload_storage is not None:
+            for tool in self.offload_storage.list_tools():
+                self.toolkit.register_tool_function(tool)
 
         self.parallel_tool_calls = parallel_tool_calls
 
@@ -1106,12 +1124,12 @@ class ReActAgent(ReActAgentBase):
 
             # Format the compressed memory summary
             if last_chunk.metadata:
-                # Update the compressed summary in the memory storage
-                await self.memory.update_compressed_summary(
-                    self.compression_config.summary_template.format(
-                        **last_chunk.metadata,
-                    ),
+                summary_text = self.compression_config.summary_template.format(
+                    **last_chunk.metadata,
                 )
+
+                # Update the compressed summary in the memory storage
+                await self.memory.update_compressed_summary(summary_text)
 
                 # Mark the compressed messages in the memory storage
                 await self.memory.update_messages_mark(
@@ -1124,6 +1142,19 @@ class ReActAgent(ReActAgentBase):
                     len(to_compressed_msgs),
                     self.name,
                 )
+
+                # Offload compressed messages to storage
+                if self.offload_storage is not None:
+                    await self.offload_storage.store(
+                        to_compressed_msgs,
+                        summary_text,
+                    )
+                    logger.info(
+                        "Offloaded %d compressed messages to "
+                        "storage for agent %s.",
+                        len(to_compressed_msgs),
+                        self.name,
+                    )
 
             else:
                 logger.warning(
