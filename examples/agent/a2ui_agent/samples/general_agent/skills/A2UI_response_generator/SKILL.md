@@ -27,7 +27,7 @@ A2UI_response_generator/
 ├── schema/                           # A2UI schema definitions
 │   ├── __init__.py
 │   └── base_schema.py                # Base A2UI schema
-└── UI_templete_examples/             # UI template examples
+└── UI_template_examples/             # UI template examples
     ├── __init__.py
     ├── booking_form.py               # Booking form template
     ├── contact_form.py               # Contact form template

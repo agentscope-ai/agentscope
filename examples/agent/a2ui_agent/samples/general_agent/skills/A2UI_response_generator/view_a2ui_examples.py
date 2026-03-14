@@ -9,7 +9,7 @@ Usage:
     # Load specific template name
     python view_a2ui_examples.py --template_name SINGLE_COLUMN_LIST_WITH_IMAGE
 """
-from UI_templete_examples import (
+from UI_template_examples import (
     SINGLE_COLUMN_LIST_WITH_IMAGE_EXAMPLE,
     TWO_COLUMN_LIST_WITH_IMAGE_EXAMPLE,
     SIMPLE_LIST_EXAMPLE,
