@@ -72,6 +72,7 @@ tokens = [
 
 # ------------ Memory ------------
 redis_memory = ["redis"]
+tablestore_memory = ["tablestore-for-agent-memory"]
 
 mem0ai = [
     "mem0ai<=1.0.3",
@@ -82,6 +83,7 @@ memory = [
     "agentscope[redis_memory]",
     "agentscope[mem0ai]",
     "agentscope[reme]",
+    "agentscope[tablestore_memory]",
 ]
 
 # ------------ RAG ------------
