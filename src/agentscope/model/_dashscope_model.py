@@ -78,6 +78,10 @@ class DashScopeChatModel(ChatModelBase):
         multimodality: bool | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
+        max_retries: int = 0,
+        retry_interval: float = 1.0,
+        fallback_model_name: str | None = None,
+        fallback_max_retries: int = 0,
         stream_tool_parsing: bool = True,
         **_kwargs: Any,
     ) -> None:
@@ -110,6 +114,17 @@ class DashScopeChatModel(ChatModelBase):
             base_http_api_url (`str | None`, optional):
                 The base URL for DashScope API requests. If not provided,
                 the default base URL from the DashScope SDK will be used.
+            max_retries (`int`, default `0`):
+                Maximum number of retry attempts when API calls fail.
+            retry_interval (`float`, default `1.0`):
+                Initial retry interval in seconds. The interval will increase
+                exponentially with each retry attempt.
+            fallback_model_name (`str | None`, default `None`):
+                The fallback model name to use when all retries with the
+                primary model fail. If provided, a final attempt will be made
+                using this model before raising the exception.
+            fallback_max_retries (`int`, default `0`):
+                Maximum number of retry attempts for fallback model.
             stream_tool_parsing (`bool`, default to `True`):
                 Whether to parse incomplete tool use JSON in streaming mode
                 with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
@@ -126,7 +141,14 @@ class DashScopeChatModel(ChatModelBase):
             )
             stream = True
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name,
+            stream,
+            max_retries,
+            retry_interval,
+            fallback_model_name,
+            fallback_max_retries,
+        )
 
         self.api_key = api_key
         self.enable_thinking = enable_thinking
@@ -159,12 +181,13 @@ class DashScopeChatModel(ChatModelBase):
                 )
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
         structured_model: Type[BaseModel] | None = None,
+        model_name_override: str | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from the dashscope
@@ -200,7 +223,9 @@ class DashScopeChatModel(ChatModelBase):
                     both `tools` and `tool_choice` parameters are ignored,
                     and the model will only perform structured output
                     generation without calling any other tools.
-
+            model_name_override (`str | None`, default `None`):
+                If provided, use this model name instead of the default
+                `self.model_name`. This is used for fallback model calls.
             **kwargs (`Any`):
                 The keyword arguments for DashScope chat completions API,
                 e.g. `temperature`, `max_tokens`, `top_p`, etc. Please
@@ -210,9 +235,21 @@ class DashScopeChatModel(ChatModelBase):
         """
         import dashscope
 
+        # Use override model name if provided, otherwise use default
+        current_model_name = model_name_override or self.model_name
+
+        # For qvq and qwen-vl models, the content field cannot be `None` or
+        # `[{"text": None}]`, so we need to convert it to an empty list.
+        if current_model_name.startswith("qvq") or "-vl" in current_model_name:
+            for msg in messages:
+                if msg["content"] is None or msg["content"] == [
+                    {"text": None},
+                ]:
+                    msg["content"] = []
+
         kwargs = {
             "messages": messages,
-            "model": self.model_name,
+            "model": current_model_name,
             "stream": self.stream,
             "result_format": "message",
             # In agentscope, the `incremental_output` must be `True` when
