@@ -13,7 +13,7 @@ from ._message_block import (
     Base64Source,
     URLSource,
 )
-from ._message_base import Msg
+from ._message_base import Msg, GenerateReason
 
 
 __all__ = [
@@ -28,4 +28,5 @@ __all__ = [
     "ToolResultBlock",
     "ContentBlock",
     "Msg",
+    "GenerateReason",
 ]

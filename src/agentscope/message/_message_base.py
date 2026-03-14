@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 from datetime import datetime
+from enum import Enum
 from typing import Literal, List, overload, Sequence
 
 import shortuuid
@@ -18,6 +19,52 @@ from ._message_block import (
 from ..types import JSONSerializableObject
 
 
+class GenerateReason(str, Enum):
+    """The reason for the agent generating the reply message."""
+
+    NORMAL_REPLY = "normal_reply"
+    """The message is a normal reply from the agent, which contains the
+    response to the outside user or agent."""
+
+    LLM_REASONING = "llm_reasoning"
+    """The message contains the agent's internal reasoning process, which
+    is generated to decide the next action or response."""
+
+    MAX_ITERATIONS = "max_iterations"
+    """The agent has reached the maximum number of iterations, and generates
+    this summary message to conclude its work."""
+
+    INTERRUPTED = "interrupted"
+    """The agent's work has been interrupted by an external signal, and this
+    message is generated within the interruption handling process."""
+
+    AWAITING_TOOL_EXECUTION = "awaiting_tool_execution"
+    """The message contains tool use block(s) for external tools, which
+    require execution outside the agent's own capabilities. Awaiting the
+    next input with tool execution results."""
+
+    TOOL_EXECUTION_RESULT = "tool_execution_result"
+    """The message contains the results of tool execution for the previously
+    requested tool use block(s)."""
+
+    AWAITING_USER_CONFIRMATION = "awaiting_user_confirmation"
+    """The message contains tool use block(s) that require user confirmation
+    before execution. Awaiting the next input with user confirmation
+    results."""
+
+    USER_CONFIRMATION_APPROVED = "user_confirmation_approved"
+    """The user approved the tool use block(s) in the content. The tool(s)
+    should be executed as requested."""
+
+    USER_CONFIRMATION_REJECTED = "user_confirmation_rejected"
+    """The user rejected the tool use block(s). The content may contain
+    the rejection reason or explanation."""
+
+    USER_CONFIRMATION_MODIFIED = "user_confirmation_modified"
+    """The user modified and approved the tool use block(s). The content
+    contains the modified tool use blocks that should be executed."""
+
+
 class Msg:
     """The message class in agentscope."""
 
@@ -28,7 +75,7 @@ class Msg:
         role: Literal["user", "assistant", "system"],
         metadata: dict[str, JSONSerializableObject] | None = None,
         timestamp: str | None = None,
-        invocation_id: str | None = None,
+        generate_reason: GenerateReason | None = None,
     ) -> None:
         """Initialize the Msg object.
 
@@ -44,9 +91,8 @@ class Msg:
             timestamp (`str | None`, optional):
                 The created timestamp of the message. If not given, the
                 timestamp will be set automatically.
-            invocation_id (`str | None`, optional):
-                The related API invocation id, if any. This is useful for
-                tracking the message in the context of an API call.
+            generate_reason (`GenerateReason | None`, optional):
+                The reason for generating this message.
         """
 
         self.name = name
@@ -70,7 +116,7 @@ class Msg:
                 "%Y-%m-%d %H:%M:%S.%f",
             )[:-3]
         )
-        self.invocation_id = invocation_id
+        self.generate_reason = generate_reason
 
     def to_dict(self) -> dict:
         """Convert the message into JSON dict data."""
@@ -81,6 +127,7 @@ class Msg:
             "content": self.content,
             "metadata": self.metadata,
             "timestamp": self.timestamp,
+            "generate_reason": self.generate_reason,
         }
 
     @classmethod
@@ -92,7 +139,7 @@ class Msg:
             role=json_data["role"],
             metadata=json_data.get("metadata", None),
             timestamp=json_data.get("timestamp", None),
-            invocation_id=json_data.get("invocation_id", None),
+            generate_reason=json_data.get("generate_reason", None),
         )
 
         new_obj.id = json_data.get("id", new_obj.id)

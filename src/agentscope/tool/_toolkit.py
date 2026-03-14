@@ -35,7 +35,7 @@ from ._async_wrapper import (
 )
 from ._response import ToolResponse
 from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
-from .._utils._common import _parse_tool_function
+from .._utils._common import _parse_tool_function, _validate_function_schema
 from ..mcp import (
     MCPToolFunction,
     MCPClientBase,
@@ -265,6 +265,108 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             if self.tools[tool_name].group in group_names:
                 self.tools.pop(tool_name)
 
+    def is_external_tool_function(self, name: str) -> bool:
+        """Check if a tool function is an external tool function.
+
+        Args:
+            name (`str`):
+                The tool function name.
+        """
+        if name in self.tools:
+            return self.tools[name].original_func is None
+
+        return False
+
+    def require_user_confirmation(self, name: str) -> bool:
+        """Check if a tool function requires user confirmation before
+        execution.
+
+        Args:
+            name (`str`):
+                The tool function name.
+
+        Returns:
+            `bool`:
+                Whether the tool function requires user confirmation.
+        """
+        if name in self.tools:
+            return self.tools[name].require_confirmation
+
+        raise ValueError(
+            f"Tool function '{name}' not found in the toolkit.",
+        )
+
+    def register_external_tool_function(
+        self,
+        json_schema: dict,
+        group_name: str | Literal["basic"] = "basic",
+        preset_kwargs: dict[str, JSONSerializableObject] | None = None,
+        require_confirmation: bool = False,
+    ) -> None:
+        """Register an external function that doesn't execute on the agent
+        side, e.g. the frontend tool function or user-side tool function.
+        In such case, the agent only needs to know the function schema, and
+        within the ReActAgent class, the tool call will be returned from the
+        reply directly without execution.
+
+        Args:
+            json_schema (`dict`):
+                The function JSON schema.
+            group_name (`str | Literal["basic"]`, defaults to `"basic"`):
+                The belonging group of the tool function. Tools in "basic"
+                group is always included in the JSON schema, while the others
+                are only included when their group is active.
+            preset_kwargs (`dict[str, JSONSerializableObject] | None`, \
+            optional):
+                Preset arguments by the user, which will not be included in
+                the JSON schema, nor exposed to the agent.
+
+        Example:
+
+            .. code-block:: python
+                :caption: Example of registering an external tool function
+
+                from agentscope.tool import Toolkit
+
+                toolkit = Toolkit()
+                toolkit.register_external_tool_function(
+                    json_schema={
+                        "type": "function",
+                        "function": {
+                            "name": "open_website",
+                            "description": "Open a website in the browser.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {
+                                        "type": "string",
+                                        "description": "The URL of the website to open."
+                                    }
+                                },
+                                "required": ["url"]
+                            }
+                        }
+                    }
+                )
+
+        """
+        # Arguments checking
+        _validate_function_schema(json_schema)
+
+        name = json_schema["function"]["name"]
+
+        func_obj = RegisteredToolFunction(
+            name=name,
+            group=group_name,
+            source="function",
+            original_func=None,
+            json_schema=json_schema,
+            preset_kwargs=preset_kwargs,
+            require_confirmation=require_confirmation,
+        )
+
+        self.tools[name] = func_obj
+
     # pylint: disable=too-many-branches, too-many-statements
     def register_tool_function(
         self,
@@ -288,6 +390,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             ]
         )
         | None = None,
+        require_confirmation: bool = False,
         namesake_strategy: Literal[
             "override",
             "skip",
@@ -341,6 +444,10 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 async. If it returns `None`, the tool result will be
                 returned as is. If it returns a `ToolResponse`,
                 the returned block will be used as the final tool result.
+            require_confirmation (`bool`, defaults to `False`):
+                Whether user confirmation is required before executing this
+                tool function. If `True`, the system will prompt for user
+                approval before the tool is executed.
             namesake_strategy (`Literal['raise', 'override', 'skip', \
             'rename']`, defaults to `'raise'`):
                 The strategy to handle the tool function name conflict:
@@ -359,13 +466,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         # Check the manually provided JSON schema if provided
         if json_schema:
-            assert (
-                isinstance(json_schema, dict)
-                and "type" in json_schema
-                and json_schema["type"] == "function"
-                and "function" in json_schema
-                and isinstance(json_schema["function"], dict)
-            ), "Invalid JSON schema for the tool function."
+            _validate_function_schema(json_schema)
 
         # Handle MCP tool function and regular function respectively
         mcp_name = None
@@ -457,6 +558,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
+            require_confirmation=require_confirmation,
         )
 
         if func_name in self.tools:
