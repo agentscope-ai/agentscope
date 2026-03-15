@@ -227,6 +227,15 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
             # from monopolizing the event loop.
             await asyncio.sleep(0)
 
+        # Invoke pre_print hooks (e.g., Studio forwarding) BEFORE the console
+        # output check, so that Studio receives messages even when console
+        # output is disabled.
+        kwargs: dict[str, Any] = {"msg": msg, "last": last, "speech": speech}
+        for hook in self._class_pre_print_hooks.values():
+            hook(self, kwargs)
+        for hook in self._instance_pre_print_hooks.values():
+            hook(self, kwargs)
+
         if self._disable_console_output:
             return
 
@@ -260,6 +269,12 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
                 self._process_audio_block(msg.id, audio_block)
         elif isinstance(speech, dict):
             self._process_audio_block(msg.id, speech)
+
+        # Invoke post_print hooks (e.g., Studio cleanup)
+        for hook in self._class_post_print_hooks.values():
+            hook(self, kwargs, msg)
+        for hook in self._instance_post_print_hooks.values():
+            hook(self, kwargs, msg)
 
         # Clean up resources if this is the last message in streaming
         if last and msg.id in self._stream_prefix:
