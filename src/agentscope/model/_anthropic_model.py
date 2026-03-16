@@ -451,6 +451,10 @@ class AnthropicChatModel(ChatModelBase):
 
             elif event.type == "message_delta":
                 if event.usage and usage:
+                    # For some providers compatible with Anthropic's API
+                    # (e.g., DashScope), the input tokens are contained in
+                    # events where event.type == "message_delta", so we add
+                    # this step to extract the value.
                     final_input_tokens = getattr(
                         event.usage,
                         "input_tokens",
