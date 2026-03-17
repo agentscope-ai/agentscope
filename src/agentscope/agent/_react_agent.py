@@ -584,6 +584,7 @@ class ReActAgent(ReActAgentBase):
                 msg = Msg(name=self.name, content=[], role="assistant")
                 if self.model.stream:
                     async for content_chunk in res:
+                        msg.invocation_id = content_chunk.id
                         msg.content = content_chunk.content
 
                         # The speech generated from multimodal (audio) models
@@ -601,6 +602,7 @@ class ReActAgent(ReActAgentBase):
                         await self.print(msg, False, speech=speech)
 
                 else:
+                    msg.invocation_id = res.id
                     msg.content = list(res.content)
 
                 if self.tts_model:
@@ -757,6 +759,7 @@ class ReActAgent(ReActAgentBase):
             res_msg = Msg(self.name, [], "assistant")
             if isinstance(res, AsyncGenerator):
                 async for chunk in res:
+                    res_msg.invocation_id = chunk.id
                     res_msg.content = chunk.content
 
                     # The speech generated from multimodal (audio) models
@@ -774,6 +777,7 @@ class ReActAgent(ReActAgentBase):
                     await self.print(res_msg, False, speech=speech)
 
             else:
+                res_msg.invocation_id = res.id
                 res_msg.content = res.content
 
             if self.tts_model:

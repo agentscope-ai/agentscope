@@ -348,13 +348,16 @@ class AnthropicChatModel(ChatModelBase):
                 time=(datetime.now() - start_datetime).total_seconds(),
             )
 
-        parsed_response = ChatResponse(
-            content=content_blocks,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return parsed_response
+        return ChatResponse(**resp_kwargs)
 
     async def _parse_anthropic_stream_completion_response(
         self,
@@ -386,6 +389,7 @@ class AnthropicChatModel(ChatModelBase):
         """
 
         usage = None
+        response_id: str | None = None
         text_buffer = ""
         thinking_buffer = ""
         thinking_signature = ""
@@ -404,6 +408,8 @@ class AnthropicChatModel(ChatModelBase):
 
             if event.type == "message_start":
                 message = event.message
+                if response_id is None:
+                    response_id = getattr(message, "id", None)
                 if message.usage:
                     usage = ChatUsage(
                         input_tokens=message.usage.input_tokens,
@@ -504,11 +510,14 @@ class AnthropicChatModel(ChatModelBase):
                         metadata = repaired_input
 
                 if contents:
-                    res = ChatResponse(
-                        content=contents,
-                        usage=usage,
-                        metadata=metadata,
-                    )
+                    _kwargs: dict[str, Any] = {
+                        "content": contents,
+                        "usage": usage,
+                        "metadata": metadata,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    res = ChatResponse(**_kwargs)
                     yield res
                     last_content = copy.deepcopy(contents)
 
@@ -525,11 +534,14 @@ class AnthropicChatModel(ChatModelBase):
                     if structured_model:
                         metadata = input_obj
 
-            yield ChatResponse(
-                content=last_content,
-                usage=usage,
-                metadata=metadata,
-            )
+            _final_kwargs: dict[str, Any] = {
+                "content": last_content,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _final_kwargs["id"] = response_id
+            yield ChatResponse(**_final_kwargs)
 
     def _format_tools_json_schemas(
         self,

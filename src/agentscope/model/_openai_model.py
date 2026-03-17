@@ -334,6 +334,7 @@ class OpenAIChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
         """
         usage, res = None, None
+        response_id: str | None = None
         text = ""
         thinking = ""
         audio = ""
@@ -354,6 +355,9 @@ class OpenAIChatModel(ChatModelBase):
                 else:
                     chunk = item
 
+                if response_id is None:
+                    response_id = getattr(chunk, "id", None)
+
                 if chunk.usage:
                     usage = ChatUsage(
                         input_tokens=chunk.usage.prompt_tokens,
@@ -364,11 +368,14 @@ class OpenAIChatModel(ChatModelBase):
 
                 if not chunk.choices:
                     if usage and contents:
-                        res = ChatResponse(
-                            content=contents,
-                            usage=usage,
-                            metadata=metadata,
-                        )
+                        _kwargs: dict[str, Any] = {
+                            "content": contents,
+                            "usage": usage,
+                            "metadata": metadata,
+                        }
+                        if response_id:
+                            _kwargs["id"] = response_id
+                        res = ChatResponse(**_kwargs)
                         yield res
                     continue
 
@@ -486,11 +493,14 @@ class OpenAIChatModel(ChatModelBase):
                     )
 
                 if contents:
-                    res = ChatResponse(
-                        content=contents,
-                        usage=usage,
-                        metadata=metadata,
-                    )
+                    _kwargs = {
+                        "content": contents,
+                        "usage": usage,
+                        "metadata": metadata,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    res = ChatResponse(**_kwargs)
                     yield res
                     last_contents = copy.deepcopy(contents)
 
@@ -507,11 +517,14 @@ class OpenAIChatModel(ChatModelBase):
                     if structured_model:
                         metadata = input_obj
 
-            yield ChatResponse(
-                content=last_contents,
-                usage=usage,
-                metadata=metadata,
-            )
+            _kwargs = {
+                "content": last_contents,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _kwargs["id"] = response_id
+            yield ChatResponse(**_kwargs)
 
     def _parse_openai_completion_response(
         self,
@@ -615,13 +628,16 @@ class OpenAIChatModel(ChatModelBase):
                 metadata=response.usage,
             )
 
-        parsed_response = ChatResponse(
-            content=content_blocks,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return parsed_response
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,

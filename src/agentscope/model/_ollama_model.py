@@ -204,6 +204,7 @@ class OllamaChatModel(ChatModelBase):
         acc_thinking_content = ""
         tool_calls = OrderedDict()  # Store tool calls
         metadata: dict | None = None
+        response_id: str | None = None
 
         async for chunk in response:
             # Handle text content
@@ -262,13 +263,19 @@ class OllamaChatModel(ChatModelBase):
                 except Exception as e:
                     print(f"Error parsing tool call input: {e}")
 
+            if response_id is None:
+                response_id = getattr(chunk, "id", None)
+
             # Generate response when there's new content or at final chunk
             if chunk.done or contents:
-                res = ChatResponse(
-                    content=contents,
-                    usage=usage,
-                    metadata=metadata,
-                )
+                _kwargs: dict[str, Any] = {
+                    "content": contents,
+                    "usage": usage,
+                    "metadata": metadata,
+                }
+                if response_id:
+                    _kwargs["id"] = response_id
+                res = ChatResponse(**_kwargs)
                 yield res
 
     async def _parse_ollama_completion_response(
@@ -339,13 +346,16 @@ class OllamaChatModel(ChatModelBase):
                 time=(datetime.now() - start_datetime).total_seconds(),
             )
 
-        parsed_response = ChatResponse(
-            content=content_blocks,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return parsed_response
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,
