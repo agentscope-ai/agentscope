@@ -114,7 +114,7 @@ def _apply_middlewares(
     return wrapper
 
 
-class Toolkit(StateModule):
+class Toolkit(StateModule):  # pylint: disable=too-many-public-methods
     """Toolkit is the core module to register, manage and delete tool
     functions, MCP clients, Agent skills in AgentScope.
 
@@ -178,6 +178,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         self._agent_skill_template = (
             agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
         )
+
+        # This is an experimental feature to allow the tool function to be
+        # executed in an async way
+        self._async_tasks: dict[str, asyncio.Task] = {}
+        self._async_results: dict[str, ToolResponse] = {}
 
     def create_tool_group(
         self,
@@ -294,6 +299,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "raise",
             "rename",
         ] = "raise",
+        async_execution: bool = False,
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -350,6 +356,12 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 - 'skip': skip the registration of the new tool function.
                 - 'rename': rename the new tool function by appending a random
                   suffix to make it unique.
+            async_execution (`bool`, defaults to `False`):
+                If this tool function is executed in an async manner, a
+                reminder with task id will be sent to the agent, allowing the
+                agent to view, cancel or check the status of the async task.
+                **This is an experimental feature and may cause unexpected
+                issues, please use it with caution.**
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
@@ -457,6 +469,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             extended_model=None,
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
+            async_execution=async_execution,
         )
 
         if func_name in self.tools:
@@ -669,6 +682,172 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             ", ".join(to_removed),
         )
 
+    async def _execute_tool_in_background(
+        self,
+        task_id: str,
+        tool_func: RegisteredToolFunction,
+        kwargs: dict,
+        partial_postprocess_func: (
+            Callable[[ToolResponse], ToolResponse | None]
+            | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
+        )
+        | None,
+    ) -> None:
+        """Execute a tool function in the background and store the result.
+
+        This function handles both streaming and non-streaming tool functions.
+        For streaming functions (generators/async generators), it accumulates
+        all chunks into a single final ToolResponse.
+
+        Args:
+            task_id (`str`):
+                The unique identifier for this async task.
+            tool_func (`RegisteredToolFunction`):
+                The registered tool function to execute.
+            kwargs (`dict`):
+                The keyword arguments to pass to the tool function.
+            partial_postprocess_func (`Callable | None`):
+                Optional postprocess function to apply to the result.
+        """
+        try:
+            # Execute the tool function
+            if inspect.iscoroutinefunction(tool_func.original_func):
+                try:
+                    res = await tool_func.original_func(**kwargs)
+                except asyncio.CancelledError:
+                    res = ToolResponse(
+                        content=[
+                            TextBlock(
+                                type="text",
+                                text="<system-info>"
+                                "The tool call has been interrupted "
+                                "by the user."
+                                "</system-info>",
+                            ),
+                        ],
+                        stream=True,
+                        is_last=True,
+                        is_interrupted=True,
+                    )
+            else:
+                # When `tool_func.original_func` is Async generator function or
+                # Sync function
+                res = tool_func.original_func(**kwargs)
+
+        except mcp.shared.exceptions.McpError as e:
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error occurred when calling MCP tool: {e}",
+                    ),
+                ],
+            )
+
+        except Exception as e:
+            res = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error: {e}",
+                    ),
+                ],
+            )
+
+        # Handle different return types and accumulate streaming results
+        final_result: ToolResponse = ToolResponse(content=[])
+
+        try:
+            # If return an async generator - accumulate all chunks
+            if isinstance(res, AsyncGenerator):
+                accumulated_content = []
+                last_chunk = None
+                async for chunk in res:
+                    accumulated_content.extend(chunk.content)
+                    last_chunk = chunk
+
+                # Create final accumulated response
+                final_result = ToolResponse(
+                    content=accumulated_content,
+                    stream=False,
+                    is_last=True,
+                    is_interrupted=last_chunk.is_interrupted
+                    if last_chunk
+                    else False,
+                )
+
+            # If return a sync generator - accumulate all chunks
+            elif isinstance(res, Generator):
+                accumulated_content = []
+                last_chunk = None
+                for chunk in res:
+                    accumulated_content.extend(chunk.content)
+                    last_chunk = chunk
+
+                # Create final accumulated response
+                final_result = ToolResponse(
+                    content=accumulated_content,
+                    stream=False,
+                    is_last=True,
+                    is_interrupted=last_chunk.is_interrupted
+                    if last_chunk
+                    else False,
+                )
+
+            elif isinstance(res, ToolResponse):
+                final_result = res
+
+            else:
+                raise TypeError(
+                    "The tool function must return a ToolResponse "
+                    "object, or an AsyncGenerator/Generator of "
+                    "ToolResponse objects, "
+                    f"but got {type(res)}.",
+                )
+
+            # Apply postprocess function if provided
+            if partial_postprocess_func:
+                from .._utils._common import _execute_async_or_sync_func
+
+                processed_result = await _execute_async_or_sync_func(
+                    partial_postprocess_func,
+                    final_result,
+                )
+                if processed_result:
+                    final_result = processed_result
+
+        except asyncio.CancelledError:
+            # Handle cancellation during execution
+            final_result = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="<system-info>"
+                        "The tool call has been cancelled by the user."
+                        "</system-info>",
+                    ),
+                ],
+                is_interrupted=True,
+                is_last=True,
+            )
+
+        except Exception as e:
+            # Handle any other errors during execution
+            final_result = ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Error during async execution: {e}",
+                    ),
+                ],
+            )
+
+        finally:
+            # Store the result and remove from active tasks
+            self._async_results[task_id] = final_result
+            if task_id in self._async_tasks:
+                self._async_tasks.pop(task_id)
+
     @trace_toolkit
     @_apply_middlewares
     async def call_tool_function(
@@ -748,6 +927,45 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             )
         else:
             partial_postprocess_func = None
+
+        # Check if async execution is enabled
+        if tool_func.async_execution:
+            # Generate a unique task ID
+            task_id = shortuuid.uuid()
+
+            # Create and store the background task
+            task = asyncio.create_task(
+                self._execute_tool_in_background(
+                    task_id=task_id,
+                    tool_func=tool_func,
+                    kwargs=kwargs,
+                    partial_postprocess_func=partial_postprocess_func,
+                ),
+            )
+            self._async_tasks[task_id] = task
+
+            # Return a response with the task ID
+            return _object_wrapper(
+                ToolResponse(
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text=f"<system-reminder>"
+                            f"Tool '{tool_call['name']}' is executing "
+                            f"asynchronously. "
+                            f"Task ID: {task_id}. "
+                            f"Use view_task('{task_id}') to check "
+                            f"status, "
+                            f"wait_task('{task_id}') to wait for "
+                            f"completion, "
+                            f"or cancel_task('{task_id}') to cancel "
+                            f"the task."
+                            f"</system-reminder>",
+                        ),
+                    ],
+                ),
+                None,
+            )
 
         # Async function
         try:
@@ -1314,3 +1532,148 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
         # Simply append the middleware to the list
         # The @apply_middlewares decorator will handle the execution
         self._middlewares.append(middleware)
+
+    async def view_task(self, task_id: str) -> ToolResponse:
+        """View the status of an async tool task by its task ID.
+
+        Args:
+            task_id (`str`):
+                The ID of the async tool task.
+
+        Returns:
+            `ToolResponse`:
+                The tool response containing the status information of the
+                async task.
+        """
+        if (
+            task_id not in self._async_tasks
+            and task_id not in self._async_results
+        ):
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"InvalidTaskIdError: Cannot find async "
+                        f"task with ID {task_id}.",
+                    ),
+                ],
+            )
+
+        if task_id in self._async_tasks:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Task {task_id} is still running.",
+                    ),
+                ],
+            )
+
+        # If the task is completed, return the result or error
+        return self._async_results.pop(task_id)
+
+    async def cancel_task(self, task_id: str) -> ToolResponse:
+        """Cancel an async tool task by its task ID.
+
+        Args:
+            task_id (`str`):
+                The ID of the async tool task.
+
+        Returns:
+            `ToolResponse`:
+                The tool response indicating whether the cancellation was
+                successful.
+        """
+        if (
+            task_id not in self._async_tasks
+            and task_id not in self._async_results
+        ):
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"InvalidTaskIdError: Cannot find async "
+                        f"task with ID {task_id}.",
+                    ),
+                ],
+            )
+
+        if task_id in self._async_results:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Task {task_id} has already completed "
+                        f"and cannot be cancelled.",
+                    ),
+                ],
+            )
+
+        # Cancel the running task
+        task = self._async_tasks.pop(task_id)
+        task.cancel()
+
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=f"Task {task_id} has been cancelled.",
+                ),
+            ],
+        )
+
+    async def wait_task(
+        self,
+        task_id: str,
+        timeout: float = 10,
+    ) -> ToolResponse:
+        """Wait for an async tool execution to complete by its task ID. Note
+        the timeout shouldn't be too large, you can check the task status
+        by this tool every short period of time to avoid long waiting time.
+
+        Args:
+            task_id (`str`):
+                The ID of the async tool task.
+            timeout (`float`, defaults to `10`):
+                The maximum time to wait for the task to complete, in seconds.
+
+        Returns:
+            `ToolResponse`:
+                The tool response containing the result of the async task if
+                it completes within the timeout, or an error message if the
+                task is still running after the timeout.
+        """
+        if (
+            task_id not in self._async_tasks
+            and task_id not in self._async_results
+        ):
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"InvalidTaskIdError: Cannot find async "
+                        f"task with ID {task_id}.",
+                    ),
+                ],
+            )
+
+        if task_id in self._async_results:
+            return self._async_results.pop(task_id)
+
+        # Wait for the running task to complete or timeout
+        task = self._async_tasks[task_id]
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            return ToolResponse(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text=f"Task {task_id} is still running after "
+                        f"waiting for {timeout} seconds.",
+                    ),
+                ],
+            )
+
+        # If the task is completed, return the result or error
+        return self._async_results.pop(task_id)

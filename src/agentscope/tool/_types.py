@@ -54,6 +54,10 @@ class RegisteredToolFunction:
     returns `None`, the tool result will be returned as is. If it returns a
     `ToolResponse`, the returned block will be used as the final tool
     response."""
+    async_execution: bool = False
+    """If this tool function is executed in an async manner, a reminder with
+    task id will be sent to the agent, allowing the agent to view, cancel or
+    check the status of the async task."""
 
     @property
     def extended_json_schema(self) -> dict:
