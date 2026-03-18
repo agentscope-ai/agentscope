@@ -70,6 +70,17 @@ def _to_openai_image_url(url: str) -> str:
         url (`str`):
             The local or public url of the image.
     """
+    import imghdr
+
+    # MIME type mapping for imghdr results
+    imghdr_to_mime = {
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "bmp": "image/bmp",
+    }
+
     # See https://platform.openai.com/docs/guides/vision for details of
     # support image extensions.
     support_image_extensions = (
@@ -90,6 +101,16 @@ def _to_openai_image_url(url: str) -> str:
                 )
             extension = raw_url.lower().split(".")[-1]
             mime_type = f"image/{extension}"
+            return f"data:{mime_type};base64,{base64_image}"
+
+        # No extension - detect file type using imghdr
+        detected_type = imghdr.what(raw_url)
+        if detected_type and detected_type in imghdr_to_mime:
+            with open(raw_url, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode(
+                    "utf-8",
+                )
+            mime_type = imghdr_to_mime[detected_type]
             return f"data:{mime_type};base64,{base64_image}"
 
     # For web urls
