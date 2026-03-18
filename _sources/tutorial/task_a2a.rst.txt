@@ -75,7 +75,7 @@ This section demonstrates how to create an ``A2AAgent`` and communicate with rem
 
  .. code-block:: none
 
-    /opt/hostedtoolcache/Python/3.10.19/x64/lib/python3.10/site-packages/v2/nacos/naming/model/service.py:20: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/v2/nacos/naming/model/service.py:20: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
       class Service(BaseModel):
 
 
@@ -337,7 +337,7 @@ Or encapsulate it as a tool function for invocation:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.693 seconds)
+   **Total running time of the script:** (0 minutes 0.511 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_a2a.py:
