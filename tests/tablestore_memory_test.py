@@ -124,11 +124,22 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_add_no_duplicates(self) -> None:
         """Test that duplicate messages are filtered out."""
-        self.memory._get_all_msg_ids = AsyncMock(
-            return_value={"0", "1"},
+        # Mock get_documents to return existing documents for IDs "0" and "1"
+        existing_docs = [
+            MagicMock(
+                document_id="0",
+                metadata={"session_id": "test_session"},
+            ),
+            MagicMock(
+                document_id="1",
+                metadata={"session_id": "test_session"},
+            ),
+        ]
+        self.memory._knowledge_store.get_documents = AsyncMock(
+            return_value=existing_docs,
         )
 
-        await self.memory.add(self.msgs[:5])
+        await self.memory.add(self.msgs[:5], allow_duplicates=False)
 
         # Only messages 2, 3, 4 should be added
         self.assertEqual(
@@ -138,16 +149,22 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_add_allow_duplicates(self) -> None:
         """Test adding with allow_duplicates=True."""
-        self.memory._get_all_msg_ids = AsyncMock(
-            return_value={"0", "1"},
-        )
-
+        # When allow_duplicates=True, get_documents should not be called
         await self.memory.add(self.msgs[:5], allow_duplicates=True)
+
+        self.memory._knowledge_store.get_documents.assert_not_called()
 
         # All 5 messages should be added
         self.assertEqual(
             self.memory._knowledge_store.put_document.call_count,
             5,
+        )
+
+        await self.memory.add(self.msgs[:5], allow_duplicates=True)
+        # All 5 messages should be added
+        self.assertEqual(
+            self.memory._knowledge_store.put_document.call_count,
+            10,
         )
 
     async def test_delete_messages(self) -> None:

@@ -220,7 +220,7 @@ class TablestoreMemory(MemoryBase):
         self,
         memories: Msg | list[Msg] | None,
         marks: str | list[str] | None = None,
-        allow_duplicates: bool = False,
+        allow_duplicates: bool = True,
         **kwargs: Any,
     ) -> None:
         """Add message(s) into the memory storage with the given mark
@@ -232,7 +232,7 @@ class TablestoreMemory(MemoryBase):
             marks (`str | list[str] | None`, optional):
                 The mark(s) to associate with the message(s). If `None`, no
                 mark is associated.
-            allow_duplicates (`bool`, defaults to ``False``):
+            allow_duplicates (`bool`, defaults to ``True``):
                 Whether to allow duplicate messages.
         """
         if memories is None:
@@ -258,7 +258,19 @@ class TablestoreMemory(MemoryBase):
             )
 
         if not allow_duplicates:
-            existing_ids = await self._get_all_msg_ids()
+            # Get existing documents for the target message IDs
+            msg_ids = [msg.id for msg in memories]
+            existing_docs = await self._knowledge_store.get_documents(
+                document_id_list=msg_ids,
+                tenant_id=self._user_id,
+            )
+            # Filter by session_id to get only duplicates in current session
+            existing_ids = {
+                doc.document_id
+                for doc in existing_docs
+                if doc.metadata
+                and doc.metadata.get("session_id") == self._session_id
+            }
             memories = [msg for msg in memories if msg.id not in existing_ids]
 
         put_tasks = []
