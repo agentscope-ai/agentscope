@@ -214,12 +214,12 @@ class DashScopeChatModel(ChatModelBase):
             "messages": messages,
             "model": self.model_name,
             "stream": self.stream,
-            **self.generate_kwargs,
-            **kwargs,
             "result_format": "message",
             # In agentscope, the `incremental_output` must be `True` when
             # `self.stream` is True
             "incremental_output": self.stream,
+            **self.generate_kwargs,
+            **kwargs,
         }
 
         if tools:

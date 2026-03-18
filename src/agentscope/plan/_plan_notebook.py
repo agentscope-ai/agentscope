@@ -815,6 +815,7 @@ class PlanNotebook(StateModule):
                 ],
             )
         self.current_plan = historical_plan
+        await self._trigger_plan_change_hooks()
         return res
 
     def list_tools(
