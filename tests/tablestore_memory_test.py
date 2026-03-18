@@ -169,7 +169,9 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_delete_messages(self) -> None:
         """Test deleting messages by ID."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value={"0", "1"})
+        self.memory._get_existing_ids_in_session = AsyncMock(
+            return_value={"0"},
+        )
 
         deleted = await self.memory.delete(msg_ids=["0"])
 

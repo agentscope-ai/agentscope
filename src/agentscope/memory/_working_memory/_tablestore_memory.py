@@ -258,19 +258,10 @@ class TablestoreMemory(MemoryBase):
             )
 
         if not allow_duplicates:
-            # Get existing documents for the target message IDs
-            msg_ids = [msg.id for msg in memories]
-            existing_docs = await self._knowledge_store.get_documents(
-                document_id_list=msg_ids,
-                tenant_id=self._user_id,
+            # Filter out duplicates
+            existing_ids = await self._get_existing_ids_in_session(
+                [msg.id for msg in memories],
             )
-            # Filter by session_id to get only duplicates in current session
-            existing_ids = {
-                doc.document_id
-                for doc in existing_docs
-                if doc.metadata
-                and doc.metadata.get("session_id") == self._session_id
-            }
             memories = [msg for msg in memories if msg.id not in existing_ids]
 
         put_tasks = []
@@ -280,6 +271,33 @@ class TablestoreMemory(MemoryBase):
                 self._knowledge_store.put_document(document),
             )
         await asyncio.gather(*put_tasks)
+
+    async def _get_existing_ids_in_session(
+        self,
+        msg_ids: list[str],
+    ) -> set[str]:
+        """Get the IDs that actually exist in the current session from the
+        provided list.
+
+        Args:
+            msg_ids (`list[str]`):
+                The list of message IDs to check.
+
+        Returns:
+            `set[str]`:
+                The set of message IDs that exist in the current session.
+        """
+        existing_docs = await self._knowledge_store.get_documents(
+            document_id_list=msg_ids,
+            tenant_id=self._user_id,
+        )
+        return {
+            doc.document_id
+            for doc in existing_docs
+            if doc is not None
+            and doc.metadata
+            and doc.metadata.get("session_id") == self._session_id
+        }
 
     async def _get_all_msg_ids(self) -> set[str]:
         """Get all message IDs currently stored for this user/session."""
@@ -323,15 +341,15 @@ class TablestoreMemory(MemoryBase):
         """
         await self._ensure_initialized()
 
-        existing_ids = await self._get_all_msg_ids()
+        # Get only the IDs that actually exist in the current session
+        existing_ids = await self._get_existing_ids_in_session(msg_ids)
         deleted_count = 0
-        for msg_id in msg_ids:
-            if msg_id in existing_ids:
-                await self._knowledge_store.delete_document(
-                    document_id=msg_id,
-                    tenant_id=self._user_id,
-                )
-                deleted_count += 1
+        for msg_id in existing_ids:
+            await self._knowledge_store.delete_document(
+                document_id=msg_id,
+                tenant_id=self._user_id,
+            )
+            deleted_count += 1
 
         return deleted_count
 
