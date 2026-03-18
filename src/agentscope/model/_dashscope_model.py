@@ -32,6 +32,33 @@ from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 from .._logging import logger
 
+
+def _extract_cached_tokens_from_dashscope(usage: Any) -> int | None:
+    """Extract cached input tokens from DashScope usage metadata safely.
+
+    DashScope API (similar to OpenAI) may return cached_tokens in
+    prompt_tokens_details when context caching is used.
+
+    Args:
+        usage: The usage object from DashScope API response.
+
+    Returns:
+        Number of cached tokens if available, None otherwise.
+    """
+    if usage is None:
+        return None
+
+    prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
+    if prompt_tokens_details is None:
+        return None
+
+    # Handle both dict and object formats
+    if isinstance(prompt_tokens_details, dict):
+        return prompt_tokens_details.get("cached_tokens")
+
+    return getattr(prompt_tokens_details, "cached_tokens", None)
+
+
 if TYPE_CHECKING:
     from dashscope.api_entities.dashscope_response import GenerationResponse
     from dashscope.api_entities.dashscope_response import (
@@ -447,6 +474,9 @@ class DashScopeChatModel(ChatModelBase):
                     input_tokens=chunk.usage.input_tokens,
                     output_tokens=chunk.usage.output_tokens,
                     time=(datetime.now() - start_datetime).total_seconds(),
+                    cached_tokens=_extract_cached_tokens_from_dashscope(
+                        chunk.usage,
+                    ),
                     metadata=chunk.usage,
                 )
 
@@ -571,6 +601,9 @@ class DashScopeChatModel(ChatModelBase):
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                cached_tokens=_extract_cached_tokens_from_dashscope(
+                    response.usage,
+                ),
                 metadata=response.usage,
             )
 

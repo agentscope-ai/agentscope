@@ -378,6 +378,11 @@ def _get_llm_response_attributes(
         attributes[
             SpanAttributes.GEN_AI_USAGE_OUTPUT_TOKENS
         ] = chat_response.usage.output_tokens
+        cached_tokens = getattr(chat_response.usage, "cached_tokens", None)
+        if cached_tokens is not None:
+            attributes[
+                SpanAttributes.AGENTSCOPE_USAGE_CACHED_TOKENS
+            ] = cached_tokens
 
     output_messages = _get_llm_output_messages(chat_response)
     if output_messages:

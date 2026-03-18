@@ -255,6 +255,7 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
         content: str = "",
         prompt_tokens: int = 10,
         completion_tokens: int = 20,
+        cached_tokens: int | None = None,
     ) -> Mock:
         """Create a standard mock response."""
         message = Mock()
@@ -273,6 +274,11 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
         usage = Mock()
         usage.prompt_tokens = prompt_tokens
         usage.completion_tokens = completion_tokens
+        if cached_tokens is not None:
+            usage.prompt_tokens_details = Mock()
+            usage.prompt_tokens_details.cached_tokens = cached_tokens
+        else:
+            usage.prompt_tokens_details = None
         response.usage = usage
         return response
 
@@ -360,6 +366,69 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)
 
+    async def test_call_populates_cached_tokens_in_usage(self) -> None:
+        """Test non-streaming responses expose cached token usage."""
+        with patch("openai.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = OpenAIChatModel(
+                model_name="gpt-4",
+                api_key="test_key",
+                stream=False,
+            )
+            model.client = mock_client
+
+            mock_response = self._create_mock_response(
+                "Hello! How can I help you?",
+                cached_tokens=7,
+            )
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=mock_response,
+            )
+
+            result = await model([{"role": "user", "content": "Hello"}])
+            self.assertEqual(result.usage.cached_tokens, 7)
+
+    async def test_streaming_response_populates_cached_tokens_in_usage(
+        self,
+    ) -> None:
+        """Test streaming responses expose cached token usage."""
+        with patch("openai.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = OpenAIChatModel(
+                model_name="gpt-4",
+                api_key="test_key",
+                stream=True,
+            )
+            model.client = mock_client
+
+            stream_mock = self._create_stream_mock(
+                [
+                    {"content": "Hello"},
+                    {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 5,
+                            "completion_tokens": 10,
+                            "cached_tokens": 3,
+                        },
+                    },
+                ],
+            )
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=stream_mock,
+            )
+
+            result = await model([{"role": "user", "content": "Hello"}])
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            self.assertEqual(responses[-1].usage.cached_tokens, 3)
+
     def _create_stream_mock(self, chunks_data: list) -> Any:
         """Create a mock stream with proper async context management."""
 
@@ -423,10 +492,34 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
                     choice.delta = delta
 
                 chunk = Mock()
-                chunk.choices = [choice]
-                chunk.usage = Mock()
-                chunk.usage.prompt_tokens = 5
-                chunk.usage.completion_tokens = 10
+                if chunk_data is None:
+                    chunk.choices = [choice]
+                    chunk.usage = Mock()
+                    chunk.usage.prompt_tokens = 5
+                    chunk.usage.completion_tokens = 10
+                    chunk.usage.prompt_tokens_details = None
+                else:
+                    chunk.choices = chunk_data.get("choices", [choice])
+                    usage_data = chunk_data.get("usage")
+                    if usage_data is None:
+                        chunk.usage = Mock()
+                        chunk.usage.prompt_tokens = 5
+                        chunk.usage.completion_tokens = 10
+                        chunk.usage.prompt_tokens_details = None
+                    else:
+                        chunk.usage = Mock()
+                        chunk.usage.prompt_tokens = usage_data["prompt_tokens"]
+                        chunk.usage.completion_tokens = usage_data[
+                            "completion_tokens"
+                        ]
+                        cached_tokens = usage_data.get("cached_tokens")
+                        if cached_tokens is not None:
+                            chunk.usage.prompt_tokens_details = Mock()
+                            chunk.usage.prompt_tokens_details.cached_tokens = (
+                                cached_tokens
+                            )
+                        else:
+                            chunk.usage.prompt_tokens_details = None
                 return chunk
 
         return MockStream(chunks_data)

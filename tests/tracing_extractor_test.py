@@ -202,6 +202,7 @@ class ExtractorTest(TestCase):
         usage = Mock()
         usage.input_tokens = 10
         usage.output_tokens = 20
+        usage.cached_tokens = 4
 
         response = ChatResponse(
             id="test-id",
@@ -233,6 +234,10 @@ class ExtractorTest(TestCase):
         self.assertEqual(
             attributes[SpanAttributes.GEN_AI_USAGE_OUTPUT_TOKENS],
             20,
+        )
+        self.assertEqual(
+            attributes[SpanAttributes.AGENTSCOPE_USAGE_CACHED_TOKENS],
+            4,
         )
         self.assertIn(SpanAttributes.GEN_AI_OUTPUT_MESSAGES, attributes)
 

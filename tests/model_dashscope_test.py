@@ -487,3 +487,147 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
         """Create an asynchronous generator."""
         for item in items:
             yield item
+
+    def _create_mock_response_with_cached_tokens(
+        self,
+        content: str,
+        cached_tokens: int | None = None,
+    ) -> Mock:
+        """Create a mock response with cached_tokens in usage."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.output.choices = [Mock()]
+        mock_response.output.choices[0].message = MessageMock(
+            {"content": content},
+        )
+        mock_response.usage = Mock()
+        mock_response.usage.input_tokens = 10
+        mock_response.usage.output_tokens = 20
+
+        # Simulate API returning prompt_tokens_details as dict
+        if cached_tokens is not None:
+            mock_response.usage.prompt_tokens_details = {
+                "cached_tokens": cached_tokens,
+            }
+        else:
+            mock_response.usage.prompt_tokens_details = None
+
+        return mock_response
+
+    def _create_mock_chunk_with_cached_tokens(
+        self,
+        content: str = "",
+        cached_tokens: int | None = None,
+    ) -> Mock:
+        """Create a mock chunk with cached_tokens in usage."""
+        chunk = Mock()
+        chunk.status_code = HTTPStatus.OK
+        chunk.output.choices = [Mock()]
+        chunk.output.choices[0].message = MessageMock(
+            {"content": content},
+        )
+        chunk.usage = Mock()
+        chunk.usage.input_tokens = 5
+        chunk.usage.output_tokens = 10
+
+        # Simulate API returning prompt_tokens_details as dict
+        if cached_tokens is not None:
+            chunk.usage.prompt_tokens_details = {
+                "cached_tokens": cached_tokens,
+            }
+        else:
+            chunk.usage.prompt_tokens_details = None
+
+        return chunk
+
+    async def test_call_populates_cached_tokens_in_usage(self) -> None:
+        """Test non-streaming responses expose cached token usage."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=False,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        mock_response = self._create_mock_response_with_cached_tokens(
+            "Hello! How can I help you?",
+            cached_tokens=7,
+        )
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = mock_response
+            result = await model(messages)
+            self.assertEqual(result.usage.cached_tokens, 7)
+
+    async def test_call_with_zero_cached_tokens(self) -> None:
+        """Test that cached_tokens=0 is correctly handled."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=False,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        mock_response = self._create_mock_response_with_cached_tokens(
+            "Hello! How can I help you?",
+            cached_tokens=0,
+        )
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = mock_response
+            result = await model(messages)
+            # cached_tokens=0 should be preserved (not converted to None)
+            self.assertEqual(result.usage.cached_tokens, 0)
+
+    async def test_call_without_cached_tokens(self) -> None:
+        """Test that missing cached_tokens defaults to None."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=False,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        # Create mock response with prompt_tokens_details=None explicitly
+        mock_response = self._create_mock_response("Hello!")
+        mock_response.usage.prompt_tokens_details = None
+
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = mock_response
+            result = await model(messages)
+            self.assertIsNone(result.usage.cached_tokens)
+
+    async def test_streaming_response_populates_cached_tokens(self) -> None:
+        """Test streaming responses expose cached token usage."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=True,
+        )
+        messages = [{"role": "user", "content": "Hello"}]
+
+        chunks = [
+            self._create_mock_chunk_with_cached_tokens(
+                content="Hello",
+                cached_tokens=3,
+            ),
+        ]
+
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = self._create_async_generator(chunks)
+            result = await model(messages)
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            # For streaming, check the first response has usage with
+            # cached_tokens
+            self.assertGreater(len(responses), 0)
+            self.assertEqual(responses[0].usage.cached_tokens, 3)

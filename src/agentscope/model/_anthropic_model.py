@@ -29,6 +29,35 @@ from ..message import TextBlock, ToolUseBlock, ThinkingBlock
 from ..tracing import trace_llm
 from ..types._json import JSONSerializableObject
 
+
+def _extract_cached_tokens_from_anthropic(usage: Any) -> int | None:
+    """Extract cached input tokens from Anthropic usage metadata safely.
+
+    Anthropic API returns cache_read_input_tokens when tokens are served
+    from cache (cache hit). We do NOT use cache_creation_input_tokens
+    (tokens written to cache) because creating a cache entry is not a
+    cache hit - it would falsely report a cache hit on cold requests.
+
+    Args:
+        usage: The usage object from Anthropic API response.
+
+    Returns:
+        Number of cached tokens read from cache (including 0), None if
+        the field is not reported by the API.
+    """
+    if usage is None:
+        return None
+
+    # Only use cache_read_input_tokens - actual tokens served from cache
+    # Use getattr with sentinel to distinguish between 0 and missing
+    sentinel = object()
+    cache_read = getattr(usage, "cache_read_input_tokens", sentinel)
+    if cache_read is not sentinel:
+        return cache_read
+
+    return None
+
+
 if TYPE_CHECKING:
     from anthropic.types.message import Message
     from anthropic import AsyncStream
@@ -346,6 +375,9 @@ class AnthropicChatModel(ChatModelBase):
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                cached_tokens=_extract_cached_tokens_from_anthropic(
+                    response.usage,
+                ),
             )
 
         parsed_response = ChatResponse(
@@ -413,6 +445,9 @@ class AnthropicChatModel(ChatModelBase):
                             0,
                         ),
                         time=(datetime.now() - start_datetime).total_seconds(),
+                        cached_tokens=_extract_cached_tokens_from_anthropic(
+                            message.usage,
+                        ),
                     )
 
             elif event.type == "content_block_start":
