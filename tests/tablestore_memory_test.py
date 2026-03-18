@@ -403,7 +403,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(doc.metadata["session_id"], "test_session")
         marks = json.loads(doc.metadata["marks_json"])
         self.assertIn("mark1", marks)
-        # Verify msg_json is NOT in metadata (moved to text)
+        # Verify msg_json is NOT in metadata
         self.assertNotIn("msg_json", doc.metadata)
         # Verify old fields are removed
         self.assertNotIn("content_json", doc.metadata)

@@ -544,6 +544,7 @@ class TablestoreMemory(MemoryBase):
                     ],
                 ),
                 meta_data_to_get=[
+                    self._text_field,
                     "name",
                     "role",
                     "timestamp",
