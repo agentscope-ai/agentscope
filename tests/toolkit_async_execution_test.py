@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=protected-access, redefined-builtin
 """Test async execution functionality in Toolkit."""
 import asyncio
+from typing import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.message import ToolUseBlock, TextBlock
@@ -27,7 +29,9 @@ async def slow_async_func(delay: float) -> ToolResponse:
     )
 
 
-async def slow_async_generator_func(delay: float):
+async def slow_async_generator_func(
+    delay: float,
+) -> AsyncGenerator[ToolResponse, None]:
     """A slow async generator function for testing async execution.
 
     Args:
@@ -63,7 +67,7 @@ class ToolkitAsyncExecutionTest(IsolatedAsyncioTestCase):
             input=input,
         )
 
-    async def _start_async_task(self, delay: float) -> str:
+    async def _start_async_task(self, delay: float) -> str | None:
         """Register slow_async_func, call it with async_execution=True,
         and return the task_id from the response text."""
         self.toolkit.register_tool_function(
@@ -73,13 +77,22 @@ class ToolkitAsyncExecutionTest(IsolatedAsyncioTestCase):
         res = await self.toolkit.call_tool_function(
             self._make_tool_call("slow_async_func", {"delay": delay}),
         )
-        task_id = None
+        task_id: str | None = None
         async for chunk in res:
             # The response text contains "Task ID: <id>"
             for block in chunk.content:
                 if "Task ID:" in block["text"]:
-                    task_id = block["text"].split("Task ID:")[1].strip().split(".")[0].strip()
-        self.assertIsNotNone(task_id, "task_id should be present in response")
+                    task_id = (
+                        block["text"]
+                        .split("Task ID:")[1]
+                        .strip()
+                        .split(".")[0]
+                        .strip()
+                    )
+        self.assertIsNotNone(
+            task_id,
+            "task_id should be present in response",
+        )
         return task_id
 
     # ------------------------------------------------------------------
@@ -165,19 +178,29 @@ class ToolkitAsyncExecutionTest(IsolatedAsyncioTestCase):
     # ------------------------------------------------------------------
 
     async def test_async_generator_result_is_accumulated(self) -> None:
-        """Streaming tool results are accumulated into a single ToolResponse."""
+        """Streaming tool results are accumulated into a single
+        ToolResponse."""
         self.toolkit.register_tool_function(
             slow_async_generator_func,
             async_execution=True,
         )
         res = await self.toolkit.call_tool_function(
-            self._make_tool_call("slow_async_generator_func", {"delay": 0.05}),
+            self._make_tool_call(
+                "slow_async_generator_func",
+                {"delay": 0.05},
+            ),
         )
         task_id = None
         async for chunk in res:
             for block in chunk.content:
                 if "Task ID:" in block["text"]:
-                    task_id = block["text"].split("Task ID:")[1].strip().split(".")[0].strip()
+                    task_id = (
+                        block["text"]
+                        .split("Task ID:")[1]
+                        .strip()
+                        .split(".")[0]
+                        .strip()
+                    )
         self.assertIsNotNone(task_id)
 
         # Wait for the generator to finish
