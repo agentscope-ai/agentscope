@@ -35,7 +35,17 @@ class HuggingFaceTokenCounter(TokenCounterBase):
                 tokenizer.
         """
         if use_mirror:
-            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+            mirror = "https://hf-mirror.com"
+            os.environ["HF_ENDPOINT"] = mirror
+
+            # if the huggingface is already imported in other dependencies,
+            # we need to set the endpoint manually
+            import huggingface_hub.constants
+
+            huggingface_hub.constants.ENDPOINT = mirror
+            huggingface_hub.constants.HUGGINGFACE_CO_URL_TEMPLATE = (
+                mirror + "/{repo_id}/resolve/{revision}/{filename}"
+            )
 
         from transformers import AutoTokenizer
 
