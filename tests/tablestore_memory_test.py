@@ -257,17 +257,15 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         """Test clearing all messages."""
         await self.memory.clear()
 
-        self.memory._knowledge_store.delete_document_by_tenant.assert_called_once_with(
-            tenant_id="test_user",
-        )
+        mock_method = self.memory._knowledge_store.delete_document_by_tenant
+        mock_method.assert_called_once_with(tenant_id="test_user")
 
     async def test_clear_empty(self) -> None:
         """Test clearing when memory is already empty."""
         await self.memory.clear()
 
-        self.memory._knowledge_store.delete_document_by_tenant.assert_called_once_with(
-            tenant_id="test_user",
-        )
+        mock_method = self.memory._knowledge_store.delete_document_by_tenant
+        mock_method.assert_called_once_with(tenant_id="test_user")
 
     async def test_delete_by_mark(self) -> None:
         """Test deleting messages by mark."""

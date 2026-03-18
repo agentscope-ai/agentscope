@@ -3,7 +3,6 @@
 import asyncio
 import copy
 import json
-import uuid
 from typing import Any, Literal, Optional, cast
 
 
@@ -388,7 +387,7 @@ class TablestoreMemory(MemoryBase):
         delete_tasks = [
             self._knowledge_store.delete_document_by_tenant(
                 tenant_id=self._user_id,
-            )
+            ),
         ]
         if delete_tasks:
             await asyncio.gather(*delete_tasks)
