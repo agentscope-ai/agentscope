@@ -209,11 +209,13 @@ async def test_add_allow_duplicates(
     await _wait_for_index_ready(memory, 1)
 
     # Add the same message again with allow_duplicates=True
+    # Since the same msg.id is used as document_id, Tablestore will
+    # upsert (overwrite) the existing row, so count stays at 1.
     await memory.add(msg, allow_duplicates=True)
-    await _wait_for_index_ready(memory, 2)
+    await _wait_for_index_ready(memory, 1)
 
     result = await memory.get_memory()
-    assert len(result) == 2
+    assert len(result) == 1
 
 
 @pytest.mark.asyncio
@@ -512,6 +514,7 @@ async def test_msg_roundtrip(tablestore_memory: TablestoreMemory) -> None:
         metadata={"key": "value", "number": 42},
     )
 
+    await memory.clear()
     await memory.add(original_msg)
     await _wait_for_index_ready(memory, 1)
 

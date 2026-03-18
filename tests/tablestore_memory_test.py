@@ -21,31 +21,20 @@ def _create_mock_document(
     if marks is None:
         marks = []
 
-    content = msg.content
-    text_content = None
-    if isinstance(content, str):
-        text_content = content
-
     doc = MagicMock()
     doc.document_id = msg.id
-    doc.text = text_content
+    doc.text = json.dumps(
+        msg.to_dict(),
+        ensure_ascii=False,
+        default=str,
+    )
+    doc.tenant_id = user_id
     doc.metadata = {
-        "user_id": user_id,
         "session_id": session_id,
-        "msg_id": msg.id,
         "name": msg.name,
         "role": msg.role,
-        "content_json": json.dumps(
-            msg.content,
-            ensure_ascii=False,
-            default=str,
-        ),
-        "metadata_json": json.dumps(
-            msg.metadata,
-            ensure_ascii=False,
-            default=str,
-        ),
         "timestamp": msg.timestamp or "",
+        "invocation_id": msg.invocation_id or "",
         "marks_json": json.dumps(marks, ensure_ascii=False),
     }
     return doc
@@ -163,36 +152,19 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_delete_messages(self) -> None:
         """Test deleting messages by ID."""
-        # Mock search_documents to return matching documents
-        mock_doc = MagicMock()
-        mock_doc.document_id = "0"
-        mock_doc.metadata = {"msg_id": "0"}
-
-        mock_hit = MagicMock()
-        mock_hit.document = mock_doc
-
-        mock_result = MagicMock()
-        mock_result.hits = [mock_hit]
-
-        self.memory._knowledge_store.search_documents = AsyncMock(
-            return_value=mock_result,
-        )
+        self.memory._get_all_msg_ids = AsyncMock(return_value={"0", "1"})
 
         deleted = await self.memory.delete(msg_ids=["0"])
 
         self.assertEqual(deleted, 1)
         self.memory._knowledge_store.delete_document.assert_called_once_with(
-            "0",
+            document_id="0",
+            tenant_id="test_user",
         )
 
     async def test_delete_nonexistent(self) -> None:
-        """Test deleting non-existent messages."""
-        mock_result = MagicMock()
-        mock_result.hits = []
-
-        self.memory._knowledge_store.search_documents = AsyncMock(
-            return_value=mock_result,
-        )
+        """Test deleting non-existent messages returns 0."""
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
 
         deleted = await self.memory.delete(msg_ids=["nonexistent"])
 
@@ -283,28 +255,19 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_clear(self) -> None:
         """Test clearing all messages."""
-        mock_docs = []
-        for i in range(3):
-            doc = MagicMock()
-            doc.document_id = str(i)
-            mock_docs.append(doc)
-
-        self.memory._get_all_documents = AsyncMock(return_value=mock_docs)
-
         await self.memory.clear()
 
-        self.assertEqual(
-            self.memory._knowledge_store.delete_document.call_count,
-            3,
+        self.memory._knowledge_store.delete_document_by_tenant.assert_called_once_with(
+            tenant_id="test_user",
         )
 
     async def test_clear_empty(self) -> None:
         """Test clearing when memory is already empty."""
-        self.memory._get_all_documents = AsyncMock(return_value=[])
-
         await self.memory.clear()
 
-        self.memory._knowledge_store.delete_document.assert_not_called()
+        self.memory._knowledge_store.delete_document_by_tenant.assert_called_once_with(
+            tenant_id="test_user",
+        )
 
     async def test_delete_by_mark(self) -> None:
         """Test deleting messages by mark."""
@@ -428,11 +391,23 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         doc = self.memory._msg_to_document(msg, ["mark1"])
 
         self.assertEqual(doc.document_id, msg.id)
-        self.assertEqual(doc.text, "Hello world!")
+        # Verify text contains full Msg JSON
+        msg_dict = json.loads(doc.text)
+        self.assertEqual(msg_dict["id"], msg.id)
+        self.assertEqual(msg_dict["name"], "Alice")
+        self.assertEqual(msg_dict["content"], "Hello world!")
+        self.assertEqual(msg_dict["role"], "user")
+        self.assertEqual(doc.tenant_id, "test_user")
         self.assertEqual(doc.metadata["name"], "Alice")
         self.assertEqual(doc.metadata["role"], "user")
+        self.assertEqual(doc.metadata["session_id"], "test_session")
         marks = json.loads(doc.metadata["marks_json"])
         self.assertIn("mark1", marks)
+        # Verify msg_json is NOT in metadata (moved to text)
+        self.assertNotIn("msg_json", doc.metadata)
+        # Verify old fields are removed
+        self.assertNotIn("content_json", doc.metadata)
+        self.assertNotIn("metadata_json", doc.metadata)
 
     async def test_msg_to_document_list_content(self) -> None:
         """Test converting a Msg with list content to document."""
@@ -441,11 +416,21 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
         doc = self.memory._msg_to_document(msg, [])
 
-        self.assertEqual(doc.text, "Hello from blocks!")
+        # Verify text contains full Msg JSON with list content
+        msg_dict = json.loads(doc.text)
+        self.assertEqual(msg_dict["content"], content)
+        self.assertEqual(doc.tenant_id, "test_user")
+        # Verify msg_json is NOT in metadata
+        self.assertNotIn("msg_json", doc.metadata)
 
     async def test_document_to_msg_roundtrip(self) -> None:
         """Test roundtrip conversion Msg -> Document -> Msg."""
-        original_msg = Msg("Alice", "Test content", "user")
+        original_msg = Msg(
+            "Alice",
+            "Test content",
+            "user",
+            metadata={"key": "value", "number": 42},
+        )
         original_marks = ["important", "todo"]
 
         doc = self.memory._msg_to_document(original_msg, original_marks)
@@ -458,6 +443,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(restored_msg.content, original_msg.content)
         self.assertEqual(restored_msg.role, original_msg.role)
         self.assertEqual(restored_msg.id, original_msg.id)
+        self.assertEqual(restored_msg.metadata, original_msg.metadata)
         self.assertListEqual(restored_marks, original_marks)
 
     async def test_invalid_mark_type(self) -> None:

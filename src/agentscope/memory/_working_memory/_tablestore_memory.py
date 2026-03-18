@@ -4,7 +4,7 @@ import asyncio
 import copy
 import json
 import uuid
-from typing import Any, Optional
+from typing import Any, Literal, Optional, cast
 
 
 from ...message import Msg
@@ -101,9 +101,10 @@ class TablestoreMemory(MemoryBase):
         )
 
         self._search_index_schema = [
-            FieldSchema("user_id", FieldType.KEYWORD),
+            FieldSchema("document_id", FieldType.KEYWORD),
+            FieldSchema("tenant_id", FieldType.KEYWORD),
             FieldSchema("session_id", FieldType.KEYWORD),
-            FieldSchema("msg_id", FieldType.KEYWORD),
+            FieldSchema("marks_json", FieldType.KEYWORD, is_array=True),
         ]
 
         self._knowledge_store = None
@@ -127,7 +128,7 @@ class TablestoreMemory(MemoryBase):
             search_index_schema=copy.deepcopy(self._search_index_schema),
             text_field=self._text_field,
             embedding_field=self._embedding_field,
-            enable_multi_tenant=False,
+            enable_multi_tenant=True,
             **self._knowledge_store_kwargs,
         )
 
@@ -136,6 +137,8 @@ class TablestoreMemory(MemoryBase):
 
     def _msg_to_document(self, msg: Msg, marks: list[str]) -> Any:
         """Convert a ``Msg`` to a Tablestore document.
+        Msg.id -> document_id
+        self._user_id -> tenant_id
 
         Args:
             msg (`Msg`):
@@ -150,39 +153,25 @@ class TablestoreMemory(MemoryBase):
             Document as TablestoreDocument,
         )
 
-        content = msg.content
-        text_content = None
-        if isinstance(content, str):
-            text_content = content
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text_content = block.get("text", "")
-                    break
+        text_content = json.dumps(
+            msg.to_dict(),
+            ensure_ascii=False,
+            default=str,
+        )
 
         metadata = {
-            "user_id": self._user_id,
             "session_id": self._session_id,
-            "msg_id": msg.id,
             "name": msg.name,
             "role": msg.role,
-            "content_json": json.dumps(
-                msg.content,
-                ensure_ascii=False,
-                default=str,
-            ),
-            "metadata_json": json.dumps(
-                msg.metadata,
-                ensure_ascii=False,
-                default=str,
-            ),
             "timestamp": msg.timestamp or "",
+            "invocation_id": msg.invocation_id or "",
             "marks_json": json.dumps(marks, ensure_ascii=False),
         }
 
         return TablestoreDocument(
             document_id=msg.id,
             text=text_content,
+            tenant_id=self._user_id,
             metadata=metadata,
         )
 
@@ -199,34 +188,32 @@ class TablestoreMemory(MemoryBase):
         """
         metadata = document.metadata or {}
 
-        content_json = metadata.get("content_json", '""')
-        try:
-            content = json.loads(content_json)
-        except (json.JSONDecodeError, TypeError):
-            content = document.text or ""
+        # Restore Msg from document text (JSON-serialized Msg dict)
+        if document.text:
+            msg_dict = json.loads(document.text)
+            msg = Msg.from_dict(msg_dict)
+        else:
+            # Fallback for legacy documents without msg_json
+            role = cast(
+                Literal["user", "assistant", "system"],
+                metadata.get("role", "user"),
+            )
+            msg = Msg(
+                name=metadata.get("name", ""),
+                content=document.text or "",
+                role=role,
+                timestamp=metadata.get("timestamp") or None,
+                invocation_id=metadata.get("invocation_id") or None,
+            )
+            msg.id = document.document_id
 
-        metadata_dict = {}
-        metadata_json = metadata.get("metadata_json", "{}")
-        try:
-            metadata_dict = json.loads(metadata_json)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-        marks = []
+        # Restore marks
+        marks: list[str] = []
         marks_json = metadata.get("marks_json", "[]")
         try:
             marks = json.loads(marks_json)
         except (json.JSONDecodeError, TypeError):
             pass
-
-        msg = Msg(
-            name=metadata.get("name", ""),
-            content=content,
-            role=metadata.get("role", "user"),
-            metadata=metadata_dict if metadata_dict else None,
-            timestamp=metadata.get("timestamp") or None,
-        )
-        msg.id = metadata.get("msg_id", document.document_id)
 
         return msg, marks
 
@@ -237,13 +224,15 @@ class TablestoreMemory(MemoryBase):
         allow_duplicates: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Add message(s) into the Tablestore memory.
+        """Add message(s) into the memory storage with the given mark
+        (if provided).
 
         Args:
             memories (`Msg | list[Msg] | None`):
                 The message(s) to be added.
             marks (`str | list[str] | None`, optional):
-                The mark(s) to associate with the message(s).
+                The mark(s) to associate with the message(s). If `None`, no
+                mark is associated.
             allow_duplicates (`bool`, defaults to ``False``):
                 Whether to allow duplicate messages.
         """
@@ -276,8 +265,6 @@ class TablestoreMemory(MemoryBase):
         put_tasks = []
         for msg in memories:
             document = self._msg_to_document(msg, marks_list)
-            if allow_duplicates:
-                document.document_id = str(uuid.uuid4())
             put_tasks.append(
                 self._knowledge_store.put_document(document),
             )
@@ -288,19 +275,24 @@ class TablestoreMemory(MemoryBase):
         from tablestore_for_agent_memory.base.filter import Filters
 
         all_ids: set[str] = set()
-        result = await self._knowledge_store.search_documents(
-            metadata_filter=Filters.logical_and(
-                [
-                    Filters.eq("user_id", self._user_id),
-                    Filters.eq("session_id", self._session_id),
-                ],
-            ),
-            meta_data_to_get=["msg_id"],
-        )
-        for hit in result.hits:
-            msg_id = hit.document.metadata.get("msg_id")
-            if msg_id:
-                all_ids.add(msg_id)
+        next_token = None
+        while True:
+            result = await self._knowledge_store.search_documents(
+                tenant_id=self._user_id,
+                metadata_filter=Filters.logical_and(
+                    [
+                        Filters.eq("session_id", self._session_id),
+                    ],
+                ),
+                next_token=next_token,
+            )
+            for hit in result.hits:
+                msg_id = hit.document.document_id
+                if msg_id:
+                    all_ids.add(msg_id)
+            next_token = result.next_token
+            if not next_token:
+                break
         return all_ids
 
     async def delete(
@@ -308,7 +300,7 @@ class TablestoreMemory(MemoryBase):
         msg_ids: list[str],
         **kwargs: Any,
     ) -> int:
-        """Remove message(s) from Tablestore by their IDs.
+        """Remove message(s) from the storage by their IDs.
 
         Args:
             msg_ids (`list[str]`):
@@ -320,23 +312,13 @@ class TablestoreMemory(MemoryBase):
         """
         await self._ensure_initialized()
 
-        from tablestore_for_agent_memory.base.filter import Filters
-
+        existing_ids = await self._get_all_msg_ids()
         deleted_count = 0
         for msg_id in msg_ids:
-            result = await self._knowledge_store.search_documents(
-                metadata_filter=Filters.logical_and(
-                    [
-                        Filters.eq("user_id", self._user_id),
-                        Filters.eq("session_id", self._session_id),
-                        Filters.eq("msg_id", msg_id),
-                    ],
-                ),
-                meta_data_to_get=["msg_id"],
-            )
-            for hit in result.hits:
+            if msg_id in existing_ids:
                 await self._knowledge_store.delete_document(
-                    hit.document.document_id,
+                    document_id=msg_id,
+                    tenant_id=self._user_id,
                 )
                 deleted_count += 1
 
@@ -347,11 +329,15 @@ class TablestoreMemory(MemoryBase):
         mark: str | list[str],
         **kwargs: Any,
     ) -> int:
-        """Remove messages from Tablestore by their marks.
+        """Remove messages from the memory by their marks.
 
         Args:
             mark (`str | list[str]`):
                 The mark(s) of the messages to be removed.
+
+        Raises:
+            `TypeError`:
+                If the provided mark is not a string or a list of strings.
 
         Returns:
             `int`:
@@ -377,14 +363,15 @@ class TablestoreMemory(MemoryBase):
             _, doc_marks = self._document_to_msg_and_marks(doc)
             if any(m in doc_marks for m in mark):
                 await self._knowledge_store.delete_document(
-                    doc.document_id,
+                    document_id=doc.document_id,
+                    tenant_id=self._user_id,
                 )
                 deleted_count += 1
 
         return deleted_count
 
     async def size(self) -> int:
-        """Get the number of messages in Tablestore for this user/session.
+        """Get the number of messages in the storage.
 
         Returns:
             `int`:
@@ -395,13 +382,13 @@ class TablestoreMemory(MemoryBase):
         return len(all_docs)
 
     async def clear(self) -> None:
-        """Clear all messages from Tablestore for this user/session."""
+        """Clear the memory content."""
         await self._ensure_initialized()
 
-        all_docs = await self._get_all_documents()
         delete_tasks = [
-            self._knowledge_store.delete_document(doc.document_id)
-            for doc in all_docs
+            self._knowledge_store.delete_document_by_tenant(
+                tenant_id=self._user_id,
+            )
         ]
         if delete_tasks:
             await asyncio.gather(*delete_tasks)
@@ -413,15 +400,22 @@ class TablestoreMemory(MemoryBase):
         prepend_summary: bool = True,
         **kwargs: Any,
     ) -> list[Msg]:
-        """Get messages from Tablestore, optionally filtered by mark.
+        """Get the messages from the memory by mark (if provided). Otherwise,
+        get all messages.
+
+        . note:: If `mark` and `exclude_mark` are both provided, the messages
+         will be filtered by both arguments.
+
+        . note:: `mark` and `exclude_mark` should not overlap.
 
         Args:
             mark (`str | None`, optional):
-                The mark to filter messages. If ``None``, return all messages.
+                The mark to filter messages. If `None`, return all messages.
             exclude_mark (`str | None`, optional):
-                The mark to exclude messages.
-            prepend_summary (`bool`, defaults to ``True``):
-                Whether to prepend the compressed summary as a message.
+                The mark to exclude messages. If provided, messages with
+                this mark will be excluded from the results.
+            prepend_summary (`bool`, defaults to True):
+                Whether to prepend the compressed summary as a message
 
         Returns:
             `list[Msg]`:
@@ -468,15 +462,26 @@ class TablestoreMemory(MemoryBase):
         old_mark: str | None = None,
         msg_ids: list[str] | None = None,
     ) -> int:
-        """Update marks of messages in Tablestore.
+        """A unified method to update marks of messages in the storage (add,
+        remove, or change marks).
+
+        - If `msg_ids` is provided, the update will be applied to the messages
+         with the specified IDs.
+        - If `old_mark` is provided, the update will be applied to the
+         messages with the specified old mark. Otherwise, the `new_mark` will
+         be added to all messages (or those filtered by `msg_ids`).
+        - If `new_mark` is `None`, the mark will be removed from the messages.
 
         Args:
-            new_mark (`str | None`):
-                The new mark to set. If ``None``, the old mark is removed.
+            new_mark (`str | None`, optional):
+                The new mark to set for the messages. If `None`, the mark
+                will be removed.
             old_mark (`str | None`, optional):
-                The old mark to filter messages.
+                The old mark to filter messages. If `None`, this constraint
+                is ignored.
             msg_ids (`list[str] | None`, optional):
-                The list of message IDs to be updated.
+                The list of message IDs to be updated. If `None`, this
+                constraint is ignored.
 
         Returns:
             `int`:
@@ -510,7 +515,8 @@ class TablestoreMemory(MemoryBase):
             if doc_marks != original_marks:
                 # Re-save the document with updated marks
                 await self._knowledge_store.delete_document(
-                    doc.document_id,
+                    document_id=doc.document_id,
+                    tenant_id=self._user_id,
                 )
                 await self._knowledge_store.put_document(
                     self._msg_to_document(msg, doc_marks),
@@ -527,26 +533,31 @@ class TablestoreMemory(MemoryBase):
         """
         from tablestore_for_agent_memory.base.filter import Filters
 
-        result = await self._knowledge_store.search_documents(
-            metadata_filter=Filters.logical_and(
-                [
-                    Filters.eq("user_id", self._user_id),
-                    Filters.eq("session_id", self._session_id),
+        all_docs: list = []
+        next_token = None
+        while True:
+            result = await self._knowledge_store.search_documents(
+                tenant_id=self._user_id,
+                metadata_filter=Filters.logical_and(
+                    [
+                        Filters.eq("session_id", self._session_id),
+                    ],
+                ),
+                meta_data_to_get=[
+                    "name",
+                    "role",
+                    "timestamp",
+                    "marks_json",
+                    "session_id",
+                    "invocation_id",
                 ],
-            ),
-            meta_data_to_get=[
-                "msg_id",
-                "name",
-                "role",
-                "content_json",
-                "metadata_json",
-                "timestamp",
-                "marks_json",
-                "user_id",
-                "session_id",
-            ],
-        )
-        return [hit.document for hit in result.hits]
+                next_token=next_token,
+            )
+            all_docs.extend(hit.document for hit in result.hits)
+            next_token = result.next_token
+            if not next_token:
+                break
+        return all_docs
 
     async def close(self) -> None:
         """Close the Tablestore client connection."""
