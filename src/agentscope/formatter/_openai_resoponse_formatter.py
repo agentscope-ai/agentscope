@@ -162,9 +162,10 @@ class OpenAIResponseChatFormatter(TruncatedFormatterBase):
 
                     messages.append(
                         {
-                            "type": "function_call_output",
-                            "call_id": block.get("id"),
-                            "output": textual_output,
+                            "role": "assistant",
+                            "tool_call_id": block.get("id"),
+                            "content": textual_output,
+                            "name": block.get("name"),
                         },
                     )
 
