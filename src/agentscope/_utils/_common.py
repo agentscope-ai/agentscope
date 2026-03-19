@@ -49,10 +49,10 @@ def _json_loads_with_repair(
             Returns an empty dict if all repair attempts fail.
     """
     try:
-        repaired = repair_json(json_str, stream_stable=True)
-        result = json.loads(repaired)
-        if isinstance(result, dict):
-            return result
+        result = repair_json(json_str, stream_stable=True)
+        while not isinstance(result := json.loads(result), dict):
+            ...
+        return result
 
     except Exception:
         if len(json_str) > 100:
