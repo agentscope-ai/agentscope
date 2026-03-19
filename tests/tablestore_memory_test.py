@@ -265,8 +265,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_size(self) -> None:
         """Test getting the size of memory."""
-        docs = [MagicMock() for _ in range(7)]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        msg_ids = [MagicMock() for _ in range(7)]
+        self.memory._get_all_msg_ids = AsyncMock(return_value=msg_ids)
 
         result = await self.memory.size()
 

@@ -343,15 +343,19 @@ class TablestoreMemory(MemoryBase):
 
         # Get only the IDs that actually exist in the current session
         existing_ids = await self._get_existing_ids_in_session(msg_ids)
-        deleted_count = 0
-        for msg_id in existing_ids:
-            await self._knowledge_store.delete_document(
+
+        delete_tasks = [
+            self._knowledge_store.delete_document(
                 document_id=msg_id,
                 tenant_id=self._user_id,
             )
-            deleted_count += 1
+            for msg_id in existing_ids
+        ]
 
-        return deleted_count
+        if delete_tasks:
+            await asyncio.gather(*delete_tasks)
+
+        return len(existing_ids)
 
     async def delete_by_mark(
         self,
@@ -407,20 +411,16 @@ class TablestoreMemory(MemoryBase):
                 The number of messages in the storage.
         """
         await self._ensure_initialized()
-        all_docs = await self._get_all_documents()
-        return len(all_docs)
+        all_msg_ids = await self._get_all_msg_ids()
+        return len(all_msg_ids)
 
     async def clear(self) -> None:
         """Clear the memory content."""
         await self._ensure_initialized()
 
-        delete_tasks = [
-            self._knowledge_store.delete_document_by_tenant(
-                tenant_id=self._user_id,
-            ),
-        ]
-        if delete_tasks:
-            await asyncio.gather(*delete_tasks)
+        await self._knowledge_store.delete_document_by_tenant(
+            tenant_id=self._user_id,
+        )
 
     async def get_memory(
         self,
