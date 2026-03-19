@@ -22,7 +22,7 @@ def _create_mock_document(
         marks = []
 
     doc = MagicMock()
-    doc.document_id = msg.id
+    doc.document_id = f"{msg.id}:::{session_id}"
     doc.text = json.dumps(
         msg.to_dict(),
         ensure_ascii=False,
@@ -127,12 +127,10 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         # Mock get_documents to return existing documents for IDs "0" and "1"
         existing_docs = [
             MagicMock(
-                document_id="0",
-                metadata={"session_id": "test_session"},
+                document_id="0:::test_session",
             ),
             MagicMock(
-                document_id="1",
-                metadata={"session_id": "test_session"},
+                document_id="1:::test_session",
             ),
         ]
         self.memory._knowledge_store.get_documents = AsyncMock(
@@ -169,7 +167,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_delete_messages(self) -> None:
         """Test deleting messages by ID."""
-        self.memory._get_existing_ids_in_session = AsyncMock(
+        self.memory._get_existing_msg_ids_in_session = AsyncMock(
             return_value={"0"},
         )
 
@@ -177,7 +175,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(deleted, 1)
         self.memory._knowledge_store.delete_document.assert_called_once_with(
-            document_id="0",
+            document_id="0:::test_session",
             tenant_id="test_user",
         )
 
@@ -274,17 +272,34 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_clear(self) -> None:
         """Test clearing all messages."""
+        self.memory._get_all_msg_ids = AsyncMock(
+            return_value={"msg_0", "msg_1"},
+        )
+
         await self.memory.clear()
 
-        mock_method = self.memory._knowledge_store.delete_document_by_tenant
-        mock_method.assert_called_once_with(tenant_id="test_user")
+        self.assertEqual(
+            self.memory._knowledge_store.delete_document.call_count,
+            2,
+        )
+        deleted_doc_ids = {
+            call.kwargs["document_id"]
+            for call in (
+                self.memory._knowledge_store.delete_document.call_args_list
+            )
+        }
+        self.assertEqual(
+            deleted_doc_ids,
+            {"msg_0:::test_session", "msg_1:::test_session"},
+        )
 
     async def test_clear_empty(self) -> None:
         """Test clearing when memory is already empty."""
+        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+
         await self.memory.clear()
 
-        mock_method = self.memory._knowledge_store.delete_document_by_tenant
-        mock_method.assert_called_once_with(tenant_id="test_user")
+        self.memory._knowledge_store.delete_document.assert_not_called()
 
     async def test_delete_by_mark(self) -> None:
         """Test deleting messages by mark."""
@@ -407,7 +422,10 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
         doc = self.memory._msg_to_document(msg, ["mark1"])
 
-        self.assertEqual(doc.document_id, msg.id)
+        self.assertEqual(
+            doc.document_id,
+            f"{msg.id}:::test_session",
+        )
         # Verify text contains full Msg JSON
         msg_dict = json.loads(doc.text)
         self.assertEqual(msg_dict["id"], msg.id)
@@ -474,6 +492,41 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         """Test that invalid mark type in get_memory raises TypeError."""
         with self.assertRaises(TypeError):
             await self.memory.get_memory(mark=123)
+
+    async def test_make_document_id(self) -> None:
+        """Test _make_document_id produces correct format."""
+        document_id = self.memory._make_document_id("msg_123")
+        self.assertEqual(document_id, "msg_123:::test_session")
+
+    async def test_extract_msg_id(self) -> None:
+        """Test _extract_msg_id extracts msg ID from document ID."""
+        msg_id = self.memory._extract_msg_id("msg_123:::test_session")
+        self.assertEqual(msg_id, "msg_123")
+
+    async def test_extract_msg_id_invalid_suffix(self) -> None:
+        """Test _extract_msg_id logs error for invalid suffix."""
+        with self.assertLogs("as", level="ERROR") as log_context:
+            msg_id = self.memory._extract_msg_id("msg_123:::wrong_session")
+        self.assertEqual(msg_id, "msg_123:::wrong_session")
+        self.assertTrue(
+            any("Unexpected document_id format" in m for m in log_context.output),
+        )
+
+    async def test_extract_msg_id_no_separator(self) -> None:
+        """Test _extract_msg_id logs error when no separator found."""
+        with self.assertLogs("as", level="ERROR") as log_context:
+            msg_id = self.memory._extract_msg_id("msg_123")
+        self.assertEqual(msg_id, "msg_123")
+        self.assertTrue(
+            any("Unexpected document_id format" in m for m in log_context.output),
+        )
+
+    async def test_make_and_extract_roundtrip(self) -> None:
+        """Test roundtrip of _make_document_id and _extract_msg_id."""
+        original_id = "test_msg_id_456"
+        document_id = self.memory._make_document_id(original_id)
+        extracted_id = self.memory._extract_msg_id(document_id)
+        self.assertEqual(extracted_id, original_id)
 
     async def test_delete_by_mark_invalid_type(self) -> None:
         """Test that invalid mark type in delete_by_mark raises TypeError."""

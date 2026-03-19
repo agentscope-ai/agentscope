@@ -3,9 +3,10 @@
 import asyncio
 import copy
 import json
-from typing import Any, Literal, Optional, cast
+from typing import Any, Optional
 
 
+from ..._logging import logger
 from ...message import Msg
 from ._base import MemoryBase
 
@@ -134,10 +135,58 @@ class TablestoreMemory(MemoryBase):
         await self._knowledge_store.init_table()
         self._initialized = True
 
+    _DOCUMENT_ID_SEPARATOR = ":::"
+
+    def _make_document_id(self, msg_id: str) -> str:
+        """Convert a message ID to a Tablestore document ID.
+
+        The document ID is formatted as ``{msg_id}:::{session_id}`` to
+        ensure uniqueness across sessions within the same tenant.
+
+        Args:
+            msg_id (`str`):
+                The message ID.
+
+        Returns:
+            `str`:
+                The Tablestore document ID.
+        """
+        return f"{msg_id}{self._DOCUMENT_ID_SEPARATOR}{self._session_id}"
+
+    def _extract_msg_id(self, document_id: str) -> str:
+        """Extract the message ID from a Tablestore document ID.
+
+        The method verifies that ``document_id`` ends with
+        ``:::{session_id}``. If it does not, an error is logged and
+        the original ``document_id`` is returned as-is.
+
+        Args:
+            document_id (`str`):
+                The Tablestore document ID in ``{msg_id}:::{session_id}``
+                format.
+
+        Returns:
+            `str`:
+                The original message ID.
+        """
+        expected_suffix = (
+            f"{self._DOCUMENT_ID_SEPARATOR}{self._session_id}"
+        )
+        if not document_id.endswith(expected_suffix):
+            logger.error(
+                "Unexpected document_id format: '%s'. "
+                "Expected suffix ':::%s'.",
+                document_id,
+                self._session_id,
+            )
+            return document_id
+        return document_id[: -len(expected_suffix)]
+
     def _msg_to_document(self, msg: Msg, marks: list[str]) -> Any:
         """Convert a ``Msg`` to a Tablestore document.
-        Msg.id -> document_id
-        self._user_id -> tenant_id
+
+        The document ID is formatted as ``{msg.id}:::{session_id}``.
+        ``self._user_id`` is used as ``tenant_id``.
 
         Args:
             msg (`Msg`):
@@ -168,7 +217,7 @@ class TablestoreMemory(MemoryBase):
         }
 
         return TablestoreDocument(
-            document_id=msg.id,
+            document_id=self._make_document_id(msg.id),
             text=text_content,
             tenant_id=self._user_id,
             metadata=metadata,
@@ -178,6 +227,11 @@ class TablestoreMemory(MemoryBase):
     def _document_to_msg_and_marks(document: Any) -> tuple[Msg, list[str]]:
         """Convert a Tablestore document back to a ``Msg`` and marks.
 
+        The ``Msg`` is restored entirely from the JSON-serialized text
+        stored in ``document.text``. The ``document_id`` is in
+        ``{msg_id}:::{session_id}`` format and is not used for restoring
+        the ``Msg``.
+
         Args:
             document:
                 The Tablestore document to convert.
@@ -185,28 +239,10 @@ class TablestoreMemory(MemoryBase):
         Returns:
             A tuple of (``Msg``, marks list).
         """
+        msg_dict = json.loads(document.text)
+        msg = Msg.from_dict(msg_dict)
+
         metadata = document.metadata or {}
-
-        # Restore Msg from document text (JSON-serialized Msg dict)
-        if document.text:
-            msg_dict = json.loads(document.text)
-            msg = Msg.from_dict(msg_dict)
-        else:
-            # Fallback for legacy documents without msg_json
-            role = cast(
-                Literal["user", "assistant", "system"],
-                metadata.get("role", "user"),
-            )
-            msg = Msg(
-                name=metadata.get("name", ""),
-                content=document.text or "",
-                role=role,
-                timestamp=metadata.get("timestamp") or None,
-                invocation_id=metadata.get("invocation_id") or None,
-            )
-            msg.id = document.document_id
-
-        # Restore marks
         marks: list[str] = []
         marks_json = metadata.get("marks_json", "[]")
         try:
@@ -259,7 +295,7 @@ class TablestoreMemory(MemoryBase):
 
         if not allow_duplicates:
             # Filter out duplicates
-            existing_ids = await self._get_existing_ids_in_session(
+            existing_ids = await self._get_existing_msg_ids_in_session(
                 [msg.id for msg in memories],
             )
             memories = [msg for msg in memories if msg.id not in existing_ids]
@@ -272,7 +308,7 @@ class TablestoreMemory(MemoryBase):
             )
         await asyncio.gather(*put_tasks)
 
-    async def _get_existing_ids_in_session(
+    async def _get_existing_msg_ids_in_session(
         self,
         msg_ids: list[str],
     ) -> set[str]:
@@ -287,16 +323,15 @@ class TablestoreMemory(MemoryBase):
             `set[str]`:
                 The set of message IDs that exist in the current session.
         """
+        document_ids = [self._make_document_id(mid) for mid in msg_ids]
         existing_docs = await self._knowledge_store.get_documents(
-            document_id_list=msg_ids,
+            document_id_list=document_ids,
             tenant_id=self._user_id,
         )
         return {
-            doc.document_id
+            self._extract_msg_id(doc.document_id)
             for doc in existing_docs
             if doc is not None
-            and doc.metadata
-            and doc.metadata.get("session_id") == self._session_id
         }
 
     async def _get_all_msg_ids(self) -> set[str]:
@@ -316,9 +351,9 @@ class TablestoreMemory(MemoryBase):
                 next_token=next_token,
             )
             for hit in result.hits:
-                msg_id = hit.document.document_id
-                if msg_id:
-                    all_ids.add(msg_id)
+                document_id = hit.document.document_id
+                if document_id:
+                    all_ids.add(self._extract_msg_id(document_id))
             next_token = result.next_token
             if not next_token:
                 break
@@ -342,11 +377,11 @@ class TablestoreMemory(MemoryBase):
         await self._ensure_initialized()
 
         # Get only the IDs that actually exist in the current session
-        existing_ids = await self._get_existing_ids_in_session(msg_ids)
+        existing_ids = await self._get_existing_msg_ids_in_session(msg_ids)
 
         delete_tasks = [
             self._knowledge_store.delete_document(
-                document_id=msg_id,
+                document_id=self._make_document_id(msg_id),
                 tenant_id=self._user_id,
             )
             for msg_id in existing_ids
@@ -415,12 +450,21 @@ class TablestoreMemory(MemoryBase):
         return len(all_msg_ids)
 
     async def clear(self) -> None:
-        """Clear the memory content."""
+        """Clear the memory content for the current session."""
         await self._ensure_initialized()
 
-        await self._knowledge_store.delete_document_by_tenant(
-            tenant_id=self._user_id,
-        )
+        all_msg_ids = await self._get_all_msg_ids()
+        if not all_msg_ids:
+            return
+
+        delete_tasks = [
+            self._knowledge_store.delete_document(
+                document_id=self._make_document_id(msg_id),
+                tenant_id=self._user_id,
+            )
+            for msg_id in all_msg_ids
+        ]
+        await asyncio.gather(*delete_tasks)
 
     async def get_memory(
         self,
