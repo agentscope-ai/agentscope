@@ -1,23 +1,17 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches, too-many-nested-blocks
 """The OpenAI response formatter for agentscope."""
-import base64
 import json
-import os
 from typing import Any
-from urllib.parse import urlparse
 
-import requests
-
+from ._openai_formatter import _to_openai_image_url, _to_openai_audio_data
 from ._truncated_formatter_base import TruncatedFormatterBase
 from .._logging import logger
 from ..message import (
     Msg,
-    URLSource,
     TextBlock,
     ImageBlock,
     AudioBlock,
-    Base64Source,
     ToolUseBlock,
     ToolResultBlock,
 )
@@ -44,7 +38,7 @@ def _format_openai_response_image_block(
     """
     source = image_block["source"]
     if source["type"] == "url":
-        url = _to_openai_response_image_url(source["url"])
+        url = _to_openai_image_url(source["url"])
     elif source["type"] == "base64":
         data = source["data"]
         media_type = source["media_type"]
@@ -58,98 +52,6 @@ def _format_openai_response_image_block(
         "type": "input_image",
         "image_url": url,
     }
-
-
-def _to_openai_response_image_url(url: str) -> str:
-    """Convert an image url to openai response format. If the given url is a
-     local file, it will be converted to base64 format. Otherwise, it will be
-    returned directly.
-
-    Args:
-        url (`str`):
-            The local or public url of the image.
-    """
-    # See https://platform.openai.com/docs/guides/vision for details of
-    # support image extensions.
-    support_image_extensions = (
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".webp",
-    )
-
-    raw_url = url.removeprefix("file://")
-    # For local files
-    if os.path.exists(raw_url) and os.path.isfile(raw_url):
-        if any(raw_url.endswith(_) for _ in support_image_extensions):
-            with open(raw_url, "rb") as image_file:
-                base64_image = base64.b64encode(image_file.read()).decode(
-                    "utf-8",
-                )
-            extension = raw_url.lower().split(".")[-1]
-            mime_type = f"image/{extension}"
-            return f"data:{mime_type};base64,{base64_image}"
-
-    # For web urls
-    parsed_url = urlparse(raw_url)
-    if parsed_url.scheme not in ["", "file"]:
-        return url
-
-    raise ValueError(
-        f'Invalid image URL: "{url}". It should be a local file or a web URL.',
-    )
-
-
-def _to_openai_response_audio_data(source: URLSource | Base64Source) -> dict:
-    """Covert an audio source to OpenAI response format."""
-    if source["type"] == "url":
-        extension = source["url"].split(".")[-1].lower()
-        if extension not in ["wav", "mp3"]:
-            raise TypeError(
-                f"Unsupported audio file extension: {extension}, "
-                "wav and mp3 are supported.",
-            )
-
-        parsed_url = urlparse(source["url"])
-
-        if os.path.exists(source["url"]):
-            with open(source["url"], "rb") as audio_file:
-                data = base64.b64encode(audio_file.read()).decode("utf-8")
-
-        # web url
-        elif parsed_url.scheme != "":
-            response = requests.get(source["url"])
-            response.raise_for_status()
-            data = base64.b64encode(response.content).decode("utf-8")
-
-        else:
-            raise ValueError(
-                f"Unsupported audio source: {source['url']}, "
-                "it should be a local file or a web URL.",
-            )
-
-        return {
-            "data": data,
-            "format": extension,
-        }
-
-    if source["type"] == "base64":
-        data = source["data"]
-        media_type = source["media_type"]
-
-        if media_type not in ["audio/wav", "audio/mp3"]:
-            raise TypeError(
-                f"Unsupported audio media type: {media_type}, "
-                "only audio/wav and audio/mp3 are supported.",
-            )
-
-        return {
-            "data": data,
-            "format": media_type.split("/")[-1],
-        }
-
-    raise TypeError(f"Unsupported audio source: {source['type']}.")
 
 
 class OpenAIResponseChatFormatter(TruncatedFormatterBase):
@@ -284,7 +186,7 @@ class OpenAIResponseChatFormatter(TruncatedFormatterBase):
                                     {
                                         "type": "input_image",
                                         "image_url": (
-                                            _to_openai_response_image_url(
+                                            _to_openai_image_url(
                                                 url,
                                             )
                                         ),
@@ -329,7 +231,7 @@ class OpenAIResponseChatFormatter(TruncatedFormatterBase):
                     # subsequent model calls
                     if msg.role == "assistant":
                         continue
-                    input_audio = _to_openai_response_audio_data(
+                    input_audio = _to_openai_audio_data(
                         block["source"],
                     )
                     content_blocks.append(
@@ -485,7 +387,7 @@ class OpenAIResponseMultiAgentFormatter(TruncatedFormatterBase):
                     # subsequent model calls
                     if msg.role == "assistant":
                         continue
-                    input_audio = _to_openai_response_audio_data(
+                    input_audio = _to_openai_audio_data(
                         block["source"],
                     )
                     audios.append(
