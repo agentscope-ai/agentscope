@@ -216,13 +216,14 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 ],
             },
             {
-                "type": "function_call_output",
-                "call_id": "1",
-                "output": "- The capital of Japan is Tokyo.\n"
+                "role": "assistant",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n"
                 "- The returned image can be found at: "
                 f"{self.image_path}\n"
                 "- The returned audio can be found at: "
                 f"{self.mock_audio_path}",
+                "name": "get_capital",
             },
             {
                 "role": "assistant",
@@ -292,13 +293,14 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
                 ],
             },
             {
-                "type": "function_call_output",
-                "call_id": "1",
-                "output": "- The capital of Japan is Tokyo.\n"
+                "role": "assistant",
+                "tool_call_id": "1",
+                "content": "- The capital of Japan is Tokyo.\n"
                 "- The returned image can be found at: "
                 f"{self.image_path}\n"
                 "- The returned audio can be found at: "
                 f"{self.mock_audio_path}",
+                "name": "get_capital",
             },
             {
                 "role": "user",
@@ -342,12 +344,10 @@ class TestOpenAIResponseFormatter(IsolatedAsyncioTestCase):
             [*self.msgs_system, *self.msgs_conversation, *self.msgs_tools],
         )
 
-        # Verify function_call_output format
-        fc_outputs = [
-            m for m in res if m.get("type") == "function_call_output"
-        ]
-        self.assertEqual(len(fc_outputs), 1)
-        self.assertEqual(fc_outputs[0]["call_id"], "1")
+        # Verify tool result format
+        tool_results = [m for m in res if m.get("tool_call_id") is not None]
+        self.assertEqual(len(tool_results), 1)
+        self.assertEqual(tool_results[0]["tool_call_id"], "1")
 
         # Verify promoted image block is inserted as a separate user message
         promoted_msgs = [
