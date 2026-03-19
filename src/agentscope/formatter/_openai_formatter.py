@@ -116,21 +116,22 @@ def _to_openai_image_url(url: str) -> str:
 def _to_openai_audio_data(source: URLSource | Base64Source) -> dict:
     """Covert an audio source to OpenAI format."""
     if source["type"] == "url":
-        extension = source["url"].split(".")[-1].lower()
+        raw_url = source["url"].removeprefix("file://")
+        extension = raw_url.split(".")[-1].lower()
         if extension not in ["wav", "mp3"]:
             raise TypeError(
                 f"Unsupported audio file extension: {extension}, "
                 "wav and mp3 are supported.",
             )
 
-        parsed_url = urlparse(source["url"])
+        parsed_url = urlparse(raw_url)
 
-        if os.path.exists(source["url"]):
-            with open(source["url"], "rb") as audio_file:
+        if os.path.exists(raw_url):
+            with open(raw_url, "rb") as audio_file:
                 data = base64.b64encode(audio_file.read()).decode("utf-8")
 
         # web url
-        elif parsed_url.scheme != "":
+        elif parsed_url.scheme not in ["", "file"]:
             response = requests.get(source["url"])
             response.raise_for_status()
             data = base64.b64encode(response.content).decode("utf-8")
