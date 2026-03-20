@@ -50,6 +50,7 @@ def _json_loads_with_repair(
     """
     try:
         result = repair_json(json_str, stream_stable=True)
+        # For nested JSON strings like '"{\\"key\\": \\"value\\"}"'
         while not isinstance(result := json.loads(result), dict):
             ...
         return result
