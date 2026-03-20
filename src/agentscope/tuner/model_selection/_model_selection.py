@@ -343,9 +343,13 @@ async def _evaluate_single_sample(
     }
 
     # Evaluate the workflow output using judge function
+    # Pass a composite dict containing both the response and workflow metrics
     judge_output: JudgeOutput = await judge_func(
         task=sample,
-        response=workflow_output,
+        response={
+            "response": workflow_output.response,
+            "metrics": workflow_output.metrics,
+        },
     )
 
     return judge_output

@@ -155,7 +155,6 @@ The judge function evaluates the agent's response and returns a reward. It has t
 async def judge_function(
     task: Dict,
     response: Any,
-    auxiliary_models: Dict[str, ChatModelBase],
 ) -> JudgeOutput:
     """Calculate reward based on the input task and agent's response."""
 ```
@@ -163,7 +162,6 @@ async def judge_function(
 - Inputs:
     - `task`: A dictionary representing a single training task.
     - `response`: The output from the workflow function.
-    - `auxiliary_models`: A dictionary of auxiliary models (can be empty).
 
 - Outputs:
     - `JudgeOutput`: An object containing:
@@ -176,7 +174,7 @@ Here is an example implementation:
 from agentscope.tuner import JudgeOutput
 
 async def judge_function(
-    task: Dict, response: Msg, auxiliary_models: Dict[str, ChatModelBase]
+    task: Dict, response: Any
 ) -> JudgeOutput:
     """Simple reward: 1.0 for exact match, else 0.0."""
     ground_truth = task["answer"]
@@ -197,7 +195,7 @@ from agentscope.tuner.prompt_tune import tune_prompt, PromptTuneConfig
 if __name__ == "__main__":
     init_prompt = "You are an agent. Please solve the math problem given to you."
 
-    optimized_prompt = tune_prompt(
+    optimized_prompt, metrics = tune_prompt(
         workflow=workflow,
         init_system_prompt=init_prompt,
         judge_func=judge_function,
@@ -210,6 +208,7 @@ if __name__ == "__main__":
     )
 
     print(f"Optimized prompt: {optimized_prompt}")
+    print(f"Metrics: {metrics}")
 ```
 
 Here, we use:
@@ -271,7 +270,7 @@ async def workflow(
 
 
 async def judge_function(
-    task: Dict, response: Msg, auxiliary_models: Dict[str, ChatModelBase]
+    task: Dict, response: Any
 ) -> JudgeOutput:
     """Simple reward: 1.0 for exact match, else 0.0."""
     ground_truth = task["answer"]
@@ -286,7 +285,7 @@ if __name__ == "__main__":
         "You should provide your output within \\boxed{{}}."
     )
 
-    optimized_prompt = tune_prompt(
+    optimized_prompt, metrics = tune_prompt(
         workflow=workflow,
         init_system_prompt=init_prompt,
         judge_func=judge_function,
@@ -295,6 +294,7 @@ if __name__ == "__main__":
     )
 
     print(f"Optimized prompt: {optimized_prompt}")
+    print(f"Metrics: {metrics}")
 ```
 
 > Note:
