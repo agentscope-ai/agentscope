@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """MsgHub is designed to share messages among a group of agents."""
 
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 import shortuuid
 
