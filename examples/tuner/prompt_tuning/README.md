@@ -161,7 +161,7 @@ async def judge_function(
 
 - Inputs:
     - `task`: A dictionary representing a single training task.
-    - `response`: The output from the workflow function.
+    - `response`: The `response` field of the `WorkflowOutput` struct returned by the workflow function.
 
 - Outputs:
     - `JudgeOutput`: An object containing:
