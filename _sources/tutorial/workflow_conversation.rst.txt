@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm into sports and a bit of coding. It's great to meet you! I think it's really cool that you're into environmental science; we need more people working on that stuff.
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and graphic design. It's awesome to meet both of you! Alice, your interest in environmental science is super important. And Bob, that's great that you're into sports and coding; it's a nice mix of physical and mental activities!
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm into science and technology, but I also love playing sports. Great to meet you too!
+    Charlie: Hi, I'm Charlie! I enjoy exploring different types of music and playing video games. Nice to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in technology and environmental science. Nice to meet you! What about you?
-    Bob: Hey Alice! I'm Bob, and I'm into sports and a bit of coding. It's great to meet you! I think it's really cool that you're into environmental science; we need more people working on that stuff.
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and graphic design. It's awesome to meet both of you! Alice, your interest in environmental science is super important. And Bob, that's great that you're into sports and coding; it's a nice mix of physical and mental activities!
+    Alice: Hi there! I'm Alice, a student with a keen interest in literature and art. It's nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob. I'm into science and technology, but I also love playing sports. Great to meet you too!
+    Charlie: Hi, I'm Charlie! I enjoy exploring different types of music and playing video games. Nice to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 16.330 seconds)
+   **Total running time of the script:** (0 minutes 11.949 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
