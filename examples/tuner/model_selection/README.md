@@ -130,14 +130,16 @@ The judge function evaluates the workflow's response and returns a reward. Highe
 ```python
 async def judge_function(
     task: Dict,
-    response: WorkflowOutput,
+    response: Any,
 ) -> JudgeOutput:
     """Calculate reward based on the input task and workflow's response."""
 ```
 
 - Inputs:
     - `task`: A dictionary representing a single training task.
-    - `response`: The output from the workflow function.
+    - `response`: A composite dict containing:
+        - `"response"`: The actual response from the workflow function.
+        - `"metrics"`: Workflow metrics including execution_time and token usage.
 
 - Outputs:
     - `JudgeOutput`: An object containing:
@@ -151,14 +153,15 @@ from agentscope.tuner import JudgeOutput
 
 async def bleu_judge(
     task: Dict,
-    response: WorkflowOutput,
+    response: Any,
 ) -> JudgeOutput:
     """Calculate BLEU score for translation quality."""
     # Lazy import to follow the requirement
     import sacrebleu
 
-    # Extract response text
-    response_str = response.response.get_text_content()
+    # Extract response text from the composite dict
+    response_content = response["response"]
+    response_str = response_content.get_text_content()
 
     # Extract reference translation
     reference_translation = task.get("answer", "") if isinstance(task, dict) else ""
