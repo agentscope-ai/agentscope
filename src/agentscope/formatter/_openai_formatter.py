@@ -405,6 +405,9 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
                             block,  # type: ignore[arg-type]
                         ),
                     )
+                # Although OpenAI officially doesn't support video input,
+                # some third-party compatible model services, such as
+                # DashScope, require video support.
                 elif typ == "video":
                     content_blocks.append(
                         _format_openai_video_block(
