@@ -25,6 +25,7 @@ from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from .._utils._common import (
     _json_loads_with_repair,
+    _parse_streaming_json_dict,
     _create_tool_from_base_model,
 )
 from ..message import TextBlock, ToolUseBlock, ThinkingBlock
@@ -413,16 +414,10 @@ class DashScopeChatModel(ChatModelBase):
 
                 # If parsing the tool input in streaming mode
                 if self.stream_tool_parsing:
-                    repaired_input = _json_loads_with_repair(
-                        input_str or "{}",
+                    repaired_input = _parse_streaming_json_dict(
+                        input_str,
+                        last_input_objs.get(tool_id),
                     )
-                    # If the new repaired input is shorter than one in the last
-                    # chunk, use the last one to avoid regression
-                    last_input = last_input_objs.get(tool_id, {})
-                    if len(json.dumps(last_input)) > len(
-                        json.dumps(repaired_input),
-                    ):
-                        repaired_input = last_input
                     last_input_objs[tool_id] = repaired_input
 
                 else:
