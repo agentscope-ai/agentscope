@@ -3,7 +3,7 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import List, Union, Dict, Tuple, Optional, Callable, Sequence
+from typing import List, Dict, Tuple, Optional, Callable, Sequence, Union
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -54,7 +54,7 @@ async def select_model(
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
     max_threads: int = 2,
-) -> Tuple[ChatModelBase, dict[str, float]]:
+) -> Tuple[ChatModelBase, Dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
     metrics on a dataset.
@@ -98,7 +98,6 @@ async def select_model(
     exporter = _InMemoryExporter()
     span_processor = SimpleSpanProcessor(exporter)
 
-
     # Create and configure tracer provider for the entire evaluation
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(span_processor)
@@ -109,8 +108,13 @@ async def select_model(
     best_avg_reward = float("-inf")  # Look for largest reward
 
     # Load dataset
-
-    from datasets import load_dataset
+    try:
+        from datasets import load_dataset
+    except ImportError as e:
+        raise ImportError(
+            "datasets library is required for model selection. "
+            "Please install it with `pip install datasets`"
+        ) from e
 
     dataset = load_dataset(
         path=train_dataset.path,
@@ -134,10 +138,8 @@ async def select_model(
 
         total_reward = 0.0
         num_samples = 0
-        model_metrics: dict[
-            str,
-            float,
-        ] = {}  # Store accumulated metrics for this model
+        model_metrics: Dict[str, float] = {}
+        # Store accumulated metrics for this model
 
         # Process dataset samples with async function calls
         semaphore = asyncio.Semaphore(max_threads)
@@ -174,8 +176,7 @@ async def select_model(
         tasks = [
             evaluate_with_semaphore(idx, sample)
             for idx, sample in enumerate(dataset)
-            if train_dataset.total_steps is None
-            or idx < train_dataset.total_steps
+            if (train_dataset.total_steps is None or idx < train_dataset.total_steps)
         ]
 
         # Execute all tasks concurrently
@@ -202,9 +203,7 @@ async def select_model(
         if avg_reward > best_avg_reward:
             best_avg_reward = avg_reward
             best_model = model
-            all_metrics = (
-                averaged_model_metrics  # Store metrics of best model
-            )
+            all_metrics = averaged_model_metrics  # Store metrics of best model
 
     # Report final scores and detailed metrics for all models
     logger.info("Model evaluation results:")
@@ -226,7 +225,7 @@ async def select_model(
 
 
 def _process_evaluation_results(
-    results: List[JudgeOutput | Exception | None],
+    results: List[Union[JudgeOutput, BaseException, None]],
     model_metrics: Dict[str, float],
     total_reward_init: float,
     num_samples_init: int,
@@ -241,7 +240,7 @@ def _process_evaluation_results(
         num_samples_init: Initial value for number of samples
 
     Returns:
-        Tuple of (total_reward, num_samples, averaged_model_metrics) 
+        Tuple of (total_reward, num_samples, averaged_model_metrics)
     """
     import numbers
 
@@ -256,6 +255,11 @@ def _process_evaluation_results(
                     str(result),
                 )
             continue  # Skip failed evaluations and don't count in num_samples
+
+        # Only count results that are JudgeOutput toward num_samples
+        # Ensure it's actually a JudgeOutput before accessing attributes
+        if not isinstance(result, JudgeOutput):
+            continue  # Skip non-JudgeOutput results
 
         # Only count results that are not None toward num_samples
         total_reward += result.reward
@@ -315,7 +319,7 @@ async def _evaluate_single_sample(
     # Setup the tracer with baggage for the exporter to track this task
     tracer = trace.get_tracer(__name__)
 
-    # Set baggage (this is critical for the exporter to associate spans with tasks)
+    # Set baggage (this is critical for exporter to associate spans with tasks)
     ctx = baggage.set_baggage("task_id", task_id)
     ctx = baggage.set_baggage("repeat_id", repeat_id, context=ctx)
 
@@ -326,6 +330,7 @@ async def _evaluate_single_sample(
         with tracer.start_as_current_span(
             name=f"Solution_{task_id}_{repeat_id}",
         ):
+            # Access _config for trace enablement
             from ... import _config
 
             _config.trace_enabled = True
@@ -359,17 +364,15 @@ async def _evaluate_single_sample(
         )
         # Sum up token usage across all models used in this task
         for _, usage in chat_usage_data.items():  # Fixed: unused variable
-            total_input_tokens += usage.get("input_tokens", 0)
-            total_output_tokens += usage.get("output_tokens", 0)
+            total_input_tokens += int(usage.get("input_tokens", 0))
+            total_output_tokens += int(usage.get("output_tokens", 0))
 
     total_tokens = total_input_tokens + total_output_tokens
 
     # Add usage information to workflow_output metrics
-    workflow_output.metrics["usage"] = {
-        "input_tokens": total_input_tokens,
-        "output_tokens": total_output_tokens,
-        "total_tokens": total_tokens,
-    }
+    workflow_output.metrics["input_tokens"] = float(total_input_tokens)
+    workflow_output.metrics["output_tokens"] = float(total_output_tokens)
+    workflow_output.metrics["total_tokens"] = float(total_tokens)
 
     # Evaluate the workflow output using judge function
     # Pass a composite dict containing both the response and workflow metrics

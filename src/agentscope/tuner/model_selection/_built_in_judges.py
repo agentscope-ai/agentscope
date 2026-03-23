@@ -11,7 +11,7 @@ async def avg_time_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average time consumption of a model.
-    This function returns a negative reward (making 
+    This function returns a negative reward (making
     it a bigger-is-better metric), and includes the original metric
     in the metrics field.
 
@@ -42,9 +42,8 @@ async def avg_time_judge(
         raise ValueError("Missing 'execution_time' field in metrics")
     time_taken = metrics["execution_time"]
 
-    #  (smaller time = higher reward)
+    # Smaller time = higher reward
     reward = -time_taken
-    
 
     return JudgeOutput(
         reward=reward,
@@ -58,7 +57,7 @@ async def avg_token_consumption_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average token consumption of a model.
-    This function returns a negative reward (making 
+    This function returns a negative reward (making
     it a bigger-is-better metric), and includes the original metric
     in the metrics field.
 
