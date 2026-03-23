@@ -52,8 +52,10 @@ async def _load_dataset(train_dataset: DatasetConfig):
     """Load and optionally limit dataset."""
     try:
         from datasets import load_dataset
-    except ImportError:
-        raise ImportError("Please install with `pip install datasets`")
+    except ImportError as e:
+        raise ImportError(
+            "Please install with `pip install datasets`"
+        ) from e
 
     dataset = load_dataset(
         path=train_dataset.path,
