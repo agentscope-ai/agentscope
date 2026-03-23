@@ -141,7 +141,9 @@ evaluate = ["ray"]
 tuner = [
     "dspy>=3.1.0",
     "datasets>=4.0.0",
-    "litellm[proxy]>=1.75.3"
+    "litellm[proxy]>=1.75.3",
+    datasets,
+    sacrebleu,
 ]
 
 tuner-gpu = [
