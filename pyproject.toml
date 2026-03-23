@@ -24,6 +24,7 @@ dependencies = [
     "anthropic",
     "dashscope",
     "docstring_parser",
+    "filetype",
     "json5",
     "json_repair",
     "mcp>=1.13",
