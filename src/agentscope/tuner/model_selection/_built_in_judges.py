@@ -11,16 +11,16 @@ async def avg_time_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average time consumption of a model.
-    This function returns a negative reward (since smaller time usage is better,
-    making it a bigger-is-better metric), and includes the original metric
+    This function returns a negative reward (making 
+    it a bigger-is-better metric), and includes the original metric
     in the metrics field.
 
     Args:
         task (`Dict[str, Any]`):
             The task information for the corresponding workflow.
         response (`Any`):
-            A composite dict containing "response" (the workflow response)
-            and "metrics" (workflow metrics including execution_time and usage).
+            A composite dict containing the workflow response
+            and workflow metrics including execution_time and usage.
 
     Returns:
         `JudgeOutput`:
@@ -42,7 +42,7 @@ async def avg_time_judge(
         raise ValueError("Missing 'execution_time' field in metrics")
     time_taken = metrics["execution_time"]
 
-    # Return negative reward to make it bigger-is-better (smaller time = higher reward)
+    #  (smaller time = higher reward)
     reward = -time_taken
 
     return JudgeOutput(
@@ -57,21 +57,21 @@ async def avg_token_consumption_judge(
 ) -> JudgeOutput:
     """
     Built-in judge function to calculate average token consumption of a model.
-    This function returns a negative reward (since smaller token usage is better,
-    making it a bigger-is-better metric), and includes the original metric
+    This function returns a negative reward (making 
+    it a bigger-is-better metric), and includes the original metric
     in the metrics field.
 
     Args:
         task (`Dict[str, Any]`):
             The task information for the corresponding workflow.
         response (`Any`):
-            A composite dict containing "response" (the workflow response)
-            and "metrics" (workflow metrics including execution_time and usage).
+            A composite dict containing the workflow response
+            and workflow metrics including execution_time and usage.
             Must include a 'metrics.usage' field.
 
     Returns:
         `JudgeOutput`:
-            The negative token consumption (making smaller consumption a bigger reward),
+            The negative token consumption,
             and metrics containing the original token consumption value.
     """
     original_reward = 0.0
@@ -93,14 +93,14 @@ async def avg_token_consumption_judge(
             original_reward = float(usage["output_tokens"])
         else:
             raise ValueError(
-                "Neither 'total_tokens' nor 'output_tokens' found in usage field",
+                "Neither 'total_tokens' nor 'output_tokens' found",
             )
     else:
         raise ValueError(
             "Usage field in response.metrics is not a dictionary",
         )
 
-    # Return negative reward to make it bigger-is-better (smaller token usage = higher reward)
+    # smaller token usage = higher reward
     reward = -original_reward
 
     return JudgeOutput(

@@ -75,6 +75,11 @@ async def workflow(
 
 
 async def main() -> None:
+    """Main entry point to run model selection example.
+
+    This function selects the best model based on
+    token consumption, and prints the results.
+    """
     # Configure the GSM8K dataset
     dataset_config = DatasetConfig(
         path="openai/gsm8k",

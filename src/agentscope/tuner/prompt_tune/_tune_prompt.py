@@ -10,7 +10,6 @@ from agentscope.tuner import (
     DatasetConfig,
 )
 from agentscope import logger
-from agentscope.model._model_base import ChatModelBase
 from agentscope.tuner._config import _check_function_signature
 from agentscope.tuner._workflow import WorkflowType
 from agentscope.tuner._judge import JudgeType
@@ -244,10 +243,9 @@ def tune_prompt(
     assert isinstance(
         optimized_prompt,
         str,
-    ), f"Optimized prompt must be a string but {type(optimized_prompt)}. This should not happen."
+    ), f"Optimized prompt must be a string but {type(optimized_prompt)}."
     logger.info("---------- Optimized Prompt ----------")
     logger.info(optimized_prompt)
-    logger.info("--------------------------------------")
 
     metrics: dict[str, float] = {}
     if valset_improvement is not None:

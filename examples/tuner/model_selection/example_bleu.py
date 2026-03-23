@@ -55,7 +55,8 @@ async def translation_workflow(
     """A workflow function using the ReAct agent to perform translation tasks.
 
     Args:
-        task (Dict[str, Any]): The translation task containing source text and target language.
+        task (Dict[str, Any]): The translation task 
+        containing source text and target language.
         model: The model to use for the agent.
 
     Returns:
@@ -63,7 +64,8 @@ async def translation_workflow(
     """
     agent = ReActAgent(
         name="translator",
-        sys_prompt="You are a helpful translation agent. Translate the given text accurately, and only output the translated text.",
+        sys_prompt="You are a helpful translation agent." \
+        "Only output the translated text.",
         model=model,
         formatter=OpenAIChatFormatter(),
     )
@@ -74,7 +76,7 @@ async def translation_workflow(
     )
 
     # Create a message with the translation request
-    prompt = f"Translate the following text between English and Chinese: {source_text}"
+    prompt = f"Translate following text between English and Chinese: {source_text}"
     msg = Msg(name="user", content=prompt, role="user")
 
     # Get response from the agent
@@ -92,9 +94,9 @@ async def bleu_judge(
     """A judge function to calculate BLEU score for translation quality.
 
     Args:
-        task (Dict[str, Any]): The task information containing reference translation.
-        response (Any): A composite dict containing "response" (the workflow response)
-            and "metrics" (workflow metrics).
+        task (Dict[str, Any]): The task information.
+        response (Any): A composite dict containing the workflow response
+            and metrics.
 
     Returns:
         JudgeOutput: The BLEU score and other metrics.
@@ -146,6 +148,11 @@ async def bleu_judge(
 
 
 async def main() -> None:
+    """Main entry point to run model selection example.
+
+    This function selects the best model based on
+    bleu score, and prints the results.
+    """
     # Define the translation benchmark dataset using DatasetConfig
     dataset_config = DatasetConfig(
         path=os.path.join(

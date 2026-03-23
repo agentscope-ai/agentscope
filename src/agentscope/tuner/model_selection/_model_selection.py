@@ -4,15 +4,16 @@ candidates based on evaluation metrics."""
 import asyncio
 import logging
 from typing import Callable, Optional, Sequence, Tuple
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from ...model import ChatModelBase
 from .._workflow import WorkflowType, WorkflowOutput
 from .._config import _check_function_signature
 from .._judge import JudgeType, JudgeOutput
 from .._dataset import DatasetConfig
 from ...evaluate._evaluator._in_memory_exporter import _InMemoryExporter
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,6 @@ async def select_model(
     exporter = _InMemoryExporter()
     span_processor = SimpleSpanProcessor(exporter)
 
-    # Get the current tracer provider before making changes
-    original_provider = trace.get_tracer_provider()
 
     # Create and configure tracer provider for the entire evaluation
     tracer_provider = TracerProvider()
@@ -147,6 +146,8 @@ async def select_model(
         async def evaluate_with_semaphore(
             idx: int,
             sample: dict,
+            model=model, 
+            exporter=exporter,  
         ) -> Optional[JudgeOutput]:
             async with semaphore:
                 try:
@@ -181,40 +182,12 @@ async def select_model(
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
-        for result in results:
-            if result is None or isinstance(result, Exception):
-                if isinstance(result, Exception):
-                    logger.warning(
-                        "Sample evaluation failed: %s",
-                        str(result),
-                    )
-                continue  # Skip failed evaluations and don't count in num_samples
-
-            # Only count results that are not None toward num_samples
-            total_reward += result.reward
-            num_samples += 1
-
-            # Aggregate metrics from this sample
-            if result.metrics:
-                for key, value in result.metrics.items():
-                    if key in model_metrics:
-                        model_metrics[key] += value
-                    else:
-                        model_metrics[key] = value
+        total_reward, num_samples, averaged_model_metrics = _process_evaluation_results(
+            results, model_metrics, total_reward, num_samples
+        )
 
         avg_reward = total_reward / num_samples if num_samples > 0 else 0.0
         model_scores[model.model_name] = avg_reward
-
-        # Average the metrics per sample for this model
-        averaged_model_metrics = {}
-        for key, value in model_metrics.items():
-            import numbers
-
-            if isinstance(value, numbers.Number):
-                num_val = value.real if hasattr(value, "real") else 0.0
-                averaged_model_metrics[f"{key}_avg"] = (
-                    float(num_val) / num_samples if num_samples > 0 else 0.0
-                )
 
         # Save detailed metrics for this model
         model_detailed_metrics[model.model_name] = averaged_model_metrics
@@ -250,6 +223,64 @@ async def select_model(
         return best_model, all_metrics
     else:
         raise RuntimeError("No best model selected. This should not happen.")
+
+
+def _process_evaluation_results(
+    results,
+    model_metrics,
+    total_reward_init,
+    num_samples_init
+):
+    """
+    Process evaluation results to calculate total reward and aggregate metrics.
+
+    Args:
+        results: The list of evaluation results
+        model_metrics: Dictionary to accumulate metrics
+        total_reward_init: Initial value for total reward
+        num_samples_init: Initial value for number of samples
+
+    Returns:
+        Tuple of (total_reward, num_samples, averaged_model_metrics) 
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    import numbers
+
+    total_reward = total_reward_init
+    num_samples = num_samples_init
+
+    for result in results:
+        if result is None or isinstance(result, Exception):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "Sample evaluation failed: %s",
+                    str(result),
+                )
+            continue  # Skip failed evaluations and don't count in num_samples
+
+        # Only count results that are not None toward num_samples
+        total_reward += result.reward
+        num_samples += 1
+
+        # Aggregate metrics from this sample
+        if result.metrics:
+            for key, value in result.metrics.items():
+                if key in model_metrics:
+                    model_metrics[key] += value
+                else:
+                    model_metrics[key] = value
+
+    # Average the metrics per sample for this model
+    averaged_model_metrics = {}
+    for key, value in model_metrics.items():
+        if isinstance(value, numbers.Number):
+            num_val = value.real if hasattr(value, "real") else 0.0
+            averaged_model_metrics[f"{key}_avg"] = (
+                float(num_val) / num_samples if num_samples > 0 else 0.0
+            )
+
+    return total_reward, num_samples, averaged_model_metrics
 
 
 async def _evaluate_single_sample(
