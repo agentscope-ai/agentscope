@@ -3,7 +3,8 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import List, Dict, Tuple, Optional, Callable, Sequence, Union
+from typing import List, Dict, Tuple, Optional, Callable
+from typing import Sequence, Union, Any
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -48,7 +49,9 @@ def check_judge_function(
 
 
 
-async def _load_dataset(train_dataset: DatasetConfig):
+async def _load_dataset(
+        train_dataset: DatasetConfig
+        )->Any:
     """Load and optionally limit dataset."""
     try:
         from datasets import load_dataset
