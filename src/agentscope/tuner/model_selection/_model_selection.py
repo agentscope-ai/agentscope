@@ -47,6 +47,28 @@ def check_judge_function(
         _check_function_signature(func, ["_task", "response"])
 
 
+
+async def _load_dataset(train_dataset: DatasetConfig):
+    """Load and optionally limit dataset."""
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("Please install with `pip install datasets`")
+
+    dataset = load_dataset(
+        path=train_dataset.path,
+        name=train_dataset.name,
+        split=train_dataset.split,
+    )
+
+    if train_dataset.total_steps is not None:
+        dataset = dataset.select(
+            range(min(train_dataset.total_steps, len(dataset))),
+        )
+    return dataset
+
+
+
 async def select_model(
     *,
     workflow_func: WorkflowType,
@@ -107,26 +129,7 @@ async def select_model(
 
     best_avg_reward = float("-inf")  # Look for largest reward
 
-    # Load dataset
-    try:
-        from datasets import load_dataset
-    except ImportError as e:
-        raise ImportError(
-            "datasets library is required for model selection. "
-            "Please install it with `pip install datasets`"
-        ) from e
-
-    dataset = load_dataset(
-        path=train_dataset.path,
-        name=train_dataset.name,
-        split=train_dataset.split,
-    )
-
-    # Limit dataset if total_steps is specified
-    if train_dataset.total_steps is not None:
-        dataset = dataset.select(
-            range(min(train_dataset.total_steps, len(dataset))),
-        )
+    dataset = await _load_dataset(train_dataset)
 
     best_model = candidate_models[0] if candidate_models else None
     model_scores = {}  # Track scores for each model to provide visibility
