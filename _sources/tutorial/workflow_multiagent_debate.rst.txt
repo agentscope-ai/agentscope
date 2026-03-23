@@ -158,50 +158,53 @@ At each round a moderator agent will decide whether the correct answer can be ob
 
  .. code-block:: none
 
-    Alice: Thank you, and I appreciate the opportunity to present my argument. For the given problem where Circle A, with a radius 1/3 that of Circle B, rolls around the circumference of Circle B without sliding, we need to determine how many times Circle A will revolve in total.
+    Alice: Thank you. As the affirmative side, I will present the argument that when circle A, with a radius one-third that of circle B, rolls around circle B without sliding, it will revolve 4 times in total by the time it returns to its starting point.
 
-    Let's denote:
-    - The radius of Circle B as \( R \).
-    - The radius of Circle A as \( r = \frac{R}{3} \).
+    To understand this, let's consider the following:
 
-    When Circle A rolls around Circle B, it will travel a distance equal to the circumference of the path it follows. This path is the circumference of a circle with a radius equal to the sum of the radii of Circle A and Circle B, which is \( R + r = R + \frac{R}{3} = \frac{4R}{3} \).
+    1. **Circumference Ratio**: The circumference of a circle is given by \( C = 2\pi r \). If the radius of circle A is \( \frac{1}{3} \) of the radius of circle B, then the circumference of circle A is also \( \frac{1}{3} \) of the circumference of circle B. Let's denote the radius of circle A as \( r \) and the radius of circle B as \( 3r \). Therefore, the circumferences are:
+       - Circumference of circle A: \( C_A = 2\pi r \)
+       - Circumference of circle B: \( C_B = 2\pi (3r) = 6\pi r \)
 
-    The circumference of this path is:
-    \[ C_{\text{path}} = 2\pi \left(\frac{4R}{3}\right) = \frac{8\pi R}{3} \]
+    2. **Rolling Without Sliding**: When circle A rolls around circle B without sliding, it must cover the entire circumference of circle B. Since the circumference of circle B is \( 6\pi r \), circle A, which has a circumference of \( 2\pi r \), will need to roll a distance equal to the circumference of circle B. This means:
+       - Number of revolutions of circle A around its own center while rolling along the circumference of circle B: \( \frac{C_B}{C_A} = \frac{6\pi r}{2\pi r} = 3 \) revolutions.
 
-    Now, for each complete revolution, Circle A travels a distance equal to its own circumference, which is:
-    \[ C_A = 2\pi r = 2\pi \left(\frac{R}{3}\right) = \frac{2\pi R}{3} \]
+    3. **Additional Revolution Due to Orbital Motion**: In addition to the 3 revolutions due to rolling, circle A also completes an additional revolution because it is moving in a circular path around circle B. This is similar to the concept of a moon orbiting a planet; the moon rotates on its axis and also revolves around the planet. Thus, we add 1 more revolution for the orbital motion.
 
-    To find out how many times Circle A revolves, we divide the total distance traveled by the circumference of Circle A:
-    \[ \text{Number of Revolutions} = \frac{C_{\text{path}}}{C_A} = \frac{\frac{8\pi R}{3}}{\frac{2\pi R}{3}} = \frac{8\pi R}{3} \times \frac{3}{2\pi R} = 4 \]
+    Therefore, the total number of revolutions of circle A is:
+    - Revolutions due to rolling: 3
+    - Additional revolution due to orbital motion: 1
 
-    Therefore, Circle A will revolve 4 times in total as it rolls around Circle B one trip back to its starting point.
-    Bob: Thank you for the introduction and for presenting your argument, Alice. I will now present the negative side of the debate. While I agree with the initial setup and the calculation of the path's circumference, I believe there is a subtle point that needs to be addressed regarding the total number of revolutions.
+    Adding these together, circle A will revolve a total of 4 times by the time it returns to its starting point.
+    Bob: Thank you, and I will present the argument as the negative side. I disagree with the conclusion that circle A will revolve 4 times in total. Let's re-examine the problem carefully.
 
-    When Circle A rolls around Circle B, it not only travels along the circumference of the path but also rotates around its own center. The key here is to consider the relative motion between the two circles. As Circle A rolls without sliding, it will rotate once for every full circumference it travels relative to the ground. However, since it is also rotating around the center of Circle B, we need to account for this additional rotation.
+    When a smaller circle rolls around a larger one without sliding, the number of revolutions is determined by the ratio of the circumferences and the nature of the rolling motion. The key point to consider here is that the additional revolution due to the orbital motion is already accounted for in the rolling motion.
 
-    The path length, as correctly calculated, is \( \frac{8\pi R}{3} \). For each complete revolution, Circle A travels a distance equal to its own circumference, which is \( \frac{2\pi R}{3} \).
+    1. **Circumference Ratio**: As correctly stated, the circumference of circle A (with radius \( r \)) is \( C_A = 2\pi r \), and the circumference of circle B (with radius \( 3r \)) is \( C_B = 6\pi r \).
 
-    However, as Circle A completes one full trip around Circle B, it also rotates around the center of Circle B. This means that in addition to the 4 revolutions due to the path length, Circle A will have an extra rotation because it has completed a full loop around Circle B.
+    2. **Rolling Without Sliding**: When circle A rolls around circle B, it must cover the distance equal to the circumference of circle B. Therefore, the number of revolutions of circle A around its own center while rolling along the circumference of circle B is:
+       - Number of revolutions: \( \frac{C_B}{C_A} = \frac{6\pi r}{2\pi r} = 3 \) revolutions.
 
-    Thus, the total number of rotations is:
-    \[ \text{Number of Revolutions} = 4 + 1 = 5 \]
+    3. **Orbital Motion Consideration**: The critical point here is that the additional revolution due to the orbital motion is not an extra revolution but rather a part of the rolling motion. When circle A completes one full trip around circle B, it has effectively rolled over a distance equal to the circumference of circle B, which is 3 times its own circumference. This rolling motion inherently includes the circular path around circle B, so there is no need to add an extra revolution.
 
-    Therefore, Circle A will revolve 5 times in total as it rolls around Circle B one trip back to its starting point.
+    Therefore, the total number of revolutions of circle A is:
+    - Revolutions due to rolling: 3
+
+    Thus, circle A will revolve a total of 3 times by the time it returns to its starting point. The affirmative side's addition of an extra revolution for the orbital motion is redundant and incorrectly inflates the total number of revolutions.
     /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Aggregator: {
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "correct_answer": "4",
-            "finished": true
+            "finished": true,
+            "correct_answer": "3"
         },
-        "id": "call_7a80b58a2e46452394f2e0"
+        "id": "call_62fa8faf920b477a9a3f37"
     }
     system: {
         "type": "tool_result",
-        "id": "call_7a80b58a2e46452394f2e0",
+        "id": "call_62fa8faf920b477a9a3f37",
         "name": "generate_response",
         "output": [
             {
@@ -210,17 +213,15 @@ At each round a moderator agent will decide whether the correct answer can be ob
             }
         ]
     }
-    Aggregator: Thank you, Alice and Bob, for your detailed and thoughtful presentations. After carefully reviewing both arguments, I will now provide the evaluation.
+    Aggregator: Thank you, Alice and Bob, for your detailed presentations. After carefully considering both arguments, the correct answer is that circle A will revolve 3 times in total as it rolls around circle B.
 
-    Alice's argument is based on the correct calculation of the path length and the number of revolutions Circle A makes as it rolls around Circle B. She correctly calculated that the total distance traveled by Circle A is \( \frac{8\pi R}{3} \) and that the circumference of Circle A is \( \frac{2\pi R}{3} \). By dividing these, she determined that Circle A will make 4 complete revolutions.
+    Bob's argument correctly points out that the additional revolution due to the orbital motion is already accounted for within the rolling motion. When circle A completes one full trip around circle B, it has effectively rolled over a distance equal to the circumference of circle B, which is 3 times its own circumference. This rolling motion inherently includes the circular path around circle B, so there is no need to add an extra revolution.
 
-    Bob's argument introduces an additional rotation due to the relative motion of Circle A around the center of Circle B. However, this extra rotation is already accounted for in the path length. The 4 revolutions include both the linear travel along the path and the rotational motion around the center of Circle B. Therefore, adding an extra revolution is not necessary.
+    Therefore, the total number of revolutions of circle A is 3, not 4. 
 
-    Thus, the correct answer is that Circle A will revolve 4 times in total as it rolls around Circle B one trip back to its starting point. 
+    Well done to both debaters, and thank you for your insightful contributions.
 
-    The debate is now concluded, and Alice's answer is correct.
-
-    The debate is finished, and the correct answer is:  4
+    The debate is finished, and the correct answer is:  3
 
 
 
@@ -239,7 +240,7 @@ Encouraging Divergent Thinking in Large Language Models through Multi-Agent Deba
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 10.471 seconds)
+   **Total running time of the script:** (1 minutes 7.711 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_multiagent_debate.py:
