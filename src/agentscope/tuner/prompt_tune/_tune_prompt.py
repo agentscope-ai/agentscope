@@ -153,7 +153,6 @@ def tune_prompt(
             name=train_dataset.name,
             split=train_dataset.split,
         )
-    logger.info("training dataset loaded")
 
     dspy_trainset = [dspy.Example(inp=x).with_inputs("inp") for x in trainset]
 

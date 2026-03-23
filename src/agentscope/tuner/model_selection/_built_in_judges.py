@@ -6,7 +6,7 @@ from .._judge import JudgeOutput
 
 
 async def avg_time_judge(
-    task: Dict[str, Any],
+    _task: Dict[str, Any],
     response: Any,
 ) -> JudgeOutput:
     """
@@ -17,7 +17,7 @@ async def avg_time_judge(
 
     Args:
         task (`Dict[str, Any]`):
-            The task information for the corresponding workflow.
+            The task information (unused in this judge).
         response (`Any`):
             A composite dict containing the workflow response
             and workflow metrics including execution_time and usage.
@@ -44,6 +44,7 @@ async def avg_time_judge(
 
     #  (smaller time = higher reward)
     reward = -time_taken
+    
 
     return JudgeOutput(
         reward=reward,
@@ -52,7 +53,7 @@ async def avg_time_judge(
 
 
 async def avg_token_consumption_judge(
-    task: Dict[str, Any],
+    _task: Dict[str, Any],
     response: Any,
 ) -> JudgeOutput:
     """
@@ -63,7 +64,7 @@ async def avg_token_consumption_judge(
 
     Args:
         task (`Dict[str, Any]`):
-            The task information for the corresponding workflow.
+            The task information (unused in this judge).
         response (`Any`):
             A composite dict containing the workflow response
             and workflow metrics including execution_time and usage.

@@ -3,7 +3,7 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import Callable, Optional, Sequence, Tuple
+from typing import List, Union, Dict, Tuple, Optional
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -41,11 +41,10 @@ def check_judge_function(
     Args:
         func (Callable): The function to check.
     """
-    essential_params = ["task", "response"]
-    _check_function_signature(
-        func,
-        essential_params,
-    )
+    try:
+        _check_function_signature(func, ["task", "response"])
+    except Exception:
+        _check_function_signature(func, ["_task", "response"])
 
 
 async def select_model(
@@ -146,10 +145,11 @@ async def select_model(
         async def evaluate_with_semaphore(
             idx: int,
             sample: dict,
-            model=model, 
-            exporter=exporter,  
+            model: ChatModelBase = model,
+            exporter: _InMemoryExporter = exporter,
+            sem: asyncio.Semaphore = semaphore,
         ) -> Optional[JudgeOutput]:
-            async with semaphore:
+            async with sem:
                 try:
                     # Process this sample using the new async function
                     judge_output = await _evaluate_single_sample(
@@ -203,34 +203,34 @@ async def select_model(
             best_avg_reward = avg_reward
             best_model = model
             all_metrics = (
-                averaged_model_metrics  # Store the metrics of the best model
+                averaged_model_metrics  # Store metrics of best model
             )
 
     # Report final scores and detailed metrics for all models
     logger.info("Model evaluation results:")
     for model_name, avg_score in model_scores.items():
-        logger.info(f"  {model_name}: {avg_score:.4f}")
+        logger.info("  %s: %.4f", model_name, avg_score)
 
     logger.info("Detailed metrics for all models:")
     for model_name, metrics in model_detailed_metrics.items():
-        logger.info(f"Metrics for {model_name}:")
+        logger.info("Metrics for %s:", model_name)
         for metric_name, metric_value in metrics.items():
-            logger.info(f"  {metric_name}: {metric_value}")
+            logger.info("  %s: %s", metric_name, metric_value)
 
     # Show the selected best model
     if best_model is not None:
-        logger.info(f"Selected best model: {best_model.model_name}")
+        logger.info("Selected best model: %s", best_model.model_name)
         return best_model, all_metrics
     else:
         raise RuntimeError("No best model selected. This should not happen.")
 
 
 def _process_evaluation_results(
-    results,
-    model_metrics,
-    total_reward_init,
-    num_samples_init
-):
+    results: List[Union[Optional[JudgeOutput], Exception]],
+    model_metrics: Dict[str, float],
+    total_reward_init: float,
+    num_samples_init: int,
+) -> Tuple[float, int, Dict[str, float]]:
     """
     Process evaluation results to calculate total reward and aggregate metrics.
 
@@ -243,8 +243,6 @@ def _process_evaluation_results(
     Returns:
         Tuple of (total_reward, num_samples, averaged_model_metrics) 
     """
-    import logging
-    logger = logging.getLogger(__name__)
     import numbers
 
     total_reward = total_reward_init
