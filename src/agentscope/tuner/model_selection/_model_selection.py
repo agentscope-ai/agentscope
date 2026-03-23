@@ -3,7 +3,7 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import List, Union, Dict, Tuple, Optional
+from typing import List, Union, Dict, Tuple, Optional, Callable, Sequence
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -226,7 +226,7 @@ async def select_model(
 
 
 def _process_evaluation_results(
-    results: List[Union[Optional[JudgeOutput], Exception]],
+    results: List[JudgeOutput | Exception | None],
     model_metrics: Dict[str, float],
     total_reward_init: float,
     num_samples_init: int,
