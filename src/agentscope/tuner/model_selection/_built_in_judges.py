@@ -31,7 +31,9 @@ async def avg_time_judge(
     time_taken = 0.0
 
     if not isinstance(response, dict):
-        raise ValueError("Response must be a dict with 'response' and 'metrics' keys")
+        raise ValueError(
+            "Response must be a dict with 'response' and 'metrics' keys",
+        )
 
     metrics = response.get("metrics")
     if metrics is None:
@@ -75,7 +77,9 @@ async def avg_token_consumption_judge(
     original_reward = 0.0
 
     if not isinstance(response, dict):
-        raise ValueError("Response must be a dict with 'response' and 'metrics' keys")
+        raise ValueError(
+            "Response must be a dict with 'response' and 'metrics' keys",
+        )
 
     metrics = response.get("metrics")
     if metrics is None or "usage" not in metrics:
