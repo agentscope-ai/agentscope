@@ -46,22 +46,22 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "在 Python 中编写并执行一个打印 'Hello, World!' 的简单脚本。"
+            "task_description": "在 Python 中编写并执行一个简单的 'Hello, World!' 程序，然后返回输出结果。"
         },
-        "id": "call_0fa1d89eb6ed4175979a89"
+        "id": "call_f7d32b333d224fc7be6508"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello, World!')",
-            "timeout": 300
+            "timeout": 10
         },
-        "id": "call_cbe6e44dcdb842b59ffed9"
+        "id": "call_ce1b92de0d084ad7989b36"
     }
     system: {
         "type": "tool_result",
-        "id": "call_cbe6e44dcdb842b59ffed9",
+        "id": "call_ce1b92de0d084ad7989b36",
         "name": "execute_python_code",
         "output": [
             {
@@ -70,23 +70,23 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
             }
         ]
     }
-    Worker: 成功执行了 Python 脚本，它打印出了 'Hello, World!'。
+    Worker: 这里是执行 Python 代码 "print('Hello, World!')" 的结果:
 
     ```
     Hello, World!
     ```
     system: {
         "type": "tool_result",
-        "id": "call_0fa1d89eb6ed4175979a89",
+        "id": "call_f7d32b333d224fc7be6508",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "成功执行了 Python 脚本，它打印出了 'Hello, World!'。\n\n```\nHello, World!\n```"
+                "text": "这里是执行 Python 代码 \"print('Hello, World!')\" 的结果:\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: 成功执行了 Python 脚本，它打印出了 'Hello, World!'。
+    Orchestrator: 子智能体执行了 Python 代码 "print('Hello, World!')" 并返回了如下结果:
 
     ```
     Hello, World!
@@ -181,7 +181,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 29.359 seconds)
+   **Total running time of the script:** (0 minutes 16.439 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
