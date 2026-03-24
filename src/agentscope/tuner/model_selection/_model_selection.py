@@ -48,10 +48,9 @@ def check_judge_function(
         _check_function_signature(func, ["_task", "response"])
 
 
-
 async def _load_dataset(
         train_dataset: DatasetConfig
-        )->Any:
+) -> Any:
     """Load and optionally limit dataset."""
     try:
         from datasets import load_dataset
@@ -71,7 +70,6 @@ async def _load_dataset(
             range(min(train_dataset.total_steps, len(dataset))),
         )
     return dataset
-
 
 
 async def select_model(
@@ -192,7 +190,7 @@ async def select_model(
 
         # Process results
         total_reward, num_samples, averaged_model_metrics = _process_evaluation_results(
-            results, model_metrics, total_reward, num_samples
+            results, model_metrics, total_reward, num_samples,
         )
 
         avg_reward = total_reward / num_samples if num_samples > 0 else 0.0
