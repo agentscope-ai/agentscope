@@ -146,7 +146,7 @@ async def judge_function(
         - `reward`: A scalar float representing the reward (higher is better).
         - `metrics`: Optional dictionary of additional metrics.
 
-Here is an example implementation for translation tasks using BLEU score:
+Here is an example implementation for translation tasks using BLEU score (please pip install the `sacrebleu` package first):
 
 ```python
 from agentscope.tuner import JudgeOutput

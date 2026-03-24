@@ -49,14 +49,14 @@ def check_judge_function(
 
 
 async def _load_dataset(
-        train_dataset: DatasetConfig,
+    train_dataset: DatasetConfig,
 ) -> Any:
     """Load and optionally limit dataset."""
     try:
         from datasets import load_dataset
     except ImportError as e:
         raise ImportError(
-            "Please install with `pip install datasets`",
+        "Please install with `pip install datasets`",
         ) from e
 
     dataset = load_dataset(
