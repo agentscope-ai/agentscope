@@ -69,7 +69,7 @@ AgentScope 是一款企业级开箱即用的智能体框架，提供灵活的核
 
 
 <p align="center">
-<img src="./assets/images/agentscope_20260120.png" width="90%" alt="AgentScope 生态系统" />
+<img src="./assets/images/agentscope.png" width="90%" alt="AgentScope 生态系统" />
 <br/>
 AgentScope 生态
 </p>
