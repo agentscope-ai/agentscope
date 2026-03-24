@@ -143,7 +143,6 @@ tuner = [
     "datasets>=4.0.0",
     "litellm[proxy]>=1.75.3",
     "datasets",
-    "opentelemetry",
     "sacrebleu",
 ]
 
@@ -186,7 +185,6 @@ dev = [
     "py-openjudge",
     # For tuner
     "dspy",
-    "opentelemetry",
 ]
 
 [project.urls]
