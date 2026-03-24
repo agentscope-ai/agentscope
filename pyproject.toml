@@ -185,7 +185,7 @@ dev = [
     # For openjudge
     "py-openjudge",
     # For tuner
-    "dspy"
+    "dspy",
     "opentelemetry",
 ]
 
