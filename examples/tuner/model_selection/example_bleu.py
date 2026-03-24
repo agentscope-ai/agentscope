@@ -65,17 +65,22 @@ async def translation_workflow(
     agent = ReActAgent(
         name="translator",
         sys_prompt=(
-            "You are a helpful translation agent." "Only output the translated text."
+            "You are a helpful translation agent."
+            "Only output the translated text."
         ),
         model=model,
         formatter=OpenAIChatFormatter(),
     )
 
     # Extract source text and target language from task
-    source_text = task.get("question", "") if isinstance(task, dict) else str(task)
+    source_text = (
+        task.get("question", "") if isinstance(task, dict) else str(task)
+    )
 
     # Create a message with the translation request
-    prompt = f"Translate following text between English and Chinese: {source_text}"
+    prompt = (
+        f"Translate following text between English and Chinese: {source_text}"
+    )
     msg = Msg(name="user", content=prompt, role="user")
 
     # Get response from the agent
@@ -110,7 +115,10 @@ async def bleu_judge(
             # Handle the response structure
             if isinstance(response_content.content, list):
                 for content_item in response_content.content:
-                    if isinstance(content_item, dict) and "text" in content_item:
+                    if (
+                        isinstance(content_item, dict)
+                        and "text" in content_item
+                    ):
                         response_str += content_item["text"]
                     elif hasattr(content_item, "text"):
                         response_str += content_item.text
@@ -120,7 +128,9 @@ async def bleu_judge(
         raise ValueError("Response must be a dict with 'response' key")
 
     # Extract reference translation
-    reference_translation = task.get("answer", "") if isinstance(task, dict) else ""
+    reference_translation = (
+        task.get("answer", "") if isinstance(task, dict) else ""
+    )
 
     # Load the BLEU metric
     ref = reference_translation.strip()

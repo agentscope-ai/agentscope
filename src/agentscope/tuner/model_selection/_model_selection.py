@@ -56,7 +56,7 @@ async def _load_dataset(
         from datasets import load_dataset
     except ImportError as e:
         raise ImportError(
-        "Please install with `pip install datasets`",
+            "Please install with `pip install datasets`",
         ) from e
 
     dataset = load_dataset(
@@ -182,15 +182,25 @@ async def select_model(
         tasks = [
             evaluate_with_semaphore(idx, sample)
             for idx, sample in enumerate(dataset)
-            if (train_dataset.total_steps is None or idx < train_dataset.total_steps)
+            if (
+                train_dataset.total_steps is None
+                or idx < train_dataset.total_steps
+            )
         ]
 
         # Execute all tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
-        total_reward, num_samples, averaged_model_metrics = _process_evaluation_results(
-            results, model_metrics, total_reward, num_samples,
+        (
+            total_reward,
+            num_samples,
+            averaged_model_metrics,
+        ) = _process_evaluation_results(
+            results,
+            model_metrics,
+            total_reward,
+            num_samples,
         )
 
         avg_reward = total_reward / num_samples if num_samples > 0 else 0.0
