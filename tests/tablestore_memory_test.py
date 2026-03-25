@@ -198,8 +198,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             )
             for i in range(5)
         ]
-        self.memory._search_documents_by_marks_and_exclude_marks = (
-            AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = AsyncMock(
+            return_value=docs,
         )
 
         result = await self.memory.get_memory(prepend_summary=False)
@@ -207,11 +207,11 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 5)
         for i, msg in enumerate(result):
             self.assertEqual(msg.id, str(i))
-        self.memory._search_documents_by_marks_and_exclude_marks \
-            .assert_called_once_with(
-                marks=None,
-                exclude_marks=None,
-            )
+        mock = self.memory._search_documents_by_marks_and_exclude_marks
+        mock.assert_called_once_with(
+            marks=None,
+            exclude_marks=None,
+        )
 
     async def test_get_memory_with_mark_filter(self) -> None:
         """Test getting messages filtered by mark."""
@@ -221,8 +221,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             _create_mock_document(self.msgs[1], marks=["important"]),
             _create_mock_document(self.msgs[2], marks=["important", "todo"]),
         ]
-        self.memory._search_documents_by_marks_and_exclude_marks = (
-            AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = AsyncMock(
+            return_value=docs,
         )
 
         result = await self.memory.get_memory(
@@ -233,11 +233,11 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].id, "1")
         self.assertEqual(result[1].id, "2")
-        self.memory._search_documents_by_marks_and_exclude_marks \
-            .assert_called_once_with(
-                marks="important",
-                exclude_marks=None,
-            )
+        mock = self.memory._search_documents_by_marks_and_exclude_marks
+        mock.assert_called_once_with(
+            marks="important",
+            exclude_marks=None,
+        )
 
     async def test_get_memory_with_exclude_mark(self) -> None:
         """Test getting messages with excluded mark."""
@@ -246,8 +246,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             _create_mock_document(self.msgs[0], marks=[]),
             _create_mock_document(self.msgs[3], marks=[]),
         ]
-        self.memory._search_documents_by_marks_and_exclude_marks = (
-            AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = AsyncMock(
+            return_value=docs,
         )
 
         result = await self.memory.get_memory(
@@ -258,19 +258,19 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].id, "0")
         self.assertEqual(result[1].id, "3")
-        self.memory._search_documents_by_marks_and_exclude_marks \
-            .assert_called_once_with(
-                marks=None,
-                exclude_marks="important",
-            )
+        mock = self.memory._search_documents_by_marks_and_exclude_marks
+        mock.assert_called_once_with(
+            marks=None,
+            exclude_marks="important",
+        )
 
     async def test_get_memory_with_summary(self) -> None:
         """Test that compressed summary is prepended when available."""
         docs = [
             _create_mock_document(self.msgs[0]),
         ]
-        self.memory._search_documents_by_marks_and_exclude_marks = (
-            AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = AsyncMock(
+            return_value=docs,
         )
         self.memory._compressed_summary = "Previous conversation summary."
 
@@ -368,8 +368,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
-        self.memory._get_existing_msg_ids_and_marks_in_session \
-            .assert_called_once_with(["0", "1"])
+        mock = self.memory._get_existing_msg_ids_and_marks_in_session
+        mock.assert_called_once_with(["0", "1"])
         self.assertEqual(
             self.memory._knowledge_store.update_document.call_count,
             2,
@@ -391,8 +391,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 1)
-        self.memory._get_existing_msg_ids_and_marks_in_session \
-            .assert_called_once_with(["0"])
+        mock = self.memory._get_existing_msg_ids_and_marks_in_session
+        mock.assert_called_once_with(["0"])
         self.assertEqual(
             self.memory._knowledge_store.update_document.call_count,
             1,
@@ -414,8 +414,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
-        self.memory._get_existing_msg_ids_and_marks_in_session \
-            .assert_called_once_with(["0", "1"])
+        mock = self.memory._get_existing_msg_ids_and_marks_in_session
+        mock.assert_called_once_with(["0", "1"])
         self.assertEqual(
             self.memory._knowledge_store.update_document.call_count,
             2,
@@ -552,7 +552,10 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             msg_id = self.memory._extract_msg_id("msg_123:::wrong_session")
         self.assertEqual(msg_id, "msg_123:::wrong_session")
         self.assertTrue(
-            any("Unexpected document_id format" in m for m in log_context.output),
+            any(
+                "Unexpected document_id format" in m
+                for m in log_context.output
+            ),
         )
 
     async def test_extract_msg_id_no_separator(self) -> None:
@@ -561,7 +564,10 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             msg_id = self.memory._extract_msg_id("msg_123")
         self.assertEqual(msg_id, "msg_123")
         self.assertTrue(
-            any("Unexpected document_id format" in m for m in log_context.output),
+            any(
+                "Unexpected document_id format" in m
+                for m in log_context.output
+            ),
         )
 
     async def test_make_and_extract_roundtrip(self) -> None:

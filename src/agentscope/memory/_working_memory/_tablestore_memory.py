@@ -169,9 +169,7 @@ class TablestoreMemory(MemoryBase):
             `str`:
                 The original message ID.
         """
-        expected_suffix = (
-            f"{self._DOCUMENT_ID_SEPARATOR}{self._session_id}"
-        )
+        expected_suffix = f"{self._DOCUMENT_ID_SEPARATOR}{self._session_id}"
         if not document_id.endswith(expected_suffix):
             logger.error(
                 "Unexpected document_id format: '%s'. "
@@ -635,11 +633,9 @@ class TablestoreMemory(MemoryBase):
 
         await self._ensure_initialized()
 
-        all_docs = (
-            await self._search_documents_by_marks_and_exclude_marks(
-                marks=mark,
-                exclude_marks=exclude_mark,
-            )
+        all_docs = await self._search_documents_by_marks_and_exclude_marks(
+            marks=mark,
+            exclude_marks=exclude_mark,
         )
 
         results: list[Msg] = []
@@ -691,7 +687,8 @@ class TablestoreMemory(MemoryBase):
 
         # Get msg_ids and their marks
         if msg_ids is not None:
-            # Get the marks for the provided msg_ids, use msg id to search is faster than using marks
+            # Get the marks for the provided msg_ids,
+            # use msg id to search is faster than using marks
             id_to_marks = (
                 await self._get_existing_msg_ids_and_marks_in_session(
                     msg_ids,
