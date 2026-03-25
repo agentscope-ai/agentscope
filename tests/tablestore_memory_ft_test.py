@@ -12,6 +12,7 @@ If any of these are missing, the tests will be skipped.
 # pylint: disable=protected-access,redefined-outer-name
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import TYPE_CHECKING
 
@@ -388,6 +389,9 @@ async def test_update_messages_mark_add(
     )
     assert updated == 1
 
+    # Wait for search index to sync metadata update (update_row needs time)
+    await asyncio.sleep(20)
+
     # Verify the mark was added
     reviewed_msgs = await memory.get_memory(mark="reviewed")
     assert len(reviewed_msgs) == 1
@@ -411,6 +415,9 @@ async def test_update_messages_mark_replace(
         new_mark="final",
     )
     assert updated == 1
+
+    # Wait for search index to sync metadata update (update_row needs time)
+    await asyncio.sleep(20)
 
     # Old mark should not match
     draft_msgs = await memory.get_memory(mark="draft")
@@ -438,6 +445,9 @@ async def test_update_messages_mark_remove(
         new_mark=None,
     )
     assert updated == 1
+
+    # Wait for search index to sync metadata update (update_row needs time)
+    await asyncio.sleep(20)
 
     # Mark should be removed
     temp_msgs = await memory.get_memory(mark="temporary")
