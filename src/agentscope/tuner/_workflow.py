@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """The workflow module for tuner."""
-from logging import Logger
 from typing import Any, Callable, Dict, Awaitable
 from pydantic import BaseModel, Field
-from ..model import ChatModelBase
 
 
 class WorkflowOutput(BaseModel):
@@ -30,10 +28,7 @@ class WorkflowOutput(BaseModel):
     )
 
 
-WorkflowType = Callable[
-    [Dict, ChatModelBase, Dict[str, ChatModelBase] | None, Logger | None],
-    Awaitable[WorkflowOutput],
-]
+WorkflowType = Callable[..., Awaitable[WorkflowOutput]]
 # An agent workflow function type for tuning.
 
 # Args:
@@ -42,6 +37,9 @@ WorkflowType = Callable[
 #     model (`ChatModelBase`):
 #         The primary chat model used in the workflow, this is the main model
 #         being tuned.
+#     system_prompt (`str`):
+#         The system prompt used in the primary agent, will be tuned in
+#         prompt tuning.
 #     auxiliary_models (`Dict[str, ChatModelBase] | None`, optional):
 #         A dictionary of additional chat models available for LLM-as-a-Judge
 #         usage. The keys are model names, and the values are the corresponding

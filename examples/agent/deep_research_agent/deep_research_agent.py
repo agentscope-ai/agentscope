@@ -3,7 +3,6 @@
 # pylint: disable=too-many-lines, no-name-in-module
 import os
 import json
-import asyncio
 
 from typing import Type, Optional, Any, Tuple
 from datetime import datetime
@@ -166,9 +165,8 @@ class DeepResearchAgent(ReActAgent):
         # register all necessary tools for deep research agent
         self.toolkit.register_tool_function(view_text_file)
         self.toolkit.register_tool_function(write_text_file)
-        asyncio.get_running_loop().create_task(
-            self.toolkit.register_mcp_client(search_mcp_client),
-        )
+        self._search_mcp_client = search_mcp_client
+        self._mcp_initialized = False
 
         self.search_function = "tavily-search"
         self.extract_function = "tavily-extract"
@@ -191,12 +189,23 @@ class DeepResearchAgent(ReActAgent):
             self.summarize_intermediate_results,
         )
 
+    async def _ensure_mcp_initialized(self) -> None:
+        """Ensure MCP client is properly initialized.
+
+        This method registers MCP tools if not already done.
+        """
+        if not self._mcp_initialized:
+            await self.toolkit.register_mcp_client(self._search_mcp_client)
+            self._mcp_initialized = True
+
     async def reply(
         self,
         msg: Msg | list[Msg] | None = None,
         structured_model: Type[BaseModel] | None = None,
     ) -> Msg:
         """The reply method of the agent."""
+        # Ensure MCP client is initialized before processing
+        await self._ensure_mcp_initialized()
         if isinstance(msg, list):
             if len(msg) == 0:
                 raise ValueError("Message list cannot be empty")
