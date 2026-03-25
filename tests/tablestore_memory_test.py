@@ -78,8 +78,8 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_add_messages(self) -> None:
         """Test adding messages to Tablestore memory."""
-        # Mock _get_all_msg_ids to return empty set (no duplicates)
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        # Mock _search_msg_ids_by_marks to return empty set (no duplicates)
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         await self.memory.add(self.msgs[:3])
 
@@ -91,7 +91,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_add_single_message(self) -> None:
         """Test adding a single message."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         await self.memory.add(self.msgs[0])
 
@@ -105,7 +105,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_add_with_marks(self) -> None:
         """Test adding messages with marks."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         await self.memory.add(self.msgs[:2], marks=["important", "todo"])
 
@@ -181,7 +181,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_delete_nonexistent(self) -> None:
         """Test deleting non-existent messages returns 0."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         deleted = await self.memory.delete(msg_ids=["nonexistent"])
 
@@ -198,23 +198,32 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
             )
             for i in range(5)
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = (
+            AsyncMock(return_value=docs)
+        )
 
         result = await self.memory.get_memory(prepend_summary=False)
 
         self.assertEqual(len(result), 5)
         for i, msg in enumerate(result):
             self.assertEqual(msg.id, str(i))
+        self.memory._search_documents_by_marks_and_exclude_marks \
+            .assert_called_once_with(
+                marks=None,
+                exclude_marks=None,
+            )
 
     async def test_get_memory_with_mark_filter(self) -> None:
         """Test getting messages filtered by mark."""
+        # When mark is provided, _search_documents_by_marks_and_exclude_marks
+        # is used and only matching docs are returned from the database layer
         docs = [
-            _create_mock_document(self.msgs[0], marks=[]),
             _create_mock_document(self.msgs[1], marks=["important"]),
             _create_mock_document(self.msgs[2], marks=["important", "todo"]),
-            _create_mock_document(self.msgs[3], marks=[]),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = (
+            AsyncMock(return_value=docs)
+        )
 
         result = await self.memory.get_memory(
             mark="important",
@@ -224,16 +233,22 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].id, "1")
         self.assertEqual(result[1].id, "2")
+        self.memory._search_documents_by_marks_and_exclude_marks \
+            .assert_called_once_with(
+                marks="important",
+                exclude_marks=None,
+            )
 
     async def test_get_memory_with_exclude_mark(self) -> None:
         """Test getting messages with excluded mark."""
+        # exclude_mark filtering is now done at the database layer
         docs = [
             _create_mock_document(self.msgs[0], marks=[]),
-            _create_mock_document(self.msgs[1], marks=["important"]),
-            _create_mock_document(self.msgs[2], marks=["important", "todo"]),
             _create_mock_document(self.msgs[3], marks=[]),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = (
+            AsyncMock(return_value=docs)
+        )
 
         result = await self.memory.get_memory(
             exclude_mark="important",
@@ -243,13 +258,20 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].id, "0")
         self.assertEqual(result[1].id, "3")
+        self.memory._search_documents_by_marks_and_exclude_marks \
+            .assert_called_once_with(
+                marks=None,
+                exclude_marks="important",
+            )
 
     async def test_get_memory_with_summary(self) -> None:
         """Test that compressed summary is prepended when available."""
         docs = [
             _create_mock_document(self.msgs[0]),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_documents_by_marks_and_exclude_marks = (
+            AsyncMock(return_value=docs)
+        )
         self.memory._compressed_summary = "Previous conversation summary."
 
         result = await self.memory.get_memory(prepend_summary=True)
@@ -264,7 +286,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
     async def test_size(self) -> None:
         """Test getting the size of memory."""
         msg_ids = [MagicMock() for _ in range(7)]
-        self.memory._get_all_msg_ids = AsyncMock(return_value=msg_ids)
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=msg_ids)
 
         result = await self.memory.size()
 
@@ -272,7 +294,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_clear(self) -> None:
         """Test clearing all messages."""
-        self.memory._get_all_msg_ids = AsyncMock(
+        self.memory._search_msg_ids_by_marks = AsyncMock(
             return_value={"msg_0", "msg_1"},
         )
 
@@ -295,7 +317,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_clear_empty(self) -> None:
         """Test clearing when memory is already empty."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         await self.memory.clear()
 
@@ -504,7 +526,7 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_invalid_mark_type(self) -> None:
         """Test that invalid mark types raise TypeError."""
-        self.memory._get_all_msg_ids = AsyncMock(return_value=set())
+        self.memory._search_msg_ids_by_marks = AsyncMock(return_value=set())
 
         with self.assertRaises(TypeError):
             await self.memory.add(self.msgs[0], marks=123)
