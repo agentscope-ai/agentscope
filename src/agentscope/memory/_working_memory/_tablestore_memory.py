@@ -731,7 +731,9 @@ class TablestoreMemory(MemoryBase):
         """
         await self._ensure_initialized()
 
+        # Get msg_ids and their marks
         if msg_ids is not None:
+            # Get the marks for the provided msg_ids, use msg id to search is faster than using marks
             id_to_marks = (
                 await self._get_existing_msg_ids_and_marks_in_session(
                     msg_ids,
@@ -744,8 +746,6 @@ class TablestoreMemory(MemoryBase):
         else:
             id_to_marks = await self._get_all_msg_ids_and_marks()
 
-        updated_count = 0
-
         # Collect msg_ids that need mark updates
         ids_to_update: dict[str, list[str]] = {}
         for msg_id, current_marks in id_to_marks.items():
@@ -753,51 +753,48 @@ class TablestoreMemory(MemoryBase):
                 continue
 
             updated_marks = current_marks.copy()
+            changed = False
 
             if new_mark is None:
                 if old_mark in updated_marks:
                     updated_marks.remove(old_mark)
+                    changed = True
             else:
                 if old_mark is not None and old_mark in updated_marks:
                     updated_marks.remove(old_mark)
+                    changed = True
                 if new_mark not in updated_marks:
                     updated_marks.append(new_mark)
+                    changed = True
 
-            if updated_marks != current_marks:
+            if changed:
                 ids_to_update[msg_id] = updated_marks
 
         if not ids_to_update:
             return 0
 
-        # Batch-fetch full documents for messages that need updating
-        document_ids = [
-            self._make_document_id(mid) for mid in ids_to_update
-        ]
-        full_docs = await self._knowledge_store.get_documents(
-            document_id_list=document_ids,
-            tenant_id=self._user_id,
+        from tablestore_for_agent_memory.base.base_knowledge_store import (
+            Document as TablestoreDocument,
         )
 
-        doc_by_msg_id: dict[str, Any] = {}
-        for doc in full_docs:
-            if doc is not None:
-                doc_by_msg_id[self._extract_msg_id(doc.document_id)] = doc
-
+        update_tasks = []
         for msg_id, updated_marks in ids_to_update.items():
-            doc = doc_by_msg_id.get(msg_id)
-            if doc is None:
-                continue
-            msg, _ = self._document_to_msg_and_marks(doc)
-            await self._knowledge_store.delete_document(
-                document_id=doc.document_id,
+            update_doc = TablestoreDocument(
+                document_id=self._make_document_id(msg_id),
                 tenant_id=self._user_id,
+                metadata={
+                    "marks_json": json.dumps(
+                        updated_marks,
+                        ensure_ascii=False,
+                    ),
+                },
             )
-            await self._knowledge_store.put_document(
-                self._msg_to_document(msg, updated_marks),
+            update_tasks.append(
+                self._knowledge_store.update_document(update_doc),
             )
-            updated_count += 1
 
-        return updated_count
+        await asyncio.gather(*update_tasks)
+        return len(ids_to_update)
 
     async def _get_all_documents(self) -> list:
         """Get all documents for the current user/session from Tablestore.

@@ -333,22 +333,12 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_update_messages_mark_add(self) -> None:
         """Test adding a mark to messages."""
-        # old_mark is None, so _get_all_msg_ids_and_marks is used
-        self.memory._get_all_msg_ids_and_marks = AsyncMock(
-            return_value={"0": [], "1": [], "2": []},
+        # msg_ids is provided, so _get_existing_msg_ids_and_marks_in_session
+        # is used
+        self.memory._get_existing_msg_ids_and_marks_in_session = AsyncMock(
+            return_value={"0": [], "1": []},
         )
-        # Mock get_documents to return full docs for batch fetch
-        full_docs = [
-            _create_mock_document(
-                self.msgs[0], marks=[], session_id="test_session",
-            ),
-            _create_mock_document(
-                self.msgs[1], marks=[], session_id="test_session",
-            ),
-        ]
-        self.memory._knowledge_store.get_documents = AsyncMock(
-            return_value=full_docs,
-        )
+        self.memory._knowledge_store.update_document = AsyncMock()
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0", "1"],
@@ -356,24 +346,21 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
-        self.memory._get_all_msg_ids_and_marks.assert_called_once()
+        self.memory._get_existing_msg_ids_and_marks_in_session \
+            .assert_called_once_with(["0", "1"])
+        self.assertEqual(
+            self.memory._knowledge_store.update_document.call_count,
+            2,
+        )
 
     async def test_update_messages_mark_remove(self) -> None:
         """Test removing a mark from messages."""
-        # old_mark is provided, so _search_msg_ids_and_marks_by_marks is used
-        self.memory._search_msg_ids_and_marks_by_marks = AsyncMock(
-            return_value={"0": ["important"], "1": ["important"]},
+        # msg_ids is provided, so _get_existing_msg_ids_and_marks_in_session
+        # is used
+        self.memory._get_existing_msg_ids_and_marks_in_session = AsyncMock(
+            return_value={"0": ["important"]},
         )
-        full_docs = [
-            _create_mock_document(
-                self.msgs[0],
-                marks=["important"],
-                session_id="test_session",
-            ),
-        ]
-        self.memory._knowledge_store.get_documents = AsyncMock(
-            return_value=full_docs,
-        )
+        self.memory._knowledge_store.update_document = AsyncMock()
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0"],
@@ -382,31 +369,21 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 1)
-        self.memory._search_msg_ids_and_marks_by_marks.assert_called_once_with(
-            ["important"],
+        self.memory._get_existing_msg_ids_and_marks_in_session \
+            .assert_called_once_with(["0"])
+        self.assertEqual(
+            self.memory._knowledge_store.update_document.call_count,
+            1,
         )
 
     async def test_update_messages_mark_replace(self) -> None:
         """Test replacing a mark on messages."""
-        # old_mark is provided, so _search_msg_ids_and_marks_by_marks is used
-        self.memory._search_msg_ids_and_marks_by_marks = AsyncMock(
+        # msg_ids is provided, so _get_existing_msg_ids_and_marks_in_session
+        # is used
+        self.memory._get_existing_msg_ids_and_marks_in_session = AsyncMock(
             return_value={"0": ["important"], "1": ["important"]},
         )
-        full_docs = [
-            _create_mock_document(
-                self.msgs[0],
-                marks=["important"],
-                session_id="test_session",
-            ),
-            _create_mock_document(
-                self.msgs[1],
-                marks=["important"],
-                session_id="test_session",
-            ),
-        ]
-        self.memory._knowledge_store.get_documents = AsyncMock(
-            return_value=full_docs,
-        )
+        self.memory._knowledge_store.update_document = AsyncMock()
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0", "1"],
@@ -415,8 +392,11 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
-        self.memory._search_msg_ids_and_marks_by_marks.assert_called_once_with(
-            ["important"],
+        self.memory._get_existing_msg_ids_and_marks_in_session \
+            .assert_called_once_with(["0", "1"])
+        self.assertEqual(
+            self.memory._knowledge_store.update_document.call_count,
+            2,
         )
 
     async def test_state_dict(self) -> None:
