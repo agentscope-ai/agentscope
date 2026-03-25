@@ -334,6 +334,42 @@ class TablestoreMemory(MemoryBase):
             if doc is not None
         }
 
+    async def _get_existing_msg_ids_and_marks_in_session(
+        self,
+        msg_ids: list[str],
+    ) -> dict[str, list[str]]:
+        """Get the IDs and their marks for messages that actually exist in
+        the current session from the provided list.
+
+        Args:
+            msg_ids (`list[str]`):
+                The list of message IDs to check.
+
+        Returns:
+            `dict[str, list[str]]`:
+                A mapping from message ID to its list of marks, only for
+                messages that exist in the current session.
+        """
+        document_ids = [self._make_document_id(mid) for mid in msg_ids]
+        existing_docs = await self._knowledge_store.get_documents(
+            document_id_list=document_ids,
+            tenant_id=self._user_id,
+        )
+
+        result_map: dict[str, list[str]] = {}
+        for doc in existing_docs:
+            if doc is None:
+                continue
+            msg_id = self._extract_msg_id(doc.document_id)
+            metadata = doc.metadata or {}
+            marks_json = metadata.get("marks_json", "[]")
+            try:
+                msg_marks = json.loads(marks_json)
+            except (json.JSONDecodeError, TypeError):
+                msg_marks = []
+            result_map[msg_id] = msg_marks
+        return result_map
+
     async def _get_all_msg_ids(self) -> set[str]:
         """Get all message IDs currently stored for this user/session."""
         from tablestore_for_agent_memory.base.filter import Filters
@@ -695,39 +731,71 @@ class TablestoreMemory(MemoryBase):
         """
         await self._ensure_initialized()
 
-        all_docs = await self._get_all_documents()
+        if msg_ids is not None:
+            id_to_marks = (
+                await self._get_existing_msg_ids_and_marks_in_session(
+                    msg_ids,
+                )
+            )
+        elif old_mark is not None:
+            id_to_marks = await self._search_msg_ids_and_marks_by_marks(
+                [old_mark],
+            )
+        else:
+            id_to_marks = await self._get_all_msg_ids_and_marks()
+
         updated_count = 0
 
-        for doc in all_docs:
-            msg, doc_marks = self._document_to_msg_and_marks(doc)
-
-            if msg_ids is not None and msg.id not in msg_ids:
+        # Collect msg_ids that need mark updates
+        ids_to_update: dict[str, list[str]] = {}
+        for msg_id, current_marks in id_to_marks.items():
+            if old_mark is not None and old_mark not in current_marks:
                 continue
 
-            if old_mark is not None and old_mark not in doc_marks:
-                continue
-
-            original_marks = doc_marks.copy()
+            updated_marks = current_marks.copy()
 
             if new_mark is None:
-                if old_mark in doc_marks:
-                    doc_marks.remove(old_mark)
+                if old_mark in updated_marks:
+                    updated_marks.remove(old_mark)
             else:
-                if old_mark is not None and old_mark in doc_marks:
-                    doc_marks.remove(old_mark)
-                if new_mark not in doc_marks:
-                    doc_marks.append(new_mark)
+                if old_mark is not None and old_mark in updated_marks:
+                    updated_marks.remove(old_mark)
+                if new_mark not in updated_marks:
+                    updated_marks.append(new_mark)
 
-            if doc_marks != original_marks:
-                # Re-save the document with updated marks
-                await self._knowledge_store.delete_document(
-                    document_id=doc.document_id,
-                    tenant_id=self._user_id,
-                )
-                await self._knowledge_store.put_document(
-                    self._msg_to_document(msg, doc_marks),
-                )
-                updated_count += 1
+            if updated_marks != current_marks:
+                ids_to_update[msg_id] = updated_marks
+
+        if not ids_to_update:
+            return 0
+
+        # Batch-fetch full documents for messages that need updating
+        document_ids = [
+            self._make_document_id(mid) for mid in ids_to_update
+        ]
+        full_docs = await self._knowledge_store.get_documents(
+            document_id_list=document_ids,
+            tenant_id=self._user_id,
+        )
+
+        doc_by_msg_id: dict[str, Any] = {}
+        for doc in full_docs:
+            if doc is not None:
+                doc_by_msg_id[self._extract_msg_id(doc.document_id)] = doc
+
+        for msg_id, updated_marks in ids_to_update.items():
+            doc = doc_by_msg_id.get(msg_id)
+            if doc is None:
+                continue
+            msg, _ = self._document_to_msg_and_marks(doc)
+            await self._knowledge_store.delete_document(
+                document_id=doc.document_id,
+                tenant_id=self._user_id,
+            )
+            await self._knowledge_store.put_document(
+                self._msg_to_document(msg, updated_marks),
+            )
+            updated_count += 1
 
         return updated_count
 

@@ -333,12 +333,22 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_update_messages_mark_add(self) -> None:
         """Test adding a mark to messages."""
-        docs = [
-            _create_mock_document(self.msgs[0], marks=[]),
-            _create_mock_document(self.msgs[1], marks=[]),
-            _create_mock_document(self.msgs[2], marks=[]),
+        # old_mark is None, so _get_all_msg_ids_and_marks is used
+        self.memory._get_all_msg_ids_and_marks = AsyncMock(
+            return_value={"0": [], "1": [], "2": []},
+        )
+        # Mock get_documents to return full docs for batch fetch
+        full_docs = [
+            _create_mock_document(
+                self.msgs[0], marks=[], session_id="test_session",
+            ),
+            _create_mock_document(
+                self.msgs[1], marks=[], session_id="test_session",
+            ),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._knowledge_store.get_documents = AsyncMock(
+            return_value=full_docs,
+        )
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0", "1"],
@@ -346,15 +356,24 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
+        self.memory._get_all_msg_ids_and_marks.assert_called_once()
 
     async def test_update_messages_mark_remove(self) -> None:
         """Test removing a mark from messages."""
-        docs = [
-            _create_mock_document(self.msgs[0], marks=["important"]),
-            _create_mock_document(self.msgs[1], marks=["important"]),
-            _create_mock_document(self.msgs[2], marks=[]),
+        # old_mark is provided, so _search_msg_ids_and_marks_by_marks is used
+        self.memory._search_msg_ids_and_marks_by_marks = AsyncMock(
+            return_value={"0": ["important"], "1": ["important"]},
+        )
+        full_docs = [
+            _create_mock_document(
+                self.msgs[0],
+                marks=["important"],
+                session_id="test_session",
+            ),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._knowledge_store.get_documents = AsyncMock(
+            return_value=full_docs,
+        )
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0"],
@@ -363,14 +382,31 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 1)
+        self.memory._search_msg_ids_and_marks_by_marks.assert_called_once_with(
+            ["important"],
+        )
 
     async def test_update_messages_mark_replace(self) -> None:
         """Test replacing a mark on messages."""
-        docs = [
-            _create_mock_document(self.msgs[0], marks=["important"]),
-            _create_mock_document(self.msgs[1], marks=["important"]),
+        # old_mark is provided, so _search_msg_ids_and_marks_by_marks is used
+        self.memory._search_msg_ids_and_marks_by_marks = AsyncMock(
+            return_value={"0": ["important"], "1": ["important"]},
+        )
+        full_docs = [
+            _create_mock_document(
+                self.msgs[0],
+                marks=["important"],
+                session_id="test_session",
+            ),
+            _create_mock_document(
+                self.msgs[1],
+                marks=["important"],
+                session_id="test_session",
+            ),
         ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._knowledge_store.get_documents = AsyncMock(
+            return_value=full_docs,
+        )
 
         updated = await self.memory.update_messages_mark(
             msg_ids=["0", "1"],
@@ -379,6 +415,9 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(updated, 2)
+        self.memory._search_msg_ids_and_marks_by_marks.assert_called_once_with(
+            ["important"],
+        )
 
     async def test_state_dict(self) -> None:
         """Test state_dict serialization."""
