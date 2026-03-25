@@ -45,7 +45,7 @@ def _format_dashscope_media_block(
     typ = block["type"]
     source = block["source"]
     if source["type"] == "url":
-        url = source["url"]
+        url = source["url"].removeprefix("file://")
         if _is_accessible_local_file(url):
             abs_path = os.path.abspath(url)
             media_type = mimetypes.guess_type(abs_path)[0]
