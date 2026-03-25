@@ -359,6 +359,138 @@ class TablestoreMemory(MemoryBase):
                 break
         return all_ids
 
+    async def _get_all_msg_ids_and_marks(self) -> dict[str, list[str]]:
+        """Get all message IDs and their marks for this user/session.
+
+        Returns:
+            `dict[str, list[str]]`:
+                A mapping from message ID to its full list of marks.
+        """
+        from tablestore_for_agent_memory.base.filter import Filters
+
+        result_map: dict[str, list[str]] = {}
+        next_token = None
+        while True:
+            result = await self._knowledge_store.search_documents(
+                tenant_id=self._user_id,
+                metadata_filter=Filters.logical_and(
+                    [
+                        Filters.eq("session_id", self._session_id),
+                    ],
+                ),
+                meta_data_to_get=["marks_json"],
+                next_token=next_token,
+            )
+            for hit in result.hits:
+                document_id = hit.document.document_id
+                if document_id:
+                    msg_id = self._extract_msg_id(document_id)
+                    metadata = hit.document.metadata or {}
+                    marks_json = metadata.get("marks_json", "[]")
+                    try:
+                        msg_marks = json.loads(marks_json)
+                    except (json.JSONDecodeError, TypeError):
+                        msg_marks = []
+                    result_map[msg_id] = msg_marks
+            next_token = result.next_token
+            if not next_token:
+                break
+        return result_map
+
+    async def _search_msg_ids_by_marks(
+        self,
+        marks: list[str],
+    ) -> set[str]:
+        """Search for message IDs that have any of the specified marks.
+
+        Uses ``Filters.In`` on the ``marks_json`` field combined with
+        ``session_id`` and ``tenant_id`` filters to query matching
+        documents via ``search_documents``.
+
+        Args:
+            marks (`list[str]`):
+                The list of marks to filter by. Returns messages that
+                contain **any** of the specified marks.
+
+        Returns:
+            `set[str]`:
+                The set of message IDs matching the filter criteria.
+        """
+        from tablestore_for_agent_memory.base.filter import Filters
+
+        matched_ids: set[str] = set()
+        next_token = None
+        while True:
+            result = await self._knowledge_store.search_documents(
+                tenant_id=self._user_id,
+                metadata_filter=Filters.logical_and(
+                    [
+                        Filters.eq("session_id", self._session_id),
+                        Filters.In("marks_json", marks),
+                    ],
+                ),
+                next_token=next_token,
+            )
+            for hit in result.hits:
+                document_id = hit.document.document_id
+                if document_id:
+                    matched_ids.add(self._extract_msg_id(document_id))
+            next_token = result.next_token
+            if not next_token:
+                break
+        return matched_ids
+
+    async def _search_msg_ids_and_marks_by_marks(
+        self,
+        marks: list[str],
+    ) -> dict[str, list[str]]:
+        """Search for message IDs and their marks by filtering on marks.
+
+        Uses ``Filters.In`` on the ``marks_json`` field combined with
+        ``session_id`` and ``tenant_id`` filters to query matching
+        documents via ``search_documents``.
+
+        Args:
+            marks (`list[str]`):
+                The list of marks to filter by. Returns messages that
+                contain **any** of the specified marks.
+
+        Returns:
+            `dict[str, list[str]]`:
+                A mapping from message ID to its full list of marks.
+        """
+        from tablestore_for_agent_memory.base.filter import Filters
+
+        result_map: dict[str, list[str]] = {}
+        next_token = None
+        while True:
+            result = await self._knowledge_store.search_documents(
+                tenant_id=self._user_id,
+                metadata_filter=Filters.logical_and(
+                    [
+                        Filters.eq("session_id", self._session_id),
+                        Filters.In("marks_json", marks),
+                    ],
+                ),
+                meta_data_to_get=["marks_json"],
+                next_token=next_token,
+            )
+            for hit in result.hits:
+                document_id = hit.document.document_id
+                if document_id:
+                    msg_id = self._extract_msg_id(document_id)
+                    metadata = hit.document.metadata or {}
+                    marks_json = metadata.get("marks_json", "[]")
+                    try:
+                        msg_marks = json.loads(marks_json)
+                    except (json.JSONDecodeError, TypeError):
+                        msg_marks = []
+                    result_map[msg_id] = msg_marks
+            next_token = result.next_token
+            if not next_token:
+                break
+        return result_map
+
     async def delete(
         self,
         msg_ids: list[str],
@@ -424,19 +556,20 @@ class TablestoreMemory(MemoryBase):
 
         await self._ensure_initialized()
 
-        all_docs = await self._get_all_documents()
-        deleted_count = 0
+        matched_msg_ids = await self._search_msg_ids_by_marks(mark)
+        if not matched_msg_ids:
+            return 0
 
-        for doc in all_docs:
-            _, doc_marks = self._document_to_msg_and_marks(doc)
-            if any(m in doc_marks for m in mark):
-                await self._knowledge_store.delete_document(
-                    document_id=doc.document_id,
-                    tenant_id=self._user_id,
-                )
-                deleted_count += 1
+        delete_tasks = [
+            self._knowledge_store.delete_document(
+                document_id=self._make_document_id(msg_id),
+                tenant_id=self._user_id,
+            )
+            for msg_id in matched_msg_ids
+        ]
+        await asyncio.gather(*delete_tasks)
 
-        return deleted_count
+        return len(matched_msg_ids)
 
     async def size(self) -> int:
         """Get the number of messages in the storage.

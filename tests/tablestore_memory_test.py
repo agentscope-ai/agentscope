@@ -303,31 +303,33 @@ class TablestoreMemoryTest(IsolatedAsyncioTestCase):
 
     async def test_delete_by_mark(self) -> None:
         """Test deleting messages by mark."""
-        docs = [
-            _create_mock_document(self.msgs[0], marks=[]),
-            _create_mock_document(self.msgs[1], marks=["important"]),
-            _create_mock_document(self.msgs[2], marks=["important", "todo"]),
-            _create_mock_document(self.msgs[3], marks=["todo"]),
-        ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_msg_ids_by_marks = AsyncMock(
+            return_value={"1", "2"},
+        )
 
         deleted = await self.memory.delete_by_mark("important")
 
         self.assertEqual(deleted, 2)
+        self.memory._search_msg_ids_by_marks.assert_called_once_with(
+            ["important"],
+        )
+        self.assertEqual(
+            self.memory._knowledge_store.delete_document.call_count,
+            2,
+        )
 
     async def test_delete_by_mark_list(self) -> None:
         """Test deleting messages by multiple marks."""
-        docs = [
-            _create_mock_document(self.msgs[0], marks=[]),
-            _create_mock_document(self.msgs[1], marks=["important"]),
-            _create_mock_document(self.msgs[2], marks=["todo"]),
-            _create_mock_document(self.msgs[3], marks=[]),
-        ]
-        self.memory._get_all_documents = AsyncMock(return_value=docs)
+        self.memory._search_msg_ids_by_marks = AsyncMock(
+            return_value={"1", "2"},
+        )
 
         deleted = await self.memory.delete_by_mark(["important", "todo"])
 
         self.assertEqual(deleted, 2)
+        self.memory._search_msg_ids_by_marks.assert_called_once_with(
+            ["important", "todo"],
+        )
 
     async def test_update_messages_mark_add(self) -> None:
         """Test adding a mark to messages."""
