@@ -2,14 +2,15 @@
 """The memory module."""
 
 from ._working_memory import (
-    MemoryBase,
-    InMemoryMemory,
-    RedisMemory,
     AsyncSQLAlchemyMemory,
+    InMemoryMemory,
+    MemoryBase,
+    RedisMemory,
 )
 from ._long_term_memory import (
     LongTermMemoryBase,
     Mem0LongTermMemory,
+    PowerMemLongTermMemory,
     ReMePersonalLongTermMemory,
     ReMeTaskLongTermMemory,
     ReMeToolLongTermMemory,
@@ -25,6 +26,7 @@ __all__ = [
     # Long-term memory
     "LongTermMemoryBase",
     "Mem0LongTermMemory",
+    "PowerMemLongTermMemory",
     "ReMePersonalLongTermMemory",
     "ReMeTaskLongTermMemory",
     "ReMeToolLongTermMemory",
