@@ -446,24 +446,32 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 正方观点：当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 作为正方，我的观点是当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。
 
-理由如下：
-1. 两个圆外切且没有相对滑动的情况下，圆A的周长为\(2\pi r_A\)，而圆B的周长为\(2\pi r_B = 6\pi r_A\)（因为给定条件是圆A的半径是圆B半径的1/3）。
-2. 当圆A绕着圆B的外围完成一圈时，它沿着圆B的周长移动了距离等于圆B的周长，即\(6\pi r_A\)。
-3. 对于圆A来说，要覆盖这个距离，根据其自身的周长\(2\pi r_A\)，需要旋转\(6\pi r_A / 2\pi r_A = 3\)次。
+首先我们来分析这个问题。给定条件为圆A的半径是圆B半径的1/3。假设圆B的半径为R，则圆A的半径为r = R / 3。
 
-因此，基于上述分析，在圆A绕圆B完整滚动一圈并且回到起点的过程中，圆A总共会旋转3次。
-Bob: 反方观点：当圆A绕着圆B滚动一圈回到起点时，圆A实际上会旋转4次，而不是3次。
+当圆A绕着圆B外切并滚动一周回到原点时，圆A的中心移动的距离等于圆B周长，即2πR。而圆A每自转一圈，其边缘点移动的距离等于自身的周长，即2πr = 2π(R/3)。
 
-理由如下：
-1. 首先，我们同意正方关于两个圆的周长关系的描述。圆A的周长确实是\(2\pi r_A\)，而圆B的周长为\(6\pi r_A\)。
-2. 当圆A沿着圆B的外围滚动时，确实需要覆盖圆B周长的距离，即\(6\pi r_A\)。如果仅考虑这一点，似乎支持了圆A旋转3次的观点。
-3. 然而，关键在于理解“绕一圈”的真正含义。当我们说圆A绕着圆B滚动一圈并且回到起点，这不仅意味着它沿着圆B的周长移动了一圈，还包括了相对于自身轴心的额外旋转。
-4. 为了更直观地理解这一点，想象一下如果你把一个小轮子（代表圆A）放在一个大轮子（代表圆B）上，并让小轮子沿着大轮子的边缘滚动直到回到原点。在这个过程中，除了沿着大轮子周长移动所需的基础旋转外，小轮子还会因为其自身的转动而额外增加一次完整的自转。
-5. 因此，在完成沿圆B周长的一圈滚动后，圆A除了进行3次基于路径长度的旋转外，还将额外完成一次自转，总共是4次旋转。
+要计算圆A绕圆B滚动一圈过程中自转了多少圈，我们可以将圆A中心移动的总距离除以圆A自身周长得到：
 
-综上所述，考虑到圆A在绕圆B滚动一圈的同时也会围绕自己的中心额外旋转一次，最终结论应该是圆A总共会旋转4次。
+\[ \text{自转次数} = \frac{\text{圆A中心移动的距离}}{\text{圆A的周长}} = \frac{2\pi R}{2\pi (R/3)} = \frac{R}{(R/3)} = 3 \]
+
+但这只是考虑了圆A相对于地面的旋转次数。实际上，由于圆A是在围绕着圆B做圆周运动，因此它还会有额外的一次旋转，这是因为圆A在完成这个圆周路径的过程中，它的方向也发生了变化，相当于又多旋转了一圈。
+
+所以，综合上述两部分，圆A绕圆B滚动一圈回到起点时，总共会旋转\(3 + 1 = 4\)次。
+Bob: 感谢Alice的详细分析。然而，我作为反方，认为当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次，而不是4次。
+
+首先，我们同意部分基本设定：假设圆B的半径为R，则圆A的半径为r = R / 3。当圆A绕着圆B外切并滚动一周回到原点时，圆A的中心移动的距离确实是圆B的周长，即2πR。同时，圆A每自转一圈，其边缘点移动的距离等于自身的周长，即2πr = 2π(R/3)。
+
+根据这个信息来计算圆A绕圆B滚动一圈过程中自转了多少圈，确实可以得出：
+
+\[ \text{自转次数} = \frac{\text{圆A中心移动的距离}}{\text{圆A的周长}} = \frac{2\pi R}{2\pi (R/3)} = \frac{R}{(R/3)} = 3 \]
+
+这里的关键在于理解这3次旋转已经包含了所有必要的转动。当我们说圆A绕圆B“滚动一圈”时，实际上是指圆A的接触点相对于圆B表面完成了一整圈的相对运动。在这个过程中，由于没有滑动，圆A必须通过自身旋转来匹配这种相对位移。因此，圆A为了保持与圆B表面的接触而进行的旋转（即上述计算中的3次）已经足够描述整个过程。
+
+至于额外的一次旋转，这实际上是对于圆A相对于固定参考系（如地面）的方向变化的一种误解。虽然从外部观察者的角度来看，圆A似乎完成了额外的一次旋转，但这是因为它跟随了圆B的圆形路径，而非真正的自转。如果我们将圆A想象成一个有标记的轮子，那么在它绕圆B滚动的过程中，标记始终指向圆B的中心，这意味着它并没有经历额外的自转。
+
+综上所述，我的观点是圆A绕圆B滚动一圈回到起点时，总共会旋转3次。
 /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Aggregator: {
@@ -471,13 +479,13 @@ Aggregator: {
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;finished&quot;: true,
-        &quot;correct_answer&quot;: &quot;4次&quot;
+        &quot;correct_answer&quot;: &quot;3次&quot;
     },
-    &quot;id&quot;: &quot;call_111455984fad434ebc9d7c&quot;
+    &quot;id&quot;: &quot;call_052fcc25b6124e28b03f94&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_111455984fad434ebc9d7c&quot;,
+    &quot;id&quot;: &quot;call_052fcc25b6124e28b03f94&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -486,13 +494,13 @@ system: {
         }
     ]
 }
-Aggregator: 感谢Alice和Bob为我们带来的精彩辩论。从双方的论点来看，对于这个问题已经有了非常深入的探讨。根据你们的讨论，我们可以得出结论：当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。
+Aggregator: 感谢Alice和Bob的精彩辩论。根据你们双方的观点，我宣布本次辩论结束，并且可以给出这个问题的正确答案。
 
-这里的关键在于理解圆A在绕圆B周长移动的同时，还会因为自身的转动而额外增加一次完整的自转。因此，除了基于路径长度所需的3次旋转外，还有1次额外的自转，总共是4次旋转。
+当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次。尽管从外部观察者的角度来看，圆A似乎完成了额外的一次旋转，但这是因为它跟随了圆B的圆形路径，而非真正的自转。因此，正确的答案是圆A绕圆B滚动一圈回到起点时，总共会旋转3次。
 
-所以，正确的答案是圆A总共会旋转4次。再次感谢两位辩手的积极参与！如果有任何其他问题或需要进一步讨论的话题，请随时告诉我。
+再次感谢两位辩手为我们带来的精彩讨论！
 
-辩论结束，正确答案是： 4次
+辩论结束，正确答案是： 3次
 </pre></div>
 </div>
 <section id="id1">
@@ -501,7 +509,7 @@ Aggregator: 感谢Alice和Bob为我们带来的精彩辩论。从双方的论点
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">管道 (Pipeline)</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 8.101 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 15.604 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>
