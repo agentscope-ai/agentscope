@@ -330,7 +330,7 @@ In ``Toolkit``, the ``call_tool_function`` method takes a tool use block as inpu
  .. code-block:: none
 
     Tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': "Searching for 'AgentScope' with API key 'xxx'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-03-26 12:07:58.124_1f257d')
+    ToolResponse(content=[{'type': 'text', 'text': "Searching for 'AgentScope' with API key 'xxx'"}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-03-26 12:47:38.875_3046c8')
 
 
 
@@ -495,7 +495,7 @@ An example of async tool function that can be interrupted is as follows:
  .. code-block:: none
 
     Tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-03-26 12:07:59.128_470fd7')
+    ToolResponse(content=[{'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-03-26 12:47:39.880_dc8ecb')
     The interrupted flag:
     True
 
@@ -576,11 +576,11 @@ The example of interrupting a streaming tool function is as follows:
  .. code-block:: none
 
     Chunk 0:
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2026-03-26 12:07:59.130_fd27ff')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}], metadata=None, stream=True, is_last=True, is_interrupted=False, id='2026-03-26 12:47:39.882_16c9cc')
     The interrupted flag:  False 
 
     Chunk 1:
-    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-03-26 12:07:59.130_fd27ff')
+    ToolResponse(content=[{'type': 'text', 'text': '1234'}, {'type': 'text', 'text': '<system-info>The tool call has been interrupted by the user.</system-info>'}], metadata=None, stream=True, is_last=True, is_interrupted=True, id='2026-03-26 12:47:39.882_16c9cc')
     The interrupted flag:  True 
 
 
@@ -904,7 +904,7 @@ contain the notes of the activated tool groups.
  .. code-block:: none
 
     Text content in tool Response:
-    ToolResponse(content=[{'type': 'text', 'text': "Now tool groups 'browser_user' are activated."}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-03-26 12:07:59.138_cc761e')
+    ToolResponse(content=[{'type': 'text', 'text': "Now tool groups 'browser_user' are activated."}], metadata=None, stream=False, is_last=True, is_interrupted=False, id='2026-03-26 12:47:39.890_04568a')
 
 
 
