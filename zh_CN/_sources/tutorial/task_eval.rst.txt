@@ -322,7 +322,7 @@ AgentScope 当前的实现包括：
 
  .. code-block:: none
 
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:232: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Friday: {
         "type": "tool_use",
@@ -330,11 +330,11 @@ AgentScope 当前的实现包括：
         "input": {
             "answer_as_number": 4
         },
-        "id": "call_e65b6735611f41b5bf222b"
+        "id": "call_2d3f45e573324bf5abf130"
     }
     system: {
         "type": "tool_result",
-        "id": "call_e65b6735611f41b5bf222b",
+        "id": "call_2d3f45e573324bf5abf130",
         "name": "generate_response",
         "output": [
             {
@@ -344,19 +344,19 @@ AgentScope 当前的实现包括：
         ]
     }
     Friday: The answer to 2 + 2 is 4.
-    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:231: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
+    /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:232: DeprecationWarning: 'required' is not supported by DashScope API. It will be converted to 'auto'.
       warnings.warn(
     Friday: {
         "type": "tool_use",
         "name": "generate_response",
         "input": {
-            "answer_as_number": 73351
+            "answer_as_number": 73021
         },
-        "id": "call_0373e5e562dd4ae49e141c"
+        "id": "call_87b75179db5941faa1c9a5"
     }
     system: {
         "type": "tool_result",
-        "id": "call_0373e5e562dd4ae49e141c",
+        "id": "call_87b75179db5941faa1c9a5",
         "name": "generate_response",
         "output": [
             {
@@ -365,7 +365,7 @@ AgentScope 当前的实现包括：
             }
         ]
     }
-    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73331. It seems there was a slight miscalculation in the provided number, which was 73351. The correct answer is 73331.
+    Friday: The sum of 12345 + 54321 + 6789 + 9876 is 73021.
     Repeat ID: 0
             Metric: math check number equal
                     Type: MetricType.NUMERICAL
@@ -384,7 +384,7 @@ AgentScope 当前的实现包括：
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 12.827 seconds)
+   **Total running time of the script:** (0 minutes 14.051 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_eval.py:
