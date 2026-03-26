@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve some of the big challenges facing our planet. What about you?
-    Bob: Hey Alice! I'm Bob, and I'm really into sports and fitness. I also have a bit of a tech side, especially when it comes to gadgets that can help with training and health. It's cool to meet someone who's passionate about using technology for good!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm really into music and art. I play a couple of instruments and love to paint. It's great to meet you both! I'm also interested in how technology can influence and enhance the arts.
+    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. In my free time, I love hiking and reading. How about you?
+    Bob: Hey Alice! Nice to meet you. I'm Bob, and I'm studying computer science. I'm really into coding and developing apps that can make daily tasks easier. When I'm not buried in code, I enjoy playing video games and watching sci-fi movies. It's cool to hear about your interest in environmental science; we definitely need more people working on sustainability!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business major. I'm really interested in entrepreneurship and how businesses can be both profitable and socially responsible. When I'm not working on my projects, I like to play basketball and listen to all kinds of music. It's great to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student with a keen interest in technology and the environment. I love exploring how we can use tech to help solve some of the big challenges facing our planet. What about you?
-    Bob: Hey Alice! I'm Bob, and I'm really into sports and fitness. I also have a bit of a tech side, especially when it comes to gadgets that can help with training and health. It's cool to meet someone who's passionate about using technology for good!
-    Charlie: Hi Alice and Bob! I'm Charlie, and I'm really into music and art. I play a couple of instruments and love to paint. It's great to meet you both! I'm also interested in how technology can influence and enhance the arts.
+    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. In my free time, I love hiking and reading. How about you?
+    Bob: Hey Alice! Nice to meet you. I'm Bob, and I'm studying computer science. I'm really into coding and developing apps that can make daily tasks easier. When I'm not buried in code, I enjoy playing video games and watching sci-fi movies. It's cool to hear about your interest in environmental science; we definitely need more people working on sustainability!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business major. I'm really interested in entrepreneurship and how businesses can be both profitable and socially responsible. When I'm not working on my projects, I like to play basketball and listen to all kinds of music. It's great to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 16.255 seconds)
+   **Total running time of the script:** (0 minutes 26.551 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
