@@ -46,43 +46,51 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
         "type": "tool_use",
         "name": "create_worker",
         "input": {
-            "task_description": "在 Python 中编写并执行一个打印 'Hello, World!' 的简单脚本。"
+            "task_description": "在 Python 中编写并执行一个打印 'Hello, world!' 的简单脚本。"
         },
-        "id": "call_6608394fc764469fb4c0cc"
+        "id": "call_3f6c1c82e9444fbfbcdd19"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
-            "code": "print('Hello, World!')",
+            "code": "print('Hello, world!')",
             "timeout": 5
         },
-        "id": "call_aa1159b8b8e54275a999cc"
+        "id": "call_9272a206bd9441018e2404"
     }
     system: {
         "type": "tool_result",
-        "id": "call_aa1159b8b8e54275a999cc",
+        "id": "call_9272a206bd9441018e2404",
         "name": "execute_python_code",
         "output": [
             {
                 "type": "text",
-                "text": "<returncode>0</returncode><stdout>Hello, World!\n</stdout><stderr></stderr>"
+                "text": "<returncode>0</returncode><stdout>Hello, world!\n</stdout><stderr></stderr>"
             }
         ]
     }
-    Worker: Python 脚本已成功执行，并打印出了 'Hello, World!'。
+    Worker: Python 脚本已成功执行，并打印出了 'Hello, world!'。
+
+    ```
+    Hello, world!
+    ```
     system: {
         "type": "tool_result",
-        "id": "call_6608394fc764469fb4c0cc",
+        "id": "call_3f6c1c82e9444fbfbcdd19",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "Python 脚本已成功执行，并打印出了 'Hello, World!'。"
+                "text": "Python 脚本已成功执行，并打印出了 'Hello, world!'。\n\n```\nHello, world!\n```"
             }
         ]
     }
-    Orchestrator: 子智能体已成功执行了 Python 脚本，并打印出了 'Hello, World!'。
+    Orchestrator: 子智能体已成功在 Python 中执行了 "Hello, world!" 程序，并打印出了以下内容：
+
+    ```
+    Hello, world!
+    ```
 
 
 
@@ -173,7 +181,7 @@ Handoffs 是由 OpenAI 提出的工作流模式，通过调用子智能体的方
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 13.628 seconds)
+   **Total running time of the script:** (0 minutes 15.685 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
