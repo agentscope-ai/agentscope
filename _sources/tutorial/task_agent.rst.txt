@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_a1ad835e18904683b66f96",
+        "id": "call_c789c3c23e3c477994493e",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_32224c1647ba4155989580",
+        "id": "call_ebef1c8635f345f9a96938",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,32 +363,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_a1ad835e18904683b66f96",
+        "id": "call_c789c3c23e3c477994493e",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 08:12:56.665204 and ended at 08:12:59.668443. "
+                "text": "Tag tag1 started at 09:07:22.676931 and ended at 09:07:25.680249. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_32224c1647ba4155989580",
+        "id": "call_ebef1c8635f345f9a96938",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 08:12:56.665298 and ended at 08:12:59.669083. "
+                "text": "Tag tag2 started at 09:07:22.677049 and ended at 09:07:25.680909. "
             }
         ]
     }
     Jarvis: The 'example_tool_function' has been called in parallel with the tags 'tag1' and 'tag2'. Here are the results:
 
-    - For tag1, the function started at 08:12:56.665204 and ended at 08:12:59.668443.
-    - For tag2, the function started at 08:12:56.665298 and ended at 08:12:59.669083.
+    - For tag 'tag1', the function started at 09:07:22.676931 and ended at 09:07:25.680249.
+    - For tag 'tag2', the function started at 09:07:22.677049 and ended at 09:07:25.680909.
 
-    Both functions executed concurrently during this time frame.
+    Both functions executed concurrently, as evidenced by their close start and end times.
 
 
 
@@ -467,11 +467,11 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_8ebf80e00ed344a199bce4",
+        "id": "call_9ee9b1aa8b31443b9f7adc",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
-            "description": "A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.",
+            "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
             "age": 76,
             "honor": [
                 "Nobel Prize in Physics (1921)",
@@ -479,11 +479,11 @@ Taking introducing Einstein as an example:
                 "Max Planck Medal (1929)"
             ]
         },
-        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
+        "raw_input": "{\"name\": \"Albert Einstein\", \"description\": \"A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.\", \"age\": 76, \"honor\": [\"Nobel Prize in Physics (1921)\", \"Copley Medal (1925)\", \"Max Planck Medal (1929)\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_8ebf80e00ed344a199bce4",
+        "id": "call_9ee9b1aa8b31443b9f7adc",
         "name": "generate_response",
         "output": [
             {
@@ -492,12 +492,12 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned physicist, best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879 and passing away at the age of 76, Einstein is considered one of the most influential scientists of the 20th century. His work laid the foundation for much of modern physics. Among his many accolades, he was awarded the Nobel Prize in Physics in 1921, primarily for his explanation of the photoelectric effect, although by then his theory of relativity had also gained significant attention. Additionally, Einstein received the Copley Medal in 1925 and the Max Planck Medal in 1929, further cementing his legacy as a pivotal figure in the world of science.
+    Jarvis: Allow me to introduce Albert Einstein, a theoretical physicist renowned for developing the theory of relativity, which stands as one of the two foundational pillars of modern physics. Born in 1879, Einstein's profound impact on the scientific community was recognized with numerous honors throughout his life, including the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. He lived to be 76 years old, leaving behind a legacy that continues to influence our understanding of the universe.
 
     The structured output:
     {
         "name": "Albert Einstein",
-        "description": "A renowned physicist who developed the theory of relativity and is considered one of the most influential scientists of the 20th century.",
+        "description": "A theoretical physicist who developed the theory of relativity, one of the two pillars of modern physics.",
         "age": 76,
         "honor": [
             "Nobel Prize in Physics (1921)",
@@ -581,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 11.552 seconds)
+   **Total running time of the script:** (0 minutes 39.692 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
