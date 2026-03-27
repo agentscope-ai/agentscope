@@ -477,7 +477,7 @@ class DashScopeChatModel(ChatModelBase):
     async def _parse_dashscope_generation_response(
         self,
         start_datetime: datetime,
-        response: GenerationResponse | MultiModalConversationResponse,
+        response: "GenerationResponse | MultiModalConversationResponse",
         structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a DashScope GenerationResponse object, extract the content
