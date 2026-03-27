@@ -3,7 +3,8 @@
 import os
 import uuid
 import copy
-from typing import AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import Event

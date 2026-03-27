@@ -2,16 +2,9 @@
 """The tracing decorators for agent, formatter, toolkit, chat and embedding
 models."""
 import inspect
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from functools import wraps
-from typing import (
-    Generator,
-    AsyncGenerator,
-    Callable,
-    Any,
-    Coroutine,
-    TypeVar,
-    TYPE_CHECKING,
-)
+from typing import Any, TYPE_CHECKING, TypeVar
 
 import aioitertools
 

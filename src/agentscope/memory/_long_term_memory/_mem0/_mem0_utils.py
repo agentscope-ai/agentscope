@@ -7,7 +7,8 @@ with the mem0 library for long-term memory functionality.
 import asyncio
 import atexit
 import threading
-from typing import Any, Coroutine, Dict, List, Literal
+from collections.abc import Coroutine
+from typing import Any, Literal
 
 from mem0.configs.embeddings.base import BaseEmbedderConfig
 from mem0.configs.llms.base import BaseLlmConfig
@@ -207,19 +208,19 @@ class AgentScopeLLM(LLMBase):
 
     def generate_response(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         response_format: Any | None = None,
-        tools: List[Dict] | None = None,
+        tools: list[dict] | None = None,
         tool_choice: str = "auto",
     ) -> str | dict:
         """Generate a response based on the given messages using agentscope.
 
         Args:
-            messages (`List[Dict[str, str]]`):
+            messages (`list[dict[str, str]]`):
                 List of message dicts containing 'role' and 'content'.
             response_format (`Any | None`, optional):
                 Format of the response. Not used in AgentScope.
-            tools (`List[Dict] | None`, optional):
+            tools (`list[dict] | None`, optional):
                 List of tools that the model can call. Not used in AgentScope.
             tool_choice (`str`, optional):
                 Tool choice method. Not used in AgentScope.
@@ -309,18 +310,18 @@ class AgentScopeEmbedding(EmbeddingBase):
 
     def embed(
         self,
-        text: str | List[str],
+        text: str | list[str],
         memory_action: Literal[  # pylint: disable=unused-argument
             "add",
             "search",
             "update",
         ]
         | None = None,
-    ) -> List[float]:
+    ) -> list[float]:
         """Get the embedding for the given text using AgentScope.
 
         Args:
-            text (`str | List[str]`):
+            text (`str | list[str]`):
                 The text to embed.
             memory_action (`Literal["add", "search", "update"] | None`, \
             optional):
@@ -328,7 +329,7 @@ class AgentScopeEmbedding(EmbeddingBase):
                 or "update". Defaults to None.
 
         Returns:
-            `List[float]`:
+            `list[float]`:
                 The embedding vector.
         """
         try:

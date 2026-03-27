@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 """DashScope SDK TTS model implementation using MultiModalConversation API."""
-from typing import (
-    Any,
-    Literal,
-    AsyncGenerator,
-    Generator,
-    TYPE_CHECKING,
-)
+from collections.abc import AsyncGenerator, Generator
+from typing import Any, Literal, TYPE_CHECKING
 
 from ._tts_base import TTSModelBase
 from ._tts_response import TTSResponse

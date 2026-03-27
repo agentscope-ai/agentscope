@@ -2,7 +2,6 @@
 """The tool response class."""
 
 from dataclasses import dataclass, field
-from typing import Optional, List
 
 from .._utils._common import _get_timestamp
 from ..message import AudioBlock, ImageBlock, TextBlock, VideoBlock
@@ -12,10 +11,10 @@ from ..message import AudioBlock, ImageBlock, TextBlock, VideoBlock
 class ToolResponse:
     """The result chunk of a tool call."""
 
-    content: List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+    content: list[TextBlock | ImageBlock | AudioBlock | VideoBlock]
     """The execution output of the tool function."""
 
-    metadata: Optional[dict] = None
+    metadata: dict | None = None
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 

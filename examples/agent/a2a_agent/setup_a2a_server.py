@@ -2,7 +2,8 @@
 """Set up an A2A server with a ReAct agent to handle the input query"""
 import os
 import uuid
-from typing import AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from agent_card import agent_card
 

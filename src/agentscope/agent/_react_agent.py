@@ -4,8 +4,9 @@
 # mypy: disable-error-code="list-item"
 """ReAct agent class in agentscope."""
 import asyncio
+from collections.abc import AsyncGenerator
 from enum import Enum
-from typing import Type, Any, AsyncGenerator, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError, Field
 
@@ -157,7 +158,7 @@ class ReActAgent(ReActAgentBase):
         which will be formatted with the fields from the
         `compression_summary_model`."""
 
-        summary_schema: Type[BaseModel] = SummarySchema
+        summary_schema: type[BaseModel] = SummarySchema
         """The structured model used to guide the agent to generate the
         structured compressed summary."""
 
@@ -356,7 +357,7 @@ class ReActAgent(ReActAgentBase):
         # Variables to record the intermediate state
 
         # If required structured output model is provided
-        self._required_structured_model: Type[BaseModel] | None = None
+        self._required_structured_model: type[BaseModel] | None = None
 
         # -------------- State registration and hooks --------------
         # Register the status variables
@@ -376,14 +377,14 @@ class ReActAgent(ReActAgentBase):
     async def reply(  # pylint: disable=too-many-branches
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """Generate a reply based on the current state and input arguments.
 
         Args:
             msg (`Msg | list[Msg] | None`, optional):
                 The input message(s) to the agent.
-            structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`type[BaseModel] | None`, optional):
                 The required structured output model. If provided, the agent
                 is expected to generate structured output in the `metadata`
                 field of the output message.
@@ -799,7 +800,7 @@ class ReActAgent(ReActAgentBase):
     async def handle_interrupt(
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
         user or something else.
@@ -807,7 +808,7 @@ class ReActAgent(ReActAgentBase):
         Args:
             msg (`Msg | list[Msg] | None`, optional):
                 The input message(s) to the agent.
-            structured_model (`Type[BaseModel] | None`, optional):
+            structured_model (`type[BaseModel] | None`, optional):
                 The required structured output model.
         """
 

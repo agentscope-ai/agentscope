@@ -6,8 +6,9 @@ import json
 import os
 from asyncio import Task, Queue
 from collections import OrderedDict
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Callable, Any
+from typing import Any
 import base64
 import shortuuid
 import numpy as np

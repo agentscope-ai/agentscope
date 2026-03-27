@@ -2,7 +2,8 @@
 """The plan notebook class, used to manage the plan, providing hints and
 tool functions to the agent."""
 from collections import OrderedDict
-from typing import Callable, Literal, Coroutine, Any, Awaitable
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any, Literal
 
 from ._in_memory_storage import InMemoryPlanStorage
 from ._plan_model import SubTask, Plan

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Unit tests for Ollama API model class."""
 import json
-from typing import AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import patch, AsyncMock
 from pydantic import BaseModel

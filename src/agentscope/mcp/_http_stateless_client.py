@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The MCP streamable HTTP server."""
+from collections.abc import Awaitable, Callable
 from contextlib import _AsyncGeneratorContextManager
-from typing import Any, Callable, Awaitable, Literal, List
+from typing import Any, Literal
 
 import mcp.types
 from mcp import ClientSession
@@ -136,7 +137,7 @@ class HttpStatelessClient(MCPClientBase):
             timeout=execution_timeout,
         )
 
-    async def list_tools(self) -> List[mcp.types.Tool]:
+    async def list_tools(self) -> list[mcp.types.Tool]:
         """List all tools available on the MCP server.
 
         Returns:

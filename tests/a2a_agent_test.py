@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """The A2A agent unittests."""
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
 from a2a.types import (

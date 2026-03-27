@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Session module tests."""
 import os
-from typing import Union
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope.agent import ReActAgent, AgentBase
@@ -35,7 +34,7 @@ class MyAgent(AgentBase):
 
     async def handle_interrupt(
         self,
-        msg: Union[Msg, list[Msg], None] = None,
+        msg: Msg | list[Msg] | None = None,
     ) -> Msg:
         """Handle interrupt."""
 

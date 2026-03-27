@@ -2,7 +2,7 @@
 # pylint: disable=R0901
 """The content blocks of messages"""
 
-from typing import Literal, List
+from typing import Literal
 from typing_extensions import TypedDict, Required
 
 
@@ -99,7 +99,7 @@ class ToolResultBlock(TypedDict, total=False):
     id: Required[str]
     """The identity of the tool call result"""
     output: Required[
-        str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+        str | list[TextBlock | ImageBlock | AudioBlock | VideoBlock]
     ]
     """The output of the tool function"""
     name: Required[str]

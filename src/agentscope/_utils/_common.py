@@ -10,8 +10,9 @@ import tempfile
 import types
 import typing
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Type, Dict
+from typing import Any
 
 import numpy as np
 import requests
@@ -264,9 +265,9 @@ def _remove_title_field(schema: dict) -> None:
 
 
 def _create_tool_from_base_model(
-    structured_model: Type[BaseModel],
+    structured_model: type[BaseModel],
     tool_name: str = "generate_structured_output",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a function tool definition from a Pydantic BaseModel.
     This function converts a Pydantic BaseModel class into a tool definition
     that can be used with function calling API. The resulting tool
@@ -275,7 +276,7 @@ def _create_tool_from_base_model(
     with properly formatted data.
 
     Args:
-        structured_model (`Type[BaseModel]`):
+        structured_model (`type[BaseModel]`):
             A Pydantic BaseModel class that defines the expected structure
             for the tool's output.
         tool_name (`str`, default `"generate_structured_output"`):
@@ -283,7 +284,7 @@ def _create_tool_from_base_model(
             output by calling this function.
 
     Returns:
-        `Dict[str, Any]`: A tool definition dictionary compatible with
+        `dict[str, Any]`: A tool definition dictionary compatible with
             function calling API, containing type ("function") and
             function dictionary with name, description, and parameters
             (JSON schema).
@@ -385,9 +386,9 @@ def _parse_tool_function(
                 continue
 
             fields[name] = (
-                Dict[str, Any]
+                dict[str, Any]
                 if param.annotation == inspect.Parameter.empty
-                else Dict[str, param.annotation],  # type: ignore
+                else dict[str, param.annotation],  # type: ignore
                 Field(
                     description=params_docstring.get(
                         f"**{name}",

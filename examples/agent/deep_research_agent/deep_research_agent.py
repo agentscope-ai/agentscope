@@ -4,7 +4,7 @@
 import os
 import json
 
-from typing import Type, Optional, Any, Tuple
+from typing import Any
 from datetime import datetime
 from copy import deepcopy
 import shortuuid
@@ -57,8 +57,8 @@ class SubTaskItem(BaseModel):
     """Subtask item of deep research agent."""
 
     objective: str
-    working_plan: Optional[str] = None
-    knowledge_gaps: Optional[str] = None
+    working_plan: str | None = None
+    knowledge_gaps: str | None = None
 
 
 class DeepResearchAgent(ReActAgent):
@@ -201,7 +201,7 @@ class DeepResearchAgent(ReActAgent):
     async def reply(
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """The reply method of the agent."""
         # Ensure MCP client is initialized before processing
@@ -435,7 +435,7 @@ class DeepResearchAgent(ReActAgent):
     async def get_model_output(
         self,
         msgs: list,
-        format_template: Type[BaseModel] = None,
+        format_template: type[BaseModel] = None,
         stream: bool = True,
     ) -> Any:
         """
@@ -478,7 +478,7 @@ class DeepResearchAgent(ReActAgent):
         self,
         func_name: str,
         params: dict = None,
-    ) -> Tuple[Msg, Msg]:
+    ) -> tuple[Msg, Msg]:
         """
         Call the specific tool in toolkit.
 
@@ -868,7 +868,7 @@ class DeepResearchAgent(ReActAgent):
     async def _generate_deepresearch_report(
         self,
         checklist: str,
-    ) -> Tuple[Msg, str]:
+    ) -> tuple[Msg, str]:
         """Collect and polish all draft reports into a final report.
 
         Args:

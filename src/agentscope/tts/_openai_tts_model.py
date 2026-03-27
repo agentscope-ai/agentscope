@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """OpenAI TTS model implementation."""
 import base64
-from typing import TYPE_CHECKING, Any, Literal, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any, Literal, TYPE_CHECKING
 
 from ._tts_base import TTSModelBase
 from ._tts_response import TTSResponse

@@ -2,7 +2,8 @@
 """The formatter module."""
 
 from abc import abstractmethod
-from typing import Any, List, Tuple, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .._utils._common import _save_base64_data
 from ..message import Msg, AudioBlock, ImageBlock, TextBlock, VideoBlock
@@ -35,11 +36,11 @@ class FormatterBase:
 
     @staticmethod
     def convert_tool_result_to_string(
-        output: str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock],
+        output: str | list[TextBlock | ImageBlock | AudioBlock | VideoBlock],
     ) -> tuple[
         str,
         Sequence[
-            Tuple[
+            tuple[
                 str,
                 ImageBlock | AudioBlock | TextBlock | VideoBlock,
             ]
@@ -54,13 +55,13 @@ class FormatterBase:
         is included in the returned list.
 
         Args:
-            output (`str | List[TextBlock | ImageBlock | AudioBlock | \
+            output (`str | list[TextBlock | ImageBlock | AudioBlock | \
             VideoBlock]`):
                 The output of the tool response, including text and multimodal
                 data like images and audio.
 
         Returns:
-            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock \
+            `tuple[str, list[tuple[str, ImageBlock | AudioBlock | VideoBlock \
             TextBlock]]]`:
                 A tuple containing the textual representation of the tool
                 result and a list of tuples. The first element of each tuple

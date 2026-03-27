@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for OpenAI API model class."""
-from typing import AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock
 from pydantic import BaseModel

@@ -2,13 +2,9 @@
 """The truncated formatter base class, which allows to truncate the input
 messages."""
 from abc import ABC
+from collections.abc import AsyncGenerator
 from copy import deepcopy
-from typing import (
-    Any,
-    Tuple,
-    Literal,
-    AsyncGenerator,
-)
+from typing import Any, Literal
 
 from ._formatter_base import FormatterBase
 from ..message import Msg
@@ -231,7 +227,7 @@ class TruncatedFormatterBase(FormatterBase, ABC):
     async def _group_messages(
         msgs: list[Msg],
     ) -> AsyncGenerator[
-        Tuple[Literal["tool_sequence", "agent_message"], list[Msg]],
+        tuple[Literal["tool_sequence", "agent_message"], list[Msg]],
         None,
     ]:
         """Group the input messages into two types and yield them as a
@@ -251,7 +247,7 @@ class TruncatedFormatterBase(FormatterBase, ABC):
                 message shouldn't be included.
 
         Yields:
-            `AsyncGenerator[Tuple[str, list[Msg]], None]`:
+            `AsyncGenerator[tuple[str, list[Msg]], None]`:
                 A generator that yields tuples of group type and the list of
                 messages in that group. The group type can be either
                 "tool_sequence" or "agent_message".

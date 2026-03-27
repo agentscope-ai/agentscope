@@ -2,7 +2,8 @@
 """The chat model base class."""
 
 from abc import abstractmethod
-from typing import AsyncGenerator, Any
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from ._model_response import ChatResponse
 

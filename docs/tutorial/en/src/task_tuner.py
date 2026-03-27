@@ -75,7 +75,6 @@ The workflow function defines how the agent interacts with the environment and m
 Below is an example workflow function using a ReAct agent to answer math questions:
 """
 
-from typing import Dict, Optional
 from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
@@ -84,16 +83,16 @@ from agentscope.tuner import WorkflowOutput
 
 
 async def example_workflow_function(
-    task: Dict,
+    task: dict,
     model: ChatModelBase,
-    auxiliary_models: Optional[Dict[str, ChatModelBase]] = None,
+    auxiliary_models: dict[str, ChatModelBase] | None = None,
 ) -> WorkflowOutput:
     """An example workflow function for tuning.
 
     Args:
-        task (`Dict`): The task information.
+        task (`dict`): The task information.
         model (`ChatModelBase`): The chat model used by the agent.
-        auxiliary_models (`Optional[Dict[str, ChatModelBase]]`): Additional
+        auxiliary_models (`dict[str, ChatModelBase] | None`): Additional
             chat models, generally used to simulate the behavior of other
             non-training agents in multi-agent scenarios.
 
@@ -152,16 +151,16 @@ from agentscope.tuner import JudgeOutput
 
 
 async def example_judge_function(
-    task: Dict,
+    task: dict,
     response: Any,
-    auxiliary_models: Optional[Dict[str, ChatModelBase]] = None,
+    auxiliary_models: dict[str, ChatModelBase] | None = None,
 ) -> JudgeOutput:
     """A very simple judge function only for demonstration.
 
     Args:
-        task (`Dict`): The task information.
+        task (`dict`): The task information.
         response (`Any`): The response field from the WorkflowOutput.
-        auxiliary_models (`Optional[Dict[str, ChatModelBase]]`): Additional
+        auxiliary_models (`dict[str, ChatModelBase] | None`): Additional
             chat models for LLM-as-a-Judge purpose.
     Returns:
         `JudgeOutput`: The reward assigned by the judge.

@@ -2,7 +2,7 @@
 """ReMe-based short-term memory implementation for AgentScope."""
 import json
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 from uuid import uuid4
 
 from agentscope import logger
@@ -286,7 +286,7 @@ class ReMeShortTermMemory(InMemoryMemory):
         msg_list: list[Msg] = []
         for msg_dict in messages:
             role = msg_dict["role"]
-            content_blocks: List[
+            content_blocks: list[
                 TextBlock | ToolUseBlock | ToolResultBlock
             ] = []
             content = msg_dict.get("content")

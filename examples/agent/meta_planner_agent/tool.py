@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from collections import OrderedDict
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from pydantic import BaseModel, Field
 

@@ -7,18 +7,16 @@ TODO: We should consider to split this `Toolkit` class in the future.
 import asyncio
 import inspect
 import os
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+)
 from copy import deepcopy
 from functools import partial, wraps
-from typing import (
-    AsyncGenerator,
-    Literal,
-    Any,
-    Type,
-    Generator,
-    Callable,
-    Awaitable,
-    Coroutine,
-)
+from typing import Any, Literal
 
 import mcp
 import shortuuid
@@ -621,7 +619,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
     def set_extended_model(
         self,
         func_name: str,
-        model: Type[BaseModel] | None,
+        model: type[BaseModel] | None,
     ) -> None:
         """Set the extended model for a tool function, so that the original
         JSON schema will be extended.
@@ -629,7 +627,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         Args:
             func_name (`str`):
                 The name of the tool function.
-            model (`Union[Type[BaseModel], None]`):
+            model (`Union[type[BaseModel], None]`):
                 The extended model to be set.
         """
         if model is not None and not issubclass(model, BaseModel):

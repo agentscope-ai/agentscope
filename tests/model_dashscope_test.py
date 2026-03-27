@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unit tests for DashScope API model class."""
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 from http import HTTPStatus

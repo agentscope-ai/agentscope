@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The MCP tool function class in AgentScope."""
+from collections.abc import Callable
 from contextlib import _AsyncGeneratorContextManager
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any
 
 import mcp
 from mcp import ClientSession

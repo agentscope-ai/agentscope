@@ -3,7 +3,6 @@
  functionality for stateful MCP clients."""
 from abc import ABC
 from contextlib import AsyncExitStack
-from typing import List
 
 import mcp
 from mcp import ClientSession
@@ -94,7 +93,7 @@ class StatefulClientBase(MCPClientBase, ABC):
             self.session = None
             self.is_connected = False
 
-    async def list_tools(self) -> List[mcp.types.Tool]:
+    async def list_tools(self) -> list[mcp.types.Tool]:
         """Get all available tools from the server.
 
         Returns:
