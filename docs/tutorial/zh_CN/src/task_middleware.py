@@ -20,7 +20,7 @@ AgentScope 提供了灵活的中间件系统，允许开发者拦截和修改各
 
 """
 import asyncio
-from typing import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable
 
 from agentscope.message import TextBlock, ToolUseBlock
 from agentscope.tool import ToolResponse, Toolkit

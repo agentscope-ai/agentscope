@@ -1,14 +1,10 @@
 # -*- coding: utf-8 -*-
 """The metaclass for agents in agentscope."""
 import inspect
+from collections.abc import Callable
 from copy import deepcopy
 from functools import wraps
-from typing import (
-    Any,
-    Dict,
-    TYPE_CHECKING,
-    Callable,
-)
+from typing import Any, TYPE_CHECKING
 
 from .._utils._common import _execute_async_or_sync_func
 
@@ -148,7 +144,7 @@ class _AgentMeta(type):
     """The agent metaclass that wraps the agent's reply, observe and print
     functions with pre- and post-hooks."""
 
-    def __new__(mcs, name: Any, bases: Any, attrs: Dict) -> Any:
+    def __new__(mcs, name: Any, bases: Any, attrs: dict) -> Any:
         """Wrap the agent's functions with hooks."""
 
         for func_name in [
@@ -166,7 +162,7 @@ class _ReActAgentMeta(_AgentMeta):
     """The ReAct metaclass that adds pre- and post-hooks for the _reasoning
     and _acting functions."""
 
-    def __new__(mcs, name: Any, bases: Any, attrs: Dict) -> Any:
+    def __new__(mcs, name: Any, bases: Any, attrs: dict) -> Any:
         """Wrap the ReAct agent's _reasoning and _acting functions with
         hooks."""
 

@@ -4,9 +4,10 @@
 """Test toolkit module in agentscope."""
 import asyncio
 import time
+from collections.abc import AsyncGenerator, Generator
 from copy import deepcopy
 from functools import partial
-from typing import Union, Optional, Any, AsyncGenerator, Generator, Tuple
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
 from pydantic import BaseModel, Field
@@ -17,7 +18,7 @@ from agentscope.tool import ToolResponse, Toolkit
 
 async def aenumerate(
     agen: AsyncGenerator[ToolResponse, None],
-) -> AsyncGenerator[Tuple[int, ToolResponse], None]:
+) -> AsyncGenerator[tuple[int, ToolResponse], None]:
     """Asynchronous enumerate function."""
     n = 0
     async for item in agen:
@@ -49,7 +50,7 @@ async def async_func(raise_cancel: bool) -> ToolResponse:
 
 def sync_func(
     arg1: int,
-    arg2: Optional[list[Union[str, int]]] = None,
+    arg2: list[str | int] | None = None,
 ) -> ToolResponse:
     """A sync function for testing.
 
@@ -58,7 +59,7 @@ def sync_func(
     Args:
         arg1 (`int`):
             Test argument 1.
-        arg2 (`Optional[list[Union[str, int]]]`, defaults to `None`):
+        arg2 (`list[str | int] | None`, defaults to `None`):
             Test argument 2.
     """
     time.sleep(1)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The base class for MCP clients in AgentScope."""
 from abc import abstractmethod
-from typing import Callable, List
+from collections.abc import Callable
 
 import mcp.types
 
@@ -39,7 +39,7 @@ class MCPClientBase:
     @staticmethod
     def _convert_mcp_content_to_as_blocks(
         mcp_content_blocks: list,
-    ) -> List[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
+    ) -> list[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
         """Convert MCP content to AgentScope blocks."""
 
         as_content: list = []

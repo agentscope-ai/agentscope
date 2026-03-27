@@ -3,17 +3,18 @@
 
 import json
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Any, Optional
+from typing import Any
 
 from ..types import JSONSerializableObject
 
 
 @dataclass
 class _JSONSerializeFunction:
-    to_json: Optional[Callable[[Any], Any]] = None
+    to_json: Callable[[Any], Any] | None = None
     """The function converting the original data to JSON data."""
-    load_json: Optional[Callable[[Any], Any]] = None
+    load_json: Callable[[Any], Any] | None = None
     """The function converting the JSON data to original data."""
 
 

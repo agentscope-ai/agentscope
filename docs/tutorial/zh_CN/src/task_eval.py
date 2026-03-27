@@ -122,7 +122,7 @@ class CheckEqual(MetricBase):
 # - 一个 ``Task`` (任务) 是基准测试中的一个单元，包含智能体执行和评估所需的所有信息（例如，输入/查询及其标准答案）。
 # - 一个 ``Benchmark`` (基准测试) 组织多个任务进行系统性评估。
 
-from typing import Generator
+from collections.abc import Generator
 from agentscope.evaluate import (
     Task,
     BenchmarkBase,
@@ -184,7 +184,7 @@ class ToyBenchmark(BenchmarkBase):
 
 import os
 import asyncio
-from typing import Callable
+from collections.abc import Callable
 from pydantic import BaseModel
 
 from agentscope.message import Msg

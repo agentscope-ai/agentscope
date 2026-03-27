@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Configuration module for prompt tuning."""
 
-from typing import Optional, Literal
+from typing import Literal
 from pydantic import BaseModel, Field
 
 
@@ -24,7 +24,7 @@ class PromptTuneConfig(BaseModel):
         description="The model name for prompt proposer.",
     )
 
-    optimization_level: Optional[Literal["light", "medium", "heavy"]] = Field(
+    optimization_level: Literal["light", "medium", "heavy"] | None = Field(
         default="light",
         description="Optimization level, can be light, medium, or heavy.",
     )

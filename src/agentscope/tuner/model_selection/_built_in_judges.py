@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """Built-in judge functions for model selection."""
 
-from typing import Dict, Any
+from typing import Any
 from .._judge import JudgeOutput
 
 
 async def avg_time_judge(
-    _task: Dict[str, Any],
+    _task: dict[str, Any],
     response: Any,
 ) -> JudgeOutput:
     """
@@ -16,7 +16,7 @@ async def avg_time_judge(
     in the metrics field.
 
     Args:
-        task (`Dict[str, Any]`):
+        task (`dict[str, Any]`):
             The task information (unused in this judge).
         response (`Any`):
             A composite dict containing the workflow response
@@ -52,7 +52,7 @@ async def avg_time_judge(
 
 
 async def avg_token_consumption_judge(
-    _task: Dict[str, Any],
+    _task: dict[str, Any],
     response: Any,
 ) -> JudgeOutput:
     """
@@ -62,7 +62,7 @@ async def avg_token_consumption_judge(
     in the metrics field.
 
     Args:
-        task (`Dict[str, Any]`):
+        task (`dict[str, Any]`):
             The task information (unused in this judge).
         response (`Any`):
             A composite dict containing the workflow response

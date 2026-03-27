@@ -6,7 +6,7 @@ TODO: handle the exception raised when yielding from async generator
  into a normal ToolResponse instance.
 """
 import asyncio
-from typing import AsyncGenerator, Generator, Callable, Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 
 from ._response import ToolResponse
 from ..message import TextBlock

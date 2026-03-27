@@ -21,7 +21,8 @@ All above features are implemented by the ``Toolkit`` class in AgentScope, which
 import asyncio
 import inspect
 import json
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from pydantic import BaseModel, Field
 

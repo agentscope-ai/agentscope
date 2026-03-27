@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The types for the tool module in AgentScope."""
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TypedDict, Literal, Type, Callable, Awaitable
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel
 
@@ -33,7 +34,7 @@ class RegisteredToolFunction:
     schema and exposed to the user."""
     original_name: str | None = None
     """The original name of the tool function when it has been renamed."""
-    extended_model: Type[BaseModel] | None = None
+    extended_model: type[BaseModel] | None = None
     """The base model used to extend the JSON schema of the original tool
     function, so that we can dynamically adjust the tool function."""
     mcp_name: str | None = None

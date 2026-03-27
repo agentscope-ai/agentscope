@@ -20,7 +20,7 @@ This allows developers to:
 
 """
 import asyncio
-from typing import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable
 
 from agentscope.message import TextBlock, ToolUseBlock
 from agentscope.tool import ToolResponse, Toolkit

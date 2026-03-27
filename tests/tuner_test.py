@@ -3,7 +3,7 @@
 # pylint: disable=too-many-statements
 """Unit tests for tuner related modules."""
 from unittest.async_case import IsolatedAsyncioTestCase
-from typing import Dict, Any
+from typing import Any
 
 from logging import Logger
 
@@ -15,9 +15,9 @@ from agentscope.tuner._config import (
 
 
 async def correct_workflow_func(
-    task: Dict,
+    task: dict,
     model: TunerModelConfig,
-    auxiliary_models: Dict[str, TunerModelConfig],
+    auxiliary_models: dict[str, TunerModelConfig],
     logger: Logger,
 ) -> WorkflowOutput:
     """Correct interface matching the workflow type."""
@@ -27,7 +27,7 @@ async def correct_workflow_func(
 
 
 async def correct_workflow_func_no_aux(
-    task: Dict,
+    task: dict,
     model: TunerModelConfig,
 ) -> WorkflowOutput:
     """Correct interface matching the workflow type without
@@ -37,7 +37,7 @@ async def correct_workflow_func_no_aux(
     )
 
 
-async def incorrect_workflow_func_1(task: Dict) -> WorkflowOutput:
+async def incorrect_workflow_func_1(task: dict) -> WorkflowOutput:
     """Incorrect interface not matching the workflow type."""
     return WorkflowOutput(
         response="Test response",
@@ -45,7 +45,7 @@ async def incorrect_workflow_func_1(task: Dict) -> WorkflowOutput:
 
 
 async def incorrect_workflow_func_2(
-    task: Dict,
+    task: dict,
     model: TunerModelConfig,
     aux_model: int,
 ) -> WorkflowOutput:
@@ -56,9 +56,9 @@ async def incorrect_workflow_func_2(
 
 
 async def correct_judge_func(
-    task: Dict,
+    task: dict,
     response: Any,
-    auxiliary_models: Dict[str, TunerModelConfig],
+    auxiliary_models: dict[str, TunerModelConfig],
     logger: Logger,
 ) -> JudgeOutput:
     """Correct interface matching the judge type."""
@@ -68,7 +68,7 @@ async def correct_judge_func(
 
 
 async def incorrect_judge_func_1(
-    wrong_name: Dict,
+    wrong_name: dict,
     response: Any,
 ) -> JudgeOutput:
     """Incorrect interface not matching the judge type."""

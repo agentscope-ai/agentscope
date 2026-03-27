@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from base64 import b64encode
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from agentscope.message import (
     Base64Source,
@@ -137,7 +137,7 @@ def extract_frames(
     video_path: str,
     output_dir: str,
     max_frames: int = 16,
-) -> List[str]:
+) -> list[str]:
     """Extract representative frames using ffmpeg (no OpenCV dependency)."""
 
     if max_frames <= 0:
@@ -237,7 +237,7 @@ def extract_audio(video_path: str, audio_path: str) -> str:
     return audio_path
 
 
-def _probe_video_duration(video_path: str) -> Optional[float]:
+def _probe_video_duration(video_path: str) -> float | None:
     """Return the video duration in seconds using ffprobe, if available."""
 
     command = [
@@ -269,7 +269,7 @@ def _probe_video_duration(video_path: str) -> Optional[float]:
 
 
 def _build_multimodal_blocks(
-    frames: List[str],
+    frames: list[str],
     transcript: str,
     task: str,
 ) -> list:

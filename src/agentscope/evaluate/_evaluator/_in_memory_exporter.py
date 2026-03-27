@@ -2,7 +2,7 @@
 """An in memory exporter of OpenTelemetry traces for AgentScope evaluator, used
 to record the token usage during evaluation."""
 from collections import defaultdict
-from typing import Sequence
+from collections.abc import Sequence
 
 from opentelemetry import baggage
 from opentelemetry.sdk.trace import ReadableSpan

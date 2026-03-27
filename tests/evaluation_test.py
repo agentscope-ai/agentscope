@@ -3,7 +3,8 @@
 import os
 import sys
 import shutil
-from typing import Generator, Callable, Any, cast
+from collections.abc import Callable, Generator
+from typing import Any, cast
 from unittest.async_case import IsolatedAsyncioTestCase
 import ray
 

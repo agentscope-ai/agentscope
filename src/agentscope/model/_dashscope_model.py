@@ -5,18 +5,10 @@ import collections
 import json
 import os
 import warnings
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime
 from http import HTTPStatus
-from typing import (
-    Any,
-    AsyncGenerator,
-    Generator,
-    Union,
-    TYPE_CHECKING,
-    List,
-    Literal,
-    Type,
-)
+from typing import Any, Literal, TYPE_CHECKING
 from pydantic import BaseModel
 from aioitertools import iter as giter
 
@@ -165,7 +157,7 @@ class DashScopeChatModel(ChatModelBase):
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from the dashscope
@@ -189,7 +181,7 @@ class DashScopeChatModel(ChatModelBase):
                  "required" will be converted to "auto".
                  For more details, please refer to
                  https://help.aliyun.com/zh/model-studio/qwen-function-calling
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output. When provided, the model will be forced
                 to return data that conforms to this schema by automatically
@@ -301,12 +293,12 @@ class DashScopeChatModel(ChatModelBase):
     async def _parse_dashscope_stream_response(
         self,
         start_datetime: datetime,
-        response: Union[
-            AsyncGenerator[GenerationResponse, None],
-            AsyncGenerator[MultiModalConversationResponse, None],
-            Generator[MultiModalConversationResponse, None, None],
-        ],
-        structured_model: Type[BaseModel] | None = None,
+        response: (
+            AsyncGenerator[GenerationResponse, None]
+            | AsyncGenerator[MultiModalConversationResponse, None]
+            | Generator[MultiModalConversationResponse, None, None]
+        ),
+        structured_model: type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, Any]:
         """Given a DashScope streaming response generator, extract the content
             blocks and usages from it and yield ChatResponse objects.
@@ -314,14 +306,12 @@ class DashScopeChatModel(ChatModelBase):
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (
-                `Union[AsyncGenerator[GenerationResponse, None], \
-                AsyncGenerator[MultiModalConversationResponse, None], \
-                Generator[MultiModalConversationResponse, None, None]]`
-            ):
+            response (`AsyncGenerator[GenerationResponse, None] \
+            | AsyncGenerator[MultiModalConversationResponse, None] \
+            | Generator[MultiModalConversationResponse, None, None]`):
                 DashScope streaming response (async) generator
                 (GenerationResponse or MultiModalConversationResponse).
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -487,11 +477,8 @@ class DashScopeChatModel(ChatModelBase):
     async def _parse_dashscope_generation_response(
         self,
         start_datetime: datetime,
-        response: Union[
-            GenerationResponse,
-            MultiModalConversationResponse,
-        ],
-        structured_model: Type[BaseModel] | None = None,
+        response: GenerationResponse | MultiModalConversationResponse,
+        structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a DashScope GenerationResponse object, extract the content
         blocks and usages from it.
@@ -499,12 +486,10 @@ class DashScopeChatModel(ChatModelBase):
         Args:
             start_datetime (`datetime`):
                 The start datetime of the response generation.
-            response (
-                `Union[GenerationResponse, MultiModalConversationResponse]`
-            ):
+            response (`GenerationResponse | MultiModalConversationResponse`):
                 Dashscope GenerationResponse | MultiModalConversationResponse
                 object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -520,7 +505,7 @@ class DashScopeChatModel(ChatModelBase):
         if response.status_code != 200:
             raise RuntimeError(response)
 
-        content_blocks: List[TextBlock | ToolUseBlock] = []
+        content_blocks: list[TextBlock | ToolUseBlock] = []
         metadata: dict | None = None
 
         message = response.output.choices[0].message

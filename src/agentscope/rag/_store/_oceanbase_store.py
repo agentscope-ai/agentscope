@@ -2,7 +2,8 @@
 """The OceanBase vector store implementation."""
 import asyncio
 import json
-from typing import Any, Callable, Literal, TYPE_CHECKING
+from collections.abc import Callable
+from typing import Any, Literal, TYPE_CHECKING
 
 from .._reader import Document
 from ._store_base import VDBStoreBase

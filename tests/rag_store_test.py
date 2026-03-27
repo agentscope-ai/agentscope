@@ -3,7 +3,7 @@
 import os
 import types
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock, patch, AsyncMock
 

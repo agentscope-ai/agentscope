@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unittests for the message converter functionality in AgentScope tracing."""
-from typing import Any, Dict
+from typing import Any
 from unittest import TestCase
 
 from agentscope.message import (
@@ -46,7 +46,7 @@ class ConverterTest(TestCase):
     def test_convert_thinking_block(self) -> None:
         """Test thinking block conversion"""
         # Normal thinking block
-        block: Dict[str, Any] = {
+        block: dict[str, Any] = {
             "type": "thinking",
             "thinking": "Let me think about this...",
         }
@@ -185,7 +185,7 @@ class ConverterTest(TestCase):
     def test_convert_image_block(self) -> None:
         """Test image block conversion"""
         # URL source
-        source: Dict[str, Any] = {
+        source: dict[str, Any] = {
             "type": "url",
             "url": "https://example.com/image.jpg",
         }
@@ -265,7 +265,7 @@ class ConverterTest(TestCase):
     def test_convert_audio_block(self) -> None:
         """Test audio block conversion"""
         # URL source
-        source: Dict[str, Any] = {
+        source: dict[str, Any] = {
             "type": "url",
             "url": "https://example.com/audio.wav",
         }
@@ -340,7 +340,7 @@ class ConverterTest(TestCase):
     def test_convert_video_block(self) -> None:
         """Test video block conversion"""
         # URL source
-        source: Dict[str, Any] = {
+        source: dict[str, Any] = {
             "type": "url",
             "url": "https://example.com/video.mp4",
         }

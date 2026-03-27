@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Functional counterpart for Pipeline"""
 import asyncio
+from collections.abc import AsyncGenerator, Coroutine
 from copy import deepcopy
-from typing import Any, AsyncGenerator, Tuple, Coroutine
+from typing import Any
 from ..agent import AgentBase
 from ..message import Msg, AudioBlock
 
@@ -111,7 +112,7 @@ async def stream_printing_messages(
     end_signal: str = "[END]",
     yield_speech: bool = False,
 ) -> AsyncGenerator[
-    Tuple[Msg, bool] | Tuple[Msg, bool, AudioBlock | list[AudioBlock] | None],
+    tuple[Msg, bool] | tuple[Msg, bool, AudioBlock | list[AudioBlock] | None],
     None,
 ]:
     """This pipeline will gather the printing messages from agents when
@@ -149,7 +150,7 @@ async def stream_printing_messages(
             the boolean flag will be yielded.
 
     Yields:
-        `Tuple[Msg, bool] | Tuple[Msg, bool, AudioBlock | list[AudioBlock] | \
+        `tuple[Msg, bool] | tuple[Msg, bool, AudioBlock | list[AudioBlock] | \
         None]`:
             A tuple containing the message, a boolean indicating whether
             it's the last chunk in a streaming message, and optionally

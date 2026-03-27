@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: skip-file
 """Get the signatures of functions and classes in the agentscope library."""
-from typing import Literal, Callable
+from collections.abc import Callable
+from typing import Literal
 
 import agentscope
 import inspect

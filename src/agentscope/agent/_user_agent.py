@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The user agent class."""
-from typing import Type, Any
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -30,7 +30,7 @@ class UserAgent(AgentBase):
     async def reply(
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """Receive input message(s) and generate a reply message from the user.
 
@@ -38,7 +38,7 @@ class UserAgent(AgentBase):
             msg (`Msg | list[Msg] | None`, defaults to `None`):
                 The message(s) to be replied. If `None`, the agent will wait
                 for user input.
-            structured_model (`Type[BaseModel] | None`, defaults to `None`):
+            structured_model (`type[BaseModel] | None`, defaults to `None`):
                 A child class of `pydantic.BaseModel` that defines the
                 structured output format. If provided, the user will be
                 prompted to fill in the required fields.

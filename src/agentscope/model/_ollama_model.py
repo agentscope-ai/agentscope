@@ -1,17 +1,10 @@
 # -*- coding: utf-8 -*-
 """Model wrapper for Ollama models."""
 import json
-from datetime import datetime
-from typing import (
-    Any,
-    TYPE_CHECKING,
-    List,
-    AsyncGenerator,
-    AsyncIterator,
-    Literal,
-    Type,
-)
 from collections import OrderedDict
+from collections.abc import AsyncGenerator, AsyncIterator
+from datetime import datetime
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -103,7 +96,7 @@ class OllamaChatModel(ChatModelBase):
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Ollama chat completions API by the given
@@ -118,7 +111,7 @@ class OllamaChatModel(ChatModelBase):
             tool_choice (`Literal["auto", "none", "required"] | str \
                 | None`, default `None`):
                 Ollama doesn't support `tool_choice` argument yet.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
             **kwargs (`Any`):
@@ -175,7 +168,7 @@ class OllamaChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncIterator[OllamaChatResponse],
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given an Ollama streaming completion response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -185,7 +178,7 @@ class OllamaChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncIterator[OllamaChatResponse]`):
                 Ollama streaming response async iterator to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -282,7 +275,7 @@ class OllamaChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: OllamaChatResponse,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given an Ollama chat completion response object, extract the content
         blocks and usages from it.
@@ -292,7 +285,7 @@ class OllamaChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`OllamaChatResponse`):
                 Ollama OllamaChatResponse object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -304,7 +297,7 @@ class OllamaChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
+        content_blocks: list[TextBlock | ToolUseBlock | ThinkingBlock] = []
         metadata: dict | None = None
 
         if response.message.thinking:

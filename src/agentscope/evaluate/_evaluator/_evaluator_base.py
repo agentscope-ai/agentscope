@@ -3,9 +3,10 @@
 import collections
 import json
 from abc import abstractmethod
-from dataclasses import asdict
-from typing import Callable, Coroutine, Any
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
+from dataclasses import asdict
+from typing import Any
 
 from .._solution import SolutionOutput
 from .._task import Task
