@@ -266,7 +266,7 @@ The memory module in AgentScope currently supports:
 
 - **In-memory storage**: For lightweight, temporary memory needs
 - **Relational databases via SQLAlchemy**: For persistent, structured data storage
-- **NoSQL databases**: For flexible schema requirements (e.g., Redis)
+- **NoSQL databases**: For flexible schema requirements (e.g., Redis, Tablestore)
 
 **⚠️ Important Notice:**
 
