@@ -65,7 +65,7 @@ async def example_multimodal_rag() -> None:
 
     # Let's see if the agent has stored the retrieved document in its memory
     print("\nThe retrieved document stored in the agent's memory:")
-    content = (await agent.memory.get_memory())[-4].content
+    content = (await agent.memory.get_memory())[-2].content
     print(json.dumps(content, indent=2, ensure_ascii=False))
 
 
