@@ -79,6 +79,7 @@ The AgentScope Ecosystem
 
 ## News
 <!-- BEGIN NEWS -->
+- **[2026-03]`RELS`:** We recently developed and open sourced an AI assistant named [CoPaw](https://github.com/agentscope-ai/CoPaw) (Co Personal Agent Workstation), built upon [AgentScope](https://github.com/agentscope-ai/agentscope), [AgentScope-Runtime](https://github.com/agentscope-ai/agentscope-runtime), and [Reme](https://github.com/agentscope-ai/ReMe).
 - **[2026-02] `FEAT`:** Realtime Voice Agent support. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent) | [Multi-Agent Realtime Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime) | [Tutorial](https://doc.agentscope.io/tutorial/task_realtime.html)
 - **[2026-01] `COMM`:** Biweekly Meetings launched to share ecosystem updates and development plans - join us! [Details & Schedule](https://github.com/agentscope-ai/agentscope/discussions/1126)
 - **[2026-01] `FEAT`:** Database support & memory compression in memory module. [Example](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) | [Tutorial](https://doc.agentscope.io/tutorial/task_memory.html)
