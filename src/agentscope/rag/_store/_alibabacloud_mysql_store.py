@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The AlibabaCloud MySQL vector store implementation."""
 import json
+import re
 from typing import Any, Literal, TYPE_CHECKING
 
 from .._reader import Document
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from mysql.connector import MySQLConnection
 else:
     MySQLConnection = "mysql.connector.MySQLConnection"
+
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class AlibabaCloudMySQLStore(VDBStoreBase):
@@ -100,10 +103,34 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             **connection_kwargs,
         }
 
+        if not _SAFE_IDENTIFIER_RE.match(table_name):
+            raise ValueError(
+                f"Invalid table_name {table_name!r}. "
+                "table_name must start with a letter or underscore and "
+                "contain only letters, digits, and underscores.",
+            )
+        if not isinstance(dimensions, int) or dimensions <= 0:
+            raise ValueError(
+                f"dimensions must be a positive integer, got {dimensions!r}.",
+            )
+        if not isinstance(hnsw_m, int) or hnsw_m <= 0:
+            raise ValueError(
+                f"hnsw_m must be a positive integer, got {hnsw_m!r}.",
+            )
+
         self.table_name = table_name
+        # Pre-computed backtick-quoted identifier, safe to embed in SQL
+        # because table_name has been validated against _SAFE_IDENTIFIER_RE.
+        self._quoted_table = "`" + table_name + "`"
         self.dimensions = dimensions
         self.distance = distance
         self.hnsw_m = hnsw_m
+
+        # Pre-build all SQL statements once using the validated identifiers.
+        # All variable parts (table name, vector dimensions, HNSW parameter,
+        # distance metric) have been validated above and are safe to embed.
+        # User-supplied VALUES are always passed via %s bound parameters.
+        self._build_sql_templates()
 
         # Initialize connection
         self._conn = mysql.connector.connect(**self.connection_params)
@@ -127,6 +154,85 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
                 f"AlibabaCloud MySQL only supports 'COSINE' and 'EUCLIDEAN'.",
             )
 
+    def _build_sql_templates(self) -> None:
+        """Pre-build all SQL statements using validated identifiers.
+
+        All dynamic parts (table name, dimensions, HNSW M, distance metric)
+        are validated in ``__init__`` before this method is called, so it
+        is safe to embed them directly in the SQL strings.  User-supplied
+        VALUES are always bound via ``%s`` parameterised placeholders.
+
+        Storing the final SQL as instance attributes means that
+        ``_cursor.execute()`` call-sites receive a plain string variable
+        with no in-line concatenation, satisfying static-analysis rules
+        that flag dynamic SQL construction.
+        """
+        _t = self._quoted_table
+        _df = self._get_distance_function()
+        _dm = self.distance.lower()
+
+        # DDL – CREATE TABLE
+        self._create_table_sql = (
+            "CREATE TABLE IF NOT EXISTS "
+            + _t
+            + " (id VARCHAR(255) PRIMARY KEY,"
+            " embedding VECTOR("
+            + str(self.dimensions)
+            + ") NOT NULL,"
+            " doc_id VARCHAR(255) NOT NULL,"
+            " chunk_id INT NOT NULL,"
+            " content TEXT NOT NULL,"
+            " total_chunks INT NOT NULL,"
+            " INDEX idx_doc_id (doc_id),"
+            " INDEX idx_chunk_id (chunk_id),"
+            " VECTOR INDEX (embedding) M="
+            + str(self.hnsw_m)
+            + " DISTANCE="
+            + _dm
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            " COLLATE=utf8mb4_unicode_ci"
+        )
+
+        # DML – INSERT / UPSERT
+        self._insert_sql = (
+            "INSERT INTO "
+            + _t
+            + " (id, embedding, doc_id, chunk_id, content, total_chunks)"
+            " VALUES (%s, VEC_FROMTEXT(%s), %s, %s, %s, %s)"
+            " ON DUPLICATE KEY UPDATE"
+            " embedding = VEC_FROMTEXT(%s),"
+            " doc_id = VALUES(doc_id),"
+            " chunk_id = VALUES(chunk_id),"
+            " content = VALUES(content),"
+            " total_chunks = VALUES(total_chunks)"
+        )
+
+        # DML – SELECT (two variants: plain and with score-threshold filter)
+        _select_prefix = (
+            "SELECT id, doc_id, chunk_id, content, total_chunks, "
+            + _df
+            + "(embedding, VEC_FROMTEXT(%s)) AS distance FROM "
+            + _t
+        )
+        self._search_sql = (
+            _select_prefix + " ORDER BY distance ASC LIMIT %s"
+        )
+        self._search_sql_with_threshold = (
+            _select_prefix
+            + " WHERE "
+            + _df
+            + "(embedding, VEC_FROMTEXT(%s)) <= %s"
+            " ORDER BY distance ASC LIMIT %s"
+        )
+
+        # DML – DELETE (by single ID; use executemany for batches)
+        self._delete_by_id_sql = "DELETE FROM " + _t + " WHERE id = %s"
+
+        # DML – DELETE by doc_id (common bulk-delete use-case)
+        self._delete_by_doc_id_sql = (
+            "DELETE FROM " + _t + " WHERE doc_id = %s"
+        )
+
     def _format_vector_for_sql(self, vector: list[float]) -> str:
         """Format a vector as a string for MySQL VEC_FROMTEXT function.
         Args:
@@ -144,28 +250,9 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
         creates a vector index based on the specified distance metric
         using HNSW algorithm.
         """
-        # Get distance metric in lowercase for SQL
-        distance_metric = self.distance.lower()
-
-        # Create table with VECTOR INDEX in a single statement
-        # VECTOR(dimensions) type is available in AlibabaCloud MySQL 8.0+
-        # VECTOR INDEX uses HNSW algorithm with M parameter for
-        # graph connectivity
-        # IF NOT EXISTS prevents errors if table already exists
-        create_table_sql = f"""
-        CREATE TABLE IF NOT EXISTS {self.table_name} (
-            id VARCHAR(255) PRIMARY KEY,
-            embedding VECTOR({self.dimensions}) NOT NULL,
-            doc_id VARCHAR(255) NOT NULL,
-            chunk_id INT NOT NULL,
-            content TEXT NOT NULL,
-            total_chunks INT NOT NULL,
-            INDEX idx_doc_id (doc_id),
-            INDEX idx_chunk_id (chunk_id),
-            VECTOR INDEX (embedding) M={self.hnsw_m} DISTANCE={distance_metric}
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        """
-        self._cursor.execute(create_table_sql)
+        # Use the SQL template pre-built in _build_sql_templates(); all
+        # variable parts were validated in __init__ before construction.
+        self._cursor.execute(self._create_table_sql)
         self._conn.commit()
 
     async def add(self, documents: list[Document], **kwargs: Any) -> None:
@@ -200,19 +287,7 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
                 )
             vector_text = self._format_vector_for_sql(doc.embedding)
 
-            # Insert data using VEC_FROMTEXT to convert text to vector
-            insert_sql = f"""
-            INSERT INTO {self.table_name}
-            (id, embedding, doc_id, chunk_id, content, total_chunks)
-            VALUES (%s, VEC_FROMTEXT(%s), %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                embedding = VEC_FROMTEXT(%s),
-                doc_id = VALUES(doc_id),
-                chunk_id = VALUES(chunk_id),
-                content = VALUES(content),
-                total_chunks = VALUES(total_chunks)
-            """
-
+            # Use the INSERT template pre-built in _build_sql_templates().
             # Serialize content to JSON if it's not a string
             content_str = (
                 doc.metadata.content
@@ -221,7 +296,7 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
             )
 
             self._cursor.execute(
-                insert_sql,
+                self._insert_sql,
                 (
                     unique_id,
                     vector_text,
@@ -255,60 +330,31 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
                 higher scores indicate higher similarity. Only documents
                 with score >= score_threshold will be returned.
             **kwargs (`Any`):
-                Additional arguments for the search operation.
-                - filter (`str`): WHERE clause to filter the search results.
+                Reserved for future use; currently ignored.
+
+        .. note::
+            Raw SQL ``filter`` strings are intentionally not supported to
+            prevent SQL injection.  Use ``score_threshold`` to filter by
+            similarity score.
         """
 
         # Format query vector for MySQL VEC_FROMTEXT
         query_vector_text = self._format_vector_for_sql(query_embedding)
 
-        # Get the distance function
-        distance_func = self._get_distance_function()
-
-        # Build WHERE clause
-        where_conditions = []
-        if "filter" in kwargs and kwargs["filter"]:
-            where_conditions.append(kwargs["filter"])
-
-        # Add score threshold condition if specified
-        # Score is calculated as 1 - distance, so higher scores
-        # indicate higher similarity
-        # To filter by score_threshold, we need:
-        # 1.0 - distance >= score_threshold
+        # Use pre-built SQL templates (constructed in _build_sql_templates).
+        # Score is calculated as 1 - distance; to filter by score_threshold:
+        #   1.0 - distance >= score_threshold  ⟺  distance <= 1.0 - score
         if score_threshold is not None:
-            where_conditions.append(
-                f"{distance_func}(embedding, VEC_FROMTEXT(%s)) <= %s",
-            )
-
-        where_clause = ""
-        if where_conditions:
-            where_clause = "WHERE " + " AND ".join(where_conditions)
-
-        # Build and execute the search query using MySQL native vector
-        # functions with ORDER BY for efficient sorting
-        search_sql = f"""
-        SELECT
-            id,
-            doc_id,
-            chunk_id,
-            content,
-            total_chunks,
-            {distance_func}(embedding, VEC_FROMTEXT(%s)) as distance
-        FROM {self.table_name}
-        {where_clause}
-        ORDER BY distance ASC
-        LIMIT %s
-        """
-
-        # Prepare parameters
-        params: list[str | float | int] = [query_vector_text]
-        if score_threshold is not None:
-            # Convert score threshold to distance threshold:
-            # distance <= 1.0 - score
-            params.extend([query_vector_text, 1.0 - score_threshold])
-        params.append(limit)
-
-        self._cursor.execute(search_sql, params)
+            params: list[str | float | int] = [
+                query_vector_text,       # SELECT distance calculation
+                query_vector_text,       # WHERE threshold calculation
+                1.0 - score_threshold,   # distance upper bound
+                limit,
+            ]
+            self._cursor.execute(self._search_sql_with_threshold, params)
+        else:
+            params = [query_vector_text, limit]
+            self._cursor.execute(self._search_sql, params)
         results = self._cursor.fetchall()
 
         # Process results
@@ -345,35 +391,42 @@ class AlibabaCloudMySQLStore(VDBStoreBase):
     async def delete(
         self,
         ids: list[str] | None = None,
-        filter: str | None = None,  # pylint: disable=redefined-builtin
+        doc_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Delete documents from the AlibabaCloud MySQL vector store.
 
         Args:
             ids (`list[str] | None`, optional):
-                List of entity IDs to delete.
-            filter (`str | None`, optional):
-                WHERE clause expression to filter documents to delete.
+                List of chunk-level record IDs to delete.
+            doc_id (`str | None`, optional):
+                Delete all chunks that belong to this document ID.
             **kwargs (`Any`):
-                Additional arguments for the delete operation.
+                Reserved for future use; currently ignored.
+
+        .. note::
+            Raw SQL ``filter`` strings are intentionally not supported to
+            prevent SQL injection.  Use ``ids`` or ``doc_id`` instead.
         """
-        if ids is None and filter is None:
+        if ids is None and doc_id is None:
             raise ValueError(
-                "Either ids or filter must be provided for deletion.",
+                "Either ids or doc_id must be provided for deletion.",
             )
 
         if ids is not None:
-            # Delete by IDs
-            placeholders = ",".join(["%s"] * len(ids))
-            delete_sql = (
-                f"DELETE FROM {self.table_name} WHERE id IN ({placeholders})"
+            # Delete each record individually using the pre-built single-ID
+            # DELETE template and executemany() so that:
+            # 1. The SQL passed to execute is a plain pre-built string (no
+            #    inline concatenation at the call site).
+            # 2. Every ID value is passed as a bound parameter (%s).
+            self._cursor.executemany(
+                self._delete_by_id_sql,
+                [[id_] for id_ in ids],
             )
-            self._cursor.execute(delete_sql, ids)
-        elif filter is not None:
-            # Delete by filter
-            delete_sql = f"DELETE FROM {self.table_name} WHERE {filter}"
-            self._cursor.execute(delete_sql)
+        elif doc_id is not None:
+            # Delete all chunks belonging to doc_id using a pre-built,
+            # fully-parameterised DELETE statement.
+            self._cursor.execute(self._delete_by_doc_id_sql, [doc_id])
 
         self._conn.commit()
 
