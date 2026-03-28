@@ -3,6 +3,7 @@
 # pylint: disable=not-an-iterable, too-many-lines
 # mypy: disable-error-code="list-item"
 """ReAct agent class in agentscope."""
+import uuid
 import asyncio
 from enum import Enum
 from typing import Type, Any, AsyncGenerator, Literal
@@ -637,13 +638,19 @@ class ReActAgent(ReActAgentBase):
                     "tool_use",
                 )
                 for tool_call in tool_use_blocks:
+                    # Ensure tool_call has valid id and name
+                    tc_id = tool_call.get("id")
+                    if not tc_id:
+                        tc_id = f"call_{uuid.uuid4().hex[:24]}"
+                    tc_name = tool_call.get("name") or "unknown_function"
+
                     msg_res = Msg(
                         "system",
                         [
                             ToolResultBlock(
                                 type="tool_result",
-                                id=tool_call["id"],
-                                name=tool_call["name"],
+                                id=tc_id,
+                                name=tc_name,
                                 output="The tool call has been interrupted "
                                 "by the user.",
                             ),
@@ -667,14 +674,30 @@ class ReActAgent(ReActAgentBase):
                 Return the structured output if it's verified in the finish
                 function call, otherwise return None.
         """
+        # Ensure tool_call has valid id and name to prevent session corruption
+        tool_call_id = tool_call.get("id")
+        if not tool_call_id:
+            tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
+            logger.warning(
+                "Tool call missing id, generated fallback: %s",
+                tool_call_id,
+            )
+
+        tool_call_name = tool_call.get("name")
+        if not tool_call_name:
+            tool_call_name = "unknown_function"
+            logger.warning(
+                "Tool call missing name, using fallback: %s",
+                tool_call_name,
+            )
 
         tool_res_msg = Msg(
             "system",
             [
                 ToolResultBlock(
                     type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_call["name"],
+                    id=tool_call_id,
+                    name=tool_call_name,
                     output=[],
                 ),
             ],
