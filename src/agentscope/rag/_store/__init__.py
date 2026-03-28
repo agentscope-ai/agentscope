@@ -9,6 +9,7 @@ from ._milvuslite_store import MilvusLiteStore
 from ._oceanbase_store import OceanBaseStore
 from ._mongodb_store import MongoDBStore
 from ._alibabacloud_mysql_store import AlibabaCloudMySQLStore
+from ._pgvector_store import PgVectorStore
 
 __all__ = [
     "VDBStoreBase",
@@ -17,4 +18,5 @@ __all__ = [
     "OceanBaseStore",
     "MongoDBStore",
     "AlibabaCloudMySQLStore",
+    "PgVectorStore",
 ]
