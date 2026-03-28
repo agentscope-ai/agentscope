@@ -11,6 +11,7 @@ from agentscope.message import (
     TextBlock,
     ImageBlock,
     AudioBlock,
+    VideoBlock,
     URLSource,
     ToolResultBlock,
     ToolUseBlock,
@@ -34,6 +35,10 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
         self.audio_path = os.path.abspath("./audio.wav")
         with open(self.audio_path, "wb") as f:
             f.write(b"fake audio content")
+
+        self.video_path = os.path.abspath("./video.mp4")
+        with open(self.video_path, "wb") as f:
+            f.write(b"fake video content")
 
         self.msgs_system = [
             Msg(
@@ -770,9 +775,71 @@ class TestOpenAIFormatter(IsolatedAsyncioTestCase):
 
         self.assertListEqual(expected_result, res)
 
+    async def test_formatter_with_video(self) -> None:
+        """Test formatters correctly handle VideoBlock."""
+        msgs = [
+            Msg(
+                "user",
+                [
+                    TextBlock(type="text", text="What is in this video?"),
+                    VideoBlock(
+                        type="video",
+                        source=URLSource(type="url", url=self.video_path),
+                    ),
+                ],
+                "user",
+            ),
+        ]
+
+        expected_video_block = {
+            "type": "video_url",
+            "video_url": {
+                "url": "data:video/mp4;" "base64,ZmFrZSB2aWRlbyBjb250ZW50",
+            },
+        }
+
+        # Chat formatter
+        res = await OpenAIChatFormatter().format(msgs)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["content"][0]["type"], "text")
+        self.assertEqual(res[0]["content"][1], expected_video_block)
+
+        # Multi-agent formatter
+        res = await OpenAIMultiAgentFormatter().format(msgs)
+        self.assertEqual(len(res), 1)
+        video_blocks = [
+            b for b in res[0]["content"] if b.get("type") == "video_url"
+        ]
+        self.assertEqual(len(video_blocks), 1)
+        self.assertEqual(video_blocks[0], expected_video_block)
+
+    async def test_video_web_url_not_base64_encoded(self) -> None:
+        """Test that web video URLs are passed through without encoding."""
+        web_url = "https://example.com/test.mp4"
+        msgs = [
+            Msg(
+                "user",
+                [
+                    TextBlock(type="text", text="Describe this video"),
+                    VideoBlock(
+                        type="video",
+                        source=URLSource(type="url", url=web_url),
+                    ),
+                ],
+                "user",
+            ),
+        ]
+
+        res = await OpenAIChatFormatter().format(msgs)
+        video_block = res[0]["content"][1]
+        self.assertEqual(video_block["type"], "video_url")
+        self.assertEqual(video_block["video_url"]["url"], web_url)
+
     async def asyncTearDown(self) -> None:
         """Clean up the test environment."""
         if os.path.exists(self.image_path):
             os.remove(self.image_path)
         if os.path.exists(self.audio_path):
             os.remove(self.audio_path)
+        if os.path.exists(self.video_path):
+            os.remove(self.video_path)
