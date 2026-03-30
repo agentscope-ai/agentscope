@@ -3,15 +3,18 @@
 import asyncio
 import base64
 import functools
+import ipaddress
 import inspect
 import json
 import os
+import socket
 import tempfile
 import types
 import typing
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Type, Dict
+from urllib.parse import urljoin, urlparse
 
 import numpy as np
 import requests
@@ -170,7 +173,7 @@ def _get_bytes_from_web_url(
     """
     for _ in range(max_retries):
         try:
-            response = requests.get(url)
+            response = _request_url_with_validated_redirects(url)
             response.raise_for_status()
             return response.content.decode("utf-8")
 
@@ -186,6 +189,87 @@ def _get_bytes_from_web_url(
 
     raise RuntimeError(
         f"Failed to fetch bytes from URL `{url}` after {max_retries} retries.",
+    )
+
+
+def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return whether the given IP address is globally routable."""
+    return ip.is_global
+
+
+def _validate_external_url(url: str) -> None:
+    """Validate URL to prevent fetching local or private network resources."""
+    parsed = urlparse(url)
+
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(
+            f"Unsupported URL scheme: {parsed.scheme}. "
+            "Only http/https are allowed.",
+        )
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"Invalid URL without hostname: {url}")
+
+    # Fast-path for literal IP addresses
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+
+    if ip is not None:
+        if not _is_public_ip(ip):
+            raise ValueError(
+                f"Blocked non-public URL host: {host}",
+            )
+        return
+
+    if host.lower() == "localhost":
+        raise ValueError("Blocked localhost URL host.")
+
+    try:
+        addresses = socket.getaddrinfo(host, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Failed to resolve URL host: {host}") from e
+
+    if not addresses:
+        raise ValueError(f"Failed to resolve URL host: {host}")
+
+    for addr_info in addresses:
+        resolved_ip = ipaddress.ip_address(addr_info[4][0])
+        if not _is_public_ip(resolved_ip):
+            raise ValueError(
+                f"Blocked non-public URL host {host} "
+                f"(resolved to {resolved_ip}).",
+            )
+
+
+def _request_url_with_validated_redirects(
+    url: str,
+    max_redirects: int = 5,
+) -> requests.Response:
+    """Request URL while validating each redirect target."""
+    current_url = url
+    for _ in range(max_redirects + 1):
+        _validate_external_url(current_url)
+
+        response = requests.get(
+            current_url,
+            allow_redirects=False,
+            timeout=(5, 10),
+        )
+
+        if (
+            response.status_code in {301, 302, 303, 307, 308}
+            and "Location" in response.headers
+        ):
+            current_url = urljoin(current_url, response.headers["Location"])
+            continue
+
+        return response
+
+    raise RuntimeError(
+        f"Exceeded maximum redirects ({max_redirects}) for URL `{url}`.",
     )
 
 
