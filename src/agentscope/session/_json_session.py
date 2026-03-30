@@ -2,6 +2,7 @@
 """The JSON session class."""
 import json
 import os
+import re
 import aiofiles
 
 from ._session_base import SessionBase
@@ -24,6 +25,11 @@ class JSONSession(SessionBase):
         """
         self.save_dir = save_dir
 
+    @staticmethod
+    def _sanitize_identifier(identifier: str) -> str:
+        """Sanitize session identifiers to safe file-name components."""
+        return re.sub(r"[^a-zA-Z0-9._-]", "_", identifier)
+
     def _get_save_path(self, session_id: str, user_id: str) -> str:
         """The path to save the session state.
 
@@ -37,12 +43,27 @@ class JSONSession(SessionBase):
             `str`:
                 The path to save the session state.
         """
-        os.makedirs(self.save_dir, exist_ok=True)
-        if user_id:
-            file_path = f"{user_id}_{session_id}.json"
+        safe_session_id = self._sanitize_identifier(session_id)
+        if not safe_session_id:
+            raise ValueError("The session_id cannot be empty.")
+
+        safe_user_id = self._sanitize_identifier(user_id)
+
+        base_dir = os.path.realpath(self.save_dir)
+        os.makedirs(base_dir, exist_ok=True)
+
+        if safe_user_id:
+            file_path = f"{safe_user_id}_{safe_session_id}.json"
         else:
-            file_path = f"{session_id}.json"
-        return os.path.join(self.save_dir, file_path)
+            file_path = f"{safe_session_id}.json"
+
+        save_path = os.path.realpath(os.path.join(base_dir, file_path))
+        if os.path.commonpath([base_dir, save_path]) != base_dir:
+            raise ValueError(
+                "The generated session path is outside of save_dir.",
+            )
+
+        return save_path
 
     async def save_session_state(
         self,

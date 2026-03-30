@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Session module tests."""
 import os
+import tempfile
 from typing import Union
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 
 from agentscope.agent import ReActAgent, AgentBase
 from agentscope.formatter import DashScopeChatFormatter
@@ -99,6 +100,49 @@ class SessionTest(IsolatedAsyncioTestCase):
         session_file = "./user_1.json"
         if os.path.exists(session_file):
             os.remove(session_file)
+
+
+class JSONSessionPathSecurityTest(TestCase):
+    """Security test cases for JSONSession path handling."""
+
+    def test_get_save_path_stays_under_save_dir(self) -> None:
+        """Path traversal payloads must not escape the save directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = JSONSession(save_dir=temp_dir)
+            save_path = session._get_save_path(
+                session_id="sid",
+                user_id="../../../../tmp/evil",
+            )
+            expected_dir = os.path.realpath(temp_dir)
+            self.assertEqual(
+                os.path.dirname(save_path),
+                expected_dir,
+            )
+            self.assertNotIn("/", os.path.basename(save_path))
+            self.assertNotIn("\\", os.path.basename(save_path))
+
+    def test_save_and_load_use_sanitized_identifiers(self) -> None:
+        """Save/load should use the same sanitized path deterministically."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = JSONSession(save_dir=temp_dir)
+            save_path = session._get_save_path(
+                session_id="session/1",
+                user_id="user/1",
+            )
+            self.assertTrue(
+                os.path.exists(os.path.dirname(save_path)),
+            )
+            self.assertEqual(
+                os.path.basename(save_path),
+                "user_1_session_1.json",
+            )
+
+    def test_empty_session_id_raises(self) -> None:
+        """An empty session id should be rejected."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = JSONSession(save_dir=temp_dir)
+            with self.assertRaises(ValueError):
+                session._get_save_path(session_id="", user_id="user")
 
 
 class RedisSessionTest(IsolatedAsyncioTestCase):
