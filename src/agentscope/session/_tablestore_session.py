@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Tablestore session class for agentscope."""
+import asyncio
 import json
 from typing import Any, Optional
 
@@ -85,30 +86,42 @@ class TablestoreSession(SessionBase):
         self._memory_store: Optional[AsyncMemoryStore] = None
         self._memory_store_kwargs = kwargs
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self) -> None:
-        """Lazily initialize the memory store on first use."""
+        """Lazily initialize the memory store on first use.
+
+        Uses an ``asyncio.Lock`` to prevent concurrent initialization when
+        multiple coroutines call this method simultaneously.
+        """
         if self._initialized:
             return
+        async with self._init_lock:
+            if self._initialized:
+                return
 
-        from tablestore_for_agent_memory.memory.async_memory_store import (
-            AsyncMemoryStore,
-        )
+            from tablestore_for_agent_memory.memory.async_memory_store import (
+                AsyncMemoryStore,
+            )
 
-        self._memory_store = AsyncMemoryStore(
-            tablestore_client=self._tablestore_client,
-            session_table_name=self._session_table_name,
-            message_table_name=self._message_table_name,
-            session_secondary_index_name=(self._SESSION_SECONDARY_INDEX_NAME),
-            session_search_index_name=self._SESSION_SEARCH_INDEX_NAME,
-            message_secondary_index_name=(self._MESSAGE_SECONDARY_INDEX_NAME),
-            message_search_index_name=self._MESSAGE_SEARCH_INDEX_NAME,
-            **self._memory_store_kwargs,
-        )
+            self._memory_store = AsyncMemoryStore(
+                tablestore_client=self._tablestore_client,
+                session_table_name=self._session_table_name,
+                message_table_name=self._message_table_name,
+                session_secondary_index_name=(
+                    self._SESSION_SECONDARY_INDEX_NAME
+                ),
+                session_search_index_name=self._SESSION_SEARCH_INDEX_NAME,
+                message_secondary_index_name=(
+                    self._MESSAGE_SECONDARY_INDEX_NAME
+                ),
+                message_search_index_name=self._MESSAGE_SEARCH_INDEX_NAME,
+                **self._memory_store_kwargs,
+            )
 
-        await self._memory_store.init_table()
-        await self._memory_store.init_search_index()
-        self._initialized = True
+            await self._memory_store.init_table()
+            await self._memory_store.init_search_index()
+            self._initialized = True
 
     async def save_session_state(
         self,

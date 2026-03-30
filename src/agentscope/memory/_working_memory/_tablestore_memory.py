@@ -110,30 +110,38 @@ class TablestoreMemory(MemoryBase):
         self._knowledge_store = None
         self._knowledge_store_kwargs = kwargs
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def _ensure_initialized(self) -> None:
-        """Lazily initialize the knowledge store on first use."""
+        """Lazily initialize the knowledge store on first use.
+
+        Uses an ``asyncio.Lock`` to prevent concurrent initialization when
+        multiple coroutines call this method simultaneously.
+        """
         if self._initialized:
             return
+        async with self._init_lock:
+            if self._initialized:
+                return
 
-        from tablestore_for_agent_memory.knowledge.async_knowledge_store import (  # noqa: E501
-            AsyncKnowledgeStore,
-        )
+            from tablestore_for_agent_memory.knowledge.async_knowledge_store import (  # noqa: E501
+                AsyncKnowledgeStore,
+            )
 
-        self._knowledge_store = AsyncKnowledgeStore(
-            tablestore_client=self._tablestore_client,
-            vector_dimension=self._vector_dimension,
-            table_name=self._table_name,
-            search_index_name=self._SEARCH_INDEX_NAME,
-            search_index_schema=copy.deepcopy(self._search_index_schema),
-            text_field=self._text_field,
-            embedding_field=self._embedding_field,
-            enable_multi_tenant=True,
-            **self._knowledge_store_kwargs,
-        )
+            self._knowledge_store = AsyncKnowledgeStore(
+                tablestore_client=self._tablestore_client,
+                vector_dimension=self._vector_dimension,
+                table_name=self._table_name,
+                search_index_name=self._SEARCH_INDEX_NAME,
+                search_index_schema=copy.deepcopy(self._search_index_schema),
+                text_field=self._text_field,
+                embedding_field=self._embedding_field,
+                enable_multi_tenant=True,
+                **self._knowledge_store_kwargs,
+            )
 
-        await self._knowledge_store.init_table()
-        self._initialized = True
+            await self._knowledge_store.init_table()
+            self._initialized = True
 
     _DOCUMENT_ID_SEPARATOR = ":::"
 
@@ -603,9 +611,7 @@ class TablestoreMemory(MemoryBase):
         get all messages.
 
         . note:: If `mark` and `exclude_mark` are both provided, the messages
-         will be filtered by both arguments.
-
-        . note:: `mark` and `exclude_mark` should not overlap.
+            will be filtered by both arguments, and they should not overlap.
 
         Args:
             mark (`str | None`, optional):
