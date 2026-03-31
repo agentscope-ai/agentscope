@@ -815,6 +815,11 @@ class TablestoreMemory(MemoryBase):
             next_token = result.next_token
             if not next_token:
                 break
+
+        # Sort documents by timestamp to maintain message order
+        all_docs.sort(
+            key=lambda doc: (doc.metadata or {}).get("timestamp", ""),
+        )
         return all_docs
 
     async def close(self) -> None:

@@ -598,3 +598,49 @@ async def test_add_none(tablestore_memory: TablestoreMemory) -> None:
     await memory.add(None)
 
     assert await memory.size() == 0
+
+
+@pytest.mark.asyncio
+async def test_get_memory_preserves_insertion_order(
+    tablestore_memory: TablestoreMemory,
+) -> None:
+    """Test that get_memory returns messages sorted by timestamp,
+    preserving the insertion order."""
+    memory = tablestore_memory
+
+    msg1 = Msg(
+        "Alice",
+        "First message",
+        "user",
+        timestamp="2026-01-01 00:00:01.000",
+    )
+    msg2 = Msg(
+        "Bob",
+        "Second message",
+        "assistant",
+        timestamp="2026-01-01 00:00:02.000",
+    )
+    msg3 = Msg(
+        "Charlie",
+        "Third message",
+        "user",
+        timestamp="2026-01-01 00:00:03.000",
+    )
+
+    # Insert in reverse order to ensure sorting is by timestamp,
+    # not by insertion order in Tablestore
+    await memory.add(msg3)
+    await memory.add(msg1)
+    await memory.add(msg2)
+    await _wait_for_index_ready(memory, 3)
+
+    messages = await memory.get_memory()
+    assert len(messages) == 3
+
+    assert messages[0].name == "Alice"
+    assert messages[1].name == "Bob"
+    assert messages[2].name == "Charlie"
+
+    assert messages[0].timestamp == "2026-01-01 00:00:01.000"
+    assert messages[1].timestamp == "2026-01-01 00:00:02.000"
+    assert messages[2].timestamp == "2026-01-01 00:00:03.000"
