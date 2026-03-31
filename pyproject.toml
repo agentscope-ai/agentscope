@@ -72,7 +72,10 @@ tokens = [
 
 # ------------ Memory ------------
 redis_memory = ["redis"]
-tablestore_memory = ["tablestore-for-agent-memory"]
+tablestore_memory = [
+    "tablestore-for-agent-memory",
+    "tablestore",
+]
 
 mem0ai = [
     "mem0ai<=1.0.3",
