@@ -610,7 +610,7 @@ class TablestoreMemory(MemoryBase):
         """Get the messages from the memory by mark (if provided). Otherwise,
         get all messages.
 
-        . note:: If `mark` and `exclude_mark` are both provided, the messages
+        .. note:: If `mark` and `exclude_mark` are both provided, the messages
             will be filtered by both arguments, and they should not overlap.
 
         Args:
