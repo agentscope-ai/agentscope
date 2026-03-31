@@ -161,6 +161,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-asyncio",
     "pytest-forked",
     "sphinx-gallery",
     "furo",
