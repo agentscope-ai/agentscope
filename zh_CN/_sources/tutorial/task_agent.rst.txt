@@ -331,7 +331,7 @@ ReAct 智能体
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_efa4ac6a71d0456f88a215",
+        "id": "call_3592c0726c114962bde8d8",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -340,7 +340,7 @@ ReAct 智能体
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_e0bfa2e2883c4b6c9df4bb",
+        "id": "call_9e7dd9196e194f63887438",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -349,32 +349,32 @@ ReAct 智能体
     }
     system: {
         "type": "tool_result",
-        "id": "call_efa4ac6a71d0456f88a215",
+        "id": "call_3592c0726c114962bde8d8",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag1 开始于 14:29:54.577157，结束于 14:29:57.580433。"
+                "text": "标签 tag1 开始于 02:22:48.512535，结束于 02:22:51.515788。"
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_e0bfa2e2883c4b6c9df4bb",
+        "id": "call_9e7dd9196e194f63887438",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "标签 tag2 开始于 14:29:54.577251，结束于 14:29:57.581131。"
+                "text": "标签 tag2 开始于 02:22:48.512632，结束于 02:22:51.516526。"
             }
         ]
     }
-    Jarvis: 两个函数 `example_tool_function` 已经并行执行完成。下面是它们的执行时间：
+    Jarvis: 两个 `example_tool_function` 函数已经并行执行完成。下面是它们各自的运行时间：
 
-    - 标签为 'tag1' 的函数开始于 14:29:54.577157，结束于 14:29:57.580433。
-    - 标签为 'tag2' 的函数开始于 14:29:54.577251，结束于 14:29:57.581131。
+    - 标签为 'tag1' 的函数开始于 02:22:48.512535，结束于 02:22:51.515788。
+    - 标签为 'tag2' 的函数开始于 02:22:48.512632，结束于 02:22:51.516526。
 
-    这两个函数几乎是同时开始和结束的，表明它们确实是以并行方式执行的。
+    看起来这两个函数几乎是同时启动和完成的。
 
 
 
@@ -443,23 +443,24 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_e6c6b7bde1d2499db0acdc",
+        "id": "call_3404ab9cfd804865affb26",
         "name": "generate_response",
         "input": {
             "name": "阿尔伯特·爱因斯坦",
-            "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
+            "description": "著名的理论物理学家，以其相对论而闻名。",
             "age": 76,
             "honor": [
                 "诺贝尔物理学奖",
-                "普朗克奖章",
-                "科普利奖章"
+                "科普利奖章",
+                "马泰乌奇奖章",
+                "富兰克林奖章"
             ]
         },
-        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"20世纪最伟大的理论物理学家之一，相对论的创立者。\", \"age\": 76, \"honor\": [\"诺贝尔物理学奖\", \"普朗克奖章\", \"科普利奖章\"]}"
+        "raw_input": "{\"name\": \"阿尔伯特·爱因斯坦\", \"description\": \"著名的理论物理学家，以其相对论而闻名。\", \"age\": 76, \"honor\": [\"诺贝尔物理学奖\", \"科普利奖章\", \"马泰乌奇奖章\", \"富兰克林奖章\"]}"
     }
     system: {
         "type": "tool_result",
-        "id": "call_e6c6b7bde1d2499db0acdc",
+        "id": "call_3404ab9cfd804865affb26",
         "name": "generate_response",
         "output": [
             {
@@ -468,19 +469,18 @@ AgentScope 中的结构化输出是与工具调用紧密结合的。具体来说
             }
         ]
     }
-    Jarvis: 阿尔伯特·爱因斯坦是20世纪最伟大的理论物理学家之一，他最为人所知的成就是创立了相对论。出生于1879年的爱因斯坦，在物理学领域做出了许多革命性的贡献，特别是关于光的行为和引力的本质方面的工作。他的著名公式E=mc²揭示了能量与质量之间的等价关系，这一发现对于后来的原子能发展至关重要。
-
-    爱因斯坦在科学界享有极高的声誉，并获得了多项重要奖项的认可，其中包括诺贝尔物理学奖（1921年获得）、普朗克奖章以及科普利奖章。这些荣誉不仅是对他个人成就的肯定，也是对其对整个科学进步所做贡献的认可。直到今天，爱因斯坦的思想仍然深刻地影响着我们对宇宙的理解。在他去世时（1955年），享年76岁，但他的遗产继续激励着全世界的研究者探索未知的世界。
+    Jarvis: 阿尔伯特·爱因斯坦是一位著名的理论物理学家，他最广为人知的成就是提出了相对论。出生于1879年，爱因斯坦通过其对光电效应的研究获得了1921年的诺贝尔物理学奖。除此之外，他还被授予了多项荣誉，包括科普利奖章、马泰乌奇奖章以及富兰克林奖章等。爱因斯坦的工作不仅极大地推动了物理学领域的发展，也深刻影响了人类对于宇宙的认识。他于1955年去世，享年76岁，但他的贡献至今仍被全世界所纪念和研究。
 
     结构化输出：
     {
         "name": "阿尔伯特·爱因斯坦",
-        "description": "20世纪最伟大的理论物理学家之一，相对论的创立者。",
+        "description": "著名的理论物理学家，以其相对论而闻名。",
         "age": 76,
         "honor": [
             "诺贝尔物理学奖",
-            "普朗克奖章",
-            "科普利奖章"
+            "科普利奖章",
+            "马泰乌奇奖章",
+            "富兰克林奖章"
         ]
     }
 
@@ -557,7 +557,7 @@ AgentScope 提供了两个基类：``AgentBase`` 和 ``ReActAgentBase``，它们
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 37.941 seconds)
+   **Total running time of the script:** (0 minutes 47.349 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
