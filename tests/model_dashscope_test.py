@@ -340,6 +340,62 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             ]
             self.assertEqual(final_response.content, expected_content)
 
+    async def test_streaming_tool_input_prefers_valid_final_json(self) -> None:
+        """Test streaming tool input keeps the final valid JSON dict."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=True,
+        )
+
+        chunks = [
+            self._create_mock_chunk(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "name": "score",
+                            "arguments": '{"points": ',
+                        },
+                    },
+                ],
+            ),
+            self._create_mock_chunk(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "arguments": "1}",
+                        },
+                    },
+                ],
+            ),
+        ]
+
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = self._create_async_generator(chunks)
+            result = await model([{"role": "user", "content": "Score it"}])
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            final_response = responses[-1]
+            expected_content = [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="call_123",
+                    name="score",
+                    input={"points": 1},
+                    raw_input='{"points": 1}',
+                ),
+            ]
+            self.assertEqual(final_response.content, expected_content)
+
     def test_tools_schema_validation_through_api(self) -> None:
         """Test tools schema validation through API call."""
         model = DashScopeChatModel(

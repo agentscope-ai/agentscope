@@ -48,7 +48,7 @@ def _to_trinity_config(
             "%Y%m%d%H%M%S",
         )
 
-    _set_if_not_none(config, "monitor", monitor_type)
+    _set_if_not_none(config.monitor, "monitor_type", monitor_type)
 
     workflow_name = "agentscope_workflow_adapter_v1"
     if train_dataset is not None:

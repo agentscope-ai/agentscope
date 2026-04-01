@@ -333,6 +333,7 @@ class GeminiChatModel(ChatModelBase):
             )
         return None
 
+    # pylint: disable=too-many-branches
     async def _parse_gemini_stream_generation_response(
         self,
         start_datetime: datetime,
@@ -366,6 +367,7 @@ class GeminiChatModel(ChatModelBase):
         thinking = ""
         tool_calls: list[ToolUseBlock] = []
         metadata: dict | None = None
+        response_id: str | None = None
         async for chunk in response:
             if (
                 chunk.candidates
@@ -434,11 +436,17 @@ class GeminiChatModel(ChatModelBase):
                     ),
                 )
 
-            yield ChatResponse(
-                content=content_blocks + tool_calls,
-                usage=usage,
-                metadata=metadata,
-            )
+            if response_id is None:
+                response_id = getattr(chunk, "response_id", None)
+
+            _kwargs: dict[str, Any] = {
+                "content": content_blocks + tool_calls,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _kwargs["id"] = response_id
+            yield ChatResponse(**_kwargs)
 
     def _parse_gemini_generation_response(
         self,
@@ -527,11 +535,16 @@ class GeminiChatModel(ChatModelBase):
 
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
-        return ChatResponse(
-            content=content_blocks + tool_calls,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks + tool_calls,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "response_id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
+
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,
