@@ -47,6 +47,8 @@ AgentScope 中的记忆模块负责：
       - 基于异步 SQLAlchemy 的记忆存储实现，支持如 SQLite、PostgreSQL、MySQL 等多种关系数据库。
     * - ``RedisMemory``
       - 基于 Redis 的记忆存储实现。
+    * - ``TablestoreMemory``
+      - 基于阿里云表格存储（Tablestore）的记忆存储实现，支持分布式环境下的持久化和可搜索记忆。
 
 .. tip:: 如果您有兴趣贡献新的记忆存储实现，请参考 `贡献指南 <https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions>`_。
 
@@ -86,7 +88,7 @@ AgentScope 中的记忆模块负责：
         ) -> None``
       - 更新存储在记忆中的摘要属性。
 
-.. GENERATED FROM PYTHON SOURCE LINES 71-85
+.. GENERATED FROM PYTHON SOURCE LINES 73-87
 
 .. code-block:: Python
 
@@ -111,7 +113,7 @@ AgentScope 中的记忆模块负责：
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 86-92
+.. GENERATED FROM PYTHON SOURCE LINES 88-94
 
 内存记忆
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -120,7 +122,7 @@ AgentScope 中的记忆模块负责：
 结合 :ref:`state` 模块，它可以在不同用户和会话之间持久化记忆内容。
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 92-134
+.. GENERATED FROM PYTHON SOURCE LINES 94-136
 
 .. code-block:: Python
 
@@ -175,30 +177,30 @@ AgentScope 中的记忆模块负责：
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='gg7qqHzLf6ZFZXGVpNEFZK', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 02:26:54.937', invocation_id='None')
+    - Msg(id='bT84EXh8LjatgUD4VXPaVs', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 12:50:10.836', invocation_id='None')
     记忆的状态字典：
     {
       "_compressed_summary": "",
       "content": [
         [
           {
-            "id": "QBn6KX3gGvyKZ3BmpbKAoc",
+            "id": "2QPiF32LXNF4EgT78eGFRm",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-04-01 02:26:54.937"
+            "timestamp": "2026-04-01 12:50:10.836"
           },
           []
         ],
         [
           {
-            "id": "gg7qqHzLf6ZFZXGVpNEFZK",
+            "id": "bT84EXh8LjatgUD4VXPaVs",
             "name": "system",
             "role": "system",
             "content": "<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>",
             "metadata": {},
-            "timestamp": "2026-04-01 02:26:54.937"
+            "timestamp": "2026-04-01 12:50:10.836"
           },
           [
             "hint"
@@ -213,12 +215,12 @@ AgentScope 中的记忆模块负责：
       "content": [
         [
           {
-            "id": "QBn6KX3gGvyKZ3BmpbKAoc",
+            "id": "2QPiF32LXNF4EgT78eGFRm",
             "name": "Alice",
             "role": "user",
             "content": "生成一份关于AgentScope的报告",
             "metadata": {},
-            "timestamp": "2026-04-01 02:26:54.937"
+            "timestamp": "2026-04-01 12:50:10.836"
           },
           []
         ]
@@ -228,7 +230,7 @@ AgentScope 中的记忆模块负责：
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 135-144
+.. GENERATED FROM PYTHON SOURCE LINES 137-146
 
 关系数据库记忆（Relational Database Memory）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -240,7 +242,7 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
 
 具体来说，这里我们以SQLite支持的记忆为例。
 
-.. GENERATED FROM PYTHON SOURCE LINES 144-186
+.. GENERATED FROM PYTHON SOURCE LINES 146-188
 
 .. code-block:: Python
 
@@ -295,16 +297,16 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='YRTg59LDaydETHvuG6UVDf', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 02:26:54.978', invocation_id='None')
+    - Msg(id='oNVmJJKsxRYdGtVagEqiTT', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 12:50:10.878', invocation_id='None')
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 187-188
+.. GENERATED FROM PYTHON SOURCE LINES 189-190
 
 可选地，您也可以将 ``AsyncSQLAlchemyMemory`` 用作异步上下文管理器，退出上下文时会话将自动关闭。
 
-.. GENERATED FROM PYTHON SOURCE LINES 188-210
+.. GENERATED FROM PYTHON SOURCE LINES 190-212
 
 .. code-block:: Python
 
@@ -339,14 +341,14 @@ AgentScope 通过 SQLAlchemy 提供统一的接口来使用关系数据库，支
  .. code-block:: none
 
     记忆中的所有消息：
-    - Msg(id='CNQhA9JyzCesJjZDoB5t2G', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-04-01 02:26:54.948', invocation_id='None')
-    - Msg(id='YRTg59LDaydETHvuG6UVDf', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 02:26:54.978', invocation_id='None')
-    - Msg(id='mNDm2xJBxjC9fWbu2Bi4NG', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-04-01 02:26:54.985', invocation_id='None')
+    - Msg(id='ea9ZfEE4DtCygY2iVztP7w', name='Alice', content='生成一份关于AgentScope的报告', role='user', metadata={}, timestamp='2026-04-01 12:50:10.846', invocation_id='None')
+    - Msg(id='oNVmJJKsxRYdGtVagEqiTT', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 12:50:10.878', invocation_id='None')
+    - Msg(id='TnXRsM85q7LREKXqpUst7z', name='Alice', content='生成一份关于 AgentScope 的报告', role='user', metadata={}, timestamp='2026-04-01 12:50:10.886', invocation_id='None')
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 211-290
+.. GENERATED FROM PYTHON SOURCE LINES 213-292
 
 在生产环境中，例如使用FastAPI时，可以按如下方式启用连接池：
 
@@ -428,7 +430,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
 
 首先，我们可以按如下方式初始化Redis记忆：
 
-.. GENERATED FROM PYTHON SOURCE LINES 290-336
+.. GENERATED FROM PYTHON SOURCE LINES 292-338
 
 .. code-block:: Python
 
@@ -487,12 +489,12 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
  .. code-block:: none
 
     带有标记'hint'的消息：
-    - Msg(id='gtiaMNYFmrG94K3qd47cBY', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 02:26:55.003', invocation_id='None')
+    - Msg(id='LVo7Hfi9uoXQiHjLfDSevJ', name='system', content='<system-hint>首先创建一个计划来收集信息，然后逐步生成报告。</system-hint>', role='system', metadata={}, timestamp='2026-04-01 12:50:10.904', invocation_id='None')
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 337-434
+.. GENERATED FROM PYTHON SOURCE LINES 339-551
 
 同样，`RedisMemory` 也可以在生产环境中使用连接池，例如与FastAPI一起使用。
 
@@ -557,6 +559,121 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
         await client.aclose()
 
 
+表格存储记忆（Tablestore Memory）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+AgentScope 还提供了基于
+`阿里云表格存储（Tablestore） <https://www.aliyun.com/product/ots>`_
+的记忆实现。``TablestoreMemory`` 支持分布式环境下的持久化和可搜索记忆，
+并内置多用户和多会话隔离。
+
+首先，安装所需的依赖包：
+
+.. code-block:: bash
+
+    pip install tablestore tablestore-for-agent-memory
+
+然后，可以按如下方式初始化 Tablestore 记忆：
+
+.. code-block:: python
+   :caption: Tablestore 记忆基本用法
+
+    import asyncio
+    from agentscope.memory import TablestoreMemory
+    from agentscope.message import Msg
+
+
+    async def tablestore_memory_example():
+        # 创建 Tablestore 记忆
+        memory = TablestoreMemory(
+            end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+            instance_name="your-instance-name",
+            access_key_id="your-access-key-id",
+            access_key_secret="your-access-key-secret",
+            # 可选地指定 user_id 和 session_id
+            user_id="user_1",
+            session_id="session_1",
+        )
+
+        # 向记忆中添加消息
+        await memory.add(
+            Msg("Alice", "生成一份关于AgentScope的报告", "user"),
+        )
+
+        # 添加一条带有标记"hint"的提示消息
+        await memory.add(
+            Msg(
+                "system",
+                "<system-hint>首先创建一个计划来收集信息，"
+                "然后逐步生成报告。</system-hint>",
+                "system",
+            ),
+            marks="hint",
+        )
+
+        # 检索带有标记"hint"的消息
+        msgs = await memory.get_memory(mark="hint")
+        for msg in msgs:
+            print(f"- {msg}")
+
+        # 完成后关闭 Tablestore 客户端连接
+        await memory.close()
+
+
+    asyncio.run(tablestore_memory_example())
+
+``TablestoreMemory`` 也可以用作异步上下文管理器：
+
+.. code-block:: python
+   :caption: Tablestore 记忆作为异步上下文管理器
+
+    async with TablestoreMemory(
+        end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+        instance_name="your-instance-name",
+        access_key_id="your-access-key-id",
+        access_key_secret="your-access-key-secret",
+        user_id="user_1",
+        session_id="session_1",
+    ) as memory:
+        await memory.add(
+            Msg("Alice", "生成一份关于AgentScope的报告", "user"),
+        )
+
+        msgs = await memory.get_memory()
+        for msg in msgs:
+            print(f"- {msg}")
+
+同样，``TablestoreMemory`` 也可以在生产环境中与 FastAPI 一起使用：
+
+.. code-block:: python
+   :caption: FastAPI 中使用 Tablestore 记忆
+
+    import os
+    from fastapi import FastAPI
+    from agentscope.memory import TablestoreMemory
+    from agentscope.message import Msg
+
+
+    app = FastAPI()
+
+
+    @app.post("/chat_endpoint")
+    async def chat_endpoint(user_id: str, session_id: str, input: str):
+        """使用 Tablestore 记忆的聊天端点。"""
+        memory = TablestoreMemory(
+            end_point=os.environ["TABLESTORE_ENDPOINT"],
+            instance_name=os.environ["TABLESTORE_INSTANCE_NAME"],
+            access_key_id=os.environ["TABLESTORE_ACCESS_KEY_ID"],
+            access_key_secret=os.environ["TABLESTORE_ACCESS_KEY_SECRET"],
+            user_id=user_id,
+            session_id=session_id,
+        )
+
+        # 使用记忆与智能体交互
+        ...
+
+        # 完成后关闭 Tablestore 客户端连接
+        await memory.close()
+
 
 自定义记忆（Customizing Memory）
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -595,7 +712,7 @@ AgentScope还提供基于NoSQL数据库（如Redis）的记忆实现。
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.091 seconds)
+   **Total running time of the script:** (0 minutes 0.094 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_memory.py:

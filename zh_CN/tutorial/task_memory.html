@@ -367,6 +367,9 @@ to download the full example code.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></p></td>
 <td><p>基于 Redis 的记忆存储实现。</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code></p></td>
+<td><p>基于阿里云表格存储（Tablestore）的记忆存储实现，支持分布式环境下的持久化和可搜索记忆。</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -435,30 +438,30 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;gg7qqHzLf6ZFZXGVpNEFZK&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:54.937&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;bT84EXh8LjatgUD4VXPaVs&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.836&#39;, invocation_id=&#39;None&#39;)
 记忆的状态字典：
 {
   &quot;_compressed_summary&quot;: &quot;&quot;,
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;QBn6KX3gGvyKZ3BmpbKAoc&quot;,
+        &quot;id&quot;: &quot;2QPiF32LXNF4EgT78eGFRm&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:26:54.937&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:50:10.836&quot;
       },
       []
     ],
     [
       {
-        &quot;id&quot;: &quot;gg7qqHzLf6ZFZXGVpNEFZK&quot;,
+        &quot;id&quot;: &quot;bT84EXh8LjatgUD4VXPaVs&quot;,
         &quot;name&quot;: &quot;system&quot;,
         &quot;role&quot;: &quot;system&quot;,
         &quot;content&quot;: &quot;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:26:54.937&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:50:10.836&quot;
       },
       [
         &quot;hint&quot;
@@ -473,12 +476,12 @@ to download the full example code.</p>
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;QBn6KX3gGvyKZ3BmpbKAoc&quot;,
+        &quot;id&quot;: &quot;2QPiF32LXNF4EgT78eGFRm&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;生成一份关于AgentScope的报告&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:26:54.937&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:50:10.836&quot;
       },
       []
     ]
@@ -538,7 +541,7 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;YRTg59LDaydETHvuG6UVDf&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:54.978&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;oNVmJJKsxRYdGtVagEqiTT&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.878&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>可选地，您也可以将 <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> 用作异步上下文管理器，退出上下文时会话将自动关闭。</p>
@@ -564,9 +567,9 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>记忆中的所有消息：
-- Msg(id=&#39;CNQhA9JyzCesJjZDoB5t2G&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:54.948&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;YRTg59LDaydETHvuG6UVDf&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:54.978&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;mNDm2xJBxjC9fWbu2Bi4NG&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:54.985&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;ea9ZfEE4DtCygY2iVztP7w&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于AgentScope的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.846&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;oNVmJJKsxRYdGtVagEqiTT&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.878&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;TnXRsM85q7LREKXqpUst7z&#39;, name=&#39;Alice&#39;, content=&#39;生成一份关于 AgentScope 的报告&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.886&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>在生产环境中，例如使用FastAPI时，可以按如下方式启用连接池：</p>
@@ -693,7 +696,7 @@ to download the full example code.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>带有标记&#39;hint&#39;的消息：
-- Msg(id=&#39;gtiaMNYFmrG94K3qd47cBY&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:26:55.003&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;LVo7Hfi9uoXQiHjLfDSevJ&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;首先创建一个计划来收集信息，然后逐步生成报告。&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:50:10.904&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>同样，<cite>RedisMemory</cite> 也可以在生产环境中使用连接池，例如与FastAPI一起使用。</p>
@@ -759,6 +762,119 @@ to download the full example code.</p>
 </div>
 </div>
 </section>
+<section id="tablestore-memory">
+<h2>表格存储记忆（Tablestore Memory）<a class="headerlink" href="#tablestore-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope 还提供了基于
+<a class="reference external" href="https://www.aliyun.com/product/ots">阿里云表格存储（Tablestore）</a>
+的记忆实现。<code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> 支持分布式环境下的持久化和可搜索记忆，
+并内置多用户和多会话隔离。</p>
+<p>首先，安装所需的依赖包：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>tablestore<span class="w"> </span>tablestore-for-agent-memory
+</pre></div>
+</div>
+<p>然后，可以按如下方式初始化 Tablestore 记忆：</p>
+<div class="literal-block-wrapper docutils container" id="id19">
+<div class="code-block-caption"><span class="caption-text">Tablestore 记忆基本用法</span><a class="headerlink" href="#id19" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">TablestoreMemory</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+
+
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">tablestore_memory_example</span><span class="p">():</span>
+     <span class="c1"># 创建 Tablestore 记忆</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+         <span class="n">end_point</span><span class="o">=</span><span class="s2">&quot;https://your-instance.cn-hangzhou.ots.aliyuncs.com&quot;</span><span class="p">,</span>
+         <span class="n">instance_name</span><span class="o">=</span><span class="s2">&quot;your-instance-name&quot;</span><span class="p">,</span>
+         <span class="n">access_key_id</span><span class="o">=</span><span class="s2">&quot;your-access-key-id&quot;</span><span class="p">,</span>
+         <span class="n">access_key_secret</span><span class="o">=</span><span class="s2">&quot;your-access-key-secret&quot;</span><span class="p">,</span>
+         <span class="c1"># 可选地指定 user_id 和 session_id</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 向记忆中添加消息</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 添加一条带有标记&quot;hint&quot;的提示消息</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span>
+             <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;&lt;system-hint&gt;首先创建一个计划来收集信息，&quot;</span>
+             <span class="s2">&quot;然后逐步生成报告。&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+         <span class="p">),</span>
+         <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 检索带有标记&quot;hint&quot;的消息</span>
+     <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+     <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+     <span class="c1"># 完成后关闭 Tablestore 客户端连接</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+ <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">tablestore_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> 也可以用作异步上下文管理器：</p>
+<div class="literal-block-wrapper docutils container" id="id20">
+<div class="code-block-caption"><span class="caption-text">Tablestore 记忆作为异步上下文管理器</span><a class="headerlink" href="#id20" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="k">async</span> <span class="k">with</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+     <span class="n">end_point</span><span class="o">=</span><span class="s2">&quot;https://your-instance.cn-hangzhou.ots.aliyuncs.com&quot;</span><span class="p">,</span>
+     <span class="n">instance_name</span><span class="o">=</span><span class="s2">&quot;your-instance-name&quot;</span><span class="p">,</span>
+     <span class="n">access_key_id</span><span class="o">=</span><span class="s2">&quot;your-access-key-id&quot;</span><span class="p">,</span>
+     <span class="n">access_key_secret</span><span class="o">=</span><span class="s2">&quot;your-access-key-secret&quot;</span><span class="p">,</span>
+     <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+     <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+ <span class="p">)</span> <span class="k">as</span> <span class="n">memory</span><span class="p">:</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;生成一份关于AgentScope的报告&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">()</span>
+     <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>同样，<code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> 也可以在生产环境中与 FastAPI 一起使用：</p>
+<div class="literal-block-wrapper docutils container" id="id21">
+<div class="code-block-caption"><span class="caption-text">FastAPI 中使用 Tablestore 记忆</span><a class="headerlink" href="#id21" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">TablestoreMemory</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat_endpoint&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">     </span><span class="sd">&quot;&quot;&quot;使用 Tablestore 记忆的聊天端点。&quot;&quot;&quot;</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+         <span class="n">end_point</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ENDPOINT&quot;</span><span class="p">],</span>
+         <span class="n">instance_name</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_INSTANCE_NAME&quot;</span><span class="p">],</span>
+         <span class="n">access_key_id</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ACCESS_KEY_ID&quot;</span><span class="p">],</span>
+         <span class="n">access_key_secret</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ACCESS_KEY_SECRET&quot;</span><span class="p">],</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># 使用记忆与智能体交互</span>
+     <span class="o">...</span>
+
+     <span class="c1"># 完成后关闭 Tablestore 客户端连接</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
 <section id="customizing-memory">
 <h2>自定义记忆（Customizing Memory）<a class="headerlink" href="#customizing-memory" title="Link to this heading">¶</a></h2>
 <p>要自定义您自己的记忆实现，只需从 <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> 继承并实现以下方法：</p>
@@ -807,7 +923,7 @@ to download the full example code.</p>
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">智能体</span></a></p></li>
 <li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">长期记忆</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.091 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.094 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>
@@ -899,6 +1015,7 @@ to download the full example code.</p>
 <li><a class="reference internal" href="#id14">内存记忆</a></li>
 <li><a class="reference internal" href="#relational-database-memory">关系数据库记忆（Relational Database Memory）</a></li>
 <li><a class="reference internal" href="#nosql-nosql-database-memory">NoSQL数据库记忆（NoSQL Database Memory）</a></li>
+<li><a class="reference internal" href="#tablestore-memory">表格存储记忆（Tablestore Memory）</a></li>
 <li><a class="reference internal" href="#customizing-memory">自定义记忆（Customizing Memory）</a></li>
 <li><a class="reference internal" href="#id15">延伸阅读</a></li>
 </ul>
