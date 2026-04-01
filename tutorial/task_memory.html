@@ -374,6 +374,9 @@ the agent level.</p>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RedisMemory</span></code></p></td>
 <td><p>A Redis-based implementation of memory storage.</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code></p></td>
+<td><p>An Alibaba Cloud Tablestore-based implementation of memory storage, enabling persistent and searchable memory across distributed environments.</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -446,30 +449,30 @@ different users and sessions.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
-- Msg(id=&#39;bSPSRgwyGgKZjUc7Jna4dA&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.179&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;UVFcmUvEkCSs6PrCyVLx5u&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.781&#39;, invocation_id=&#39;None&#39;)
 The state dict of the memory:
 {
   &quot;_compressed_summary&quot;: &quot;&quot;,
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;VJAidcvpowURUc2e4ejHQm&quot;,
+        &quot;id&quot;: &quot;3QpozFZyMWHrVUuWdm9WtL&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;Generate a report about AgentScope&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:17:13.179&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:39:23.781&quot;
       },
       []
     ],
     [
       {
-        &quot;id&quot;: &quot;bSPSRgwyGgKZjUc7Jna4dA&quot;,
+        &quot;id&quot;: &quot;UVFcmUvEkCSs6PrCyVLx5u&quot;,
         &quot;name&quot;: &quot;system&quot;,
         &quot;role&quot;: &quot;system&quot;,
         &quot;content&quot;: &quot;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:17:13.179&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:39:23.781&quot;
       },
       [
         &quot;hint&quot;
@@ -484,12 +487,12 @@ The state dict of the memory after deletion:
   &quot;content&quot;: [
     [
       {
-        &quot;id&quot;: &quot;VJAidcvpowURUc2e4ejHQm&quot;,
+        &quot;id&quot;: &quot;3QpozFZyMWHrVUuWdm9WtL&quot;,
         &quot;name&quot;: &quot;Alice&quot;,
         &quot;role&quot;: &quot;user&quot;,
         &quot;content&quot;: &quot;Generate a report about AgentScope&quot;,
         &quot;metadata&quot;: {},
-        &quot;timestamp&quot;: &quot;2026-04-01 02:17:13.179&quot;
+        &quot;timestamp&quot;: &quot;2026-04-01 12:39:23.781&quot;
       },
       []
     ]
@@ -550,7 +553,7 @@ The state dict of the memory after deletion:
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
-- Msg(id=&#39;2d44REDnsqvEXXAi2qfmZH&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.221&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;gD8ZD2hs5jwHyernj7fVmA&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.824&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>Optionally, you can also use the <code class="docutils literal notranslate"><span class="pre">AsyncSQLAlchemyMemory</span></code> as an async context manager, and the session will be closed automatically when exiting the context.</p>
@@ -576,9 +579,9 @@ The state dict of the memory after deletion:
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>All messages in the memory:
-- Msg(id=&#39;Coz7qy7pMQYSHJM5QDrqFn&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.189&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;2d44REDnsqvEXXAi2qfmZH&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.221&#39;, invocation_id=&#39;None&#39;)
-- Msg(id=&#39;RuXbSg8KQdh4ZrMAm5nLmN&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.230&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;F9vdpcweL8b2QrrmfeVTu5&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.792&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;gD8ZD2hs5jwHyernj7fVmA&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.824&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;5ZYH54guw2GvnyeGEVxf4F&#39;, name=&#39;Alice&#39;, content=&#39;Generate a report about AgentScope&#39;, role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.832&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>In production environment e.g. with FastAPI, the connection pooling can be enabled as follows:</p>
@@ -706,7 +709,7 @@ It also supports user and session management, and connection pooling in the prod
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The messages with mark &#39;hint&#39;:
-- Msg(id=&#39;nofoCWdPBT7kXWG8yd72MT&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 02:17:13.248&#39;, invocation_id=&#39;None&#39;)
+- Msg(id=&#39;VyYXn4GjJdMiWYPjZH2k7A&#39;, name=&#39;system&#39;, content=&#39;&lt;system-hint&gt;Create a plan first to collect information and generate the report step by step.&lt;/system-hint&gt;&#39;, role=&#39;system&#39;, metadata={}, timestamp=&#39;2026-04-01 12:39:23.851&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>Similarly, the <cite>RedisMemory</cite> can also be used with connection pooling in the production environment, e.g., with FastAPI.</p>
@@ -772,6 +775,120 @@ It also supports user and session management, and connection pooling in the prod
 </div>
 </div>
 </section>
+<section id="tablestore-memory">
+<h2>Tablestore Memory<a class="headerlink" href="#tablestore-memory" title="Link to this heading">¶</a></h2>
+<p>AgentScope also provides a memory implementation based on
+<a class="reference external" href="https://www.alibabacloud.com/product/tablestore">Alibaba Cloud Tablestore</a>,
+a fully managed NoSQL database service. <code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> enables
+persistent and searchable memory across distributed environments, with
+built-in support for multi-user and multi-session isolation.</p>
+<p>First, install the required packages:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>tablestore<span class="w"> </span>tablestore-for-agent-memory
+</pre></div>
+</div>
+<p>Then, you can initialize the Tablestore memory as follows:</p>
+<div class="literal-block-wrapper docutils container" id="id13">
+<div class="code-block-caption"><span class="caption-text">Tablestore Memory Basic Usage</span><a class="headerlink" href="#id13" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">TablestoreMemory</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+
+
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">tablestore_memory_example</span><span class="p">():</span>
+     <span class="c1"># Create the Tablestore memory</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+         <span class="n">end_point</span><span class="o">=</span><span class="s2">&quot;https://your-instance.cn-hangzhou.ots.aliyuncs.com&quot;</span><span class="p">,</span>
+         <span class="n">instance_name</span><span class="o">=</span><span class="s2">&quot;your-instance-name&quot;</span><span class="p">,</span>
+         <span class="n">access_key_id</span><span class="o">=</span><span class="s2">&quot;your-access-key-id&quot;</span><span class="p">,</span>
+         <span class="n">access_key_secret</span><span class="o">=</span><span class="s2">&quot;your-access-key-secret&quot;</span><span class="p">,</span>
+         <span class="c1"># Optionally specify user_id and session_id</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># Add a message to the memory</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="c1"># Add a hint message with the mark &quot;hint&quot;</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span>
+             <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;&lt;system-hint&gt;Create a plan first to collect information and &quot;</span>
+             <span class="s2">&quot;generate the report step by step.&lt;/system-hint&gt;&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;system&quot;</span><span class="p">,</span>
+         <span class="p">),</span>
+         <span class="n">marks</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># Retrieve messages with the mark &quot;hint&quot;</span>
+     <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">(</span><span class="n">mark</span><span class="o">=</span><span class="s2">&quot;hint&quot;</span><span class="p">)</span>
+     <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+     <span class="c1"># Close the Tablestore client connection when done</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+ <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">tablestore_memory_example</span><span class="p">())</span>
+</pre></div>
+</div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> can also be used as an async context manager:</p>
+<div class="literal-block-wrapper docutils container" id="id14">
+<div class="code-block-caption"><span class="caption-text">Tablestore Memory as Async Context Manager</span><a class="headerlink" href="#id14" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="k">async</span> <span class="k">with</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+     <span class="n">end_point</span><span class="o">=</span><span class="s2">&quot;https://your-instance.cn-hangzhou.ots.aliyuncs.com&quot;</span><span class="p">,</span>
+     <span class="n">instance_name</span><span class="o">=</span><span class="s2">&quot;your-instance-name&quot;</span><span class="p">,</span>
+     <span class="n">access_key_id</span><span class="o">=</span><span class="s2">&quot;your-access-key-id&quot;</span><span class="p">,</span>
+     <span class="n">access_key_secret</span><span class="o">=</span><span class="s2">&quot;your-access-key-secret&quot;</span><span class="p">,</span>
+     <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;user_1&quot;</span><span class="p">,</span>
+     <span class="n">session_id</span><span class="o">=</span><span class="s2">&quot;session_1&quot;</span><span class="p">,</span>
+ <span class="p">)</span> <span class="k">as</span> <span class="n">memory</span><span class="p">:</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">add</span><span class="p">(</span>
+         <span class="n">Msg</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;Generate a report about AgentScope&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span>
+     <span class="p">)</span>
+
+     <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">get_memory</span><span class="p">()</span>
+     <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>Similarly, <code class="docutils literal notranslate"><span class="pre">TablestoreMemory</span></code> can be used in production environments with FastAPI:</p>
+<div class="literal-block-wrapper docutils container" id="id15">
+<div class="code-block-caption"><span class="caption-text">Tablestore Memory in FastAPI</span><a class="headerlink" href="#id15" title="Link to this code">¶</a></div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span> <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">TablestoreMemory</span>
+ <span class="kn">from</span><span class="w"> </span><span class="nn">agentscope.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+
+
+ <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+
+ <span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/chat_endpoint&quot;</span><span class="p">)</span>
+ <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">chat_endpoint</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">session_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">input</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">     </span><span class="sd">&quot;&quot;&quot;A chat endpoint using Tablestore memory.&quot;&quot;&quot;</span>
+     <span class="n">memory</span> <span class="o">=</span> <span class="n">TablestoreMemory</span><span class="p">(</span>
+         <span class="n">end_point</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ENDPOINT&quot;</span><span class="p">],</span>
+         <span class="n">instance_name</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_INSTANCE_NAME&quot;</span><span class="p">],</span>
+         <span class="n">access_key_id</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ACCESS_KEY_ID&quot;</span><span class="p">],</span>
+         <span class="n">access_key_secret</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;TABLESTORE_ACCESS_KEY_SECRET&quot;</span><span class="p">],</span>
+         <span class="n">user_id</span><span class="o">=</span><span class="n">user_id</span><span class="p">,</span>
+         <span class="n">session_id</span><span class="o">=</span><span class="n">session_id</span><span class="p">,</span>
+     <span class="p">)</span>
+
+     <span class="c1"># Use the memory with your agent</span>
+     <span class="o">...</span>
+
+     <span class="c1"># Close the Tablestore client connection when done</span>
+     <span class="k">await</span> <span class="n">memory</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+</section>
 <section id="customizing-memory">
 <h2>Customizing Memory<a class="headerlink" href="#customizing-memory" title="Link to this heading">¶</a></h2>
 <p>To customize your own memory, just inherit from <code class="docutils literal notranslate"><span class="pre">MemoryBase</span></code> and implement the following methods:</p>
@@ -820,7 +937,7 @@ It also supports user and session management, and connection pooling in the prod
 <li><p><a class="reference internal" href="task_agent.html#agent"><span class="std std-ref">Agent</span></a></p></li>
 <li><p><a class="reference internal" href="task_long_term_memory.html#long-term-memory"><span class="std std-ref">Long-Term Memory</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.093 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.095 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-memory-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/614c62124a3a81f471b56e3377ea63d0/task_memory.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_memory.ipynb</span></code></a></p>
@@ -912,6 +1029,7 @@ It also supports user and session management, and connection pooling in the prod
 <li><a class="reference internal" href="#in-memory-memory">In-Memory Memory</a></li>
 <li><a class="reference internal" href="#relational-database-memory">Relational Database Memory</a></li>
 <li><a class="reference internal" href="#nosql-database-memory">NoSQL Database Memory</a></li>
+<li><a class="reference internal" href="#tablestore-memory">Tablestore Memory</a></li>
 <li><a class="reference internal" href="#customizing-memory">Customizing Memory</a></li>
 <li><a class="reference internal" href="#further-reading">Further Reading</a></li>
 </ul>

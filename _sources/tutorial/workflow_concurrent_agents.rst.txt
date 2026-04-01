@@ -33,10 +33,10 @@ A simple example is shown below, where two agents are created and executed concu
 
  .. code-block:: none
 
-    Agent 1 started at 02:10:39.298
-    Agent 2 started at 02:10:39.298
-    Agent 1 finished at 02:10:42.301
-    Agent 2 finished at 02:10:42.301
+    Agent 1 started at 12:33:11.029
+    Agent 2 started at 12:33:11.029
+    Agent 1 finished at 12:33:14.032
+    Agent 2 finished at 12:33:14.032
 
 
 
@@ -84,7 +84,7 @@ A simple example is shown below, where two agents are created and executed concu
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 3.005 seconds)
+   **Total running time of the script:** (0 minutes 3.006 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_concurrent_agents.py:
