@@ -158,7 +158,7 @@ Taking DashScope TTS model as an example:
 
  .. code-block:: none
 
-    The length of audio data: 179260
+    The length of audio data: 209980
 
 
 
@@ -225,8 +225,10 @@ you to start playback before synthesis completes. This reduces perceived latency
     Received audio chunk of length: 204860
     Received audio chunk of length: 225340
     Received audio chunk of length: 245820
-    Received audio chunk of length: 261180
-    Received audio chunk of length: 261180
+    Received audio chunk of length: 266300
+    Received audio chunk of length: 286780
+    Received audio chunk of length: 297020
+    Received audio chunk of length: 297020
 
 
 
