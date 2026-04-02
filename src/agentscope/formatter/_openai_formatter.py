@@ -17,6 +17,7 @@ from ..message import (
     TextBlock,
     ImageBlock,
     AudioBlock,
+    VideoBlock,
     Base64Source,
     ToolUseBlock,
     ToolResultBlock,
@@ -165,6 +166,90 @@ def _to_openai_audio_data(source: URLSource | Base64Source) -> dict:
     raise TypeError(f"Unsupported audio source: {source['type']}.")
 
 
+def _format_openai_video_block(
+    video_block: VideoBlock,
+) -> dict[str, Any]:
+    """Format a video block for OpenAI-compatible API.
+
+    Uses the ``video_url`` content type, which is supported by
+    DashScope's OpenAI-compatible endpoint for Qwen-VL models.
+
+    Args:
+        video_block (`VideoBlock`):
+            The video block to format.
+
+    Returns:
+        `dict[str, Any]`:
+            A dictionary with ``"type": "video_url"`` and a nested
+            ``"video_url"`` object containing the URL.
+
+    Raises:
+        `ValueError`:
+            If the source type is not supported.
+    """
+    source = video_block["source"]
+    if source["type"] == "url":
+        url = _to_openai_video_url(source["url"])
+    elif source["type"] == "base64":
+        data = source["data"]
+        media_type = source["media_type"]
+        url = f"data:{media_type};base64,{data}"
+    else:
+        raise ValueError(
+            f"Unsupported video source type: {source['type']}",
+        )
+
+    return {
+        "type": "video_url",
+        "video_url": {
+            "url": url,
+        },
+    }
+
+
+def _to_openai_video_url(url: str) -> str:
+    """Convert a video URL to OpenAI-compatible format.
+
+    Local files are converted to base64 data URIs.
+    Web URLs are returned as-is.
+
+    Args:
+        url (`str`):
+            The local or public URL of the video.
+    """
+    support_video_extensions = (
+        ".mp4",
+        ".mpeg",
+        ".mov",
+        ".avi",
+        ".mkv",
+        ".webm",
+        ".flv",
+    )
+
+    raw_url = url.removeprefix("file://")
+    if os.path.exists(raw_url) and os.path.isfile(raw_url):
+        if any(
+            raw_url.lower().endswith(ext) for ext in support_video_extensions
+        ):
+            with open(raw_url, "rb") as video_file:
+                base64_video = base64.b64encode(video_file.read()).decode(
+                    "utf-8",
+                )
+            extension = raw_url.lower().split(".")[-1]
+            mime_type = f"video/{extension}"
+            return f"data:{mime_type};base64,{base64_video}"
+
+    parsed_url = urlparse(raw_url)
+    if parsed_url.scheme not in ["", "file"]:
+        return url
+
+    raise ValueError(
+        f'Invalid video URL: "{url}". '
+        "It should be a local file or a web URL.",
+    )
+
+
 class OpenAIChatFormatter(TruncatedFormatterBase):
     """The OpenAI formatter class for chatbot scenario, where only a user
     and an agent are involved. We use the `name` field in OpenAI API to
@@ -184,6 +269,7 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
         TextBlock,
         ImageBlock,
         AudioBlock,
+        VideoBlock,
         ToolUseBlock,
         ToolResultBlock,
     ]
@@ -331,6 +417,15 @@ class OpenAIChatFormatter(TruncatedFormatterBase):
                             block,  # type: ignore[arg-type]
                         ),
                     )
+                # Although OpenAI officially doesn't support video input,
+                # some third-party compatible model services, such as
+                # DashScope, require video support.
+                elif typ == "video":
+                    content_blocks.append(
+                        _format_openai_video_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
 
                 elif typ == "audio":
                     # Filter out audio content when the multimodal model
@@ -392,6 +487,7 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
         TextBlock,
         ImageBlock,
         AudioBlock,
+        VideoBlock,
         ToolUseBlock,
         ToolResultBlock,
     ]
@@ -462,6 +558,7 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
         accumulated_text = []
         images = []
         audios = []
+        videos = []
 
         for msg in msgs:
             for block in msg.get_content_blocks():
@@ -470,6 +567,8 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
 
                 elif block["type"] == "image":
                     images.append(_format_openai_image_block(block))
+                elif block["type"] == "video":
+                    videos.append(_format_openai_video_block(block))
                 elif block["type"] == "audio":
                     # Filter out audio content when the multimodal model
                     # outputs both text and audio, to prevent errors in
@@ -526,6 +625,8 @@ class OpenAIMultiAgentFormatter(TruncatedFormatterBase):
             )
         if images:
             content_list.extend(images)
+        if videos:
+            content_list.extend(videos)
         if audios:
             content_list.extend(audios)
 
