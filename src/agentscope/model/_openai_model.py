@@ -67,6 +67,22 @@ def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
                         )
 
 
+def _extract_cached_tokens(usage: Any) -> int | None:
+    """Extract cached input tokens from OpenAI usage metadata safely."""
+    if usage is None:
+        return None
+
+    prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
+    if prompt_tokens_details is None:
+        return None
+
+    # Handle both dict and object formats
+    if isinstance(prompt_tokens_details, dict):
+        return prompt_tokens_details.get("cached_tokens")
+
+    return getattr(prompt_tokens_details, "cached_tokens", None)
+
+
 class OpenAIChatModel(ChatModelBase):
     """The OpenAI chat model class."""
 
@@ -365,6 +381,7 @@ class OpenAIChatModel(ChatModelBase):
                         input_tokens=chunk.usage.prompt_tokens,
                         output_tokens=chunk.usage.completion_tokens,
                         time=(datetime.now() - start_datetime).total_seconds(),
+                        cached_tokens=_extract_cached_tokens(chunk.usage),
                         metadata=chunk.usage,
                     )
 
@@ -621,6 +638,7 @@ class OpenAIChatModel(ChatModelBase):
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
                 time=(datetime.now() - start_datetime).total_seconds(),
+                cached_tokens=_extract_cached_tokens(response.usage),
                 metadata=response.usage,
             )
 
