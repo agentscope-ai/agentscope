@@ -1111,9 +1111,22 @@ class ReActAgent(ReActAgentBase):
             # Format the compressed memory summary
             if last_chunk.metadata:
                 # Update the compressed summary in the memory storage
+                # Use a defaultdict to handle missing fields gracefully
+                # when the compression model omits optional fields
+                metadata_with_defaults = {
+                    k: last_chunk.metadata.get(k, "")
+                    for k in [
+                        "task_overview",
+                        "current_state",
+                        "important_discoveries",
+                        "next_steps",
+                        "context_to_preserve",
+                    ]
+                }
+                metadata_with_defaults.update(last_chunk.metadata)
                 await self.memory.update_compressed_summary(
                     self.compression_config.summary_template.format(
-                        **last_chunk.metadata,
+                        **metadata_with_defaults,
                     ),
                 )
 
