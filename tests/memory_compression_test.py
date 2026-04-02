@@ -31,10 +31,10 @@ class MockChatModel(ChatModelBase):
         self.call_count = 0
         self.received_messages: list[list[dict]] = []
 
-    async def __call__(
+    async def _call_api(
         self,
         messages: list[dict],
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> ChatResponse:
         """Mock the model's response.
 
@@ -69,7 +69,7 @@ class MockChatModel(ChatModelBase):
 class MockFormatter(FormatterBase):
     """A mock formatter for testing purposes."""
 
-    async def format(self, msgs: list[Msg], **kwargs: Any) -> list[dict]:
+    async def format(self, msgs: list[Msg], **_kwargs: Any) -> list[dict]:
         """Mock the formatting of messages.
 
         Args:

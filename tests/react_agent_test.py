@@ -36,10 +36,10 @@ class MyModel(ChatModelBase):
             ),
         ]
 
-    async def __call__(
+    async def _call_api(
         self,
         _messages: list[dict],
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> ChatResponse:
         """Mock model call."""
         self.cnt += 1
