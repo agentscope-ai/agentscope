@@ -384,6 +384,13 @@ class GeminiChatModel(ChatModelBase):
 
                     if part.function_call:
                         keyword_args = part.function_call.args or {}
+                        # .. note:: Gemini API always returns None for
+                        # function_call.id, so we use thought_signature
+                        # as the unique identifier for tool
+                        # calls when available. That maybe
+                        # infeasible someday, but Gemini
+                        # requires the thought_signature for some
+                        # llms like gemini-3-pro
 
                         thought_sig_b64: str | None = None
                         if part.thought_signature:
