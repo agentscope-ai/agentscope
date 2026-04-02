@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student who's really into literature and art. I love spending my time reading and visiting art galleries. How about you? What are your interests?
-    Bob: Hey Alice! I'm Bob. It's great to meet you. I'm into a lot of different things, but I especially enjoy playing video games and basketball. I also like to tinker with computers in my free time. It's cool that you're into literature and art; do you have any favorite books or artists?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and technology. I play the guitar and a bit of piano, and I also like to code in my free time. It's great to meet you both! Alice, I'd love to hear more about your favorite books and artists too!
+    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm studying computer science. I'm really into coding and developing apps. It's great to meet someone who's so passionate about the environment. Sustainability is such an important topic, and it's cool to see how technology can play a part in it too.
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business student. I'm really interested in how businesses can be more sustainable and ethical. It's awesome to meet both of you. I think there's a lot we can learn from each other, especially about how technology and business can support environmental goals.
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student who's really into literature and art. I love spending my time reading and visiting art galleries. How about you? What are your interests?
-    Bob: Hey Alice! I'm Bob. It's great to meet you. I'm into a lot of different things, but I especially enjoy playing video games and basketball. I also like to tinker with computers in my free time. It's cool that you're into literature and art; do you have any favorite books or artists?
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and technology. I play the guitar and a bit of piano, and I also like to code in my free time. It's great to meet you both! Alice, I'd love to hear more about your favorite books and artists too!
+    Alice: Hi there! I'm Alice, a student currently working on my degree in environmental science. I'm really passionate about sustainability and finding ways to help the planet. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm studying computer science. I'm really into coding and developing apps. It's great to meet someone who's so passionate about the environment. Sustainability is such an important topic, and it's cool to see how technology can play a part in it too.
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a business student. I'm really interested in how businesses can be more sustainable and ethical. It's awesome to meet both of you. I think there's a lot we can learn from each other, especially about how technology and business can support environmental goals.
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 18.401 seconds)
+   **Total running time of the script:** (0 minutes 18.681 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
