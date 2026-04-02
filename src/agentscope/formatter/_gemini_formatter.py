@@ -197,7 +197,7 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                     text_sig = block.get("thought_signature")
                     if text_sig is not None:
                         text_part["thought_signature"] = base64.b64decode(
-                            text_sig,
+                            text_sig,  # type: ignore[arg-type]
                         )
                     parts.append(text_part)
 
@@ -212,7 +212,7 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                     thought_sig = block.get("thought_signature")
                     if thought_sig is not None:
                         fc_part["thought_signature"] = base64.b64decode(
-                            thought_sig,
+                            thought_sig,  # type: ignore[arg-type]
                         )
                     parts.append(fc_part)
 
