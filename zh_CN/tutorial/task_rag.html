@@ -601,9 +601,9 @@ AgentScope 目前内置支持基于 <a class="reference external" href="https://
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>检索到的 Document 对象：
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;JSupoFxUy9qSfAve534Yh6&#39;, embedding=None, score=0.5971063116560947)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=2, total_chunks=5), id=&#39;V9XfSFUDrXh7bV9aRRPrfF&#39;, embedding=None, score=0.5971063116560947)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;DhGXBnBKJzaJRQHQ6aYX96&#39;, embedding=None, score=0.5449764333507582)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;我的名字是李明，今年28岁。&#39;}, doc_id=&#39;547e45879e96438c19ddb0f06bcf750ead3cc20e079458880f3533bcb2300a13&#39;, chunk_id=0, total_chunks=5), id=&#39;Cxcis4tr6P3teYeDKCz4T5&#39;, embedding=None, score=0.5449764333507582)
 </pre></div>
 </div>
 <p>AgentScope 中的知识库类提供两个核心方法：<code class="docutils literal notranslate"><span class="pre">add_documents</span></code> 和 <code class="docutils literal notranslate"><span class="pre">retrieve</span></code>，分别用于添加数据块和搜索检索数据块。</p>
@@ -709,35 +709,47 @@ Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>第一次回复:
-Friday: 那很好啊！有好朋友是一件很幸福的事情。你和李明是怎么成为好朋友的呢？你们之间有什么共同的兴趣爱好吗？
+Friday: 那听起来真好！有好朋友在身边是一种幸福。你和李明是怎么成为好朋友的呢？你们之间有什么特别的回忆或者共同的兴趣爱好吗？
 
 
 第二次回复:
-Friday: 我目前没有关于李明父亲的具体信息。如果你能提供一些更详细的信息，比如他父亲的名字或者相关背景，我可以尝试帮你查找相关信息。如果没有特别的信息，我恐怕无法直接得知李明的父亲是谁。你可以告诉我更多吗？
-{
+Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_bc0b71382f864eafb2c69f&quot;,
+    &quot;id&quot;: &quot;call_a6eb70fc51b0456f9e98ce&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
-        &quot;query&quot;: &quot;李明的父亲&quot;,
-        &quot;limit&quot;: 5,
-        &quot;score_threshold&quot;: 0.7
+        &quot;query&quot;: &quot;李明的父亲&quot;
     },
-    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;李明的父亲\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: 0.7}&quot;
+    &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;李明的父亲\&quot;}&quot;
 }
-
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_bc0b71382f864eafb2c69f&quot;,
+    &quot;id&quot;: &quot;call_a6eb70fc51b0456f9e98ce&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;No relevant documents found. TRY to reduce the `score_threshold` parameter to get more results.&quot;
+            &quot;text&quot;: &quot;Score: 0.5874060786403573, Content: 我父亲的名字是李强，是一名医生，我的母亲是陈芳芳，是一名教师，她总是指导我学习。&quot;
+        },
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Score: 0.5298775693077571, Content: 我的名字是李明，今年28岁。&quot;
+        },
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Score: 0.4109046508059505, Content: 我最好的朋友是王伟，我们从小一起长大，现在他是一名律师。&quot;
+        },
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Score: 0.3137894297688633, Content: 我现在在北京大学攻读博士学位，研究方向是人工智能。&quot;
+        },
+        {
+            &quot;type&quot;: &quot;text&quot;,
+            &quot;text&quot;: &quot;Score: 0.30488523710847326, Content: 我居住在中国杭州，是一名算法工程师。我喜欢打篮球和玩游戏。&quot;
         }
     ]
 }
-Friday: 目前没有找到关于“李明的父亲”的相关信息。可能是因为提供的信息不够具体，或者这个人物的信息在可获取的资料中并不突出。如果李明的父亲是公众人物或有特别的事迹，提供更多的背景信息可能会有助于找到相关内容。如果你愿意分享更多细节，我可以再试一次。否则，这个问题的答案可能需要直接询问李明本人了。
+Friday: 根据我找到的信息，李明的父亲名字是李强，并且他是一名医生。如果你需要更多关于李明或者他父亲的信息，请告诉我，我会尽力提供帮助。
 </pre></div>
 </div>
 <p>在上面的例子中，我们模拟了正常与智能体交流过程。第一次的交流我们提供了“李明”的名字作为上下文内容。
@@ -781,7 +793,7 @@ Friday: 目前没有找到关于“李明的父亲”的相关信息。可能是
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_generic_manner</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据提供的信息，李明的父亲名叫李强，他是一名医生。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: 根据提供的信息，李明的父亲是李强，他是一名医生。
 
 查看智能体记忆中检索信息如何插入：
 [
@@ -803,11 +815,11 @@ Friday: 目前没有找到关于“李明的父亲”的相关信息。可能是
   },
   {
     &quot;type&quot;: &quot;text&quot;,
-    &quot;text&quot;: &quot;我现在在北京大学攻读博士学位，研究方向是人工智能。&quot;
+    &quot;text&quot;: &quot;我居住在中国杭州，是一名算法工程师。我喜欢打篮球和玩游戏。&quot;
   },
   {
     &quot;type&quot;: &quot;text&quot;,
-    &quot;text&quot;: &quot;我居住在中国杭州，是一名算法工程师。我喜欢打篮球和玩游戏。&quot;
+    &quot;text&quot;: &quot;我现在在北京大学攻读博士学位，研究方向是人工智能。&quot;
   },
   {
     &quot;type&quot;: &quot;text&quot;,
@@ -919,7 +931,7 @@ Friday: 目前没有找到关于“李明的父亲”的相关信息。可能是
 <li><p><a class="reference internal" href="task_embedding.html#embedding"><span class="std std-ref">嵌入(Embedding)</span></a></p></li>
 <li><p><a class="reference internal" href="task_plan.html#plan"><span class="std std-ref">计划</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 47.170 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 34.121 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
