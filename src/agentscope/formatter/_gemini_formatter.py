@@ -191,23 +191,30 @@ class GeminiChatFormatter(TruncatedFormatterBase):
             for block in msg.get_content_blocks():
                 typ = block.get("type")
                 if typ == "text":
-                    parts.append(
-                        {
-                            "text": block.get("text"),
-                        },
-                    )
+                    text_part: dict[str, Any] = {
+                        "text": block.get("text"),
+                    }
+                    text_sig = block.get("thought_signature")
+                    if text_sig is not None:
+                        text_part["thought_signature"] = base64.b64decode(
+                            text_sig,
+                        )
+                    parts.append(text_part)
 
                 elif typ == "tool_use":
-                    parts.append(
-                        {
-                            "function_call": {
-                                "id": None,
-                                "name": block["name"],
-                                "args": block["input"],
-                            },
-                            "thought_signature": block.get("id", None),
+                    fc_part: dict[str, Any] = {
+                        "function_call": {
+                            "id": None,
+                            "name": block["name"],
+                            "args": block["input"],
                         },
-                    )
+                    }
+                    thought_sig = block.get("thought_signature")
+                    if thought_sig is not None:
+                        fc_part["thought_signature"] = base64.b64decode(
+                            thought_sig,
+                        )
+                    parts.append(fc_part)
 
                 elif typ == "tool_result":
                     (

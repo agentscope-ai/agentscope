@@ -35,6 +35,7 @@ class GeminiResponseMock:
             part.text = text
             part.thought = False
             part.function_call = None
+            part.thought_signature = None
 
             first_candidate = Mock()
             first_candidate.content = Mock()
@@ -60,7 +61,7 @@ class GeminiResponseMock:
 class GeminiFunctionCallMock:
     """Mock class for Gemini function calls."""
 
-    def __init__(self, call_id: str, name: str, args: dict = None):
+    def __init__(self, call_id: str | None, name: str, args: dict = None):
         self.id = call_id
         self.name = name
         self.args = args or {}
@@ -359,6 +360,159 @@ class TestGeminiChatModel(IsolatedAsyncioTestCase):
                 TextBlock(type="text", text="Hello there!"),
             ]
             self.assertEqual(final_response.content, expected_content)
+
+    async def test_tool_call_with_thought_signature(self) -> None:
+        """Test that thought_signature is captured in ToolUseBlock."""
+        with patch("google.genai.Client") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = GeminiChatModel(
+                model_name="gemini-3-pro",
+                api_key="test_key",
+                stream=False,
+            )
+            model.client = mock_client
+
+            messages = [{"role": "user", "content": "Check the weather"}]
+
+            sig_bytes = b"test_thought_signature_bytes"
+            fc_part = GeminiPartMock()
+            fc_part.function_call = GeminiFunctionCallMock(
+                call_id=None,
+                name="get_weather",
+                args={"location": "Paris"},
+            )
+            fc_part.thought_signature = sig_bytes
+
+            candidate = GeminiCandidateMock(parts=[fc_part])
+            mock_response = GeminiResponseMock(
+                candidates=[candidate],
+                usage_metadata={
+                    "prompt_token_count": 10,
+                    "total_token_count": 30,
+                },
+            )
+
+            mock_client.aio.models.generate_content = AsyncMock(
+                return_value=mock_response,
+            )
+            result = await model(messages)
+
+            import base64
+
+            expected_sig = base64.b64encode(sig_bytes).decode("utf-8")
+            tool_blocks = [
+                b for b in result.content if b.get("type") == "tool_use"
+            ]
+            self.assertEqual(len(tool_blocks), 1)
+            self.assertEqual(tool_blocks[0]["id"], expected_sig)
+            self.assertEqual(
+                tool_blocks[0]["thought_signature"],
+                expected_sig,
+            )
+
+    async def test_parallel_tool_calls_thought_signature(self) -> None:
+        """Test parallel FCs: only the first gets thought_signature."""
+        with patch("google.genai.Client") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = GeminiChatModel(
+                model_name="gemini-3-pro",
+                api_key="test_key",
+                stream=False,
+            )
+            model.client = mock_client
+
+            sig_bytes = b"sig_for_first_fc"
+            fc1 = GeminiPartMock()
+            fc1.function_call = GeminiFunctionCallMock(
+                call_id=None,
+                name="get_weather",
+                args={"location": "Paris"},
+            )
+            fc1.thought_signature = sig_bytes
+
+            fc2 = GeminiPartMock()
+            fc2.function_call = GeminiFunctionCallMock(
+                call_id=None,
+                name="get_weather",
+                args={"location": "London"},
+            )
+            fc2.thought_signature = None
+
+            candidate = GeminiCandidateMock(parts=[fc1, fc2])
+            mock_response = GeminiResponseMock(
+                candidates=[candidate],
+                usage_metadata={
+                    "prompt_token_count": 10,
+                    "total_token_count": 30,
+                },
+            )
+
+            mock_client.aio.models.generate_content = AsyncMock(
+                return_value=mock_response,
+            )
+            result = await model([{"role": "user", "content": "Weather?"}])
+
+            tool_blocks = [
+                b for b in result.content if b.get("type") == "tool_use"
+            ]
+            self.assertEqual(len(tool_blocks), 2)
+
+            import base64
+
+            expected_sig = base64.b64encode(sig_bytes).decode("utf-8")
+            self.assertEqual(
+                tool_blocks[0].get("thought_signature"),
+                expected_sig,
+            )
+            self.assertNotIn("thought_signature", tool_blocks[1])
+            self.assertEqual(tool_blocks[1]["id"], "call_1")
+
+    async def test_text_thought_signature(self) -> None:
+        """Test thought_signature on text parts (non-FC responses)."""
+        with patch("google.genai.Client") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = GeminiChatModel(
+                model_name="gemini-3-pro",
+                api_key="test_key",
+                stream=False,
+            )
+            model.client = mock_client
+
+            sig_bytes = b"text_reasoning_signature"
+            text_part = GeminiPartMock(text="Here is the answer.")
+            text_part.thought_signature = sig_bytes
+
+            candidate = GeminiCandidateMock(parts=[text_part])
+            mock_response = GeminiResponseMock(
+                candidates=[candidate],
+                usage_metadata={
+                    "prompt_token_count": 10,
+                    "total_token_count": 30,
+                },
+            )
+
+            mock_client.aio.models.generate_content = AsyncMock(
+                return_value=mock_response,
+            )
+            result = await model([{"role": "user", "content": "Question?"}])
+
+            import base64
+
+            expected_sig = base64.b64encode(sig_bytes).decode("utf-8")
+            text_blocks = [
+                b for b in result.content if b.get("type") == "text"
+            ]
+            self.assertEqual(len(text_blocks), 1)
+            self.assertEqual(
+                text_blocks[0].get("thought_signature"),
+                expected_sig,
+            )
 
     async def test_generate_kwargs_integration(self) -> None:
         """Test integration of generate_kwargs."""

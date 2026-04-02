@@ -368,6 +368,7 @@ class GeminiChatModel(ChatModelBase):
         tool_calls: list[ToolUseBlock] = []
         metadata: dict | None = None
         response_id: str | None = None
+        text_thought_signature: str | None = None
         async for chunk in response:
             if (
                 chunk.candidates
@@ -383,33 +384,46 @@ class GeminiChatModel(ChatModelBase):
 
                     if part.function_call:
                         keyword_args = part.function_call.args or {}
-                        # .. note:: Gemini API always returns None for
-                        # function_call.id, so we use thought_signature
-                        # as the unique identifier for tool
-                        # calls when available. That maybe
-                        # infeasible someday, but Gemini
-                        # requires the thought_signature for some
-                        # llms like gemini-3-pro
 
+                        thought_sig_b64: str | None = None
                         if part.thought_signature:
-                            call_id = base64.b64encode(
+                            thought_sig_b64 = base64.b64encode(
                                 part.thought_signature,
                             ).decode("utf-8")
-                        else:
-                            call_id = part.function_call.id
 
-                        tool_calls.append(
-                            ToolUseBlock(
-                                type="tool_use",
-                                id=call_id,
-                                name=part.function_call.name,
-                                input=keyword_args,
-                                raw_input=json.dumps(
-                                    keyword_args,
-                                    ensure_ascii=False,
-                                ),
+                        call_id = (
+                            thought_sig_b64
+                            or part.function_call.id
+                            or f"call_{len(tool_calls)}"
+                        )
+
+                        tool_call = ToolUseBlock(
+                            type="tool_use",
+                            id=call_id,
+                            name=part.function_call.name,
+                            input=keyword_args,
+                            raw_input=json.dumps(
+                                keyword_args,
+                                ensure_ascii=False,
                             ),
                         )
+
+                        if thought_sig_b64:
+                            tool_call["thought_signature"] = thought_sig_b64
+
+                        tool_calls.append(tool_call)
+
+                    # Capture thought_signature on non-FC parts for
+                    # preserving reasoning context in text responses.
+                    # May arrive on a part with empty text during streaming.
+                    if (
+                        not part.function_call
+                        and getattr(part, "thought_signature", None)
+                        and isinstance(part.thought_signature, bytes)
+                    ):
+                        text_thought_signature = base64.b64encode(
+                            part.thought_signature,
+                        ).decode("utf-8")
 
             # Text parts
             if text and structured_model:
@@ -429,12 +443,13 @@ class GeminiChatModel(ChatModelBase):
                 )
 
             if text:
-                content_blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=text,
-                    ),
+                text_block = TextBlock(
+                    type="text",
+                    text=text,
                 )
+                if text_thought_signature:
+                    text_block["thought_signature"] = text_thought_signature
+                content_blocks.append(text_block)
 
             if response_id is None:
                 response_id = getattr(chunk, "response_id", None)
@@ -477,6 +492,7 @@ class GeminiChatModel(ChatModelBase):
         content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
         metadata: dict | None = None
         tool_calls: list = []
+        text_thought_signature: str | None = None
 
         if (
             response.candidates
@@ -502,32 +518,52 @@ class GeminiChatModel(ChatModelBase):
 
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
-                    # .. note:: Gemini API always returns None for
-                    # function_call.id, so we use thought_signature
-                    # as the unique identifier for tool
-                    # calls when available. That maybe infeasible
-                    # someday, but Gemini requires the thought_signature
-                    # for some llms like gemini-3-pro
 
+                    thought_sig_b64: str | None = None
                     if part.thought_signature:
-                        call_id = base64.b64encode(
+                        thought_sig_b64 = base64.b64encode(
                             part.thought_signature,
                         ).decode("utf-8")
-                    else:
-                        call_id = part.function_call.id
 
-                    tool_calls.append(
-                        ToolUseBlock(
-                            type="tool_use",
-                            id=call_id,
-                            name=part.function_call.name,
-                            input=keyword_args,
-                            raw_input=json.dumps(
-                                keyword_args,
-                                ensure_ascii=False,
-                            ),
+                    call_id = (
+                        thought_sig_b64
+                        or part.function_call.id
+                        or f"call_{len(tool_calls)}"
+                    )
+
+                    tool_call = ToolUseBlock(
+                        type="tool_use",
+                        id=call_id,
+                        name=part.function_call.name,
+                        input=keyword_args,
+                        raw_input=json.dumps(
+                            keyword_args,
+                            ensure_ascii=False,
                         ),
                     )
+
+                    if thought_sig_b64:
+                        tool_call["thought_signature"] = thought_sig_b64
+
+                    tool_calls.append(tool_call)
+
+                # Capture thought_signature on non-FC parts for
+                # preserving reasoning context in text responses.
+                if (
+                    not part.function_call
+                    and getattr(part, "thought_signature", None)
+                    and isinstance(part.thought_signature, bytes)
+                ):
+                    text_thought_signature = base64.b64encode(
+                        part.thought_signature,
+                    ).decode("utf-8")
+
+        # Apply captured text thought_signature to the last TextBlock
+        if text_thought_signature:
+            for block in reversed(content_blocks):
+                if block.get("type") == "text":
+                    block["thought_signature"] = text_thought_signature
+                    break
 
         # For the structured output case
         if response.text and structured_model:
