@@ -1,13 +1,98 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches
+# pylint: disable=too-many-branches, too-many-nested-blocks
 """The Anthropic formatter module."""
 
+import base64
+import os
 from typing import Any
+from urllib.parse import urlparse
 
 from ._truncated_formatter_base import TruncatedFormatterBase
 from .._logging import logger
 from ..message import Msg, TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock
 from ..token import TokenCounterBase
+
+
+def _format_anthropic_image_block(image_block: ImageBlock) -> dict:
+    """Format an image block for Anthropic API. If the source is a URLSource
+    pointing to a local file, it will be converted to base64 format.
+
+    Args:
+        image_block (`ImageBlock`):
+            The image block to format.
+
+    Returns:
+        `dict`:
+            A dictionary in Anthropic image block format.
+
+    Raises:
+        `ValueError`:
+            If the source type or image format is not supported.
+    """
+    import filetype
+
+    # See https://platform.openai.com/docs/guides/vision for details of
+    # support image extensions.
+    support_image_extensions = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+
+    source = image_block["source"]
+
+    if source["type"] == "base64":
+        return {**image_block}
+
+    url = source["url"]
+    raw_url = url.removeprefix("file://")
+
+    if os.path.exists(raw_url) and os.path.isfile(raw_url):
+        ext = os.path.splitext(raw_url)[1].lower()
+        media_type = support_image_extensions.get(ext)
+        if media_type:
+            with open(raw_url, "rb") as f:
+                data = base64.b64encode(f.read()).decode("utf-8")
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                },
+            }
+        # No extension - detect file type using filetype
+        kind = filetype.guess(raw_url)
+        if kind is not None and kind.mime.startswith("image/"):
+            with open(raw_url, "rb") as image_file:
+                data = base64.b64encode(image_file.read()).decode(
+                    "utf-8",
+                )
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": kind.mime,
+                    "data": data,
+                },
+            }
+
+    # For web urls
+    parsed_url = urlparse(raw_url)
+    if parsed_url.scheme not in ("", "file"):
+        return {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "url": url,
+            },
+        }
+
+    raise ValueError(
+        f'Invalid image URL: "{url}". It should be a local file or a web URL.',
+    )
 
 
 class AnthropicChatFormatter(TruncatedFormatterBase):
@@ -63,8 +148,15 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
 
             for block in msg.get_content_blocks():
                 typ = block.get("type")
-                if typ in ["thinking", "text", "image"]:
+                if typ in ["thinking", "text"]:
                     content_blocks.append({**block})
+
+                elif typ == "image":
+                    content_blocks.append(
+                        _format_anthropic_image_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
 
                 elif typ == "tool_use":
                     content_blocks.append(
@@ -81,7 +173,12 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
                     if output is None:
                         content_value = [{"type": "text", "text": None}]
                     elif isinstance(output, list):
-                        content_value = output
+                        content_value = [
+                            _format_anthropic_image_block(item)
+                            if item.get("type") == "image"
+                            else item
+                            for item in output
+                        ]
                     else:
                         content_value = [{"type": "text", "text": str(output)}]
                     messages.append(
@@ -207,7 +304,11 @@ class AnthropicMultiAgentFormatter(TruncatedFormatterBase):
                         )
                         accumulated_text.clear()
 
-                    conversation_blocks.append({**block})
+                    conversation_blocks.append(
+                        _format_anthropic_image_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
 
         if accumulated_text:
             conversation_blocks.append(
