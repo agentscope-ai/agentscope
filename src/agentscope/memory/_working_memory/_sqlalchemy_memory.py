@@ -451,6 +451,12 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             )
             self.session.add(message_record)
 
+        # Flush the session to ensure message records are written to the
+        # database
+        # This is necessary before bulk_insert_mappings for message_mark
+        # records to satisfy foreign key constraints
+        await self.session.flush()
+
         # Create mark records if marks are provided (use bulk insert)
         if marks:
             mark_records = [
