@@ -27,6 +27,10 @@ from ._deepseek_formatter import (
     DeepSeekChatFormatter,
     DeepSeekMultiAgentFormatter,
 )
+from ._minimax_formatter import (
+    MiniMaxChatFormatter,
+    MiniMaxMultiAgentFormatter,
+)
 from ._a2a_formatter import A2AChatFormatter
 
 __all__ = [
@@ -44,5 +48,7 @@ __all__ = [
     "OllamaMultiAgentFormatter",
     "DeepSeekChatFormatter",
     "DeepSeekMultiAgentFormatter",
+    "MiniMaxChatFormatter",
+    "MiniMaxMultiAgentFormatter",
     "A2AChatFormatter",
 ]
