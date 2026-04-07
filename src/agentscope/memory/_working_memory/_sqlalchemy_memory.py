@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The SQLAlchemy database storage module, which supports storing messages in
 a SQL database using SQLAlchemy ORM (e.g., SQLite, PostgreSQL, MySQL)."""
+import asyncio
 from typing import Any
 
 from sqlalchemy import (
@@ -144,6 +145,7 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         super().__init__()
 
         self._db_session: AsyncSession | None = None
+        self._lock = asyncio.Lock()
 
         if isinstance(engine_or_session, AsyncEngine):
             self._session_factory = async_sessionmaker(
@@ -415,78 +417,79 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         # Create table if not exists
         await self._create_table()
 
-        # If skip_duplicated is True, filter out existing messages
-        messages_to_add = memories
-        if skip_duplicated:
-            existing_msg_ids = set()
-            result = await self.session.execute(
-                select(self.MessageTable.id).filter(
-                    self.MessageTable.id.in_(
-                        [self._make_message_id(m.id) for m in memories],
+        async with self._lock:
+            # If skip_duplicated is True, filter out existing messages
+            messages_to_add = memories
+            if skip_duplicated:
+                existing_msg_ids = set()
+                result = await self.session.execute(
+                    select(self.MessageTable.id).filter(
+                        self.MessageTable.id.in_(
+                            [self._make_message_id(m.id) for m in memories],
+                        ),
                     ),
-                ),
-            )
-            existing_msg_ids = {row[0] for row in result.fetchall()}
+                )
+                existing_msg_ids = {row[0] for row in result.fetchall()}
 
-            messages_to_add = [
-                m
-                for m in memories
-                if self._make_message_id(m.id) not in existing_msg_ids
-            ]
+                messages_to_add = [
+                    m
+                    for m in memories
+                    if self._make_message_id(m.id) not in existing_msg_ids
+                ]
 
-            # If all messages are duplicates, return early
-            if not messages_to_add:
-                return
+                # If all messages are duplicates, return early
+                if not messages_to_add:
+                    return
 
-        # Get the starting index once to avoid race conditions
-        start_index = await self._get_next_index()
+            # Get the starting index once to avoid race conditions
+            start_index = await self._get_next_index()
 
-        # Add messages to message table
-        for i, m in enumerate(messages_to_add):
-            message_record = self.MessageTable(
-                id=self._make_message_id(m.id),
-                msg=m.to_dict(),
-                session_id=self.session_id,
-                index=start_index + i,
-            )
-            self.session.add(message_record)
+            # Add messages to message table
+            for i, m in enumerate(messages_to_add):
+                message_record = self.MessageTable(
+                    id=self._make_message_id(m.id),
+                    msg=m.to_dict(),
+                    session_id=self.session_id,
+                    index=start_index + i,
+                )
+                self.session.add(message_record)
 
-        # Create mark records if marks are provided (use bulk insert)
-        if marks:
-            mark_records = [
-                {"msg_id": self._make_message_id(msg.id), "mark": mark}
-                for msg in messages_to_add
-                for mark in marks
-            ]
-            if mark_records:
-                if skip_duplicated:
-                    # Query existing mark combinations to avoid duplicates
-                    result = await self.session.execute(
-                        select(
-                            self.MessageMarkTable.msg_id,
-                            self.MessageMarkTable.mark,
-                        ),
-                    )
-                    existing_marks = {
-                        (row[0], row[1]) for row in result.fetchall()
-                    }
-
-                    # Filter out existing mark combinations
-                    mark_records = [
-                        r
-                        for r in mark_records
-                        if (r["msg_id"], r["mark"]) not in existing_marks
-                    ]
-
+            # Create mark records if marks are provided (use bulk insert)
+            if marks:
+                mark_records = [
+                    {"msg_id": self._make_message_id(msg.id), "mark": mark}
+                    for msg in messages_to_add
+                    for mark in marks
+                ]
                 if mark_records:
-                    await self.session.run_sync(
-                        lambda session: session.bulk_insert_mappings(
-                            self.MessageMarkTable,
-                            mark_records,
-                        ),
-                    )
+                    if skip_duplicated:
+                        # Query existing mark combinations to avoid duplicates
+                        result = await self.session.execute(
+                            select(
+                                self.MessageMarkTable.msg_id,
+                                self.MessageMarkTable.mark,
+                            ),
+                        )
+                        existing_marks = {
+                            (row[0], row[1]) for row in result.fetchall()
+                        }
 
-        await self.session.commit()
+                        # Filter out existing mark combinations
+                        mark_records = [
+                            r
+                            for r in mark_records
+                            if (r["msg_id"], r["mark"]) not in existing_marks
+                        ]
+
+                    if mark_records:
+                        await self.session.run_sync(
+                            lambda session: session.bulk_insert_mappings(
+                                self.MessageMarkTable,
+                                mark_records,
+                            ),
+                        )
+
+            await self.session.commit()
 
     async def _get_next_index(self) -> int:
         """Get the next index for a new message in the current session.
