@@ -23,6 +23,7 @@ from .._logging import logger
 from .._utils._common import (
     _json_loads_with_repair,
     _parse_streaming_json_dict,
+    _create_tool_from_base_model,
 )
 from ..message import (
     ToolUseBlock,
@@ -169,6 +170,7 @@ class OpenAIChatModel(ChatModelBase):
         self.reasoning_effort = reasoning_effort
         self.stream_tool_parsing = stream_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
+        self._structured_output_fallback = False
 
     @trace_llm
     async def __call__(
@@ -277,16 +279,48 @@ class OpenAIChatModel(ChatModelBase):
             kwargs.pop("stream", None)
             kwargs.pop("tools", None)
             kwargs.pop("tool_choice", None)
-            kwargs["response_format"] = structured_model
-            if not self.stream:
-                response = await self.client.chat.completions.parse(**kwargs)
-            else:
-                response = self.client.chat.completions.stream(**kwargs)
-                return self._parse_openai_stream_response(
-                    start_datetime,
-                    response,
+
+            if self._structured_output_fallback:
+                response = await self._structured_via_tool_call(
+                    kwargs,
                     structured_model,
+                    start_datetime,
                 )
+                if isinstance(response, AsyncGenerator):
+                    return response
+            else:
+                kwargs["response_format"] = structured_model
+                try:
+                    if not self.stream:
+                        response = await self.client.chat.completions.parse(
+                            **kwargs,
+                        )
+                    else:
+                        response = self.client.chat.completions.stream(
+                            **kwargs,
+                        )
+                        return self._parse_openai_stream_response(
+                            start_datetime,
+                            response,
+                            structured_model,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "response_format structured output failed (%s: %s), "
+                        "falling back to tool-call based structured output. "
+                        "Subsequent calls will use tool-call directly.",
+                        type(e).__name__,
+                        e,
+                    )
+                    self._structured_output_fallback = True
+                    kwargs.pop("response_format", None)
+                    response = await self._structured_via_tool_call(
+                        kwargs,
+                        structured_model,
+                        start_datetime,
+                    )
+                    if isinstance(response, AsyncGenerator):
+                        return response
         else:
             response = await self.client.chat.completions.create(**kwargs)
 
@@ -350,7 +384,7 @@ class OpenAIChatModel(ChatModelBase):
 
         async with response as stream:
             async for item in stream:
-                if structured_model:
+                if structured_model and not self._structured_output_fallback:
                     if item.type != "chunk":
                         continue
                     chunk = item.chunk
@@ -613,7 +647,16 @@ class OpenAIChatModel(ChatModelBase):
                 )
 
             if structured_model:
-                metadata = choice.message.parsed.model_dump()
+                try:
+                    parsed = choice.message.parsed
+                except AttributeError:
+                    parsed = None
+                if parsed is not None:
+                    metadata = parsed.model_dump()
+                elif choice.message.tool_calls:
+                    metadata = _json_loads_with_repair(
+                        choice.message.tool_calls[0].function.arguments,
+                    )
 
         usage = None
         if response.usage:
@@ -634,6 +677,35 @@ class OpenAIChatModel(ChatModelBase):
             resp_kwargs["id"] = response_id
 
         return ChatResponse(**resp_kwargs)
+
+    async def _structured_via_tool_call(
+        self,
+        kwargs: dict,
+        structured_model: Type[BaseModel],
+        start_datetime: datetime,
+    ) -> Any:
+        """Use tool-call approach for structured output.
+
+        Falls back to this when the API endpoint does not support
+        json_schema response_format (e.g. DashScope, DeepSeek).
+        """
+        kwargs.pop("response_format", None)
+        format_tool = _create_tool_from_base_model(structured_model)
+        kwargs["tools"] = self._format_tools_json_schemas([format_tool])
+        kwargs["tool_choice"] = self._format_tool_choice(
+            format_tool["function"]["name"],
+        )
+        if self.stream:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+        response = await self.client.chat.completions.create(**kwargs)
+        if self.stream:
+            return self._parse_openai_stream_response(
+                start_datetime,
+                response,
+                structured_model,
+            )
+        return response
 
     def _format_tools_json_schemas(
         self,
