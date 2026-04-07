@@ -313,7 +313,6 @@ class OpenAIChatModel(ChatModelBase):
                         e,
                     )
                     self._structured_output_fallback = True
-                    kwargs.pop("response_format", None)
                     response = await self._structured_via_tool_call(
                         kwargs,
                         structured_model,
