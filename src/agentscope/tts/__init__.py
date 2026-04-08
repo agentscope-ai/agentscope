@@ -11,6 +11,7 @@ from ._dashscope_cosyvoice_tts_model import DashScopeCosyVoiceTTSModel
 from ._dashscope_cosyvoice_realtime_tts_model import (
     DashScopeCosyVoiceRealtimeTTSModel,
 )
+from ._minimax_tts_model import MiniMaxTTSModel
 
 __all__ = [
     "TTSModelBase",
@@ -22,4 +23,5 @@ __all__ = [
     "OpenAITTSModel",
     "DashScopeCosyVoiceTTSModel",
     "DashScopeCosyVoiceRealtimeTTSModel",
+    "MiniMaxTTSModel",
 ]
