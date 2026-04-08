@@ -15,7 +15,6 @@ from typing import (
 
 import aioitertools
 
-from .. import _config
 from ..embedding import EmbeddingModelBase, EmbeddingResponse
 from .._logging import logger
 from ..message import Msg, ToolUseBlock
@@ -74,7 +73,7 @@ def _check_tracing_enabled() -> bool:
      tracer is initialized. Leaving this function here as a temporary
      solution.
     """
-    return _config.trace_enabled
+    return True
 
 
 def _set_span_success_status(span: Span) -> None:
