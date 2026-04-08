@@ -8,8 +8,7 @@ from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
 from ._embedding_base import EmbeddingModelBase
 from ..message import (
-    VideoBlock,
-    ImageBlock,
+    DataBlock,
     TextBlock,
 )
 
@@ -90,14 +89,14 @@ class DashScopeMultiModalEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        inputs: list[TextBlock | ImageBlock | VideoBlock],
+        inputs: list[TextBlock | DataBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """Call the DashScope multimodal embedding API, which accepts text,
         image, and video data.
 
         Args:
-            inputs (`list[TextBlock | ImageBlock | VideoBlock]`):
+            inputs (`list[TextBlock | DataBlock]`):
                 The input data to be embedded. It can be a list of text,
                 image, and video blocks.
 

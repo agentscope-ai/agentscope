@@ -7,11 +7,9 @@ import mcp.types
 
 from .._logging import logger
 from ..message import (
-    ImageBlock,
     Base64Source,
-    AudioBlock,
     TextBlock,
-    VideoBlock,
+    DataBlock,
 )
 
 
@@ -39,33 +37,19 @@ class MCPClientBase:
     @staticmethod
     def _convert_mcp_content_to_as_blocks(
         mcp_content_blocks: list,
-    ) -> List[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
+    ) -> List[TextBlock | DataBlock]:
         """Convert MCP content to AgentScope blocks."""
 
         as_content: list = []
         for content in mcp_content_blocks:
             if isinstance(content, mcp.types.TextContent):
+                as_content.append(TextBlock(text=content.text))
+            elif isinstance(
+                content,
+                (mcp.types.ImageContent, mcp.types.AudioContent),
+            ):
                 as_content.append(
-                    TextBlock(
-                        type="text",
-                        text=content.text,
-                    ),
-                )
-            elif isinstance(content, mcp.types.ImageContent):
-                as_content.append(
-                    ImageBlock(
-                        type="image",
-                        source=Base64Source(
-                            type="base64",
-                            media_type=content.mimeType,
-                            data=content.data,
-                        ),
-                    ),
-                )
-            elif isinstance(content, mcp.types.AudioContent):
-                as_content.append(
-                    AudioBlock(
-                        type="audio",
+                    DataBlock(
                         source=Base64Source(
                             type="base64",
                             media_type=content.mimeType,
@@ -80,7 +64,6 @@ class MCPClientBase:
                 ):
                     as_content.append(
                         TextBlock(
-                            type="text",
                             text=content.resource.model_dump_json(indent=2),
                         ),
                     )
@@ -93,6 +76,7 @@ class MCPClientBase:
                         "Skipping this content.",
                         type(content.resource),
                     )
+
             else:
                 logger.warning(
                     "Unsupported content type: %s. Skipping this content.",

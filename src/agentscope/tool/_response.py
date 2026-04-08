@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
-
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-from .._utils._common import _get_timestamp
-from ..message import AudioBlock, ImageBlock, TextBlock, VideoBlock
+from ..message import DataBlock, TextBlock
 
 
 @dataclass
 class ToolResponse:
     """The result chunk of a tool call."""
 
-    content: List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+    content: List[TextBlock | DataBlock]
     """The execution output of the tool function."""
 
     metadata: Optional[dict] = None
@@ -28,5 +27,5 @@ class ToolResponse:
     is_interrupted: bool = False
     """Whether the tool execution is interrupted."""
 
-    id: str = field(default_factory=lambda: _get_timestamp(True))
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The identity of the tool response."""

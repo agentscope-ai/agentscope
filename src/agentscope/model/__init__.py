@@ -9,8 +9,10 @@ from ._anthropic_model import AnthropicChatModel
 from ._ollama_model import OllamaChatModel
 from ._gemini_model import GeminiChatModel
 from ._trinity_model import TrinityChatModel
+from ._model_usage import ChatUsage
 
 __all__ = [
+    "ChatUsage",
     "ChatModelBase",
     "ChatResponse",
     "DashScopeChatModel",

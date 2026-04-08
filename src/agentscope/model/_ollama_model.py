@@ -9,9 +9,7 @@ from typing import (
     AsyncGenerator,
     AsyncIterator,
     Literal,
-    Type,
 )
-from collections import OrderedDict
 
 from pydantic import BaseModel
 
@@ -19,8 +17,8 @@ from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
-from ..message import ToolUseBlock, TextBlock, ThinkingBlock
+from ..formatter import FormatterBase, OllamaChatFormatter
+from ..message import ToolCallBlock, TextBlock, ThinkingBlock
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
@@ -33,17 +31,24 @@ else:
 class OllamaChatModel(ChatModelBase):
     """The Ollama chat model class in agentscope."""
 
+    class ThinkingConfig(BaseModel):
+        """Configuration for thinking in Ollama chat models."""
+
+        enable_thinking: bool
+
     def __init__(
         self,
         model_name: str,
         stream: bool = False,
+        max_retries: int = 0,
+        fallback_model_name: str | None = None,
+        formatter: FormatterBase | None = None,
+        thinking_config: ThinkingConfig | None = None,
         options: dict = None,
         keep_alive: str = "5m",
-        enable_thinking: bool | None = None,
         host: str | None = None,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the Ollama chat model.
 
@@ -52,6 +57,15 @@ class OllamaChatModel(ChatModelBase):
                 The name of the model.
             stream (`bool`, default `True`):
                 Streaming mode or not.
+            max_retries (`int`, optional):
+                Maximum number of retries on failure. Defaults to 0.
+            fallback_model_name (`str | None`, optional):
+                Fallback model name to use after all retries fail.
+            formatter (`FormatterBase | None`, optional):
+                Formatter for message preprocessing.
+            thinking_config (`ThinkingConfig | None`, default `None`)
+                Configuration for thinking, only for models such as qwen3,
+                deepseek-r1, etc.
             options (`dict`, default `None`):
                 Additional parameters to pass to the Ollama API. These can
                 include temperature etc.
@@ -59,10 +73,6 @@ class OllamaChatModel(ChatModelBase):
                 Duration to keep the model loaded in memory. The format is a
                 number followed by a unit suffix (s for seconds, m for minutes
                 , h for hours).
-            enable_thinking (`bool | None`, default `None`)
-                Whether enable thinking or not, only for models such as qwen3,
-                deepseek-r1, etc. For more details, please refer to
-                https://ollama.com/search?c=thinking
             host (`str | None`, default `None`):
                 The host address of the Ollama server. If None, uses the
                 default address (typically http://localhost:11434).
@@ -72,9 +82,6 @@ class OllamaChatModel(ChatModelBase):
             generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments used in Ollama API generation.
-            **kwargs (`Any`):
-                Additional keyword arguments to pass to the base chat model
-                class.
         """
 
         try:
@@ -85,31 +92,38 @@ class OllamaChatModel(ChatModelBase):
                 'running command `pip install "ollama>=0.1.7"`',
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name=model_name,
+            stream=stream,
+            max_retries=max_retries,
+            fallback_model_name=fallback_model_name,
+            formatter=formatter or OllamaChatFormatter(),
+        )
 
         self.client = ollama.AsyncClient(
             host=host,
             **(client_kwargs or {}),
-            **kwargs,
         )
         self.options = options
         self.keep_alive = keep_alive
-        self.think = enable_thinking
+        self.thinking_config = thinking_config
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
+        model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Ollama chat completions API by the given
         arguments.
 
         Args:
+            model_name (`str`):
+                The model name to use for this call.
             messages (`list[dict]`):
                 A list of dictionaries, where `role` and `content` fields are
                 required, and `name` field is optional.
@@ -118,9 +132,6 @@ class OllamaChatModel(ChatModelBase):
             tool_choice (`Literal["auto", "none", "required"] | str \
                 | None`, default `None`):
                 Ollama doesn't support `tool_choice` argument yet.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
             **kwargs (`Any`):
                 The keyword arguments for Ollama chat completions API,
                 e.g. `think`etc. Please refer to the Ollama API
@@ -132,7 +143,7 @@ class OllamaChatModel(ChatModelBase):
         """
 
         kwargs = {
-            "model": self.model_name,
+            "model": model_name,
             "messages": messages,
             "stream": self.stream,
             "options": self.options,
@@ -141,17 +152,14 @@ class OllamaChatModel(ChatModelBase):
             **kwargs,
         }
 
-        if self.think is not None and "think" not in kwargs:
-            kwargs["think"] = self.think
+        if self.thinking_config and "think" not in kwargs:
+            kwargs["think"] = self.thinking_config.enable_thinking
 
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
             logger.warning("Ollama does not support tool_choice yet, ignored.")
-
-        if structured_model:
-            kwargs["format"] = structured_model.model_json_schema()
 
         start_datetime = datetime.now()
         response = await self.client.chat(**kwargs)
@@ -160,13 +168,11 @@ class OllamaChatModel(ChatModelBase):
             return self._parse_ollama_stream_completion_response(
                 start_datetime,
                 response,
-                structured_model,
             )
 
         parsed_response = await self._parse_ollama_completion_response(
             start_datetime,
             response,
-            structured_model,
         )
 
         return parsed_response
@@ -175,7 +181,6 @@ class OllamaChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncIterator[OllamaChatResponse],
-        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given an Ollama streaming completion response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -185,9 +190,6 @@ class OllamaChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncIterator[OllamaChatResponse]`):
                 Ollama streaming response async iterator to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             AsyncGenerator[ChatResponse, None]:
@@ -195,94 +197,94 @@ class OllamaChatModel(ChatModelBase):
                 the content blocks and usage information for each chunk in the
                 streaming response.
 
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
-
         """
-        accumulated_text = ""
-        acc_thinking_content = ""
-        tool_calls = OrderedDict()  # Store tool calls
-        metadata: dict | None = None
+        # Accumulated state
+        acc_text = ""
+        acc_thinking = ""
+        acc_tool_calls: dict = {}  # tool_id -> {name, input}
         response_id: str | None = None
+        usage = None
 
         async for chunk in response:
-            # Handle text content
+            delta_content: list = []
             msg = chunk.message
-            acc_thinking_content += msg.thinking or ""
-            accumulated_text += msg.content or ""
+
+            # Handle thinking delta
+            if msg.thinking:
+                acc_thinking += msg.thinking
+                delta_content.append(ThinkingBlock(thinking=msg.thinking))
+
+            # Handle text delta
+            if msg.content:
+                acc_text += msg.content
+                delta_content.append(TextBlock(text=msg.content))
 
             # Handle tool calls
             for idx, tool_call in enumerate(msg.tool_calls or []):
                 function = tool_call.function
                 tool_id = f"{idx}_{function.name}"
-                tool_calls[tool_id] = {
-                    "type": "tool_use",
-                    "id": tool_id,
+                input_str = json.dumps(function.arguments)
+                acc_tool_calls[tool_id] = {
                     "name": function.name,
-                    "input": function.arguments,
-                    "raw_input": json.dumps(function.arguments),
+                    "input": input_str,
                 }
-            # Calculate usage statistics
+                delta_content.append(
+                    ToolCallBlock(
+                        id=tool_id,
+                        name=function.name,
+                        input=input_str,
+                    ),
+                )
+
+            if response_id is None:
+                response_id = getattr(chunk, "id", None)
+
+            # Calculate usage
             current_time = (datetime.now() - start_datetime).total_seconds()
             usage = ChatUsage(
                 input_tokens=getattr(chunk, "prompt_eval_count", 0) or 0,
                 output_tokens=getattr(chunk, "eval_count", 0) or 0,
                 time=current_time,
             )
-            # Create content blocks
-            contents: list = []
 
-            if acc_thinking_content:
-                contents.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        thinking=acc_thinking_content,
-                    ),
-                )
-
-            if accumulated_text:
-                contents.append(TextBlock(type="text", text=accumulated_text))
-                if structured_model:
-                    metadata = _json_loads_with_repair(accumulated_text)
-
-            # Add tool call blocks
-            for tool_call in tool_calls.values():
-                try:
-                    input_data = tool_call["input"]
-                    if isinstance(input_data, str):
-                        input_data = _json_loads_with_repair(input_data)
-                    contents.append(
-                        ToolUseBlock(
-                            type=tool_call["type"],
-                            id=tool_call["id"],
-                            name=tool_call["name"],
-                            input=input_data,
-                        ),
-                    )
-                except Exception as e:
-                    print(f"Error parsing tool call input: {e}")
-
-            if response_id is None:
-                response_id = getattr(chunk, "id", None)
-
-            # Generate response when there's new content or at final chunk
-            if chunk.done or contents:
+            if delta_content:
                 _kwargs: dict[str, Any] = {
-                    "content": contents,
+                    "content": delta_content,
+                    "is_last": False,
                     "usage": usage,
-                    "metadata": metadata,
                 }
                 if response_id:
                     _kwargs["id"] = response_id
-                res = ChatResponse(**_kwargs)
-                yield res
+                yield ChatResponse(**_kwargs)
+
+        # Build final accumulated content
+        final_content: list = []
+        if acc_thinking:
+            final_content.append(ThinkingBlock(thinking=acc_thinking))
+        if acc_text:
+            final_content.append(TextBlock(text=acc_text))
+        for tool_id, tc in acc_tool_calls.items():
+            final_content.append(
+                ToolCallBlock(
+                    id=tool_id,
+                    name=tc["name"],
+                    input=tc["input"],
+                ),
+            )
+
+        _final_kwargs: dict[str, Any] = {
+            "content": final_content,
+            "is_last": True,
+            "usage": usage,
+        }
+        if response_id:
+            _final_kwargs["id"] = response_id
+        yield ChatResponse(**_final_kwargs)
 
     async def _parse_ollama_completion_response(
         self,
         start_datetime: datetime,
         response: OllamaChatResponse,
-        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given an Ollama chat completion response object, extract the content
         blocks and usages from it.
@@ -292,49 +294,29 @@ class OllamaChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`OllamaChatResponse`):
                 Ollama OllamaChatResponse object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             `ChatResponse`:
                 A ChatResponse object containing the content blocks and usage.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
-        metadata: dict | None = None
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         if response.message.thinking:
             content_blocks.append(
-                ThinkingBlock(
-                    type="thinking",
-                    thinking=response.message.thinking,
-                ),
+                ThinkingBlock(thinking=response.message.thinking),
             )
 
         if response.message.content:
             content_blocks.append(
-                TextBlock(
-                    type="text",
-                    text=response.message.content,
-                ),
+                TextBlock(text=response.message.content),
             )
-            if structured_model:
-                metadata = _json_loads_with_repair(
-                    response.message.content,
-                )
 
         for idx, tool_call in enumerate(response.message.tool_calls or []):
             content_blocks.append(
-                ToolUseBlock(
-                    type="tool_use",
+                ToolCallBlock(
                     id=f"{idx}_{tool_call.function.name}",
                     name=tool_call.function.name,
-                    input=tool_call.function.arguments,
-                    raw_input=json.dumps(tool_call.function.arguments),
+                    input=json.dumps(tool_call.function.arguments),
                 ),
             )
 
@@ -348,8 +330,8 @@ class OllamaChatModel(ChatModelBase):
 
         resp_kwargs: dict[str, Any] = {
             "content": content_blocks,
+            "is_last": True,
             "usage": usage,
-            "metadata": metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:

@@ -4,7 +4,7 @@ import inspect
 from typing import Any, Dict, Tuple, TYPE_CHECKING
 
 from ..embedding import EmbeddingModelBase
-from ..message import Msg, ToolUseBlock
+from ..message import Msg, ToolCallBlock
 from ..model import ChatModelBase
 
 from ._attributes import (
@@ -551,7 +551,7 @@ def _get_agent_response_attributes(
 
 def _get_tool_request_attributes(
     instance: "Toolkit",
-    tool_call: ToolUseBlock,
+    tool_call: ToolCallBlock,
 ) -> Dict[str, str]:
     """Get tool request attributes for OpenTelemetry tracing.
 
@@ -561,7 +561,7 @@ def _get_tool_request_attributes(
         instance (`Toolkit`):
             Toolkit instance with tool definitions. Used to extract tool
             description from the tool's JSON schema.
-        tool_call (`ToolUseBlock`):
+        tool_call (`ToolCallBlock`):
             Tool use block with call information including id, name, and input
             arguments.
 

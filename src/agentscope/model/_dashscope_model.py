@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """The dashscope API model classes."""
-import copy
-import collections
-import json
-import os
+import uuid
 import warnings
 from datetime import datetime
 from http import HTTPStatus
@@ -14,24 +11,20 @@ from typing import (
     Union,
     TYPE_CHECKING,
     List,
-    Literal,
-    Type,
 )
+
 from pydantic import BaseModel
 from aioitertools import iter as giter
 
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
-from .._utils._common import (
-    _json_loads_with_repair,
-    _parse_streaming_json_dict,
-    _create_tool_from_base_model,
-)
-from ..message import TextBlock, ToolUseBlock, ThinkingBlock
+from ..formatter import FormatterBase, DashScopeChatFormatter
+from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject
+from ..types import JSONSerializableObject, ToolChoice
 from .._logging import logger
+
 
 if TYPE_CHECKING:
     from dashscope.api_entities.dashscope_response import GenerationResponse
@@ -70,16 +63,25 @@ class DashScopeChatModel(ChatModelBase):
     DashScope's diverse model offerings.
     """
 
+    class ThinkingConfig(BaseModel):
+        """The configuration for the thinking process in DashScope API."""
+
+        enable_thinking: bool
+        thinking_budget: int = 2000
+        preserve_thinking: bool = False
+
     def __init__(
         self,
         model_name: str,
         api_key: str,
         stream: bool = True,
-        enable_thinking: bool | None = None,
-        multimodality: bool | None = None,
+        max_retries: int = 0,
+        fallback_model_name: str | None = None,
+        formatter: FormatterBase | None = None,
+        thinking_config: ThinkingConfig | None = None,
+        multimodality: bool = False,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
         base_http_api_url: str | None = None,
-        stream_tool_parsing: bool = True,
         **_kwargs: Any,
     ) -> None:
         """Initialize the DashScope chat model.
@@ -120,65 +122,58 @@ class DashScopeChatModel(ChatModelBase):
             **_kwargs (`Any`):
                 Additional keyword arguments.
         """
-        if enable_thinking and not stream:
+
+        self.thinking_config = (
+            thinking_config
+            or DashScopeChatModel.ThinkingConfig(
+                enable_thinking=False,
+            )
+        )
+
+        if self.thinking_config.enable_thinking and not stream:
             logger.info(
                 "In DashScope API, `stream` must be True when "
                 "`enable_thinking` is True. ",
             )
             stream = True
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name,
+            stream,
+            max_retries,
+            fallback_model_name,
+            formatter or DashScopeChatFormatter(),
+        )
 
         self.api_key = api_key
-        self.enable_thinking = enable_thinking
         self.multimodality = multimodality
         self.generate_kwargs = generate_kwargs or {}
-        self.stream_tool_parsing = stream_tool_parsing
 
         if base_http_api_url is not None:
             import dashscope
 
             dashscope.base_http_api_url = base_http_api_url
 
-        # Load headers from environment variable if exists
-        headers = os.getenv("DASHSCOPE_API_HEADERS")
-        if headers:
-            try:
-                headers = json.loads(str(headers))
-                if not isinstance(headers, dict):
-                    raise json.JSONDecodeError("", "", 0)
-
-                if self.generate_kwargs.get("headers"):
-                    headers.update(self.generate_kwargs["headers"])
-
-                self.generate_kwargs["headers"] = headers
-
-            except json.JSONDecodeError:
-                logger.warning(
-                    "Failed to parse DASHSCOPE_API_HEADERS environment "
-                    "variable as JSON. It should be a JSON object.",
-                )
-
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
-        messages: list[dict[str, Any]],
+        model_name: str,
+        messages: list[Msg],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from the dashscope
         Generation/MultimodalConversation API by the given arguments.
 
-        .. note:: We unify the dashscope generation and multimodal conversation
+        .. note:: We unify the DashScope generation and multimodal conversation
          APIs into one method, since they support similar arguments and share
          the same functionality.
 
         Args:
-            messages (`list[dict[str, Any]]`):
-                A list of dictionaries, where `role` and `content` fields are
-                required.
+            messages (`list[Msg]`):
+                The Msg object that will be formatted and sent to the LLM API
+                as the conversation messages.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
             tool_choice (`Literal["auto", "none", "required"] | str \
@@ -189,19 +184,6 @@ class DashScopeChatModel(ChatModelBase):
                  "required" will be converted to "auto".
                  For more details, please refer to
                  https://help.aliyun.com/zh/model-studio/qwen-function-calling
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output. When provided, the model will be forced
-                to return data that conforms to this schema by automatically
-                converting the BaseModel to a tool function and setting
-                `tool_choice` to enforce its usage. This enables structured
-                output generation.
-
-                .. note:: When `structured_model` is specified,
-                    both `tools` and `tool_choice` parameters are ignored,
-                    and the model will only perform structured output
-                    generation without calling any other tools.
-
             **kwargs (`Any`):
                 The keyword arguments for DashScope chat completions API,
                 e.g. `temperature`, `max_tokens`, `top_p`, etc. Please
@@ -211,9 +193,13 @@ class DashScopeChatModel(ChatModelBase):
         """
         import dashscope
 
+        # 1. Format the messages to the format required by DashScope API
+        formatted_msg = await self.formatter.format(messages)
+
+        # 2. Prepare the generation keyword arguments
         kwargs = {
-            "messages": messages,
-            "model": self.model_name,
+            "messages": formatted_msg,
+            "model": model_name,
             "stream": self.stream,
             "result_format": "message",
             # In agentscope, the `incremental_output` must be `True` when
@@ -223,53 +209,27 @@ class DashScopeChatModel(ChatModelBase):
             **kwargs,
         }
 
+        # tools
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
+        # tool choice options
         if tool_choice:
-            # Handle deprecated "any" option with warning
-            if tool_choice in ["any", "required"]:
-                warnings.warn(
-                    f"'{tool_choice}' is not supported by DashScope API. "
-                    "It will be converted to 'auto'.",
-                    DeprecationWarning,
-                )
-                tool_choice = "auto"
-
-            self._validate_tool_choice(tool_choice, tools)
-            kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
-
-        if (
-            self.enable_thinking is not None
-            and "enable_thinking" not in kwargs
-        ):
-            kwargs["enable_thinking"] = self.enable_thinking
-
-        if structured_model:
-            if tools or tool_choice:
-                logger.warning(
-                    "structured_model is provided. Both 'tools' and "
-                    "'tool_choice' parameters will be overridden and "
-                    "ignored. The model will only perform structured output "
-                    "generation without calling any other tools.",
-                )
-            format_tool = _create_tool_from_base_model(structured_model)
-            kwargs["tools"] = self._format_tools_json_schemas(
-                [format_tool],
-            )
             kwargs["tool_choice"] = self._format_tool_choice(
-                format_tool["function"]["name"],
+                tool_choice,
+                tools,
             )
 
+        # thinking related options
+        kwargs = {**kwargs, **self.thinking_config.model_dump()}
+
+        # 3. Call the API and parse the response
         start_datetime = datetime.now()
+        # Use MultiModalConversation API if multimodality is True, or if the
+        # model is multimodal based on the model name.
         if self.multimodality or (
             self.multimodality is None
-            and (
-                self.model_name.startswith(
-                    "qvq",
-                )
-                or "-vl" in self.model_name
-            )
+            and ("qvq" in self.model_name or "-vl" in self.model_name)
         ):
             response = await dashscope.AioMultiModalConversation.call(
                 api_key=self.api_key,
@@ -286,27 +246,21 @@ class DashScopeChatModel(ChatModelBase):
             return self._parse_dashscope_stream_response(
                 start_datetime,
                 response,
-                structured_model,
             )
 
         parsed_response = await self._parse_dashscope_generation_response(
             start_datetime,
             response,
-            structured_model,
         )
 
         return parsed_response
 
-    # pylint: disable=too-many-branches, too-many-statements
     async def _parse_dashscope_stream_response(
         self,
         start_datetime: datetime,
-        response: Union[
-            AsyncGenerator[GenerationResponse, None],
-            AsyncGenerator[MultiModalConversationResponse, None],
-            Generator[MultiModalConversationResponse, None, None],
-        ],
-        structured_model: Type[BaseModel] | None = None,
+        response: AsyncGenerator[GenerationResponse, None]
+        | AsyncGenerator[MultiModalConversationResponse, None]
+        | Generator[MultiModalConversationResponse, None, None],
     ) -> AsyncGenerator[ChatResponse, Any]:
         """Given a DashScope streaming response generator, extract the content
             blocks and usages from it and yield ChatResponse objects.
@@ -315,132 +269,117 @@ class DashScopeChatModel(ChatModelBase):
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (
-                `Union[AsyncGenerator[GenerationResponse, None], \
-                AsyncGenerator[MultiModalConversationResponse, None], \
-                Generator[MultiModalConversationResponse, None, None]]`
+                `AsyncGenerator[GenerationResponse, None] | \
+                AsyncGenerator[MultiModalConversationResponse, None] | \
+                Generator[MultiModalConversationResponse, None, None]`
             ):
                 DashScope streaming response (async) generator
                 (GenerationResponse or MultiModalConversationResponse).
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
-            AsyncGenerator[ChatResponse, Any]:
+            `AsyncGenerator[ChatResponse, Any]`:
                 An async generator that yields ChatResponse objects containing
                 the content blocks and usage information for each chunk in the
                 streaming response.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
-        acc_content, acc_thinking_content = "", ""
-        acc_tool_calls = collections.defaultdict(dict)
-        last_input_objs = {}  # Store last input_obj for each tool_call
-        metadata = None
-        last_content = None
+        # All delta should have the same block identifier
+        acc_text = TextBlock(text="")
+        acc_thinking = ThinkingBlock(thinking="")
+        acc_tool_calls = {}
         usage = None
         response_id: str | None = None
 
         async for chunk in giter(response):
+            # The yield delta content blocks in the current chunk
+            delta_content: list = []
+
             if chunk.status_code != HTTPStatus.OK:
                 raise RuntimeError(
-                    f"Failed to get response from _ API: {chunk}",
+                    f"Failed to get response from DashScope API: {chunk}",
                 )
 
-            if response_id is None:
-                response_id = getattr(chunk, "request_id", None)
+            # Capture response_id from the first chunk if not already set
+            response_id = response_id or chunk.request_id
 
+            # The message field in the chunk
             message = chunk.output.choices[0].message
 
             # Update reasoning content
             if isinstance(message.get("reasoning_content"), str):
-                acc_thinking_content += message["reasoning_content"]
+                acc_thinking.thinking += message["reasoning_content"]
+                delta_content.append(
+                    ThinkingBlock(
+                        id=acc_thinking.id,
+                        thinking=message["reasoning_content"],
+                    ),
+                )
 
             # Update text content
             if isinstance(message.content, str):
-                acc_content += message.content
+                acc_text.text += message.content
+                delta_content.append(
+                    TextBlock(
+                        id=acc_text.id,
+                        text=message.content,
+                    ),
+                )
             elif isinstance(message.content, list):
-                for item in message.content:
-                    if isinstance(item, dict) and "text" in item:
-                        acc_content += item["text"]
+                delta_text = "".join(
+                    [
+                        _["text"]
+                        for _ in message.content
+                        if isinstance(_, dict)
+                        and isinstance(_.get("text"), str)
+                    ],
+                )
+                acc_text.text += delta_text
+                delta_content.append(
+                    ThinkingBlock(id=acc_text.id, thinking=delta_text),
+                )
 
             # Update tool calls
-            for tool_call in message.get("tool_calls", []):
+            for tool_call in message.get("tool_calls") or []:
+                # Must be a dictionary
+                if not isinstance(tool_call, dict):
+                    continue
+
+                # Use the index to identify different tool calls
                 index = tool_call.get("index", 0)
 
+                # Avoid appending duplicate id
                 if "id" in tool_call and tool_call["id"] != acc_tool_calls[
                     index
                 ].get("id"):
-                    acc_tool_calls[index]["id"] = (
-                        acc_tool_calls[index].get("id", "") + tool_call["id"]
-                    )
+                    acc_tool_calls[index]["id"] = tool_call["id"]
 
-                if "function" in tool_call:
+                # Arguments
+                if isinstance(tool_call.get("function"), dict):
                     func = tool_call["function"]
-                    if "name" in func:
-                        acc_tool_calls[index]["name"] = (
-                            acc_tool_calls[index].get("name", "")
-                            + func["name"]
-                        )
 
-                    if "arguments" in func:
+                    # Function name
+                    if "name" in func:
+                        acc_tool_calls[index]["name"] = func["name"]
+
+                    # Function input arguments
+                    if isinstance(func.get("arguments"), str):
                         acc_tool_calls[index]["arguments"] = (
                             acc_tool_calls[index].get("arguments", "")
                             + func["arguments"]
                         )
 
-            # Build content blocks (always include thinking and text)
-            content_blocks: list[TextBlock | ToolUseBlock | ThinkingBlock] = []
-
-            if acc_thinking_content:
-                content_blocks.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        thinking=acc_thinking_content,
-                    ),
-                )
-
-            if acc_content:
-                content_blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=acc_content,
-                    ),
-                )
-
-            for tool_call in acc_tool_calls.values():
-                # Only add intermediate tool use blocks if
-                # stream_tool_parsing is True
-                tool_id = tool_call.get("id", "")
-                input_str = tool_call.get("arguments")
-
-                # If parsing the tool input in streaming mode
-                if self.stream_tool_parsing:
-                    repaired_input = _parse_streaming_json_dict(
-                        input_str,
-                        last_input_objs.get(tool_id),
+                    # Append the tool call block for this chunk
+                    delta_content.append(
+                        ToolCallBlock(
+                            id=acc_tool_calls[index].get(
+                                "id",
+                                uuid.uuid4().hex,
+                            ),
+                            name=func.get("name", ""),
+                            input=func.get("arguments", ""),
+                        ),
                     )
-                    last_input_objs[tool_id] = repaired_input
 
-                else:
-                    # Otherwise, keep input as empty dict until the final chunk
-                    repaired_input = {}
-
-                content_blocks.append(
-                    ToolUseBlock(
-                        type="tool_use",
-                        id=tool_id,
-                        name=tool_call.get("name", ""),
-                        input=repaired_input,
-                        raw_input=input_str,
-                    ),
-                )
-
-                if structured_model:
-                    metadata = repaired_input
-
+            # The chunk usage
             if chunk.usage:
                 usage = ChatUsage(
                     input_tokens=chunk.usage.input_tokens,
@@ -449,40 +388,32 @@ class DashScopeChatModel(ChatModelBase):
                     metadata=chunk.usage,
                 )
 
-            if content_blocks:
-                _kwargs: dict[str, Any] = {
-                    "content": content_blocks,
-                    "usage": usage,
-                    "metadata": metadata,
-                }
-                if response_id:
-                    _kwargs["id"] = response_id
-                parsed_chunk = ChatResponse(**_kwargs)
-                yield parsed_chunk
-                last_content = copy.deepcopy(content_blocks)
+            # Yield the chat response
+            yield ChatResponse(
+                id=response_id,
+                content=delta_content,
+                is_last=False,
+                usage=usage,
+            )
 
-        # If stream_tool_parsing is False, we need to parse the final tool
-        # use inputs here
-        if not self.stream_tool_parsing and last_content and acc_tool_calls:
-            metadata = None
-            # Update tool use blocks in last_contents inplace
-            for block in last_content:
-                if block.get("type") == "tool_use":
-                    block["input"] = input_obj = _json_loads_with_repair(
-                        str(block.get("raw_input") or "{}"),
-                    )
+        # Yield a final complete response with the accumulated content and
+        # final usage
+        content = []
+        if acc_text.text:
+            content.append(acc_text)
 
-                    if structured_model:
-                        metadata = input_obj
+        if acc_thinking.thinking:
+            content.append(acc_thinking)
 
-            _final_kwargs: dict[str, Any] = {
-                "content": last_content,
-                "usage": usage,
-                "metadata": metadata,
-            }
-            if response_id:
-                _final_kwargs["id"] = response_id
-            yield ChatResponse(**_final_kwargs)
+        if acc_tool_calls:
+            content.extend(acc_tool_calls.values())
+
+        yield ChatResponse(
+            id=response_id or uuid.uuid4().hex,
+            content=content,
+            is_last=True,
+            usage=usage,
+        )
 
     async def _parse_dashscope_generation_response(
         self,
@@ -491,7 +422,6 @@ class DashScopeChatModel(ChatModelBase):
             GenerationResponse,
             MultiModalConversationResponse,
         ],
-        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a DashScope GenerationResponse object, extract the content
         blocks and usages from it.
@@ -504,70 +434,54 @@ class DashScopeChatModel(ChatModelBase):
             ):
                 Dashscope GenerationResponse | MultiModalConversationResponse
                 object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
-            ChatResponse (`ChatResponse`):
+            `ChatResponse`:
                 A ChatResponse object containing the content blocks and usage.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
         # Collect the content blocks from the response.
-        if response.status_code != 200:
-            raise RuntimeError(response)
+        if response.status_code != HTTPStatus.OK:
+            raise RuntimeError(
+                f"Failed to get response from DashScope API: {response}",
+            )
 
-        content_blocks: List[TextBlock | ToolUseBlock] = []
-        metadata: dict | None = None
+        content_blocks: List[TextBlock | ToolCallBlock] = []
 
         message = response.output.choices[0].message
-        content = message.get("content")
 
-        if response.output.choices[0].message.get("content") not in [
-            None,
-            "",
-            [],
-        ]:
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and "text" in item:
-                        content_blocks.append(
-                            TextBlock(
-                                type="text",
-                                text=item["text"],
-                            ),
-                        )
-            else:
-                content_blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=content,
+        # The content and tool calls in the message
+        content, tool_calls = message.get("content"), message.get("tool_calls")
+
+        if isinstance(content, str):
+            content_blocks.append(TextBlock(text=content))
+
+        elif isinstance(content, list):
+            content_blocks.append(
+                TextBlock(
+                    text="".join(
+                        [
+                            _["text"]
+                            for _ in content
+                            if isinstance(_, dict)
+                            and isinstance(_.get("text"), str)
+                        ],
                     ),
-                )
+                ),
+            )
 
-        if message.get("tool_calls"):
-            for tool_call in message["tool_calls"]:
-                input_ = _json_loads_with_repair(
-                    tool_call["function"].get(
-                        "arguments",
-                        "{}",
-                    )
-                    or "{}",
-                )
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                function = tool_call.get("function") or {}
+                name = function.get("name") or ""
+                input_ = function.get("arguments") or "{}"
+
                 content_blocks.append(
-                    ToolUseBlock(
-                        type="tool_use",
-                        name=tool_call["function"]["name"],
+                    ToolCallBlock(
+                        id=tool_call.get("id", uuid.uuid4().hex),
+                        name=name,
                         input=input_,
-                        id=tool_call["id"],
                     ),
                 )
-
-                if structured_model:
-                    metadata = input_
 
         # Usage information
         usage = None
@@ -579,19 +493,15 @@ class DashScopeChatModel(ChatModelBase):
                 metadata=response.usage,
             )
 
-        resp_kwargs: dict[str, Any] = {
-            "content": content_blocks,
-            "usage": usage,
-            "metadata": metadata,
-        }
-        response_id = getattr(response, "request_id", None)
-        if response_id:
-            resp_kwargs["id"] = response_id
+        return ChatResponse(
+            id=getattr(response, "request_id", uuid.uuid4().hex),
+            content=content_blocks,
+            is_last=True,
+            usage=usage,
+        )
 
-        return ChatResponse(**resp_kwargs)
-
+    @staticmethod
     def _format_tools_json_schemas(
-        self,
         schemas: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Format the tools JSON schema into required format for DashScope API.
@@ -617,26 +527,37 @@ class DashScopeChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "required"] | str | None,
+        tool_choice: ToolChoice | None,
+        tools: list[dict] | None,
     ) -> str | dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default  `None`):
-                Controls which (if any) tool is called by the model. For more
-                details, please refer to
-                https://help.aliyun.com/zh/model-studio/qwen-function-calling
+            tool_choice (`ToolChoice | None`):
+                The unified tool choice parameter which can be a mode ("auto",
+                "none", "required") or a specific function name.
+            tools (`list[dict] | None`):
+                The list of available tools, used for validation if
+                tool_choice is a specific function name.
 
         Returns:
             `dict | None`:
                 The formatted tool choice configuration dict, or None if
                     tool_choice is None.
         """
-        if tool_choice is None:
-            return None
+        # Validate the tool_choice value
+        self._validate_tool_choice(tool_choice, tools)
+
+        # DashScope API specific validation and formatting
         if tool_choice in ["auto", "none"]:
             return tool_choice
+
         if tool_choice == "required":
+            warnings.warn(
+                f"'{tool_choice}' is not supported by DashScope API. "
+                "It will be converted to 'auto'.",
+                DeprecationWarning,
+            )
             return "auto"
+
         return {"type": "function", "function": {"name": tool_choice}}
