@@ -117,7 +117,7 @@ print("456")"""
 
         # without timeout
         normal_cmd = (
-            f"{sys.executable} -c \""  # fmt: skip
+            f'{sys.executable} -c "'  # fmt: skip
             f"import time; print('123'); "
             f"time.sleep(0.1); print('456')\""
         )
@@ -151,6 +151,27 @@ print("456")"""
             "the timeout of 2 seconds.</stderr>",
             actual,
         )
+
+        # large output should not deadlock on pipe buffers
+        large_output_cmd = (
+            f'{sys.executable} -c "import sys; '
+            f"sys.stdout.write('x' * 131072)\""
+        )
+        res = await execute_shell_command(
+            command=large_output_cmd,
+            timeout=5,
+        )
+        actual = res.content[0]["text"]
+        self.assertTrue(
+            actual.startswith(
+                "<returncode>0</returncode><stdout>",
+            ),
+        )
+        self.assertIn("</stdout><stderr></stderr>", actual)
+        stdout_payload = actual.split("<stdout>", 1)[1].split("</stdout>", 1)[
+            0
+        ]
+        self.assertEqual(131072, len(stdout_payload))
 
     async def test_view_text_file(self) -> None:
         """Test viewing text file."""
