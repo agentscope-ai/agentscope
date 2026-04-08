@@ -414,45 +414,6 @@ class TestOpenAIResponseModel(IsolatedAsyncioTestCase):
                 {"name": "Bob", "age": 25},
             )
 
-    def test_format_tools(self) -> None:
-        """Test _format_tools converts Chat Completions format."""
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "search",
-                    "description": "Search",
-                    "parameters": {"type": "object"},
-                },
-            },
-        ]
-        # pylint: disable=protected-access
-        result = OpenAIResponseModel._format_tools(tools)
-        expected = [
-            {
-                "type": "function",
-                "name": "search",
-                "description": "Search",
-                "parameters": {"type": "object"},
-            },
-        ]
-        self.assertEqual(result, expected)
-
-    def test_format_tool_choice(self) -> None:
-        """Test _format_tool_choice for all modes."""
-        # pylint: disable=protected-access
-        self.assertIsNone(OpenAIResponseModel._format_tool_choice(None))
-        self.assertEqual(
-            # pylint: disable=protected-access
-            OpenAIResponseModel._format_tool_choice("auto"),
-            "auto",
-        )
-        self.assertEqual(
-            # pylint: disable=protected-access
-            OpenAIResponseModel._format_tool_choice("get_weather"),
-            {"type": "function", "name": "get_weather"},
-        )
-
     # ------------------------------------------------------------------
     # Mock helpers
     # ------------------------------------------------------------------

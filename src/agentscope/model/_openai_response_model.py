@@ -116,7 +116,10 @@ class OpenAIResponseModel(ChatModelBase):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: Literal["auto", "none", "required"]
+        | str
+        | list
+        | None = None,
         structured_model: Type[BaseModel] | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
@@ -131,9 +134,10 @@ class OpenAIResponseModel(ChatModelBase):
                 Tool JSON schemas (Chat-Completions format accepted;
                 they are automatically converted to the Responses API
                 format).
-            tool_choice (`str`, optional):
-                ``"auto"``, ``"none"``, ``"required"`` or a specific
-                tool name.
+            tool_choice (`Literal["auto", "none", "required"] | str | list`,
+            optional):
+                ``"auto"``, ``"none"``, ``"required"``, a specific
+                tool name, or a list of tool names.
             structured_model (`Type[BaseModel]`, optional):
                 A Pydantic BaseModel class for structured output.
                 When provided, the model is instructed to return JSON
@@ -478,13 +482,80 @@ class OpenAIResponseModel(ChatModelBase):
         """
         return [{"type": "function", **tool["function"]} for tool in schemas]
 
-    @staticmethod
+    def _validate_tool_choice(
+        self,
+        tool_choice: str | list,
+        tools: list[dict] | None,
+    ) -> None:
+        """Validate tool_choice parameter, supporting list of tool names.
+
+        Extends the base class validation to additionally accept a list of
+        tool names for OpenAI's ``allowed_tools`` feature.
+
+        Args:
+            tool_choice (`str | list`):
+                Tool choice mode, function name, or a list of function names.
+            tools (`list[dict] | None`):
+                Available tools list.
+        Raises:
+            TypeError: If tool_choice type is invalid.
+            ValueError: If tool_choice value is invalid.
+        """
+        if isinstance(tool_choice, list):
+            if not tool_choice:
+                raise ValueError(
+                    "tool_choice list must not be empty.",
+                )
+            if not all(isinstance(name, str) for name in tool_choice):
+                raise TypeError(
+                    "All elements in tool_choice list must be str.",
+                )
+            if not tools:
+                raise ValueError(
+                    "tools must be provided when tool_choice is a list.",
+                )
+            available_functions = [tool["function"]["name"] for tool in tools]
+            for name in tool_choice:
+                if name not in available_functions:
+                    raise ValueError(
+                        f"Invalid tool name '{name}' in tool_choice list. "
+                        f"Available functions: "
+                        f"{', '.join(sorted(available_functions))}",
+                    )
+            return
+
+        super()._validate_tool_choice(tool_choice, tools)
+
     def _format_tool_choice(
-        tool_choice: Literal["auto", "none", "required"] | str | None,
+        self,
+        tool_choice: Literal["auto", "none", "required"] | str | list | None,
     ) -> str | dict | None:
-        """Format tool_choice for the Responses API."""
+        """Format tool_choice parameter for API compatibility.
+
+        Args:
+            tool_choice (`Literal["auto", "none", "required"] | str \
+            | list | None`, default `None`):
+                Controls which (if any) tool is called by the model.
+                 Can be "auto", "none", "required", a specific tool name,
+                 or a list of tool names. For more details, please refer to
+                 https://platform.openai.com/docs/api-reference/responses/create#responses_create-tool_choice
+        Returns:
+            `str | dict | None`:
+                The formatted tool choice configuration, or None if
+                    tool_choice is None.
+        """
         if tool_choice is None:
             return None
+
+        if isinstance(tool_choice, list):
+            return {
+                "type": "allowed_tools",
+                "mode": "auto",
+                "tools": [
+                    {"type": "function", "name": name} for name in tool_choice
+                ],
+            }
+
         if tool_choice in ("auto", "none", "required"):
             return tool_choice
         return {"type": "function", "name": tool_choice}
