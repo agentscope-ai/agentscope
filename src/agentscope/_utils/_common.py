@@ -11,7 +11,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable, Type, Dict
 
-import numpy as np
 import requests
 from docstring_parser import parse
 from json_repair import repair_json

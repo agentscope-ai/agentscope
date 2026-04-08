@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """A template test case."""
 from unittest.async_case import IsolatedAsyncioTestCase
+from utils import AnyString
 
 from agentscope.message import (
     UserMsg,
@@ -15,7 +16,6 @@ from agentscope.message import (
     ToolCallBlock,
     ToolResultBlock,
 )
-from utils import AnyString
 
 
 class MessageTest(IsolatedAsyncioTestCase):
