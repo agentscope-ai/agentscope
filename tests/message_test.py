@@ -15,7 +15,7 @@ from agentscope.message import (
     ToolCallBlock,
     ToolResultBlock,
 )
-from tests.utils import AnyString
+from utils import AnyString
 
 
 class MessageTest(IsolatedAsyncioTestCase):
