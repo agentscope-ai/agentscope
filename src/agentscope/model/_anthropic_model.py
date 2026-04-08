@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches, too-many-statements
 """The Anthropic API model classes."""
-import copy
-import warnings
 from datetime import datetime
 from typing import (
     Any,
@@ -10,7 +7,6 @@ from typing import (
     TYPE_CHECKING,
     List,
     Literal,
-    Type,
 )
 from collections import OrderedDict
 
@@ -19,15 +15,10 @@ from pydantic import BaseModel
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
-from .._logging import logger
-from .._utils._common import (
-    _json_loads_with_repair,
-    _parse_streaming_json_dict,
-    _create_tool_from_base_model,
-)
-from ..message import TextBlock, ToolUseBlock, ThinkingBlock
+from ..formatter import FormatterBase, AnthropicChatFormatter
+from ..message import TextBlock, ToolCallBlock, ThinkingBlock
 from ..tracing import trace_llm
-from ..types._json import JSONSerializableObject
+from ..types import JSONSerializableObject, ToolChoice
 
 if TYPE_CHECKING:
     from anthropic.types.message import Message
@@ -40,17 +31,25 @@ else:
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic model wrapper for AgentScope."""
 
+    class ThinkingConfig(BaseModel):
+        """Configuration for Claude's internal reasoning process."""
+
+        enable_thinking: bool
+        budget_tokens: int = 1024
+
     def __init__(
         self,
         model_name: str,
         api_key: str | None = None,
         max_tokens: int = 2048,
         stream: bool = True,
-        thinking: dict | None = None,
+        max_retries: int = 0,
+        fallback_model_name: str | None = None,
+        formatter: FormatterBase | None = None,
+        thinking_config: ThinkingConfig | None = None,
         stream_tool_parsing: bool = True,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the Anthropic chat model.
 
@@ -59,21 +58,18 @@ class AnthropicChatModel(ChatModelBase):
                 The model names.
             api_key (`str`):
                 The anthropic API key.
-            stream (`bool`):
-                The streaming output or not
             max_tokens (`int`):
                 Limit the maximum token count the model can generate.
-            thinking (`dict | None`, default `None`):
+            stream (`bool`):
+                The streaming output or not
+            max_retries (`int`, optional):
+                Maximum number of retries on failure. Defaults to 0.
+            fallback_model_name (`str | None`, optional):
+                Fallback model name to use after all retries fail.
+            formatter (`FormatterBase | None`, optional):
+                Formatter for message preprocessing.
+            thinking_config (`ThinkingConfig | None`, default `None`):
                 Configuration for Claude's internal reasoning process.
-
-                .. code-block:: python
-                    :caption: Example of thinking
-
-                    {
-                        "type": "enabled" | "disabled",
-                        "budget_tokens": 1024
-                    }
-
             stream_tool_parsing (`bool`, default to `True`):
                 Whether to parse incomplete tool use JSON during streaming
                 with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
@@ -87,32 +83,7 @@ class AnthropicChatModel(ChatModelBase):
              optional):
                 The extra keyword arguments used in Anthropic API generation,
                 e.g. `temperature`, `seed`.
-            **kwargs (`Any`):
-                Additional keyword arguments.
         """
-
-        # Handle deprecated client_args parameter from kwargs
-        client_args = kwargs.pop("client_args", None)
-        if client_args is not None and client_kwargs is not None:
-            raise ValueError(
-                "Cannot specify both 'client_args' and 'client_kwargs'. "
-                "Please use only 'client_kwargs' (client_args is deprecated).",
-            )
-
-        if client_args is not None:
-            logger.warning(
-                "The parameter 'client_args' is deprecated and will be "
-                "removed in a future version. Please use 'client_kwargs' "
-                "instead. Automatically converting 'client_args' to "
-                "'client_kwargs'.",
-            )
-            client_kwargs = client_args
-
-        if kwargs:
-            logger.warning(
-                "Unknown keyword arguments: %s. These will be ignored.",
-                list(kwargs.keys()),
-            )
 
         try:
             import anthropic
@@ -122,127 +93,75 @@ class AnthropicChatModel(ChatModelBase):
                 "`pip install anthropic`.",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name=model_name,
+            stream=stream,
+            max_retries=max_retries,
+            fallback_model_name=fallback_model_name,
+            formatter=formatter or AnthropicChatFormatter(),
+        )
 
         self.client = anthropic.AsyncAnthropic(
             api_key=api_key,
             **(client_kwargs or {}),
         )
         self.max_tokens = max_tokens
-        self.thinking = thinking
+        self.thinking_config = thinking_config
         self.stream_tool_parsing = stream_tool_parsing
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
+        model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
         arguments.
 
         Args:
+            model_name (`str`):
+                The model name to use for this call.
             messages (`list[dict]`):
                 A list of dictionaries, where `role` and `content` fields are
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
-                The tools JSON schemas that in format of:
-
-                .. code-block:: python
-                    :caption: Example of tools JSON schemas
-
-                    [
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": "xxx",
-                                "description": "xxx",
-                                "parameters": {
-                                    "type": "object",
-                                    "properties": {
-                                        "param1": {
-                                            "type": "string",
-                                            "description": "..."
-                                        },
-                                        # Add more parameters as needed
-                                    },
-                                    "required": ["param1"]
-                            }
-                        },
-                        # More schemas here
-                    ]
-
+                The tools JSON schemas.
             tool_choice (`Literal["auto", "none", "required"] | str \
             | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool
-                 name. For more details, please refer to
-                 https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output. When provided, the model will be forced
-                to return data that conforms to this schema by automatically
-                converting the BaseModel to a tool function and setting
-                `tool_choice` to enforce its usage. This enables structured
-                output generation.
-
-                .. note:: When `structured_model` is specified,
-                    both `tools` and `tool_choice` parameters are ignored,
-                    and the model will only perform structured output
-                    generation without calling any other tools.
-
             **generate_kwargs (`Any`):
-                The keyword arguments for Anthropic chat completions API,
-                e.g. `temperature`, `top_p`, etc. Please
-                refer to the Anthropic API documentation for more details.
+                The keyword arguments for Anthropic chat completions API.
 
         Returns:
             `ChatResponse | AsyncGenerator[ChatResponse, None]`:
                 The response from the Anthropic chat completions API."""
 
         kwargs: dict[str, Any] = {
-            "model": self.model_name,
+            "model": model_name,
             "max_tokens": self.max_tokens,
             "stream": self.stream,
             **self.generate_kwargs,
             **generate_kwargs,
         }
-        if self.thinking and "thinking" not in kwargs:
-            kwargs["thinking"] = self.thinking
+        if self.thinking_config and "thinking" not in kwargs:
+            kwargs["thinking"] = {
+                "type": "enabled"
+                if self.thinking_config.enable_thinking
+                else "disabled",
+                "budget_tokens": self.thinking_config.budget_tokens,
+            }
 
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
-            # Handle deprecated "any" option with warning
-            if tool_choice == "any":
-                warnings.warn(
-                    '"any" is deprecated and will be removed in a future '
-                    "version.",
-                    DeprecationWarning,
-                )
-                tool_choice = "required"
-            self._validate_tool_choice(tool_choice, tools)
-            kwargs["tool_choice"] = self._format_tool_choice(tool_choice)
-
-        if structured_model:
-            if tools or tool_choice:
-                logger.warning(
-                    "structured_model is provided. Both 'tools' and "
-                    "'tool_choice' parameters will be overridden and "
-                    "ignored. The model will only perform structured output "
-                    "generation without calling any other tools.",
-                )
-            format_tool = _create_tool_from_base_model(structured_model)
-            kwargs["tools"] = self._format_tools_json_schemas(
-                [format_tool],
-            )
             kwargs["tool_choice"] = self._format_tool_choice(
-                format_tool["function"]["name"],
+                tool_choice,
+                tools,
             )
 
         # Extract the system message
@@ -260,14 +179,12 @@ class AnthropicChatModel(ChatModelBase):
             return self._parse_anthropic_stream_completion_response(
                 start_datetime,
                 response,
-                structured_model,
             )
 
         # Non-streaming response
         parsed_response = await self._parse_anthropic_completion_response(
             start_datetime,
             response,
-            structured_model,
         )
 
         return parsed_response
@@ -276,7 +193,6 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: Message,
-        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given an Anthropic Message object, extract the content blocks and
         usages from it.
@@ -286,20 +202,12 @@ class AnthropicChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`Message`):
                 Anthropic Message object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             ChatResponse (`ChatResponse`):
                 A ChatResponse object containing the content blocks and usage.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[ThinkingBlock | TextBlock | ToolUseBlock] = []
-        metadata = None
+        content_blocks: List[ThinkingBlock | TextBlock | ToolCallBlock] = []
 
         if hasattr(response, "content") and response.content:
             for content_block in response.content:
@@ -308,7 +216,6 @@ class AnthropicChatModel(ChatModelBase):
                     and content_block.type == "thinking"
                 ):
                     thinking_block = ThinkingBlock(
-                        type="thinking",
                         thinking=content_block.thinking,
                     )
                     thinking_block["signature"] = content_block.signature
@@ -319,26 +226,22 @@ class AnthropicChatModel(ChatModelBase):
                     and content_block.type == "text"
                 ):
                     content_blocks.append(
-                        TextBlock(
-                            type="text",
-                            text=content_block.text,
-                        ),
+                        TextBlock(text=content_block.text),
                     )
 
                 elif (
                     hasattr(content_block, "type")
                     and content_block.type == "tool_use"
                 ):
+                    import json
+
                     content_blocks.append(
-                        ToolUseBlock(
-                            type="tool_use",
+                        ToolCallBlock(
                             id=content_block.id,
                             name=content_block.name,
-                            input=content_block.input,
+                            input=json.dumps(content_block.input),
                         ),
                     )
-                    if structured_model:
-                        metadata = content_block.input
 
         usage = None
         if response.usage:
@@ -350,8 +253,8 @@ class AnthropicChatModel(ChatModelBase):
 
         resp_kwargs: dict[str, Any] = {
             "content": content_blocks,
+            "is_last": True,
             "usage": usage,
-            "metadata": metadata,
         }
         response_id = getattr(response, "id", None)
         if response_id:
@@ -363,7 +266,6 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncStream,
-        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given an Anthropic streaming response, extract the content blocks
         and usages from it and yield ChatResponse objects.
@@ -373,38 +275,26 @@ class AnthropicChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncStream`):
                 Anthropic AsyncStream object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             `AsyncGenerator[ChatResponse, None]`:
                 An async generator that yields ChatResponse objects containing
                 the content blocks and usage information for each chunk in
                 the streaming response.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
 
         usage = None
         response_id: str | None = None
-        text_buffer = ""
-        thinking_buffer = ""
+        # Accumulated state
+        acc_text = ""
+        acc_thinking = ""
         thinking_signature = ""
-        tool_calls = OrderedDict()
-        tool_call_buffers = {}
-        last_input_objs = {}  # Store last input_obj for each tool_call
-        res = None
-        metadata = None
-
-        # Record the last yielded content to parse the tools' input
-        last_content = None
+        acc_tool_calls: OrderedDict = (
+            OrderedDict()
+        )  # index -> {id, name, input}
 
         async for event in response:
-            content_changed = False
-            thinking_changed = False
+            delta_content: list = []
 
             if event.type == "message_start":
                 message = event.message
@@ -425,117 +315,80 @@ class AnthropicChatModel(ChatModelBase):
                 if event.content_block.type == "tool_use":
                     block_index = event.index
                     tool_block = event.content_block
-                    tool_calls[block_index] = {
-                        "type": "tool_use",
+                    acc_tool_calls[block_index] = {
                         "id": tool_block.id,
                         "name": tool_block.name,
                         "input": "",
                     }
-                    tool_call_buffers[block_index] = ""
-                    content_changed = True
 
             elif event.type == "content_block_delta":
                 block_index = event.index
                 delta = event.delta
                 if delta.type == "text_delta":
-                    text_buffer += delta.text
-                    content_changed = True
+                    acc_text += delta.text
+                    delta_content.append(TextBlock(text=delta.text))
                 elif delta.type == "thinking_delta":
-                    thinking_buffer += delta.thinking
-                    thinking_changed = True
+                    acc_thinking += delta.thinking
+                    delta_content.append(
+                        ThinkingBlock(thinking=delta.thinking),
+                    )
                 elif delta.type == "signature_delta":
                     thinking_signature = delta.signature
                 elif (
                     delta.type == "input_json_delta"
-                    and block_index in tool_calls
+                    and block_index in acc_tool_calls
                 ):
-                    tool_call_buffers[block_index] += delta.partial_json or ""
-                    tool_calls[block_index]["input"] = tool_call_buffers[
-                        block_index
-                    ]
-                    content_changed = True
+                    fragment = delta.partial_json or ""
+                    acc_tool_calls[block_index]["input"] += fragment
+                    tc = acc_tool_calls[block_index]
+                    delta_content.append(
+                        ToolCallBlock(
+                            id=tc["id"],
+                            name=tc["name"],
+                            input=fragment,
+                        ),
+                    )
 
             elif event.type == "message_delta":
                 if event.usage and usage:
                     usage.output_tokens = event.usage.output_tokens
 
-            if (thinking_changed or content_changed) and usage:
-                contents: list = []
-                if thinking_buffer:
-                    thinking_block = ThinkingBlock(
-                        type="thinking",
-                        thinking=thinking_buffer,
-                    )
-                    thinking_block["signature"] = thinking_signature
-                    contents.append(thinking_block)
-                if text_buffer:
-                    contents.append(
-                        TextBlock(
-                            type="text",
-                            text=text_buffer,
-                        ),
-                    )
-                for block_index, tool_call in tool_calls.items():
-                    input_str = tool_call["input"]
-                    tool_id = tool_call["id"]
+            if delta_content:
+                _kwargs: dict[str, Any] = {
+                    "content": delta_content,
+                    "is_last": False,
+                    "usage": usage,
+                }
+                if response_id:
+                    _kwargs["id"] = response_id
+                yield ChatResponse(**_kwargs)
 
-                    # If parsing the tool input in streaming mode
-                    if self.stream_tool_parsing:
-                        repaired_input = _parse_streaming_json_dict(
-                            input_str,
-                            last_input_objs.get(tool_id),
-                        )
-                        last_input_objs[tool_id] = repaired_input
+        # Build final accumulated content
+        final_content: list = []
+        if acc_thinking:
+            thinking_block = ThinkingBlock(thinking=acc_thinking)
+            thinking_block["signature"] = thinking_signature
+            final_content.append(thinking_block)
+        if acc_text:
+            final_content.append(TextBlock(text=acc_text))
+        for tc in acc_tool_calls.values():
+            input_str = tc["input"]
+            final_content.append(
+                ToolCallBlock(
+                    id=tc["id"],
+                    name=tc["name"],
+                    input=input_str,
+                ),
+            )
 
-                    else:
-                        repaired_input = {}
-
-                    contents.append(
-                        ToolUseBlock(
-                            type=tool_call["type"],
-                            id=tool_call["id"],
-                            name=tool_call["name"],
-                            input=repaired_input,
-                            raw_input=input_str,
-                        ),
-                    )
-
-                    if structured_model:
-                        metadata = repaired_input
-
-                if contents:
-                    _kwargs: dict[str, Any] = {
-                        "content": contents,
-                        "usage": usage,
-                        "metadata": metadata,
-                    }
-                    if response_id:
-                        _kwargs["id"] = response_id
-                    res = ChatResponse(**_kwargs)
-                    yield res
-                    last_content = copy.deepcopy(contents)
-
-        # If stream_tool_parsing is False, yield last contents
-        if not self.stream_tool_parsing and last_content and tool_calls:
-            metadata = None
-            # Update tool use blocks in last_contents inplace
-            for block in last_content:
-                if block.get("type") == "tool_use":
-                    block["input"] = input_obj = _json_loads_with_repair(
-                        block.get("raw_input") or "{}",
-                    )
-
-                    if structured_model:
-                        metadata = input_obj
-
-            _final_kwargs: dict[str, Any] = {
-                "content": last_content,
-                "usage": usage,
-                "metadata": metadata,
-            }
-            if response_id:
-                _final_kwargs["id"] = response_id
-            yield ChatResponse(**_final_kwargs)
+        _final_kwargs: dict[str, Any] = {
+            "content": final_content,
+            "is_last": True,
+            "usage": usage,
+        }
+        if response_id:
+            _final_kwargs["id"] = response_id
+        yield ChatResponse(**_final_kwargs)
 
     def _format_tools_json_schemas(
         self,
@@ -566,22 +419,26 @@ class AnthropicChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "required"] | str | None,
+        tool_choice: ToolChoice | None,
+        tools: list[dict] | None,
     ) -> dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "required"] | str \
-                | None`, default `None`):
-                Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool
-                 name. For more details, please refer to
-                 https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
+            tool_choice (`ToolChoice | None`):
+                The unified tool choice parameter which can be a mode ("auto",
+                "none", "required") or a specific function name.
+            tools (`list[dict] | None`):
+                The list of available tools, used for validation if
+                tool_choice is a specific function name.
+
         Returns:
             `dict | None`:
                 The formatted tool choice configuration dict, or None if
                 tool_choice is None.
         """
+        self._validate_tool_choice(tool_choice, tools)
+
         if tool_choice is None:
             return None
 

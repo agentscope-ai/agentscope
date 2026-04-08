@@ -17,7 +17,7 @@ import aioitertools
 
 from ..embedding import EmbeddingModelBase, EmbeddingResponse
 from .._logging import logger
-from ..message import Msg, ToolUseBlock
+from ..message import Msg, ToolCallBlock
 from ..model import ChatModelBase, ChatResponse
 
 from ._attributes import SpanAttributes, OperationNameValues
@@ -326,7 +326,7 @@ def trace_toolkit(
     @wraps(func)
     async def wrapper(
         self: Toolkit,
-        tool_call: ToolUseBlock,
+        tool_call: ToolCallBlock,
     ) -> AsyncGenerator[ToolResponse, None]:
         """The wrapper function for tracing the toolkit call_tool_function
         method."""
@@ -388,16 +388,16 @@ def trace_reply(
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
 
-        from ..agent import AgentBase
-
-        if not isinstance(self, AgentBase):
-            logger.warning(
-                "Skipping tracing for %s as the first argument"
-                "is not an instance of AgentBase, but %s",
-                func.__name__,
-                type(self),
-            )
-            return await func(self, *args, **kwargs)
+        # from ..agent import AgentBase
+        #
+        # if not isinstance(self, AgentBase):
+        #     logger.warning(
+        #         "Skipping tracing for %s as the first argument"
+        #         "is not an instance of AgentBase, but %s",
+        #         func.__name__,
+        #         type(self),
+        #     )
+        #     return await func(self, *args, **kwargs)
 
         tracer = _get_tracer()
 

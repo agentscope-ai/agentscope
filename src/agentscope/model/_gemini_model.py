@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-# mypy: disable-error-code="dict-item"
 """The Google Gemini model in agentscope."""
 import base64
 import copy
-import warnings
 from datetime import datetime
 import json
 from typing import (
@@ -12,20 +10,19 @@ from typing import (
     TYPE_CHECKING,
     AsyncIterator,
     Literal,
-    Type,
     List,
 )
 
 from pydantic import BaseModel
 
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
-from ..message import ToolUseBlock, TextBlock, ThinkingBlock
+from ..formatter import FormatterBase
+from ..message import ToolCallBlock, TextBlock, ThinkingBlock
 from ._model_usage import ChatUsage
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject
+from ..types import JSONSerializableObject, ToolChoice
 
 if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse
@@ -115,15 +112,23 @@ def _flatten_json_schema(schema: dict) -> dict:
 class GeminiChatModel(ChatModelBase):
     """The Google Gemini chat model class in agentscope."""
 
+    class ThinkingConfig(BaseModel):
+        """Configuration for enabling thinking blocks in Gemini responses."""
+
+        enable_thinking: bool
+        thinking_budget: int = 1024
+
     def __init__(
         self,
         model_name: str,
         api_key: str,
         stream: bool = True,
-        thinking_config: dict | None = None,
+        max_retries: int = 0,
+        fallback_model_name: str | None = None,
+        formatter: FormatterBase | None = None,
+        thinking_config: ThinkingConfig | None = None,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the Gemini chat model.
 
@@ -134,19 +139,14 @@ class GeminiChatModel(ChatModelBase):
                 The API key for Google Gemini.
             stream (`bool`, default `True`):
                 Whether to use streaming output or not.
-            thinking_config (`dict | None`, optional):
+            max_retries (`int`, optional):
+                Maximum number of retries on failure. Defaults to 0.
+            fallback_model_name (`str | None`, optional):
+                Fallback model name to use after all retries fail.
+            formatter (`FormatterBase | None`, optional):
+                Formatter for message preprocessing.
+            thinking_config (`ThinkingConfig | None`, optional):
                 Thinking config, supported models are 2.5 Pro, 2.5 Flash, etc.
-                Refer to https://ai.google.dev/gemini-api/docs/thinking for
-                more details.
-
-                .. code-block:: python
-                    :caption: Example of thinking_config
-
-                    {
-                        "include_thoughts": True, # enable thoughts or not
-                        "thinking_budget": 1024   # Max tokens for reasoning
-                    }
-
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the Gemini client.
@@ -154,32 +154,7 @@ class GeminiChatModel(ChatModelBase):
              optional):
                The extra keyword arguments used in Gemini API generation,
                e.g. `temperature`, `seed`.
-            **kwargs (`Any`):
-                Additional keyword arguments.
         """
-
-        # Handle deprecated client_args parameter from kwargs
-        client_args = kwargs.pop("client_args", None)
-        if client_args is not None and client_kwargs is not None:
-            raise ValueError(
-                "Cannot specify both 'client_args' and 'client_kwargs'. "
-                "Please use only 'client_kwargs' (client_args is deprecated).",
-            )
-
-        if client_args is not None:
-            logger.warning(
-                "The parameter 'client_args' is deprecated and will be "
-                "removed in a future version. Please use 'client_kwargs' "
-                "instead. Automatically converting 'client_args' to "
-                "'client_kwargs'.",
-            )
-            client_kwargs = client_args
-
-        if kwargs:
-            logger.warning(
-                "Unknown keyword arguments: %s. These will be ignored.",
-                list(kwargs.keys()),
-            )
 
         try:
             from google import genai
@@ -189,7 +164,13 @@ class GeminiChatModel(ChatModelBase):
                 "`pip install -q -U google-genai`",
             ) from e
 
-        super().__init__(model_name, stream)
+        super().__init__(
+            model_name=model_name,
+            stream=stream,
+            max_retries=max_retries,
+            fallback_model_name=fallback_model_name,
+            formatter=formatter,
+        )
 
         self.client = genai.Client(
             api_key=api_key,
@@ -199,12 +180,12 @@ class GeminiChatModel(ChatModelBase):
         self.generate_kwargs = generate_kwargs or {}
 
     @trace_llm
-    async def __call__(
+    async def _call_api(
         self,
+        model_name: str,
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
         **config_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
@@ -221,59 +202,32 @@ class GeminiChatModel(ChatModelBase):
                  Can be "auto", "none", "required", or specific tool name.
                  For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
-
-                .. note:: When `structured_model` is specified,
-                    both `tools` and `tool_choice` parameters are ignored,
-                    and the model will only perform structured output
-                    generation without calling any other tools.
-
-                For more details, please refer to
-                    https://ai.google.dev/gemini-api/docs/structured-output
-
             **config_kwargs (`Any`):
                 The keyword arguments for Gemini chat completions API.
         """
 
         config: dict = {
-            "thinking_config": self.thinking_config,
             **self.generate_kwargs,
             **config_kwargs,
         }
+        if self.thinking_config:
+            config["thinking_config"] = {
+                "include_thoughts": self.thinking_config.enable_thinking,
+                "thinking_budget": self.thinking_config.thinking_budget,
+            }
 
         if tools:
             config["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
-            # Handle deprecated "any" option with warning
-            if tool_choice == "any":
-                warnings.warn(
-                    '"any" is deprecated and will be removed in a future '
-                    "version.",
-                    DeprecationWarning,
-                )
-                tool_choice = "required"
-            self._validate_tool_choice(tool_choice, tools)
-            config["tool_config"] = self._format_tool_choice(tool_choice)
-
-        if structured_model:
-            if tools or tool_choice:
-                logger.warning(
-                    "structured_model is provided. Both 'tools' and "
-                    "'tool_choice' parameters will be overridden and "
-                    "ignored. The model will only perform structured output "
-                    "generation without calling any other tools.",
-                )
-            config.pop("tools", None)
-            config.pop("tool_config", None)
-            config["response_mime_type"] = "application/json"
-            config["response_schema"] = structured_model
+            config["tool_config"] = self._format_tool_choice(
+                tool_choice,
+                tools,
+            )
 
         # Prepare the arguments for the Gemini API call
-        kwargs: dict[str, JSONSerializableObject] = {
-            "model": self.model_name,
+        kwargs: dict = {
+            "model": model_name,
             "contents": messages,
             "config": config,
         }
@@ -287,7 +241,6 @@ class GeminiChatModel(ChatModelBase):
             return self._parse_gemini_stream_generation_response(
                 start_datetime,
                 response,
-                structured_model,
             )
 
         # non-streaming
@@ -298,7 +251,6 @@ class GeminiChatModel(ChatModelBase):
         parsed_response = self._parse_gemini_generation_response(
             start_datetime,
             response,
-            structured_model,
         )
 
         return parsed_response
@@ -338,7 +290,6 @@ class GeminiChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncIterator[GenerateContentResponse],
-        structured_model: Type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given a Gemini streaming generation response, extract the
         content blocks and usages from it and yield ChatResponse objects.
@@ -348,27 +299,23 @@ class GeminiChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncIterator[GenerateContentResponse]`):
                 Gemini GenerateContentResponse async iterator to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             `AsyncGenerator[ChatResponse, None]`:
                 An async generator that yields ChatResponse objects containing
                 the content blocks and usage information for each chunk in the
                 streaming response.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
 
-        text = ""
-        thinking = ""
-        tool_calls: list[ToolUseBlock] = []
-        metadata: dict | None = None
-        response_id: str | None = None
+        # Accumulated state
+        acc_text = ""
+        acc_thinking = ""
+        acc_tool_calls: dict = {}  # call_id -> {name, input}
+        usage = None
+
         async for chunk in response:
+            delta_content: list = []
+
             if (
                 chunk.candidates
                 and chunk.candidates[0].content
@@ -377,20 +324,16 @@ class GeminiChatModel(ChatModelBase):
                 for part in chunk.candidates[0].content.parts:
                     if part.text:
                         if part.thought:
-                            thinking += part.text
+                            acc_thinking += part.text
+                            delta_content.append(
+                                ThinkingBlock(thinking=part.text),
+                            )
                         else:
-                            text += part.text
+                            acc_text += part.text
+                            delta_content.append(TextBlock(text=part.text))
 
                     if part.function_call:
                         keyword_args = part.function_call.args or {}
-                        # .. note:: Gemini API always returns None for
-                        # function_call.id, so we use thought_signature
-                        # as the unique identifier for tool
-                        # calls when available. That maybe
-                        # infeasible someday, but Gemini
-                        # requires the thought_signature for some
-                        # llms like gemini-3-pro
-
                         if part.thought_signature:
                             call_id = base64.b64encode(
                                 part.thought_signature,
@@ -398,61 +341,56 @@ class GeminiChatModel(ChatModelBase):
                         else:
                             call_id = part.function_call.id
 
-                        tool_calls.append(
-                            ToolUseBlock(
-                                type="tool_use",
+                        input_str = json.dumps(
+                            keyword_args,
+                            ensure_ascii=False,
+                        )
+                        acc_tool_calls[call_id] = {
+                            "name": part.function_call.name,
+                            "input": input_str,
+                        }
+                        delta_content.append(
+                            ToolCallBlock(
                                 id=call_id,
                                 name=part.function_call.name,
-                                input=keyword_args,
-                                raw_input=json.dumps(
-                                    keyword_args,
-                                    ensure_ascii=False,
-                                ),
+                                input=input_str,
                             ),
                         )
 
-            # Text parts
-            if text and structured_model:
-                metadata = _json_loads_with_repair(text)
-
             usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
-            # The content blocks for the current chunk
-            content_blocks: list = []
-
-            if thinking:
-                content_blocks.append(
-                    ThinkingBlock(
-                        type="thinking",
-                        thinking=thinking,
-                    ),
+            if delta_content:
+                yield ChatResponse(
+                    content=delta_content,
+                    is_last=False,
+                    usage=usage,
                 )
 
-            if text:
-                content_blocks.append(
-                    TextBlock(
-                        type="text",
-                        text=text,
-                    ),
-                )
+        # Build final accumulated content
+        final_content: list = []
+        if acc_thinking:
+            final_content.append(ThinkingBlock(thinking=acc_thinking))
+        if acc_text:
+            final_content.append(TextBlock(text=acc_text))
+        for call_id, tc in acc_tool_calls.items():
+            final_content.append(
+                ToolCallBlock(
+                    id=call_id,
+                    name=tc["name"],
+                    input=tc["input"],
+                ),
+            )
 
-            if response_id is None:
-                response_id = getattr(chunk, "response_id", None)
-
-            _kwargs: dict[str, Any] = {
-                "content": content_blocks + tool_calls,
-                "usage": usage,
-                "metadata": metadata,
-            }
-            if response_id:
-                _kwargs["id"] = response_id
-            yield ChatResponse(**_kwargs)
+        yield ChatResponse(
+            content=final_content,
+            is_last=True,
+            usage=usage,
+        )
 
     def _parse_gemini_generation_response(
         self,
         start_datetime: datetime,
         response: GenerateContentResponse,
-        structured_model: Type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given a Gemini chat completion response object, extract the content
            blocks and usages from it.
@@ -462,21 +400,12 @@ class GeminiChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`GenerateContentResponse`):
                 The Gemini generation response object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
-                A Pydantic BaseModel class that defines the expected structure
-                for the model's output.
 
         Returns:
             ChatResponse (`ChatResponse`):
                 A ChatResponse object containing the content blocks and usage.
-
-        .. note::
-            If `structured_model` is not `None`, the expected structured output
-            will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[TextBlock | ToolUseBlock | ThinkingBlock] = []
-        metadata: dict | None = None
-        tool_calls: list = []
+        content_blocks: List[TextBlock | ToolCallBlock | ThinkingBlock] = []
 
         if (
             response.candidates
@@ -487,28 +416,15 @@ class GeminiChatModel(ChatModelBase):
                 if part.text:
                     if part.thought:
                         content_blocks.append(
-                            ThinkingBlock(
-                                type="thinking",
-                                thinking=part.text,
-                            ),
+                            ThinkingBlock(thinking=part.text),
                         )
                     else:
                         content_blocks.append(
-                            TextBlock(
-                                type="text",
-                                text=part.text,
-                            ),
+                            TextBlock(text=part.text),
                         )
 
                 if part.function_call:
                     keyword_args = part.function_call.args or {}
-                    # .. note:: Gemini API always returns None for
-                    # function_call.id, so we use thought_signature
-                    # as the unique identifier for tool
-                    # calls when available. That maybe infeasible
-                    # someday, but Gemini requires the thought_signature
-                    # for some llms like gemini-3-pro
-
                     if part.thought_signature:
                         call_id = base64.b64encode(
                             part.thought_signature,
@@ -516,35 +432,21 @@ class GeminiChatModel(ChatModelBase):
                     else:
                         call_id = part.function_call.id
 
-                    tool_calls.append(
-                        ToolUseBlock(
-                            type="tool_use",
+                    content_blocks.append(
+                        ToolCallBlock(
                             id=call_id,
                             name=part.function_call.name,
-                            input=keyword_args,
-                            raw_input=json.dumps(
-                                keyword_args,
-                                ensure_ascii=False,
-                            ),
+                            input=json.dumps(keyword_args, ensure_ascii=False),
                         ),
                     )
 
-        # For the structured output case
-        if response.text and structured_model:
-            metadata = _json_loads_with_repair(response.text)
-
         usage = self._extract_usage(response.usage_metadata, start_datetime)
 
-        resp_kwargs: dict[str, Any] = {
-            "content": content_blocks + tool_calls,
-            "usage": usage,
-            "metadata": metadata,
-        }
-        response_id = getattr(response, "response_id", None)
-        if response_id:
-            resp_kwargs["id"] = response_id
-
-        return ChatResponse(**resp_kwargs)
+        return ChatResponse(
+            content=content_blocks,
+            is_last=True,
+            usage=usage,
+        )
 
     def _format_tools_json_schemas(
         self,
@@ -637,23 +539,26 @@ class GeminiChatModel(ChatModelBase):
 
     def _format_tool_choice(
         self,
-        tool_choice: Literal["auto", "none", "required"] | str | None,
+        tool_choice: ToolChoice | None,
+        tools: list[dict] | None,
     ) -> dict | None:
         """Format tool_choice parameter for API compatibility.
 
         Args:
-            tool_choice (`Literal["auto", "none", "required"] | str | None`, \
-            default `None`):
-                Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool name.
-                 For more details, please refer to
-                 https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
+            tool_choice (`ToolChoice | None`):
+                The unified tool choice parameter which can be a mode ("auto",
+                "none", "required") or a specific function name.
+            tools (`list[dict] | None`):
+                The list of available tools, used for validation if
+                tool_choice is a specific function name.
 
         Returns:
             `dict | None`:
                 The formatted tool choice configuration dict, or None if
                     tool_choice is None.
         """
+        self._validate_tool_choice(tool_choice, tools)
+
         if tool_choice is None:
             return None
 

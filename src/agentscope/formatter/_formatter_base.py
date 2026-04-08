@@ -1,15 +1,41 @@
 # -*- coding: utf-8 -*-
 """The formatter module."""
-
+import base64
+import mimetypes
+import tempfile
 from abc import abstractmethod
-from typing import Any, List, Tuple, Sequence
+from fnmatch import fnmatch
+from typing import Any, List, AsyncGenerator
 
-from .._utils._common import _save_base64_data
-from ..message import Msg, AudioBlock, ImageBlock, TextBlock, VideoBlock
+import shortuuid
+
+from ..message import (
+    Msg,
+    DataBlock,
+    TextBlock,
+    URLSource,
+    Base64Source,
+)
 
 
 class FormatterBase:
     """The base class for formatters."""
+
+    supported_input_media_types: list[str]
+    """The supported media types for multimodal data in the input messages,
+    supporting mime types like "image/*", "image/png", "audio/*", "video/*",
+     etc."""
+
+    def __init__(self, supported_input_media_types: list[str]) -> None:
+        """Initialize the formatter base class.
+
+        Args:
+            supported_input_media_types (`list[str]`):
+                The supported media types for multimodal data in the input
+                messages, supporting mime types like "image/*", "image/png",
+                "audio/*", "video/*", etc.
+        """
+        self.supported_input_media_types = supported_input_media_types
 
     @abstractmethod
     async def format(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
@@ -33,18 +59,10 @@ class FormatterBase:
                     f"Expected Msg object, got {type(msg)} instead.",
                 )
 
-    @staticmethod
     def convert_tool_result_to_string(
-        output: str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock],
-    ) -> tuple[
-        str,
-        Sequence[
-            Tuple[
-                str,
-                ImageBlock | AudioBlock | TextBlock | VideoBlock,
-            ]
-        ],
-    ]:
+        self,
+        output: str | List[TextBlock | DataBlock],
+    ) -> tuple[str, list[TextBlock | DataBlock]]:
         """Turn the tool result list into a textual output to be compatible
         with the LLM API that doesn't support multimodal data in the tool
         result.
@@ -54,76 +72,139 @@ class FormatterBase:
         is included in the returned list.
 
         Args:
-            output (`str | List[TextBlock | ImageBlock | AudioBlock | \
-            VideoBlock]`):
+            output (`str | List[TextBlock | DataBlock]`):
                 The output of the tool response, including text and multimodal
                 data like images and audio.
 
         Returns:
-            `tuple[str, list[Tuple[str, ImageBlock | AudioBlock | VideoBlock \
-            TextBlock]]]`:
+            `tuple[str, list[TextBlock | DataBlock]]`:
                 A tuple containing the textual representation of the tool
-                result and a list of tuples. The first element of each tuple
-                is the local file path or URL of the multimodal data, and the
-                second element is the corresponding block.
+                result and a list of blocks to be promoted as a user message.
         """
 
         if isinstance(output, str):
             return output, []
 
         textual_output = []
-        multimodal_data = []
+        multimodal_data: list = []
+
         for block in output:
-            assert isinstance(block, dict) and "type" in block, (
-                f"Invalid block: {block}, a TextBlock, ImageBlock, "
-                f"AudioBlock, or VideoBlock is expected."
-            )
-            if block["type"] == "text":
-                textual_output.append(block["text"])
+            if isinstance(block, TextBlock):
+                textual_output.append(block.text)
 
-            elif block["type"] in ["image", "audio", "video"]:
-                assert "source" in block, (
-                    f"Invalid {block['type']} block: {block}, 'source' key "
-                    "is required."
-                )
-                source = block["source"]
-                # Save the image locally and return the file path
-                if source["type"] == "url":
+            elif isinstance(block, DataBlock):
+                main_type = block.source.media_type.split("/")[0]
+
+                if any(
+                    fnmatch(block.source.media_type, _)
+                    for _ in self.supported_input_media_types
+                ):
+                    # If supported, promote the block
+
+                    # Create an identifier for such multimodal data for
+                    # accurate reference (in terms of order, position, etc.)
+                    identifier = shortuuid.uuid()
+
                     textual_output.append(
-                        f"The returned {block['type']} can be found "
-                        f"at: {source['url']}",
+                        f"<system-reminder>A(n) {main_type} file is returned "
+                        f"and will be presented to you with the identifier "
+                        f"[{identifier}].</system-reminder>",
                     )
-
-                    path_multimodal_file = source["url"]
-
-                elif source["type"] == "base64":
-                    path_multimodal_file = _save_base64_data(
-                        source["media_type"],
-                        source["data"],
+                    multimodal_data.extend(
+                        [
+                            TextBlock(
+                                text=f"- {identifier} ({main_type} file): ",
+                            ),
+                            block,
+                        ],
                     )
+                    multimodal_data.append(block)
+
+                # For unsupported media types, if it's a URL, include it in
+                # the textual output; if it's base64 data, save it locally
+                # and include the file path in the textual output.
+                # Note if you don't want to save the local file, you should
+                # transform the base64 data in the tool execution hook
+                # rather than changing the formatter.
+                elif isinstance(block.source, URLSource):
                     textual_output.append(
-                        f"The returned {block['type']} can be found "
-                        f"at: {path_multimodal_file}",
+                        f"<system-reminder>A(n) {main_type} file is returned "
+                        f"and can be accessed at the URL: {block.source.url}."
+                        f"</system-reminder>",
                     )
 
+                elif isinstance(block.source, Base64Source):
+                    # Have to save the base64 data locally
+                    extension = mimetypes.guess_extension(
+                        block.source.media_type,
+                    )
+                    with tempfile.NamedTemporaryFile(
+                        suffix=extension,
+                        delete=False,
+                    ) as temp_file:
+                        decoded_data = base64.b64decode(block.source.data)
+                        temp_file.write(decoded_data)
+                        textual_output.append(
+                            f"<system-reminder>A(n) {main_type} file is "
+                            f"returned and saved locally at: {temp_file.name}."
+                            f"</system-reminder>",
+                        )
+
+        # Add system reminder tags if there is multimodal data to be promoted
+        if multimodal_data:
+            multimodal_data = [
+                TextBlock(
+                    text="<system-reminder>The multimodal data and their "
+                    "identifiers are listed as follows:",
+                ),
+                *multimodal_data,
+                TextBlock(
+                    text="</system-reminder>",
+                ),
+            ]
+
+        return "\n".join(textual_output), multimodal_data
+
+    @staticmethod
+    async def _group_messages(msgs: list[Msg]) -> AsyncGenerator:
+        """Group messages into tool sequences and agent messages.
+
+        Args:
+            msgs (`list[Msg]`):
+                A list of Msg objects to be grouped.
+        """
+        group_type = None
+        group = []
+        for msg in msgs:
+            if group_type is None:
+                if msg.get_content_blocks(
+                    "tool_call",
+                ) or msg.get_content_blocks("tool_result"):
+                    group_type = "tool_sequence"
                 else:
-                    raise ValueError(
-                        f"Invalid image source: {block['source']}, "
-                        "expected 'url' or 'base64'.",
-                    )
+                    group_type = "agent_message"
+                group.append(msg)
+                continue
 
-                multimodal_data.append(
-                    (path_multimodal_file, block),
-                )
+            if group_type == "tool_sequence":
+                if msg.has_content_blocks(
+                    "tool_call",
+                ) or msg.has_content_blocks("tool_result"):
+                    group.append(msg)
+                else:
+                    yield group_type, group
+                    group = [msg]
+                    group_type = "agent_message"
 
-            else:
-                raise ValueError(
-                    f"Unsupported block type: {block['type']}, "
-                    "expected 'text', 'image', 'audio', or 'video'.",
-                )
+            elif group_type == "agent_message":
+                if msg.has_content_blocks(
+                    "tool_call",
+                ) or msg.has_content_blocks("tool_result"):
+                    yield group_type, group
+                    group = [msg]
+                    group_type = "tool_sequence"
+                else:
+                    group.append(msg)
 
-        if len(textual_output) == 1:
-            return textual_output[0], multimodal_data
-
-        else:
-            return "\n".join("- " + _ for _ in textual_output), multimodal_data
+        if group_type:
+            yield group_type, group

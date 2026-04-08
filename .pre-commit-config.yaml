@@ -99,6 +99,9 @@ repos:
           --disable=W0632,
           --disable=W0123,
           --disable=C3001,
+          --max-branches=30,
+          --max-nested-blocks=7,
+          --max-statements=100,
         ]
   - repo: https://github.com/regebro/pyroma
     rev: "5.0"

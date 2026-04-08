@@ -10,6 +10,8 @@ from typing import (
     Coroutine,
     Any,
     TYPE_CHECKING,
+    TypeAlias,
+    Literal,
 )
 
 if TYPE_CHECKING:
@@ -34,3 +36,6 @@ ToolFunction = Callable[
         Coroutine[Any, Any, Generator[ToolResponse, None, None]],
     ],
 ]
+
+
+ToolChoice: TypeAlias = Literal["auto", "none", "required"] | str

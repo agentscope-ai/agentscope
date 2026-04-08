@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from . import ToolResponse
 from .._utils._common import _remove_title_field
-from ..message import ToolUseBlock
+from ..message import ToolCallBlock
 from ..types import ToolFunction, JSONSerializableObject
 
 
@@ -40,11 +40,11 @@ class RegisteredToolFunction:
     """The name of the MCP, if the tool function comes from an MCP server."""
     postprocess_func: (
         Callable[
-            [ToolUseBlock, ToolResponse],
+            [ToolCallBlock, ToolResponse],
             ToolResponse | None,
         ]
         | Callable[
-            [ToolUseBlock, ToolResponse],
+            [ToolCallBlock, ToolResponse],
             Awaitable[ToolResponse | None],
         ]
     ) | None = None

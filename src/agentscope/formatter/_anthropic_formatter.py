@@ -1,41 +1,34 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches
 """The Anthropic formatter module."""
-
+import base64
+import fnmatch
+from abc import ABC
 from typing import Any
 
-from ._truncated_formatter_base import TruncatedFormatterBase
+import requests
+
+from ._formatter_base import FormatterBase
 from .._logging import logger
-from ..message import Msg, TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock
-from ..token import TokenCounterBase
+from ..message import (
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    HintBlock,
+    DataBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    URLSource,
+    Base64Source,
+)
 
 
-class AnthropicChatFormatter(TruncatedFormatterBase):
-    """The Anthropic formatter class for chatbot scenario, where only a user
-    and an agent are involved. We use the `role` field to identify different
-    entities in the conversation.
-    """
+class _AnthropicFormatterBase(FormatterBase, ABC):
+    """Mixin for formatting Anthropic formatters to avoid duplication between
+    AnthropicChatFormatter and AnthropicMultiAgentFormatter."""
 
-    support_tools_api: bool = True
-    """Whether support tools API"""
+    supported_input_media_types: list[str]
 
-    support_multiagent: bool = False
-    """Whether support multi-agent conversations"""
-
-    support_vision: bool = True
-    """Whether support vision data"""
-
-    supported_blocks: list[type] = [
-        TextBlock,
-        # Multimodal
-        ImageBlock,
-        # Tool use
-        ToolUseBlock,
-        ToolResultBlock,
-    ]
-    """The list of supported message blocks"""
-
-    async def _format(
+    async def _format_messages(
         self,
         msgs: list[Msg],
     ) -> list[dict[str, Any]]:
@@ -58,92 +51,263 @@ class AnthropicChatFormatter(TruncatedFormatterBase):
         self.assert_list_of_msgs(msgs)
 
         messages: list[dict] = []
-        for index, msg in enumerate(msgs):
-            content_blocks = []
+        for msg in msgs:
+            content_blocks: list = []
 
             for block in msg.get_content_blocks():
-                typ = block.get("type")
-                if typ in ["thinking", "text", "image"]:
-                    content_blocks.append({**block})
+                if isinstance(block, TextBlock):
+                    content_blocks.append(
+                        {"type": "text", "text": block.text},
+                    )
 
-                elif typ == "tool_use":
+                elif isinstance(block, ThinkingBlock):
+                    content_blocks.append(
+                        {"type": "thinking", "thinking": block.thinking},
+                    )
+
+                elif isinstance(block, HintBlock):
+                    pass  # Anthropic does not support hint blocks
+
+                elif isinstance(block, DataBlock):
+                    formatted_block = self._format_anthropic_data_block(block)
+                    if formatted_block:
+                        content_blocks.append(formatted_block)
+
+                elif isinstance(block, ToolCallBlock):
                     content_blocks.append(
                         {
-                            "id": block.get("id"),
                             "type": "tool_use",
-                            "name": block.get("name"),
-                            "input": block.get("input", {}),
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
                         },
                     )
 
-                elif typ == "tool_result":
-                    output = block.get("output")
-                    if output is None:
-                        content_value = [{"type": "text", "text": None}]
-                    elif isinstance(output, list):
-                        content_value = output
-                    else:
-                        content_value = [{"type": "text", "text": str(output)}]
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": [
+                elif isinstance(block, ToolResultBlock):
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block.output)
+
+                    tool_result_content = []
+                    if textual_output:
+                        tool_result_content.append(
+                            {"type": "text", "text": textual_output},
+                        )
+
+                    for data_block in multimodal_data:
+                        formatted_block = self._format_anthropic_data_block(
+                            data_block,
+                        )
+                        if formatted_block:
+                            tool_result_content.append(formatted_block)
+
+                    # If there's multimodal data, promote to UserMsg
+                    if multimodal_data:
+                        # Add tool result first
+                        content_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": tool_result_content,
+                            },
+                        )
+
+                        # Flush current message
+                        if content_blocks:
+                            messages.append(
                                 {
-                                    "type": "tool_result",
-                                    "tool_use_id": block.get("id"),
-                                    "content": content_value,
+                                    "role": msg.role,
+                                    "content": content_blocks,
                                 },
-                            ],
-                        },
-                    )
+                            )
+                            content_blocks = []
+
+                        # Insert UserMsg with multimodal data
+                        user_content = []
+                        for data_block in multimodal_data:
+                            formatted_block = (
+                                self._format_anthropic_data_block(data_block)
+                            )
+                            if formatted_block:
+                                user_content.append(formatted_block)
+
+                        if user_content:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": user_content,
+                                },
+                            )
+                    else:
+                        # No multimodal data, just add tool result
+                        content_blocks.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": tool_result_content,
+                            },
+                        )
+
                 else:
                     logger.warning(
                         "Unsupported block type %s in the message, skipped.",
-                        typ,
+                        type(block),
                     )
 
-            # Claude only allow the first message to be system message
-            if msg.role == "system" and index != 0:
-                role = "user"
-            else:
-                role = msg.role
-
-            msg_anthropic = {
-                "role": role,
-                "content": content_blocks or None,
-            }
-
-            # When both content and tool_calls are None, skipped
-            if msg_anthropic["content"] or msg_anthropic.get("tool_calls"):
-                messages.append(msg_anthropic)
+            if content_blocks:
+                messages.append(
+                    {
+                        "role": msg.role,
+                        "content": content_blocks,
+                    },
+                )
 
         return messages
 
+    def _format_anthropic_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        """Format a DataBlock into Anthropic API format.
 
-class AnthropicMultiAgentFormatter(TruncatedFormatterBase):
+        Args:
+            block (`DataBlock`):
+                The data block to format.
+
+        Returns:
+            `dict[str, Any] | None`:
+                The formatted data block, or None if the media type is not
+                supported.
+        """
+        source = block.source
+        media_type = source.media_type
+
+        # Check if media type is supported
+        if not any(
+            fnmatch.fnmatch(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            logger.warning(
+                "Media type %s is not supported, skipped.",
+                media_type,
+            )
+            return None
+
+        # Anthropic only supports images
+        if not media_type.startswith("image/"):
+            logger.warning(
+                "Anthropic only supports image data, got %s, skipped.",
+                media_type,
+            )
+            return None
+
+        return self._format_image_source(source)
+
+    @staticmethod
+    def _format_image_source(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Format an image source into Anthropic API format.
+
+        Args:
+            source (`URLSource | Base64Source`):
+                The image source to format.
+
+        Returns:
+            `dict[str, Any]`:
+                The formatted image source.
+        """
+        if isinstance(source, Base64Source):
+            return {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": source.media_type,
+                    "data": source.data,
+                },
+            }
+        elif isinstance(source, URLSource):
+            url = source.url
+            if url.startswith("file://"):
+                # Local file - read and convert to base64
+                file_path = url.removeprefix("file://")
+                with open(file_path, "rb") as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": source.media_type,
+                        "data": data,
+                    },
+                }
+            else:
+                # Remote URL - download and convert to base64
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                data = base64.b64encode(response.content).decode("utf-8")
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": source.media_type,
+                        "data": data,
+                    },
+                }
+        else:
+            raise ValueError(f"Unsupported source type: {type(source)}")
+
+
+class AnthropicChatFormatter(_AnthropicFormatterBase):
+    """The Anthropic formatter class for chatbot scenario, where only a user
+    and an agent are involved. We use the `role` field to identify different
+    entities in the conversation.
     """
-    Anthropic formatter for multi-agent conversations, where more than
+
+    def __init__(
+        self,
+        supported_input_media_types: list[str] | None = None,
+    ) -> None:
+        """Initialize the Anthropic chat formatter.
+
+        Args:
+            supported_input_media_types (`list[str] | None`, optional):
+                The list of supported input media types. Defaults to
+                ``["image/*"]``.
+        """
+        super().__init__(
+            supported_input_media_types=supported_input_media_types
+            or ["image/*"],
+        )
+
+    async def format(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format message objects into Anthropic API format.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of message objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The formatted messages as a list of dictionaries.
+
+        .. note:: Anthropic suggests always passing all previous thinking
+         blocks back to the API in subsequent calls to maintain reasoning
+         continuity. For more details, please refer to
+         `Anthropic's documentation
+         <https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks>`_.
+        """
+        return await self._format_messages(msgs)
+
+
+class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
+    """Anthropic formatter for multi-agent conversations, where more than
     a user and an agent are involved.
     """
-
-    support_tools_api: bool = True
-    """Whether support tools API"""
-
-    support_multiagent: bool = True
-    """Whether support multi-agent conversations"""
-
-    support_vision: bool = True
-    """Whether support vision data"""
-
-    supported_blocks: list[type] = [
-        TextBlock,
-        # Multimodal
-        ImageBlock,
-        # Tool use
-        ToolUseBlock,
-        ToolResultBlock,
-    ]
-    """The list of supported message blocks"""
 
     def __init__(
         self,
@@ -152,102 +316,143 @@ class AnthropicMultiAgentFormatter(TruncatedFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        token_counter: TokenCounterBase | None = None,
-        max_tokens: int | None = None,
+        supported_input_media_types: list[str] | None = None,
     ) -> None:
-        """Initialize the DashScope multi-agent formatter.
+        """Initialize the Anthropic multi-agent formatter.
 
         Args:
             conversation_history_prompt (`str`):
                 The prompt to use for the conversation history section.
+            supported_input_media_types (`list[str] | None`, optional):
+                The list of supported input media types. Defaults to
+                ``["image/*"]``.
         """
-        super().__init__(token_counter=token_counter, max_tokens=max_tokens)
+        super().__init__(
+            supported_input_media_types=supported_input_media_types
+            or ["image/*"],
+        )
         self.conversation_history_prompt = conversation_history_prompt
 
-    async def _format_tool_sequence(
-        self,
-        msgs: list[Msg],
-    ) -> list[dict[str, Any]]:
-        """Given a sequence of tool call/result messages, format them into
-        the required format for the Anthropic API."""
-        return await AnthropicChatFormatter().format(msgs)
+    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
+        """Format input messages into the structure required by the Anthropic
+        API for multi-agent conversations."""
+        self.assert_list_of_msgs(msgs)
+
+        formatted_msgs = []
+        start_index = 0
+        if len(msgs) > 0 and msgs[0].role == "system":
+            formatted_msgs.append(
+                await self._format_system_message(msgs[0]),
+            )
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_messages(group),
+                    )
+                case "agent_message":
+                    formatted_msgs.extend(
+                        await self._format_agent_message(
+                            group,
+                            is_first_agent_message,
+                        ),
+                    )
+                    is_first_agent_message = False
+
+        return formatted_msgs
 
     async def _format_agent_message(
         self,
         msgs: list[Msg],
-        is_first: bool = True,
+        is_first: bool,
     ) -> list[dict[str, Any]]:
-        """Given a sequence of messages without tool calls/results, format
-        them into the required format for the Anthropic API."""
-
-        if is_first:
-            conversation_history_prompt = self.conversation_history_prompt
-        else:
-            conversation_history_prompt = ""
-
-        # Format into required Anthropic format
-        formatted_msgs: list[dict] = []
-
-        # Collect the multimodal files
-        conversation_blocks: list = []
+        """Format agent messages into conversation history."""
+        conversation_blocks = []
         accumulated_text = []
+
         for msg in msgs:
+            agent_name = msg.name or "Agent"
+            agent_text_parts = []
+
             for block in msg.get_content_blocks():
-                if block["type"] == "text":
-                    accumulated_text.append(f"{msg.name}: {block['text']}")
+                if isinstance(block, TextBlock):
+                    agent_text_parts.append(block.text)
+                elif isinstance(block, DataBlock):
+                    formatted_block = self._format_anthropic_data_block(block)
+                    if formatted_block:
+                        if accumulated_text:
+                            conversation_blocks.append(
+                                {
+                                    "type": "text",
+                                    "text": "\n".join(accumulated_text),
+                                },
+                            )
+                            accumulated_text = []
+                        conversation_blocks.append(formatted_block)
 
-                elif block["type"] == "image":
-                    # Handle the accumulated text as a single block
-                    if accumulated_text:
-                        conversation_blocks.append(
-                            {
-                                "text": "\n".join(accumulated_text),
-                                "type": "text",
-                            },
-                        )
-                        accumulated_text.clear()
-
-                    conversation_blocks.append({**block})
+            if agent_text_parts:
+                agent_message = f"{agent_name}: {' '.join(agent_text_parts)}"
+                accumulated_text.append(agent_message)
 
         if accumulated_text:
             conversation_blocks.append(
                 {
-                    "text": "\n".join(accumulated_text),
                     "type": "text",
+                    "text": "\n".join(accumulated_text),
                 },
             )
 
-        if conversation_blocks:
+        if conversation_blocks and is_first:
             if conversation_blocks[0].get("text"):
                 conversation_blocks[0]["text"] = (
-                    conversation_history_prompt
+                    self.conversation_history_prompt
                     + "<history>\n"
                     + conversation_blocks[0]["text"]
                 )
-
             else:
                 conversation_blocks.insert(
                     0,
                     {
                         "type": "text",
-                        "text": conversation_history_prompt + "<history>\n",
+                        "text": self.conversation_history_prompt
+                        + "<history>\n",
                     },
                 )
 
             if conversation_blocks[-1].get("text"):
                 conversation_blocks[-1]["text"] += "\n</history>"
-
             else:
                 conversation_blocks.append(
                     {"type": "text", "text": "</history>"},
                 )
 
         if conversation_blocks:
-            formatted_msgs.append(
+            return [
                 {
                     "role": "user",
                     "content": conversation_blocks,
                 },
-            )
+            ]
 
-        return formatted_msgs
+        return []
+
+    @staticmethod
+    async def _format_system_message(msg: Msg) -> dict[str, Any]:
+        """Format a system message."""
+        text_parts = []
+        for block in msg.get_content_blocks():
+            if isinstance(block, TextBlock):
+                text_parts.append(block.text)
+
+        return {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "\n".join(text_parts),
+                },
+            ],
+        }

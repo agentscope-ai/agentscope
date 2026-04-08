@@ -42,10 +42,9 @@ from ..mcp import (
     StatefulClientBase,
 )
 from ..message import (
-    ToolUseBlock,
+    ToolCallBlock,
     TextBlock,
 )
-from ..module import StateModule
 from ..types import (
     JSONSerializableObject,
     ToolFunction,
@@ -72,7 +71,7 @@ def _apply_middlewares(
     @wraps(func)
     async def wrapper(
         self: "Toolkit",
-        tool_call: ToolUseBlock,
+        tool_call: ToolCallBlock,
     ) -> AsyncGenerator[ToolResponse, None]:
         """Wrapper that applies middleware chain."""
         middlewares = getattr(self, "_middlewares", [])
@@ -114,7 +113,7 @@ def _apply_middlewares(
     return wrapper
 
 
-class Toolkit(StateModule):  # pylint: disable=too-many-public-methods
+class Toolkit:  # pylint: disable=too-many-public-methods
     """Toolkit is the core module to register, manage and delete tool
     functions, MCP clients, Agent skills in AgentScope.
 
@@ -284,11 +283,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         include_var_keyword: bool = False,
         postprocess_func: (
             Callable[
-                [ToolUseBlock, ToolResponse],
+                [ToolCallBlock, ToolResponse],
                 ToolResponse | None,
             ]
             | Callable[
-                [ToolUseBlock, ToolResponse],
+                [ToolCallBlock, ToolResponse],
                 Awaitable[ToolResponse | None],
             ]
         )
@@ -338,8 +337,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             include_var_keyword (`bool`, defaults to `False`):
                 Whether to include the variable keyword arguments (`**kwargs`)
                 in the function schema.
-            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            postprocess_func (`(Callable[[ToolCallBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolCallBlock, ToolResponse], \
             Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
@@ -852,16 +851,16 @@ Check "{dir}/SKILL.md" for how to use this skill"""
     @_apply_middlewares
     async def call_tool_function(
         self,
-        tool_call: ToolUseBlock,
+        tool_call: ToolCallBlock,
     ) -> AsyncGenerator[ToolResponse, None]:
-        """Execute the tool function by the `ToolUseBlock` and return the
+        """Execute the tool function by the `ToolCallBlock` and return the
         tool response chunk in unified streaming mode, i.e. an async
         generator of `ToolResponse` objects.
 
         .. note:: The tool response chunk is **accumulated**.
 
         Args:
-            tool_call (`ToolUseBlock`):
+            tool_call (`ToolCallBlock`):
                 A tool call block.
 
         Yields:
@@ -917,7 +916,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         # Prepare postprocess function
         if tool_func.postprocess_func:
             # Type: partial wraps the postprocess_func with tool_call bound,
-            # reducing it from (ToolUseBlock, ToolResponse) to (ToolResponse)
+            # reducing it from (ToolCallBlock, ToolResponse) to (ToolResponse)
             partial_postprocess_func: (
                 Callable[[ToolResponse], ToolResponse | None]
                 | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
@@ -1041,11 +1040,11 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         preset_kwargs_mapping: dict[str, dict[str, Any]] | None = None,
         postprocess_func: (
             Callable[
-                [ToolUseBlock, ToolResponse],
+                [ToolCallBlock, ToolResponse],
                 ToolResponse | None,
             ]
             | Callable[
-                [ToolUseBlock, ToolResponse],
+                [ToolCallBlock, ToolResponse],
                 Awaitable[ToolResponse | None],
             ]
         )
@@ -1074,8 +1073,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             defaults to `None`):
                 The preset keyword arguments mapping, whose keys are the tool
                 function names and values are the preset keyword arguments.
-            postprocess_func (`(Callable[[ToolUseBlock, ToolResponse], \
-            ToolResponse | None] | Callable[[ToolUseBlock, ToolResponse], \
+            postprocess_func (`(Callable[[ToolCallBlock, ToolResponse], \
+            ToolResponse | None] | Callable[[ToolCallBlock, ToolResponse], \
             Awaitable[ToolResponse | None]]) | None`, optional):
                 A post-processing function that will be called after the tool
                 function is executed, taking the tool call block and tool
@@ -1459,7 +1458,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         parameter and ``next_handler`` as the second parameter. The ``kwargs``
         dict currently contains:
 
-        - ``tool_call`` (`ToolUseBlock`): The tool call request
+        - ``tool_call`` (`ToolCallBlock`): The tool call request
 
         When calling ``next_handler``, pass ``**kwargs`` to unpack the dict.
 
@@ -1521,7 +1520,7 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
                 The middleware function that accepts ``kwargs`` (dict) and
                 ``next_handler`` (Callable), and returns a coroutine that
                 yields AsyncGenerator of ToolResponse objects. The ``kwargs``
-                dict currently includes ``tool_call`` (ToolUseBlock), and may
+                dict currently includes ``tool_call`` (ToolCallBlock), and may
                 include additional context in future versions.
 
         .. note:: The middleware chain is applied inside the

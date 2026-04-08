@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The agentscope serialization module"""
-
 import warnings
 
 from . import exception
@@ -11,7 +10,6 @@ from . import formatter
 from . import agent
 from . import embedding
 from . import tracing
-
 from ._logging import (
     logger,
     setup_logger,
@@ -33,7 +31,6 @@ __all__ = [
     "logger",
     "embedding",
     "tracing",
-    "a2a",
     # functions
     "setup_logger",
     "__version__",

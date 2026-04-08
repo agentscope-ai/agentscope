@@ -1,21 +1,14 @@
 # -*- coding: utf-8 -*-
 """The JSON related types"""
+from typing import TypeAlias
 
-from typing import Union
+JSONPrimitive: TypeAlias = str | int | float | bool | None
 
-JSONPrimitive = Union[
-    str,
-    int,
-    float,
-    bool,
-    None,
-]
-
-JSONSerializableObject = Union[
-    JSONPrimitive,
-    list["JSONSerializableObject"],
-    dict[
+JSONSerializableObject: TypeAlias = (
+    JSONPrimitive
+    | list["JSONSerializableObject"]
+    | dict[
         str,
         "JSONSerializableObject",
-    ],
-]
+    ]
+)

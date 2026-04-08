@@ -5,11 +5,33 @@ from datetime import timedelta
 from typing import Any, Callable
 
 import mcp
-from mcp import ClientSession
+from mcp import ClientSession, Tool
 
 from ._client_base import MCPClientBase
-from .._utils._common import _extract_json_schema_from_mcp_tool
 from ..tool import ToolResponse
+
+
+def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict[str, Any]:
+    """Extract JSON schema from MCP tool."""
+
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": {
+                "type": "object",
+                "properties": tool.inputSchema.get(
+                    "properties",
+                    {},
+                ),
+                "required": tool.inputSchema.get(
+                    "required",
+                    [],
+                ),
+            },
+        },
+    }
 
 
 class MCPToolFunction:

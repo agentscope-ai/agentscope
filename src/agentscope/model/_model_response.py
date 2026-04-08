@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """The model response module."""
-
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal, Sequence
 
 from ._model_usage import ChatUsage
-from .._utils._common import _get_timestamp
 from .._utils._mixin import DictMixin
 from ..message import (
     TextBlock,
-    ToolUseBlock,
+    ToolCallBlock,
     ThinkingBlock,
-    AudioBlock,
+    DataBlock,
 )
 from ..types import JSONSerializableObject
 
@@ -20,14 +20,18 @@ from ..types import JSONSerializableObject
 class ChatResponse(DictMixin):
     """The response of chat models."""
 
-    content: Sequence[TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock]
+    content: Sequence[TextBlock | ToolCallBlock | ThinkingBlock | DataBlock]
     """The content of the chat response, which can include text blocks,
     tool use blocks, or thinking blocks."""
 
-    id: str = field(default_factory=lambda: _get_timestamp(True))
+    is_last: bool
+    """Whether this response is the last response, if `Ture`, the content will
+    be the complete response, otherwise the content is a partial response"""
+
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The unique identifier formatter """
 
-    created_at: str = field(default_factory=_get_timestamp)
+    created_at: str = field(default_factory=datetime.now().isoformat)
     """When the response was created"""
 
     type: Literal["chat"] = field(default_factory=lambda: "chat")

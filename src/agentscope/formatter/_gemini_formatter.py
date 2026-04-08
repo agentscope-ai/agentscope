@@ -1,229 +1,192 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=too-many-branches
-"""Google gemini API formatter in agentscope."""
+"""Google Gemini API formatter in agentscope."""
 import base64
-import os
+import fnmatch
+from abc import ABC
 from typing import Any
-from urllib.parse import urlparse
 
-from ._truncated_formatter_base import TruncatedFormatterBase
-from .._utils._common import _get_bytes_from_web_url
+import requests
+
+from ._formatter_base import FormatterBase
+from .._logging import logger
 from ..message import (
     Msg,
     TextBlock,
-    ImageBlock,
-    AudioBlock,
-    ToolUseBlock,
+    ThinkingBlock,
+    HintBlock,
+    DataBlock,
+    ToolCallBlock,
     ToolResultBlock,
-    VideoBlock,
+    UserMsg,
     URLSource,
+    Base64Source,
 )
-from .._logging import logger
-from ..token import TokenCounterBase
 
 
-def _format_gemini_media_block(
-    media_block: ImageBlock | AudioBlock | VideoBlock,
-) -> dict[str, Any]:
-    """Format an image/audio/video block for Gemini API.
+class _GeminiFormatterBase(FormatterBase, ABC):
+    """Base class for Gemini formatters, providing shared data block
+    formatting logic."""
 
-    Args:
-        media_block (`ImageBlock | AudioBlock | VideoBlock`):
-            The media block to format.
+    supported_input_media_types: list[str]
 
-    Returns:
-        `dict[str, Any]`:
-            A dictionary with "inline_data" key in Gemini format.
+    def _format_gemini_data_block(
+        self,
+        block: DataBlock,
+    ) -> dict[str, Any] | None:
+        """Format a DataBlock into Gemini API format.
 
-    Raises:
-        `ValueError`:
-            If the source type is not supported.
-    """
-    source = media_block["source"]
-    if source["type"] == "base64":
-        return {
-            "inline_data": {
-                "data": source["data"],
-                "mime_type": source["media_type"],
-            },
-        }
-    elif source["type"] == "url":
-        return {
-            "inline_data": _to_gemini_inline_data(source["url"]),
-        }
-    else:
-        raise ValueError(
-            f"Unsupported source type: {source['type']}",
-        )
+        Args:
+            block (`DataBlock`):
+                The data block to format.
 
+        Returns:
+            `dict[str, Any] | None`:
+                The formatted data block in Gemini ``inline_data`` format,
+                or None if the media type is not supported.
+        """
+        source = block.source
+        media_type = source.media_type
 
-def _to_gemini_inline_data(url: str) -> dict:
-    """Convert url into the Gemini API required format."""
-    raw_url = url.removeprefix("file://")
-    parsed_url = urlparse(raw_url)
-    extension = raw_url.split(".")[-1].lower()
-
-    # Pre-calculate media type from extension (image/audio/video).
-    typ = None
-    for k, v in GeminiChatFormatter.supported_extensions.items():
-        if extension in v:
-            typ = k
-            break
-
-    if os.path.exists(raw_url):
-        # Local file
-        if typ is None:
-            raise TypeError(
-                f"Unsupported file extension: {extension}, expected "
-                f"{GeminiChatFormatter.supported_extensions}",
+        # Check if media type is supported
+        if not any(
+            fnmatch.fnmatch(media_type, pattern)
+            for pattern in self.supported_input_media_types
+        ):
+            logger.warning(
+                "Media type %s is not supported, skipped.",
+                media_type,
             )
+            return None
 
-        with open(raw_url, "rb") as f:
-            data = base64.b64encode(f.read()).decode("utf-8")
+        return self._format_media_source(source)
 
-        return {
-            "data": data,
-            "mime_type": f"{typ}/{extension}",
-        }
+    @staticmethod
+    def _format_media_source(
+        source: URLSource | Base64Source,
+    ) -> dict[str, Any]:
+        """Format a media source into Gemini API ``inline_data`` format.
 
-    elif parsed_url.scheme not in ["", "file"]:
-        # Web url
-        if typ is None:
-            raise TypeError(
-                f"Unsupported file extension: {extension}, expected "
-                f"{GeminiChatFormatter.supported_extensions}",
-            )
+        Args:
+            source (`URLSource | Base64Source`):
+                The media source to format.
 
-        data = _get_bytes_from_web_url(url)
-        return {
-            "data": data,
-            "mime_type": f"{typ}/{extension}",
-        }
+        Returns:
+            `dict[str, Any]`:
+                The formatted media source.
+        """
+        if isinstance(source, Base64Source):
+            return {
+                "inline_data": {
+                    "data": source.data,
+                    "mime_type": source.media_type,
+                },
+            }
+        elif isinstance(source, URLSource):
+            url = source.url
+            if url.startswith("file://"):
+                # Local file - read and convert to base64
+                file_path = url.removeprefix("file://")
+                with open(file_path, "rb") as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+                return {
+                    "inline_data": {
+                        "data": data,
+                        "mime_type": source.media_type,
+                    },
+                }
+            else:
+                # Remote URL - download and convert to base64
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                data = base64.b64encode(response.content).decode("utf-8")
+                return {
+                    "inline_data": {
+                        "data": data,
+                        "mime_type": source.media_type,
+                    },
+                }
+        else:
+            raise ValueError(f"Unsupported source type: {type(source)}")
 
-    raise ValueError(
-        f"The URL `{url}` is not a valid image URL or local file.",
-    )
 
-
-class GeminiChatFormatter(TruncatedFormatterBase):
+class GeminiChatFormatter(_GeminiFormatterBase):
     """The Gemini formatter class for chatbot scenario, where only a user
     and an agent are involved. We use the `role` field to identify different
     entities in the conversation.
     """
 
-    support_tools_api: bool = True
-    """Whether support tools API"""
-
-    support_multiagent: bool = False
-    """Whether support multi-agent conversations"""
-
-    support_vision: bool = True
-    """Whether support vision data"""
-
-    supported_blocks: list[type] = [
-        TextBlock,
-        # Multimodal
-        ImageBlock,
-        VideoBlock,
-        AudioBlock,
-        # Tool use
-        ToolUseBlock,
-        ToolResultBlock,
-    ]
-    """The list of supported message blocks"""
-
-    supported_extensions: dict[str, list[str]] = {
-        "image": ["png", "jpeg", "webp", "heic", "heif"],
-        "video": [
-            "mp4",
-            "mpeg",
-            "mov",
-            "avi",
-            "x-flv",
-            "mpg",
-            "webm",
-            "wmv",
-            "3gpp",
-        ],
-        "audio": ["mp3", "wav", "aiff", "aac", "ogg", "flac"],
-    }
-
     def __init__(
         self,
-        promote_tool_result_images: bool = False,
-        token_counter: TokenCounterBase | None = None,
-        max_tokens: int | None = None,
+        supported_input_media_types: list[str] | None = None,
     ) -> None:
-        """Initialize the Gemini chat formatter.
+        super().__init__(
+            supported_input_media_types=supported_input_media_types
+            or ["image/*", "audio/*", "video/*"],
+        )
 
-        Args:
-            promote_tool_result_images (`bool`, defaults to `False`):
-                Whether to promote images from tool results to user messages.
-                Most LLM APIs don't support images in tool result blocks, but
-                do support them in user message blocks. When `True`, images are
-                extracted and appended as a separate user message with
-                explanatory text indicating their source.
-            token_counter (`TokenCounterBase | None`, optional):
-                A token counter instance used to count tokens in the messages.
-                If not provided, the formatter will format the messages
-                without considering token limits.
-            max_tokens (`int | None`, optional):
-                The maximum number of tokens allowed in the formatted
-                messages. If not provided, the formatter will not truncate
-                the messages.
-        """
-        super().__init__(token_counter, max_tokens)
-        self.promote_tool_result_images = promote_tool_result_images
-
-    async def _format(
+    async def format(
         self,
         msgs: list[Msg],
-    ) -> list[dict]:
-        """Format message objects into Gemini API required format."""
+    ) -> list[dict[str, Any]]:
+        """Format message objects into Gemini API required format.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of message objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                The formatted messages as a list of dictionaries.
+        """
         self.assert_list_of_msgs(msgs)
 
-        messages: list = []
+        messages: list[dict] = []
         i = 0
         while i < len(msgs):
             msg = msgs[i]
-            parts = []
+            parts: list = []
 
             for block in msg.get_content_blocks():
-                typ = block.get("type")
-                if typ == "text":
-                    parts.append(
-                        {
-                            "text": block.get("text"),
-                        },
-                    )
+                if isinstance(block, TextBlock):
+                    parts.append({"text": block.text})
 
-                elif typ == "tool_use":
+                elif isinstance(block, ThinkingBlock):
+                    parts.append({"text": block.thinking})
+
+                elif isinstance(block, HintBlock):
+                    pass  # Gemini does not support hint blocks
+
+                elif isinstance(block, DataBlock):
+                    formatted = self._format_gemini_data_block(block)
+                    if formatted:
+                        parts.append(formatted)
+
+                elif isinstance(block, ToolCallBlock):
                     parts.append(
                         {
                             "function_call": {
                                 "id": None,
-                                "name": block["name"],
-                                "args": block["input"],
+                                "name": block.name,
+                                "args": block.input,
                             },
-                            "thought_signature": block.get("id", None),
+                            "thought_signature": block.id,
                         },
                     )
 
-                elif typ == "tool_result":
+                elif isinstance(block, ToolResultBlock):
                     (
                         textual_output,
                         multimodal_data,
-                    ) = self.convert_tool_result_to_string(block["output"])
+                    ) = self.convert_tool_result_to_string(block.output)
 
-                    # First add the tool result message in DashScope API format
                     messages.append(
                         {
                             "role": "user",
                             "parts": [
                                 {
                                     "function_response": {
-                                        "id": block["id"],
-                                        "name": block["name"],
+                                        "id": block.id,
+                                        "name": block.name,
                                         "response": {
                                             "output": textual_output,
                                         },
@@ -233,66 +196,22 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                         },
                     )
 
-                    promoted_blocks: list = []
-                    for url, multimodal_block in multimodal_data:
-                        if (
-                            multimodal_block["type"] == "image"
-                            and self.promote_tool_result_images
-                        ):
-                            promoted_blocks.extend(
-                                [
-                                    TextBlock(
-                                        type="text",
-                                        text=f"\n- The image from '{url}': ",
-                                    ),
-                                    ImageBlock(
-                                        type="image",
-                                        source=URLSource(
-                                            type="url",
-                                            url=url,
-                                        ),
-                                    ),
-                                ],
-                            )
-
-                    if promoted_blocks:
-                        # Insert promoted blocks as new user message(s)
-                        promoted_blocks = [
-                            TextBlock(
-                                type="text",
-                                text="<system-info>The following are "
-                                "the image contents from the tool "
-                                f"result of '{block['name']}':",
-                            ),
-                            *promoted_blocks,
-                            TextBlock(
-                                type="text",
-                                text="</system-info>",
-                            ),
-                        ]
-
+                    if multimodal_data:
                         msgs.insert(
                             i + 1,
-                            Msg(
-                                name="user",
-                                content=promoted_blocks,
-                                role="user",
+                            UserMsg(
+                                name="system-reminder",
+                                content=multimodal_data,
                             ),
                         )
 
-                elif typ in ["image", "audio", "video"]:
-                    parts.append(
-                        _format_gemini_media_block(
-                            block,  # type: ignore[arg-type]
-                        ),
-                    )
-
                 else:
                     logger.warning(
-                        "Unsupported block type: %s in the message, skipped. ",
-                        typ,
+                        "Unsupported block type %s in the message, skipped.",
+                        type(block),
                     )
 
+            # Gemini uses "model" instead of "assistant"
             role = "model" if msg.role == "assistant" else "user"
 
             if parts:
@@ -303,14 +222,12 @@ class GeminiChatFormatter(TruncatedFormatterBase):
                     },
                 )
 
-            # Move to next message (including inserted messages, which will
-            # be processed in subsequent iterations)
             i += 1
 
         return messages
 
 
-class GeminiMultiAgentFormatter(TruncatedFormatterBase):
+class GeminiMultiAgentFormatter(_GeminiFormatterBase):
     """The multi-agent formatter for Google Gemini API, where more than a
     user and an agent are involved.
 
@@ -329,27 +246,6 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
 
     """
 
-    support_tools_api: bool = True
-    """Whether support tools API"""
-
-    support_multiagent: bool = True
-    """Whether support multi-agent conversations"""
-
-    support_vision: bool = True
-    """Whether support vision data"""
-
-    supported_blocks: list[type] = [
-        TextBlock,
-        # Multimodal
-        ImageBlock,
-        VideoBlock,
-        AudioBlock,
-        # Tool use
-        ToolUseBlock,
-        ToolResultBlock,
-    ]
-    """The list of supported message blocks"""
-
     def __init__(
         self,
         conversation_history_prompt: str = (
@@ -357,62 +253,62 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        promote_tool_result_images: bool = False,
-        token_counter: TokenCounterBase | None = None,
-        max_tokens: int | None = None,
+        supported_input_media_types: list[str] | None = None,
     ) -> None:
         """Initialize the Gemini multi-agent formatter.
 
         Args:
             conversation_history_prompt (`str`):
                 The prompt to be used for the conversation history section.
-            promote_tool_result_images (`bool`, defaults to `False`):
-                Whether to promote images from tool results to user messages.
-                Most LLM APIs don't support images in tool result blocks, but
-                do support them in user message blocks. When `True`, images are
-                extracted and appended as a separate user message with
-                explanatory text indicating their source.
-            token_counter (`TokenCounterBase | None`, optional):
-                The token counter used for truncation.
-            max_tokens (`int | None`, optional):
-                The maximum number of tokens allowed in the formatted
-                messages. If `None`, no truncation will be applied.
+            supported_input_media_types (`list[str] | None`, optional):
+                The list of supported input media types. Defaults to
+                ``["image/*", "audio/*", "video/*"]``.
         """
-        super().__init__(token_counter=token_counter, max_tokens=max_tokens)
+        super().__init__(
+            supported_input_media_types=supported_input_media_types
+            or ["image/*", "audio/*", "video/*"],
+        )
         self.conversation_history_prompt = conversation_history_prompt
-        self.promote_tool_result_images = promote_tool_result_images
 
-    async def _format_system_message(
-        self,
-        msg: Msg,
-    ) -> dict[str, Any]:
-        """Format system message for the Gemini API."""
-        return {
-            "role": "user",
-            "parts": [
-                {
-                    "text": msg.get_text_content(),
-                },
-            ],
-        }
+    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
+        """Format input messages into the structure required by the Gemini
+        API for multi-agent conversations."""
+        self.assert_list_of_msgs(msgs)
+
+        formatted_msgs = []
+        start_index = 0
+        if len(msgs) > 0 and msgs[0].role == "system":
+            formatted_msgs.append(
+                await self._format_system_message(msgs[0]),
+            )
+            start_index = 1
+
+        is_first_agent_message = True
+        async for typ, group in self._group_messages(msgs[start_index:]):
+            match typ:
+                case "tool_sequence":
+                    formatted_msgs.extend(
+                        await self._format_tool_sequence(group),
+                    )
+                case "agent_message":
+                    formatted_msgs.extend(
+                        await self._format_agent_message(
+                            group,
+                            is_first_agent_message,
+                        ),
+                    )
+                    is_first_agent_message = False
+
+        return formatted_msgs
 
     async def _format_tool_sequence(
         self,
         msgs: list[Msg],
     ) -> list[dict[str, Any]]:
         """Given a sequence of tool call/result messages, format them into
-        the required format for the Gemini API.
-
-        Args:
-            msgs (`list[Msg]`):
-                The list of messages containing tool calls/results to format.
-
-        Returns:
-            `list[dict[str, Any]]`:
-                A list of dictionaries formatted for the Gemini API.
-        """
+        the required format for the Gemini API."""
         return await GeminiChatFormatter(
-            promote_tool_result_images=self.promote_tool_result_images,
+            supported_input_media_types=self.supported_input_media_types,
         ).format(msgs)
 
     async def _format_agent_message(
@@ -421,58 +317,37 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
         is_first: bool = True,
     ) -> list[dict[str, Any]]:
         """Given a sequence of messages without tool calls/results, format
-        them into the required format for the Gemini API.
-
-        Args:
-            msgs (`list[Msg]`):
-                A list of Msg objects to be formatted.
-            is_first (`bool`, defaults to `True`):
-                Whether this is the first agent message in the conversation.
-                If `True`, the conversation history prompt will be included.
-
-        Returns:
-            `list[dict[str, Any]]`:
-                A list of dictionaries formatted for the Gemini API.
-        """
+        them into the required format for the Gemini API."""
 
         if is_first:
             conversation_history_prompt = self.conversation_history_prompt
         else:
             conversation_history_prompt = ""
 
-        # Format into Gemini API required format
-        formatted_msgs: list = []
+        formatted_msgs: list[dict] = []
+        conversation_parts: list[dict] = []
+        accumulated_text: list[str] = []
 
-        # Collect the multimodal files
-        conversation_parts: list = []
-        accumulated_text = []
         for msg in msgs:
             for block in msg.get_content_blocks():
-                if block["type"] == "text":
-                    accumulated_text.append(f"{msg.name}: {block['text']}")
+                if isinstance(block, TextBlock):
+                    accumulated_text.append(f"{msg.name}: {block.text}")
 
-                elif block["type"] in ["image", "video", "audio"]:
-                    # handle the accumulated text as a single part if exists
+                elif isinstance(block, DataBlock):
+                    # Flush accumulated text first
                     if accumulated_text:
                         conversation_parts.append(
-                            {
-                                "text": "\n".join(accumulated_text),
-                            },
+                            {"text": "\n".join(accumulated_text)},
                         )
-                        accumulated_text.clear()
+                        accumulated_text = []
 
-                    # handle the multimodal data
-                    conversation_parts.append(
-                        _format_gemini_media_block(
-                            block,  # type: ignore[arg-type]
-                        ),
-                    )
+                    formatted = self._format_gemini_data_block(block)
+                    if formatted:
+                        conversation_parts.append(formatted)
 
         if accumulated_text:
             conversation_parts.append(
-                {
-                    "text": "\n".join(accumulated_text),
-                },
+                {"text": "\n".join(accumulated_text)},
             )
 
         # Add prompt and <history></history> tags around conversation history
@@ -480,23 +355,19 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
             if conversation_parts[0].get("text"):
                 conversation_parts[0]["text"] = (
                     conversation_history_prompt
-                    + "<history>"
+                    + "<history>\n"
                     + conversation_parts[0]["text"]
                 )
-
             else:
                 conversation_parts.insert(
                     0,
-                    {"text": conversation_history_prompt + "<history>"},
+                    {"text": conversation_history_prompt + "<history>\n"},
                 )
 
             if conversation_parts[-1].get("text"):
                 conversation_parts[-1]["text"] += "\n</history>"
-
             else:
-                conversation_parts.append(
-                    {"text": "</history>"},
-                )
+                conversation_parts.append({"text": "</history>"})
 
             formatted_msgs.append(
                 {
@@ -506,3 +377,15 @@ class GeminiMultiAgentFormatter(TruncatedFormatterBase):
             )
 
         return formatted_msgs
+
+    @staticmethod
+    async def _format_system_message(msg: Msg) -> dict[str, Any]:
+        """Format system message for the Gemini API."""
+        return {
+            "role": "user",
+            "parts": [
+                {
+                    "text": msg.get_text_content(),
+                },
+            ],
+        }
