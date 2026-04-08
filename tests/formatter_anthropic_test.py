@@ -21,7 +21,10 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up the test environment."""
-        self.image_url = "www.example_image.png"
+        self.image_url = "https://www.example.com/image.png"
+        self.image_path = "./image.png"
+        with open(self.image_path, "wb") as f:
+            f.write(b"fake image content")
 
         self.msgs_system = [
             Msg(
@@ -153,7 +156,7 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
                         "type": "image",
                         "source": {
                             "type": "url",
-                            "url": "www.example_image.png",
+                            "url": "https://www.example.com/image.png",
                         },
                     },
                 ],
@@ -239,7 +242,7 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
                         "type": "image",
                         "source": {
                             "type": "url",
-                            "url": "www.example_image.png",
+                            "url": "https://www.example.com/image.png",
                         },
                     },
                     {
@@ -366,7 +369,7 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
                         "type": "image",
                         "source": {
                             "type": "url",
-                            "url": "www.example_image.png",
+                            "url": "https://www.example.com/image.png",
                         },
                     },
                     {
@@ -598,4 +601,77 @@ class TestAnthropicChatFormatterFormatter(IsolatedAsyncioTestCase):
         self.assertListEqual(
             res,
             self.ground_truth_multiagent_without_first_conversation[1:],
+        )
+
+    async def test_chat_local_image_to_base64(self) -> None:
+        """Local image URL in user message and tool result should be
+        converted to base64."""
+        formatter = AnthropicChatFormatter()
+        msgs = [
+            Msg(
+                "user",
+                [
+                    TextBlock(type="text", text="Describe the image."),
+                    ImageBlock(
+                        type="image",
+                        source=URLSource(type="url", url=self.image_path),
+                    ),
+                ],
+                "user",
+            ),
+            Msg(
+                "assistant",
+                [
+                    ToolUseBlock(
+                        type="tool_use",
+                        id="tool_1",
+                        name="view_image",
+                        input={"path": "/tmp/img.png"},
+                    ),
+                ],
+                "assistant",
+            ),
+            Msg(
+                "system",
+                [
+                    ToolResultBlock(
+                        type="tool_result",
+                        id="tool_1",
+                        name="view_image",
+                        output=[
+                            ImageBlock(
+                                type="image",
+                                source=URLSource(
+                                    type="url",
+                                    url=self.image_path,
+                                ),
+                            ),
+                            TextBlock(type="text", text="Image loaded"),
+                        ],
+                    ),
+                ],
+                "system",
+            ),
+        ]
+        res = await formatter.format(msgs)
+
+        # User message: local image should be base64
+        user_img = res[0]["content"][1]
+        self.assertEqual(user_img["source"]["type"], "base64")
+        self.assertEqual(user_img["source"]["media_type"], "image/png")
+        self.assertEqual(
+            user_img["source"]["data"],
+            "ZmFrZSBpbWFnZSBjb250ZW50",
+        )
+
+        # Tool result: local image should also be base64
+        tool_result_content = res[2]["content"][0]["content"]
+        img_items = [
+            b for b in tool_result_content if b.get("type") == "image"
+        ]
+        self.assertEqual(len(img_items), 1)
+        self.assertEqual(img_items[0]["source"]["type"], "base64")
+        self.assertEqual(
+            img_items[0]["source"]["data"],
+            "ZmFrZSBpbWFnZSBjb250ZW50",
         )
