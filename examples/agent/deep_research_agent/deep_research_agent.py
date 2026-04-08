@@ -168,8 +168,8 @@ class DeepResearchAgent(ReActAgent):
         self._search_mcp_client = search_mcp_client
         self._mcp_initialized = False
 
-        self.search_function = "tavily-search"
-        self.extract_function = "tavily-extract"
+        self.search_function = "tavily_search"
+        self.extract_function = "tavily_extract"
         self.read_file_function = "view_text_file"
         self.write_file_function = "write_text_file"
         self.summarize_function = "summarize_intermediate_results"
