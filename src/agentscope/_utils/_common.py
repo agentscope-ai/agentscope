@@ -6,14 +6,11 @@ import functools
 import inspect
 import json
 import os
-import tempfile
 import types
-import typing
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Type, Dict
 
-import numpy as np
 import requests
 from docstring_parser import parse
 from json_repair import repair_json
@@ -21,11 +18,6 @@ from pydantic import BaseModel, Field, create_model, ConfigDict
 
 from .._logging import logger
 from ..types import ToolFunction
-
-if typing.TYPE_CHECKING:
-    from mcp.types import Tool
-else:
-    Tool = "mcp.types.Tool"
 
 
 def _json_loads_with_repair(
@@ -67,40 +59,6 @@ def _json_loads_with_repair(
         )
 
     return {}
-
-
-def _parse_streaming_json_dict(
-    json_str: str,
-    last_input: dict | None = None,
-) -> dict:
-    """Parse a streaming JSON dict without regressing on incomplete chunks.
-
-    If the current chunk already forms a valid JSON dict, prefer it directly.
-    Otherwise, fall back to repaired JSON and keep the previous parsed value
-    only when repair would shrink the intermediate structure.
-    """
-    json_str = json_str or "{}"
-    try:
-        result = json.loads(json_str)
-        if isinstance(result, dict):
-            return result
-    except Exception:
-        pass
-
-    repaired_input = _json_loads_with_repair(json_str)
-    last_input = last_input or {}
-    if len(json.dumps(last_input)) > len(json.dumps(repaired_input)):
-        return last_input
-    return repaired_input
-
-
-def _is_accessible_local_file(url: str) -> bool:
-    """Check if the given URL is a local URL."""
-    # First identify if it's an uri with 'file://' schema,
-    if url.startswith("file://"):
-        local_path = url.removeprefix("file://")
-        return os.path.isfile(local_path)
-    return os.path.isfile(url)
 
 
 def _get_timestamp(add_random_suffix: bool = False) -> str:
@@ -187,53 +145,6 @@ def _get_bytes_from_web_url(
     raise RuntimeError(
         f"Failed to fetch bytes from URL `{url}` after {max_retries} retries.",
     )
-
-
-def _save_base64_data(
-    media_type: str,
-    base64_data: str,
-) -> str:
-    """Save the base64 data to a temp file and return the file path. The
-    extension is guessed from the MIME type.
-
-    Args:
-        media_type (`str`):
-            The MIME type of the data, e.g. "image/png", "audio/mpeg".
-        base64_data (`str`):
-            The base64 data to be saved.
-    """
-    extension = "." + media_type.split("/")[-1]
-
-    with tempfile.NamedTemporaryFile(
-        suffix=extension,
-        delete=False,
-    ) as temp_file:
-        decoded_data = base64.b64decode(base64_data)
-        temp_file.write(decoded_data)
-        return temp_file.name
-
-
-def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict[str, Any]:
-    """Extract JSON schema from MCP tool."""
-
-    return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": {
-                "type": "object",
-                "properties": tool.inputSchema.get(
-                    "properties",
-                    {},
-                ),
-                "required": tool.inputSchema.get(
-                    "required",
-                    [],
-                ),
-            },
-        },
-    }
 
 
 def _remove_title_field(schema: dict) -> None:
@@ -453,50 +364,3 @@ def _parse_tool_function(
         func_json_schema["function"]["description"] = func_description
 
     return func_json_schema
-
-
-def _resample_pcm_delta(
-    pcm_base64: str,
-    sample_rate: int,
-    target_rate: int,
-) -> str:
-    """Resampling the input pcm base64 data into the target rate.
-
-    Args:
-        pcm_base64 (`str`):
-            The input base64 audio data in pcm format.
-        sample_rate (`int`):
-            The sampling rate of the input data.
-        target_rate (`int`):
-            The target rate of the input data.
-
-    Returns:
-        `str`:
-            The resampling base64 audio data in the required sampling
-            rate.
-    """
-    pcm_data = base64.b64decode(pcm_base64)
-
-    # Into numpy array first
-    audio_array = np.frombuffer(pcm_data, dtype=np.int16)
-
-    # return directly if the same
-    if sample_rate == target_rate:
-        return pcm_base64
-
-    # compute the number of samples
-    num_samples = int(len(audio_array) * target_rate / sample_rate)
-
-    from scipy import signal
-
-    # Use scipy to resample
-    resampled_audio = signal.resample(audio_array, num_samples)
-
-    # Turn it back into bytes
-    resampled_audio = np.clip(resampled_audio, -32768, 32767).astype(np.int16)
-
-    # into base64
-    resampled_bytes = resampled_audio.tobytes()
-    resampled_base64 = base64.b64encode(resampled_bytes).decode("utf-8")
-
-    return resampled_base64

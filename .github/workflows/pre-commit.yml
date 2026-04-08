@@ -11,13 +11,13 @@ jobs:
         os: [ubuntu-latest]
     env:
       OS: ${{ matrix.os }}
-      PYTHON: '3.10'
+      PYTHON: '3.11'
     steps:
     - uses: actions/checkout@master
     - name: Install uv
       uses: astral-sh/setup-uv@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'
     - name: Install AgentScope
       run: |
         uv pip install -q -e .[dev]
