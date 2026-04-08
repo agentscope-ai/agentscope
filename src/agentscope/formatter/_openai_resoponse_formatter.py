@@ -1,0 +1,454 @@
+# -*- coding: utf-8 -*-
+# pylint: disable=too-many-branches, too-many-nested-blocks
+"""The OpenAI response formatter for agentscope."""
+import json
+from typing import Any
+
+from ._openai_formatter import _to_openai_image_url, _to_openai_audio_data
+from ._truncated_formatter_base import TruncatedFormatterBase
+from .._logging import logger
+from ..message import (
+    Msg,
+    TextBlock,
+    ImageBlock,
+    AudioBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+)
+from ..token import TokenCounterBase
+
+
+def _format_openai_response_image_block(
+    image_block: ImageBlock,
+) -> dict[str, Any]:
+    """Format an image block for OpenAI response API.
+
+    Args:
+        image_block (`ImageBlock`):
+            The image block to format.
+
+    Returns:
+        `dict[str, Any]`:
+            A dictionary with "type" and "image_url" keys in OpenAI
+            response format.
+
+    Raises:
+        `ValueError`:
+            If the source type is not supported.
+    """
+    source = image_block["source"]
+    if source["type"] == "url":
+        url = _to_openai_image_url(source["url"])
+    elif source["type"] == "base64":
+        data = source["data"]
+        media_type = source["media_type"]
+        url = f"data:{media_type};base64,{data}"
+    else:
+        raise ValueError(
+            f"Unsupported image source type: {source['type']}",
+        )
+
+    return {
+        "type": "input_image",
+        "image_url": url,
+    }
+
+
+class OpenAIResponseChatFormatter(TruncatedFormatterBase):
+    """The OpenAI response formatter class for chatbot scenario, where only
+    a user and an agent are involved. We use the `name` field in OpenAI
+    response API to identify different entities in the conversation.
+    """
+
+    support_tools_api: bool = True
+    """Whether support tools API"""
+
+    support_multiagent: bool = True
+    """Whether support multi-agent conversation"""
+
+    support_vision: bool = True
+    """Whether support vision models"""
+
+    supported_blocks: list[type] = [
+        TextBlock,
+        ImageBlock,
+        AudioBlock,
+        ToolUseBlock,
+        ToolResultBlock,
+    ]
+    """Supported message blocks for OpenAI response API"""
+
+    def __init__(
+        self,
+        promote_tool_result_images: bool = False,
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize the OpenAI response chat formatter.
+
+        Args:
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
+        """
+        super().__init__(token_counter=token_counter, max_tokens=max_tokens)
+        self.promote_tool_result_images = promote_tool_result_images
+
+    async def _format(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Format message objects into OpenAI response API required format.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of Msg objects to format.
+
+        Returns:
+            `list[dict[str, Any]]`:
+                A list of dictionaries, where each dictionary has "name",
+                "role", and "content" keys.
+        """
+        self.assert_list_of_msgs(msgs)
+
+        messages: list[dict] = []
+        i = 0
+        while i < len(msgs):
+            msg = msgs[i]
+            content_blocks = []
+            tool_calls = []
+
+            for block in msg.get_content_blocks():
+                typ = block.get("type")
+                if typ == "text":
+                    content_blocks.append(
+                        {
+                            "type": "input_text",
+                            "text": block.get("text"),
+                        },
+                    )
+
+                elif typ == "tool_use":
+                    tool_calls.append(
+                        {
+                            "id": block.get("id"),
+                            "type": "function",
+                            "function": {
+                                "name": block.get("name"),
+                                "arguments": json.dumps(
+                                    block.get("input", {}),
+                                    ensure_ascii=False,
+                                ),
+                            },
+                        },
+                    )
+
+                elif typ == "tool_result":
+                    (
+                        textual_output,
+                        multimodal_data,
+                    ) = self.convert_tool_result_to_string(block["output"])
+
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "tool_call_id": block.get("id"),
+                            "content": textual_output,
+                            "name": block.get("name"),
+                        },
+                    )
+
+                    # Then, handle the multimodal data if any
+                    promoted_content: list = []
+                    for url, multimodal_block in multimodal_data:
+                        if (
+                            multimodal_block["type"] == "image"
+                            and self.promote_tool_result_images
+                        ):
+                            promoted_content.extend(
+                                [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            f"\n- The image from " f"'{url}': "
+                                        ),
+                                    },
+                                    {
+                                        "type": "input_image",
+                                        "image_url": (
+                                            _to_openai_image_url(
+                                                url,
+                                            )
+                                        ),
+                                    },
+                                ],
+                            )
+
+                    if promoted_content:
+                        messages.append(
+                            {
+                                "role": "user",
+                                "name": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "<system-info>The following"
+                                            " are the image contents "
+                                            "from the tool result of "
+                                            f"'{block['name']}':"
+                                        ),
+                                    },
+                                    *promoted_content,
+                                    {
+                                        "type": "input_text",
+                                        "text": "</system-info>",
+                                    },
+                                ],
+                            },
+                        )
+
+                elif typ == "image":
+                    content_blocks.append(
+                        _format_openai_response_image_block(
+                            block,  # type: ignore[arg-type]
+                        ),
+                    )
+
+                elif typ == "audio":
+                    # Filter out audio content when the multimodal model
+                    # outputs both text and audio, to prevent errors in
+                    # subsequent model calls
+                    if msg.role == "assistant":
+                        continue
+                    input_audio = _to_openai_audio_data(
+                        block["source"],
+                    )
+                    content_blocks.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": input_audio,
+                        },
+                    )
+
+                else:
+                    logger.warning(
+                        "Unsupported block type %s in the message, skipped.",
+                        typ,
+                    )
+
+            msg_openai_response = {
+                "role": msg.role,
+                "name": msg.name,
+                "content": content_blocks,
+            }
+
+            if tool_calls:
+                msg_openai_response["tool_calls"] = tool_calls
+
+            # When both content and tool_calls are None, skipped
+            if msg_openai_response["content"] or msg_openai_response.get(
+                "tool_calls",
+            ):
+                messages.append(msg_openai_response)
+
+            # Move to next message
+            i += 1
+
+        return messages
+
+
+class OpenAIResponseMultiAgentFormatter(TruncatedFormatterBase):
+    """
+    OpenAI response formatter for multi-agent conversations, where more than
+    a user and an agent are involved.
+
+    .. tip:: This formatter is compatible with OpenAI response API and
+    OpenAI-response-compatible services like vLLM, Azure OpenAI, and others.
+    """
+
+    support_tools_api: bool = True
+    """Whether support tools API"""
+
+    support_multiagent: bool = True
+    """Whether support multi-agent conversation"""
+
+    support_vision: bool = True
+    """Whether support vision models"""
+
+    supported_blocks: list[type] = [
+        TextBlock,
+        ImageBlock,
+        AudioBlock,
+        ToolUseBlock,
+        ToolResultBlock,
+    ]
+    """Supported message blocks for OpenAI response API"""
+
+    def __init__(
+        self,
+        conversation_history_prompt: str = (
+            "# Conversation History\n"
+            "The content between <history></history> tags contains "
+            "your conversation history\n"
+        ),
+        promote_tool_result_images: bool = False,
+        token_counter: TokenCounterBase | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        """Initialize the OpenAI response multi-agent formatter.
+
+        Args:
+            conversation_history_prompt (`str`):
+                The prompt to use for the conversation history section.
+            promote_tool_result_images (`bool`, defaults to `False`):
+                Whether to promote images from tool results to user messages.
+                Most LLM APIs don't support images in tool result blocks, but
+                do support them in user message blocks. When `True`, images are
+                extracted and appended as a separate user message with
+                explanatory text indicating their source.
+            token_counter (`TokenCounterBase | None`, optional):
+                A token counter instance used to count tokens in the messages.
+                If not provided, the formatter will format the messages
+                without considering token limits.
+            max_tokens (`int | None`, optional):
+                The maximum number of tokens allowed in the formatted
+                messages. If not provided, the formatter will not truncate
+                the messages.
+        """
+        super().__init__(token_counter=token_counter, max_tokens=max_tokens)
+        self.conversation_history_prompt = conversation_history_prompt
+        self.promote_tool_result_images = promote_tool_result_images
+
+    async def _format_system_message(
+        self,
+        msg: Msg,
+    ) -> dict[str, Any]:
+        """Format system message using ``input_text`` block type."""
+        return {
+            "role": "system",
+            "content": [
+                {"type": "input_text", "text": block["text"]}
+                for block in msg.get_content_blocks("text")
+            ],
+        }
+
+    async def _format_tool_sequence(
+        self,
+        msgs: list[Msg],
+    ) -> list[dict[str, Any]]:
+        """Given a sequence of tool call/result messages, format them into
+        the required format for the OpenAI response API."""
+        return await OpenAIResponseChatFormatter(
+            promote_tool_result_images=self.promote_tool_result_images,
+        ).format(msgs)
+
+    async def _format_agent_message(
+        self,
+        msgs: list[Msg],
+        is_first: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Given a sequence of messages without tool calls/results, format
+        them into the required format for the OpenAI response API."""
+
+        if is_first:
+            conversation_history_prompt = self.conversation_history_prompt
+        else:
+            conversation_history_prompt = ""
+
+        # Format into required OpenAI response format
+        formatted_msgs: list[dict] = []
+
+        conversation_blocks: list = []
+        accumulated_text = []
+        images = []
+        audios = []
+
+        for msg in msgs:
+            for block in msg.get_content_blocks():
+                if block["type"] == "text":
+                    accumulated_text.append(f"{msg.name}: {block['text']}")
+
+                elif block["type"] == "image":
+                    images.append(_format_openai_response_image_block(block))
+                elif block["type"] == "audio":
+                    # Filter out audio content when the multimodal model
+                    # outputs both text and audio, to prevent errors in
+                    # subsequent model calls
+                    if msg.role == "assistant":
+                        continue
+                    input_audio = _to_openai_audio_data(
+                        block["source"],
+                    )
+                    audios.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": input_audio,
+                        },
+                    )
+
+        if accumulated_text:
+            conversation_blocks.append(
+                {"text": "\n".join(accumulated_text)},
+            )
+
+        if conversation_blocks:
+            if conversation_blocks[0].get("text"):
+                conversation_blocks[0]["text"] = (
+                    conversation_history_prompt
+                    + "<history>\n"
+                    + conversation_blocks[0]["text"]
+                )
+
+            else:
+                conversation_blocks.insert(
+                    0,
+                    {
+                        "text": conversation_history_prompt + "<history>\n",
+                    },
+                )
+
+            if conversation_blocks[-1].get("text"):
+                conversation_blocks[-1]["text"] += "\n</history>"
+
+            else:
+                conversation_blocks.append({"text": "</history>"})
+
+        conversation_blocks_text = "\n".join(
+            conversation_block.get("text", "")
+            for conversation_block in conversation_blocks
+        )
+
+        content_list: list[dict[str, Any]] = []
+        if conversation_blocks_text:
+            content_list.append(
+                {
+                    "type": "input_text",
+                    "text": conversation_blocks_text,
+                },
+            )
+        if images:
+            content_list.extend(images)
+        if audios:
+            content_list.extend(audios)
+
+        user_message = {
+            "role": "user",
+            "content": content_list,
+        }
+
+        if content_list:
+            formatted_msgs.append(user_message)
+
+        return formatted_msgs
