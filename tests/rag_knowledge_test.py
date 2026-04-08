@@ -107,3 +107,71 @@ class RAGKnowledgeTest(IsolatedAsyncioTestCase):
             res[0].score // 0.0001,
             9974,
         )
+
+    async def test_simple_knowledge_with_filter(self) -> None:
+        """Test the SimpleKnowledge implementation."""
+
+        knowledge = SimpleKnowledge(
+            embedding_model=TestTextEmbedding(),
+            embedding_store=QdrantStore(
+                location=":memory:",
+                collection_name="test",
+                dimensions=3,
+            ),
+        )
+
+        await knowledge.add_documents(
+            [
+                Document(
+                    embedding=[0.1, 0.2, 0.3],
+                    metadata=DocMetadata(
+                        content=TextBlock(
+                            type="text",
+                            text="This is an apple.",
+                        ),
+                        doc_id="doc1",
+                        chunk_id=1,
+                        total_chunks=2,
+                        category="tutorial",
+                    ),
+                ),
+                Document(
+                    embedding=[0.9, 0.1, 0.4],
+                    metadata=DocMetadata(
+                        content=TextBlock(
+                            type="text",
+                            text="This is a banana.",
+                        ),
+                        doc_id="doc1",
+                        chunk_id=2,
+                        total_chunks=2,
+                    ),
+                ),
+            ],
+        )
+
+        res = await knowledge.retrieve(
+            query="apple",
+            limit=3,
+            score_threshold=0.7,
+            search_filter={"category": "tutorial"},
+        )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(
+            res[0].metadata.content["text"],
+            "This is an apple.",
+        )
+        self.assertEqual(
+            res[0].score,
+            0.9974149072579597,
+        )
+
+        res = await knowledge.retrieve(
+            query="apple",
+            limit=3,
+            score_threshold=0.7,
+            search_filter={"category": "non-tutorial"},
+        )
+
+        self.assertEqual(len(res), 0)
