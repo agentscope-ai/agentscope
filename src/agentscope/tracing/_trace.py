@@ -15,7 +15,6 @@ from typing import (
 
 import aioitertools
 
-from .. import _config
 from ..embedding import EmbeddingModelBase, EmbeddingResponse
 from .._logging import logger
 from ..message import Msg, ToolUseBlock
@@ -74,7 +73,7 @@ def _check_tracing_enabled() -> bool:
      tracer is initialized. Leaving this function here as a temporary
      solution.
     """
-    return _config.trace_enabled
+    return True
 
 
 def _set_span_success_status(span: Span) -> None:
@@ -389,16 +388,17 @@ def trace_reply(
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
 
-        from ..agent import AgentBase
+        # TODO: fix here after refactor
+        # from ..agent import AgentBase
 
-        if not isinstance(self, AgentBase):
-            logger.warning(
-                "Skipping tracing for %s as the first argument"
-                "is not an instance of AgentBase, but %s",
-                func.__name__,
-                type(self),
-            )
-            return await func(self, *args, **kwargs)
+        # if not isinstance(self, AgentBase):
+        #     logger.warning(
+        #         "Skipping tracing for %s as the first argument"
+        #         "is not an instance of AgentBase, but %s",
+        #         func.__name__,
+        #         type(self),
+        #     )
+        #     return await func(self, *args, **kwargs)
 
         tracer = _get_tracer()
 

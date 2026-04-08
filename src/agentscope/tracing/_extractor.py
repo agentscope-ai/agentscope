@@ -3,7 +3,6 @@
 import inspect
 from typing import Any, Dict, Tuple, TYPE_CHECKING
 
-from .. import _config
 from ..embedding import EmbeddingModelBase
 from ..message import Msg, ToolUseBlock
 from ..model import ChatModelBase
@@ -58,7 +57,8 @@ def _get_common_attributes() -> Dict[str, str]:
     """
     return {
         SpanAttributes.GEN_AI_CONVERSATION_ID: _serialize_to_str(
-            _config.run_id,
+            # TODO: an id here
+            "conversation_id_placeholder",
         ),
     }
 
