@@ -6,6 +6,7 @@ from ._working_memory import (
     InMemoryMemory,
     RedisMemory,
     AsyncSQLAlchemyMemory,
+    TablestoreMemory,
 )
 from ._long_term_memory import (
     LongTermMemoryBase,
@@ -22,6 +23,7 @@ __all__ = [
     "InMemoryMemory",
     "RedisMemory",
     "AsyncSQLAlchemyMemory",
+    "TablestoreMemory",
     # Long-term memory
     "LongTermMemoryBase",
     "Mem0LongTermMemory",

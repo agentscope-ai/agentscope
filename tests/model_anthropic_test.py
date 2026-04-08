@@ -326,6 +326,78 @@ class TestAnthropicChatModel(IsolatedAsyncioTestCase):
             ]
             self.assertEqual(final_response.content, expected_content)
 
+    async def test_streaming_tool_input_prefers_valid_final_json(self) -> None:
+        """Test streaming tool input keeps the final valid JSON dict."""
+        with patch("anthropic.AsyncAnthropic") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = AnthropicChatModel(
+                model_name="claude-3-sonnet-20240229",
+                api_key="test_key",
+                stream=True,
+            )
+            model.client = mock_client
+
+            events = [
+                AnthropicEventMock(
+                    "message_start",
+                    message=Mock(usage=Mock(input_tokens=10, output_tokens=0)),
+                ),
+                AnthropicEventMock(
+                    "content_block_start",
+                    index=0,
+                    content_block=AnthropicContentBlockMock(
+                        "tool_use",
+                        id="tool_123",
+                        name="score",
+                    ),
+                ),
+                AnthropicEventMock(
+                    "content_block_delta",
+                    index=0,
+                    delta=Mock(
+                        type="input_json_delta",
+                        partial_json='{"points": ',
+                    ),
+                ),
+                AnthropicEventMock(
+                    "content_block_delta",
+                    index=0,
+                    delta=Mock(
+                        type="input_json_delta",
+                        partial_json="1}",
+                    ),
+                ),
+                AnthropicEventMock(
+                    "message_delta",
+                    usage=Mock(output_tokens=5),
+                ),
+            ]
+
+            async def mock_stream() -> AsyncGenerator:
+                for event in events:
+                    yield event
+
+            mock_client.messages.create = AsyncMock(return_value=mock_stream())
+            result = await model([{"role": "user", "content": "Score it"}])
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            final_response = responses[-1]
+            expected_content = [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool_123",
+                    name="score",
+                    input={"points": 1},
+                    raw_input='{"points": 1}',
+                ),
+            ]
+            self.assertEqual(final_response.content, expected_content)
+
     async def test_generate_kwargs_integration(self) -> None:
         """Test integration of generate_kwargs."""
         with patch("anthropic.AsyncAnthropic") as mock_client_class:

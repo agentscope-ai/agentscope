@@ -470,10 +470,48 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
         self,
         msg: Msg | list[Msg] | None,
     ) -> None:
-        """Broadcast the message to all subscribers."""
+        """Broadcast the message to all subscribers.
+
+        Thinking blocks are stripped before broadcasting, since they represent
+        the agent's internal reasoning and should not be visible to others.
+        """
+        if msg is None:
+            return
+
+        broadcast_msg = self._strip_thinking_blocks(msg)
+
         for subscribers in self._subscribers.values():
             for subscriber in subscribers:
-                await subscriber.observe(msg)
+                await subscriber.observe(broadcast_msg)
+
+    @staticmethod
+    def _strip_thinking_blocks(msg: Msg | list[Msg]) -> Msg | list[Msg]:
+        """Remove thinking blocks from message(s) before sharing with other
+        agents."""
+        if isinstance(msg, list):
+            return [AgentBase._strip_thinking_blocks_single(m) for m in msg]
+        return AgentBase._strip_thinking_blocks_single(msg)
+
+    @staticmethod
+    def _strip_thinking_blocks_single(msg: Msg) -> Msg:
+        """Remove thinking blocks from a single message."""
+        if not isinstance(msg.content, list):
+            return msg
+
+        filtered = [b for b in msg.content if b.get("type") != "thinking"]
+        if len(filtered) == len(msg.content):
+            return msg
+
+        new_msg = Msg(
+            name=msg.name,
+            content=filtered,
+            role=msg.role,
+            metadata=msg.metadata,
+            timestamp=msg.timestamp,
+            invocation_id=msg.invocation_id,
+        )
+        new_msg.id = msg.id
+        return new_msg
 
     async def handle_interrupt(
         self,

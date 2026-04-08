@@ -24,6 +24,7 @@ dependencies = [
     "anthropic",
     "dashscope",
     "docstring_parser",
+    "filetype",
     "json5",
     "json_repair",
     "mcp>=1.13",
@@ -72,6 +73,10 @@ tokens = [
 
 # ------------ Memory ------------
 redis_memory = ["redis"]
+tablestore_memory = [
+    "tablestore-for-agent-memory",
+    "tablestore",
+]
 
 mem0ai = [
     "mem0ai<=1.0.3",
@@ -82,6 +87,7 @@ memory = [
     "agentscope[redis_memory]",
     "agentscope[mem0ai]",
     "agentscope[reme]",
+    "agentscope[tablestore_memory]",
 ]
 
 # ------------ RAG ------------
@@ -118,7 +124,7 @@ readers = [
 # The qdrant-client >= 1.16.0 has conflicts with pymilvus, so we fix
 # the version to 1.15.1 here.
 qdrant = ["qdrant-client==1.15.1"]
-milvus = ["pymilvus[milvus_lite]"]
+milvus = ["pymilvus[milvus_lite]==2.6.2"]
 ali_mysql = ["mysql-connector-python"]
 mongodb = ["pymongo"]
 oceanbase = ["pyobvector>=0.2.0,<0.3.0"]
@@ -138,6 +144,20 @@ rag = [
 # ------------ Evaluation ------------
 evaluate = ["ray"]
 
+# ------------ Tuner ------------
+tuner = [
+    "dspy>=3.1.0",
+    "datasets>=4.0.0",
+    "litellm[proxy]>=1.75.3",
+]
+
+tuner-gpu = [
+    "trinity-rft>=0.5.0",
+    "dspy>=3.1.0",
+    "datasets>=4.0.0",
+    "litellm[proxy]>=1.75.3"
+]
+
 # ------------ Full ------------
 full = [
     "agentscope[a2a]",
@@ -156,6 +176,7 @@ dev = [
     # Development tools
     "pre-commit",
     "pytest",
+    "pytest-asyncio",
     "pytest-forked",
     "sphinx-gallery",
     "furo",
@@ -168,6 +189,8 @@ dev = [
     "greenlet",
     # For openjudge
     "py-openjudge",
+    # For tuner
+    "dspy",
 ]
 
 [project.urls]

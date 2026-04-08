@@ -193,7 +193,7 @@ print(f"Judge reward: {judge_output.reward}")
 # Below is an example of configuring and starting the tuning process:
 #
 # .. note::
-#    This example is for demonstration only. For a complete runnable example, see `Tune ReActAgent <https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent>`_
+#    This example is for demonstration only. For a complete runnable example, see `Tune ReActAgent <https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/model_tuning>`_
 #
 # .. code-block:: python
 #

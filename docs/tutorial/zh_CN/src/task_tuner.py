@@ -193,7 +193,7 @@ print(f"评判奖励: {judge_output.reward}")
 # 下面是调优流程的配置与启动示例：
 #
 # .. note::
-#    此示例仅供演示。完整可运行示例请参考 `Tune ReActAgent <https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent>`_
+#    此示例仅供演示。完整可运行示例请参考 `Tune ReActAgent <https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/model_tuning>`_
 #
 # .. code-block:: python
 #
