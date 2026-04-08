@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The SQLAlchemy database storage module, which supports storing messages in
 a SQL database using SQLAlchemy ORM (e.g., SQLite, PostgreSQL, MySQL)."""
-from typing import Any
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 from sqlalchemy import (
     Column,
@@ -166,6 +168,20 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
         # Flag to track if tables and records have been initialized
         self._initialized = False
+
+        # Lock to serialize concurrent write operations on the shared session
+        self._lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _write_session(self) -> AsyncIterator[None]:
+        """Acquire the write lock and auto-commit/rollback the session."""
+        async with self._lock:
+            try:
+                yield
+                await self.session.commit()
+            except Exception:
+                await self.session.rollback()
+                raise
 
     def _make_message_id(self, msg_id: str) -> str:
         """Generate a composite primary key for a message.
@@ -412,81 +428,81 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 f"but got {type(marks)}.",
             )
 
-        # Create table if not exists
-        await self._create_table()
+        async with self._write_session():
+            # Create table if not exists
+            await self._create_table()
 
-        # If skip_duplicated is True, filter out existing messages
-        messages_to_add = memories
-        if skip_duplicated:
-            existing_msg_ids = set()
-            result = await self.session.execute(
-                select(self.MessageTable.id).filter(
-                    self.MessageTable.id.in_(
-                        [self._make_message_id(m.id) for m in memories],
+            # If skip_duplicated is True, filter out existing messages
+            messages_to_add = memories
+            if skip_duplicated:
+                existing_msg_ids = set()
+                result = await self.session.execute(
+                    select(self.MessageTable.id).filter(
+                        self.MessageTable.id.in_(
+                            [self._make_message_id(m.id) for m in memories],
+                        ),
                     ),
-                ),
-            )
-            existing_msg_ids = {row[0] for row in result.fetchall()}
+                )
+                existing_msg_ids = {row[0] for row in result.fetchall()}
 
-            messages_to_add = [
-                m
-                for m in memories
-                if self._make_message_id(m.id) not in existing_msg_ids
-            ]
+                messages_to_add = [
+                    m
+                    for m in memories
+                    if self._make_message_id(m.id) not in existing_msg_ids
+                ]
 
-            # If all messages are duplicates, return early
-            if not messages_to_add:
-                return
+                # If all messages are duplicates, return early
+                if not messages_to_add:
+                    return
 
-        # Get the starting index once to avoid race conditions
-        start_index = await self._get_next_index()
+            # Get the starting index once to avoid race conditions
+            start_index = await self._get_next_index()
 
-        # Add messages to message table
-        for i, m in enumerate(messages_to_add):
-            message_record = self.MessageTable(
-                id=self._make_message_id(m.id),
-                msg=m.to_dict(),
-                session_id=self.session_id,
-                index=start_index + i,
-            )
-            self.session.add(message_record)
+            # Add messages to message table
+            for i, m in enumerate(messages_to_add):
+                message_record = self.MessageTable(
+                    id=self._make_message_id(m.id),
+                    msg=m.to_dict(),
+                    session_id=self.session_id,
+                    index=start_index + i,
+                )
+                self.session.add(message_record)
 
-        # Create mark records if marks are provided (use bulk insert)
-        if marks:
-            mark_records = [
-                {"msg_id": self._make_message_id(msg.id), "mark": mark}
-                for msg in messages_to_add
-                for mark in marks
-            ]
-            if mark_records:
-                if skip_duplicated:
-                    # Query existing mark combinations to avoid duplicates
-                    result = await self.session.execute(
-                        select(
-                            self.MessageMarkTable.msg_id,
-                            self.MessageMarkTable.mark,
-                        ),
-                    )
-                    existing_marks = {
-                        (row[0], row[1]) for row in result.fetchall()
+            # Create mark records if marks are provided (bulk insert)
+            if marks:
+                mark_records = [
+                    {
+                        "msg_id": self._make_message_id(msg.id),
+                        "mark": mark,
                     }
-
-                    # Filter out existing mark combinations
-                    mark_records = [
-                        r
-                        for r in mark_records
-                        if (r["msg_id"], r["mark"]) not in existing_marks
-                    ]
-
+                    for msg in messages_to_add
+                    for mark in marks
+                ]
                 if mark_records:
-                    await self.session.run_sync(
-                        lambda session: session.bulk_insert_mappings(
-                            self.MessageMarkTable,
-                            mark_records,
-                        ),
-                    )
+                    if skip_duplicated:
+                        result = await self.session.execute(
+                            select(
+                                self.MessageMarkTable.msg_id,
+                                self.MessageMarkTable.mark,
+                            ),
+                        )
+                        existing_marks = {
+                            (row[0], row[1]) for row in result.fetchall()
+                        }
 
-        await self.session.commit()
+                        mark_records = [
+                            r
+                            for r in mark_records
+                            if (r["msg_id"], r["mark"]) not in existing_marks
+                        ]
+
+                    if mark_records:
+                        await self.session.run_sync(
+                            lambda session: session.bulk_insert_mappings(
+                                self.MessageMarkTable,
+                                mark_records,
+                            ),
+                        )
 
     async def _get_next_index(self) -> int:
         """Get the next index for a new message in the current session.
@@ -515,25 +531,24 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
     async def clear(self) -> None:
         """Clear all messages from the storage."""
-        # Delete all marks for messages in this session
-        await self.session.execute(
-            delete(self.MessageMarkTable).where(
-                self.MessageMarkTable.msg_id.in_(
-                    select(self.MessageTable.id).filter(
-                        self.MessageTable.session_id == self.session_id,
+        async with self._write_session():
+            # Delete all marks for messages in this session
+            await self.session.execute(
+                delete(self.MessageMarkTable).where(
+                    self.MessageMarkTable.msg_id.in_(
+                        select(self.MessageTable.id).filter(
+                            self.MessageTable.session_id == self.session_id,
+                        ),
                     ),
                 ),
-            ),
-        )
+            )
 
-        # Then delete all messages
-        await self.session.execute(
-            delete(self.MessageTable).filter(
-                self.MessageTable.session_id == self.session_id,
-            ),
-        )
-
-        await self.session.commit()
+            # Then delete all messages
+            await self.session.execute(
+                delete(self.MessageTable).filter(
+                    self.MessageTable.session_id == self.session_id,
+                ),
+            )
 
     async def delete_by_mark(
         self,
@@ -553,45 +568,44 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         if isinstance(mark, str):
             mark = [mark]
 
-        # First, find message IDs that have the specified marks
-        query = (
-            select(self.MessageTable.id)
-            .join(
-                self.MessageMarkTable,
-                self.MessageTable.id == self.MessageMarkTable.msg_id,
+        async with self._write_session():
+            # First, find message IDs that have the specified marks
+            query = (
+                select(self.MessageTable.id)
+                .join(
+                    self.MessageMarkTable,
+                    self.MessageTable.id == self.MessageMarkTable.msg_id,
+                )
+                .filter(
+                    self.MessageTable.session_id == self.session_id,
+                    self.MessageMarkTable.mark.in_(mark),
+                )
             )
-            .filter(
-                self.MessageTable.session_id == self.session_id,
-                self.MessageMarkTable.mark.in_(mark),
+
+            result = await self.session.execute(query)
+            msg_ids = [row[0] for row in result.all()]
+
+            if not msg_ids:
+                return 0
+
+            deleted_count = len(msg_ids)
+
+            # Delete marks first
+            await self.session.execute(
+                delete(self.MessageMarkTable).filter(
+                    self.MessageMarkTable.msg_id.in_(msg_ids),
+                ),
             )
-        )
 
-        result = await self.session.execute(query)
-        msg_ids = [row[0] for row in result.all()]
+            # Then delete the messages
+            await self.session.execute(
+                delete(self.MessageTable).filter(
+                    self.MessageTable.session_id == self.session_id,
+                    self.MessageTable.id.in_(msg_ids),
+                ),
+            )
 
-        if not msg_ids:
-            return 0
-
-        # Store the count before deletion
-        deleted_count = len(msg_ids)
-
-        # Delete marks first
-        await self.session.execute(
-            delete(self.MessageMarkTable).filter(
-                self.MessageMarkTable.msg_id.in_(msg_ids),
-            ),
-        )
-
-        # Then delete the messages
-        await self.session.execute(
-            delete(self.MessageTable).filter(
-                self.MessageTable.session_id == self.session_id,
-                self.MessageTable.id.in_(msg_ids),
-            ),
-        )
-
-        await self.session.commit()
-        return deleted_count
+            return deleted_count
 
     async def delete(
         self,
@@ -620,26 +634,25 @@ class AsyncSQLAlchemyMemory(MemoryBase):
         if not composite_ids:
             return 0
 
-        # Store the count before deletion
-        deleted_count = len(composite_ids)
+        async with self._write_session():
+            deleted_count = len(composite_ids)
 
-        # Delete related marks first (explicit cleanup for reliability)
-        await self.session.execute(
-            delete(self.MessageMarkTable).filter(
-                self.MessageMarkTable.msg_id.in_(composite_ids),
-            ),
-        )
+            # Delete related marks first (explicit cleanup for reliability)
+            await self.session.execute(
+                delete(self.MessageMarkTable).filter(
+                    self.MessageMarkTable.msg_id.in_(composite_ids),
+                ),
+            )
 
-        # Then delete the messages
-        await self.session.execute(
-            delete(self.MessageTable).filter(
-                self.MessageTable.session_id == self.session_id,
-                self.MessageTable.id.in_(composite_ids),
-            ),
-        )
+            # Then delete the messages
+            await self.session.execute(
+                delete(self.MessageTable).filter(
+                    self.MessageTable.session_id == self.session_id,
+                    self.MessageTable.id.in_(composite_ids),
+                ),
+            )
 
-        await self.session.commit()
-        return deleted_count
+            return deleted_count
 
     async def update_messages_mark(
         self,
@@ -695,54 +708,51 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 f"but got {type(msg_ids)}.",
             )
 
-        # First obtain the message ids that belong to this session
-        query = select(self.MessageTable).filter(
-            self.MessageTable.session_id == self.session_id,
-        )
-
-        # Filter by msg_ids if provided
-        if msg_ids is not None:
-            # Convert to composite keys
-            composite_ids = [
-                self._make_message_id(msg_id) for msg_id in msg_ids
-            ]
-            query = query.filter(self.MessageTable.id.in_(composite_ids))
-
-        # Filter by old_mark if provided
-        if old_mark is not None:
-            query = query.join(
-                self.MessageMarkTable,
-                self.MessageTable.id == self.MessageMarkTable.msg_id,
-            ).filter(self.MessageMarkTable.mark == old_mark)
-
-        # Obtain the message records
-        result = await self.session.execute(query)
-        msg_ids = [str(_.id) for _ in result.scalars().all()]
-
-        # Return early if no messages found
-        if not msg_ids:
-            return 0
-
-        if new_mark:
-            if old_mark:
-                # Replace old_mark with new_mark
-                return await self._replace_message_mark(
-                    msg_ids=msg_ids,
-                    old_mark=old_mark,
-                    new_mark=new_mark,
-                )
-
-            # Add new_mark to the messages
-            return await self._add_message_mark(
-                msg_ids=msg_ids,
-                mark=new_mark,
+        async with self._write_session():
+            # First obtain the message ids that belong to this session
+            query = select(self.MessageTable).filter(
+                self.MessageTable.session_id == self.session_id,
             )
 
-        # Remove all marks from the messages
-        return await self._remove_message_mark(
-            msg_ids=msg_ids,
-            old_mark=old_mark,
-        )
+            # Filter by msg_ids if provided
+            if msg_ids is not None:
+                composite_ids = [
+                    self._make_message_id(msg_id) for msg_id in msg_ids
+                ]
+                query = query.filter(
+                    self.MessageTable.id.in_(composite_ids),
+                )
+
+            # Filter by old_mark if provided
+            if old_mark is not None:
+                query = query.join(
+                    self.MessageMarkTable,
+                    self.MessageTable.id == self.MessageMarkTable.msg_id,
+                ).filter(self.MessageMarkTable.mark == old_mark)
+
+            # Obtain the message records
+            result = await self.session.execute(query)
+            msg_ids = [str(_.id) for _ in result.scalars().all()]
+
+            if not msg_ids:
+                return 0
+
+            if new_mark:
+                if old_mark:
+                    return await self._replace_message_mark(
+                        msg_ids=msg_ids,
+                        old_mark=old_mark,
+                        new_mark=new_mark,
+                    )
+                return await self._add_message_mark(
+                    msg_ids=msg_ids,
+                    mark=new_mark,
+                )
+
+            return await self._remove_message_mark(
+                msg_ids=msg_ids,
+                old_mark=old_mark,
+            )
 
     async def _replace_message_mark(
         self,
@@ -752,6 +762,8 @@ class AsyncSQLAlchemyMemory(MemoryBase):
     ) -> int:
         """Replace the old mark with the new mark for the given messages by
         updating records in the message_mark table.
+
+        Note: Must be called within ``_write_session()``.
 
         Args:
             msg_ids (`list[str]`):
@@ -765,7 +777,6 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             `int`:
                 The number of messages updated.
         """
-
         await self.session.execute(
             update(self.MessageMarkTable)
             .filter(
@@ -774,12 +785,13 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             )
             .values(mark=new_mark),
         )
-        await self.session.commit()
         return len(msg_ids)
 
     async def _add_message_mark(self, msg_ids: list[str], mark: str) -> int:
         """Mark the messages with the given mark by adding records to the
         message_mark table.
+
+        Note: Must be called within ``_write_session()``.
 
         Args:
             msg_ids (`list[str]`):
@@ -791,7 +803,6 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             `int`:
                 The number of messages marked.
         """
-        # Use bulk insert for better performance
         mark_records = [{"msg_id": msg_id, "mark": mark} for msg_id in msg_ids]
 
         if mark_records:
@@ -802,7 +813,6 @@ class AsyncSQLAlchemyMemory(MemoryBase):
                 ),
             )
 
-        await self.session.commit()
         return len(msg_ids)
 
     async def _remove_message_mark(
@@ -812,6 +822,8 @@ class AsyncSQLAlchemyMemory(MemoryBase):
     ) -> int:
         """Remove marks from the messages by deleting records from the
         message_mark table.
+
+        Note: Must be called within ``_write_session()``.
 
         Args:
             msg_ids (`list[str]`):
@@ -834,16 +846,16 @@ class AsyncSQLAlchemyMemory(MemoryBase):
             )
 
         await self.session.execute(delete_query)
-        await self.session.commit()
         return len(msg_ids)
 
     async def close(self) -> None:
         """Close the database session."""
-        if self._db_session and self._db_session.is_active:
-            await self._db_session.close()
-
-        self._db_session = None
-        self._initialized = False
+        try:
+            if self._db_session and self._db_session.is_active:
+                await self._db_session.close()
+        finally:
+            self._db_session = None
+            self._initialized = False
 
     async def __aenter__(self) -> "AsyncSQLAlchemyMemory":
         """Enter the async context manager.
