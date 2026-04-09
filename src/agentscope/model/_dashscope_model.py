@@ -13,12 +13,13 @@ from typing import (
     List,
 )
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, SecretStr
 from aioitertools import iter as giter
 
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
+from ._utils import ThinkingConfig
 from ..formatter import FormatterBase, DashScopeChatFormatter
 from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
 from ..tracing import trace_llm
@@ -63,12 +64,15 @@ class DashScopeChatModel(ChatModelBase):
     DashScope's diverse model offerings.
     """
 
-    class ThinkingConfig(BaseModel):
-        """The configuration for the thinking process in DashScope API."""
-
-        enable_thinking: bool
-        thinking_budget: int = 2000
-        preserve_thinking: bool = False
+    class DashScope(BaseModel):
+        api_key: SecretStr = Field(
+            title="API Key",
+            description="The DashScope API key",
+        )
+        base_http_api_url: str | None = Field(
+            default=None,
+            title="The Base HTTP API URL",
+        )
 
     def __init__(
         self,
@@ -126,11 +130,11 @@ class DashScopeChatModel(ChatModelBase):
         self.thinking_config = (
             thinking_config
             or DashScopeChatModel.ThinkingConfig(
-                enable_thinking=False,
+                enable=False,
             )
         )
 
-        if self.thinking_config.enable_thinking and not stream:
+        if self.thinking_config.enable and not stream:
             logger.info(
                 "In DashScope API, `stream` must be True when "
                 "`enable_thinking` is True. ",

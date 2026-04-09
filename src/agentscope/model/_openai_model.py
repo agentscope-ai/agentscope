@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
+from ._utils import ThinkingConfig
 from ..formatter import FormatterBase
 from ..message import (
     TextBlock,
@@ -64,12 +65,6 @@ def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
 class OpenAIChatModel(ChatModelBase):
     """The OpenAI chat model class."""
 
-    class ThinkingConfig(BaseModel):
-        """Configuration for reasoning effort levels."""
-
-        enable_thinking: bool
-        reasoning_effect: ReasoningEffort | None = None
-
     def __init__(
         self,
         model_name: str,
@@ -116,7 +111,7 @@ class OpenAIChatModel(ChatModelBase):
         """
         self.thinking_config = (
             thinking_config
-            or OpenAIChatModel.ThinkingConfig(enable_thinking=False)
+            or OpenAIChatModel.ThinkingConfig(enable=False)
         )
 
         super().__init__(
@@ -204,7 +199,7 @@ class OpenAIChatModel(ChatModelBase):
             **kwargs,
         }
         if (
-            self.thinking_config.enable_thinking
+            self.thinking_config.enable
             and self.thinking_config.reasoning_effect
         ):
             kwargs["reasoning_effort"] = self.thinking_config.reasoning_effect

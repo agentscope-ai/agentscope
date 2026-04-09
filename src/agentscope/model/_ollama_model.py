@@ -11,6 +11,7 @@ from typing import (
     Literal,
 )
 
+from google.genai.types import ThinkingConfig
 from pydantic import BaseModel
 
 from . import ChatResponse
@@ -30,11 +31,6 @@ else:
 
 class OllamaChatModel(ChatModelBase):
     """The Ollama chat model class in agentscope."""
-
-    class ThinkingConfig(BaseModel):
-        """Configuration for thinking in Ollama chat models."""
-
-        enable_thinking: bool
 
     def __init__(
         self,
@@ -153,7 +149,7 @@ class OllamaChatModel(ChatModelBase):
         }
 
         if self.thinking_config and "think" not in kwargs:
-            kwargs["think"] = self.thinking_config.enable_thinking
+            kwargs["think"] = self.thinking_config.enable
 
         if tools:
             kwargs["tools"] = self._format_tools_json_schemas(tools)

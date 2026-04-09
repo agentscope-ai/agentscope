@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The Anthropic API model classes."""
+import json
 from datetime import datetime
 from typing import (
     Any,
@@ -15,8 +16,9 @@ from pydantic import BaseModel
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
+from ._utils import ThinkingConfig
 from ..formatter import FormatterBase, AnthropicChatFormatter
-from ..message import TextBlock, ToolCallBlock, ThinkingBlock
+from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject, ToolChoice
 
@@ -31,12 +33,6 @@ else:
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic model wrapper for AgentScope."""
 
-    class ThinkingConfig(BaseModel):
-        """Configuration for Claude's internal reasoning process."""
-
-        enable_thinking: bool
-        budget_tokens: int = 1024
-
     def __init__(
         self,
         model_name: str,
@@ -47,7 +43,6 @@ class AnthropicChatModel(ChatModelBase):
         fallback_model_name: str | None = None,
         formatter: FormatterBase | None = None,
         thinking_config: ThinkingConfig | None = None,
-        stream_tool_parsing: bool = True,
         client_kwargs: dict[str, JSONSerializableObject] | None = None,
         generate_kwargs: dict[str, JSONSerializableObject] | None = None,
     ) -> None:
@@ -70,12 +65,6 @@ class AnthropicChatModel(ChatModelBase):
                 Formatter for message preprocessing.
             thinking_config (`ThinkingConfig | None`, default `None`):
                 Configuration for Claude's internal reasoning process.
-            stream_tool_parsing (`bool`, default to `True`):
-                Whether to parse incomplete tool use JSON during streaming
-                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
-                is repaired to valid dicts ({"a": "x"}) in real-time for
-                immediate tool function input. Otherwise, the input field
-                remains {} until the final chunk arrives.
             client_kwargs (`dict[str, JSONSerializableObject] | None`, \
              optional):
                 The extra keyword arguments to initialize the Anthropic client.
@@ -114,10 +103,10 @@ class AnthropicChatModel(ChatModelBase):
     async def _call_api(
         self,
         model_name: str,
-        messages: list[dict[str, Any]],
+        messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        **generate_kwargs: Any,
+        tool_choice: ToolChoice | None = None,
+        **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
         arguments.
@@ -126,14 +115,12 @@ class AnthropicChatModel(ChatModelBase):
             model_name (`str`):
                 The model name to use for this call.
             messages (`list[dict]`):
-                A list of dictionaries, where `role` and `content` fields are
-                required, and `name` field is optional.
-            tools (`list[dict]`, default `None`):
-                The tools JSON schemas.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+                A list of formatted messages to send to the model.
+            tools (`list[dict] | None`, optional):
+                The tools JSON schema.
+            tool_choice (`ToolChoice | None`, optional):
                 Controls which (if any) tool is called by the model.
-            **generate_kwargs (`Any`):
+            **kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API.
 
         Returns:
@@ -145,14 +132,14 @@ class AnthropicChatModel(ChatModelBase):
             "max_tokens": self.max_tokens,
             "stream": self.stream,
             **self.generate_kwargs,
-            **generate_kwargs,
+            **kwargs,
         }
         if self.thinking_config and "thinking" not in kwargs:
             kwargs["thinking"] = {
                 "type": "enabled"
-                if self.thinking_config.enable_thinking
+                if self.thinking_config.enable
                 else "disabled",
-                "budget_tokens": self.thinking_config.budget_tokens,
+                "budget_tokens": self.thinking_config.budget,
             }
 
         if tools:
@@ -233,13 +220,11 @@ class AnthropicChatModel(ChatModelBase):
                     hasattr(content_block, "type")
                     and content_block.type == "tool_use"
                 ):
-                    import json
-
                     content_blocks.append(
                         ToolCallBlock(
                             id=content_block.id,
                             name=content_block.name,
-                            input=json.dumps(content_block.input),
+                            input=json.dumps(content_block.input, ensure_ascii=False),
                         ),
                     )
 
@@ -251,16 +236,11 @@ class AnthropicChatModel(ChatModelBase):
                 time=(datetime.now() - start_datetime).total_seconds(),
             )
 
-        resp_kwargs: dict[str, Any] = {
-            "content": content_blocks,
-            "is_last": True,
-            "usage": usage,
-        }
-        response_id = getattr(response, "id", None)
-        if response_id:
-            resp_kwargs["id"] = response_id
-
-        return ChatResponse(**resp_kwargs)
+        return ChatResponse(
+            content=content_blocks,
+            is_last=True,
+            usage=usage,
+        )
 
     async def _parse_anthropic_stream_completion_response(
         self,
@@ -284,84 +264,80 @@ class AnthropicChatModel(ChatModelBase):
         """
 
         usage = None
-        response_id: str | None = None
         # Accumulated state
         acc_text = ""
         acc_thinking = ""
         thinking_signature = ""
-        acc_tool_calls: OrderedDict = (
-            OrderedDict()
-        )  # index -> {id, name, input}
+        # index -> {id, name, input}
+        acc_tool_calls: OrderedDict = OrderedDict()
 
         async for event in response:
             delta_content: list = []
 
-            if event.type == "message_start":
-                message = event.message
-                if response_id is None:
-                    response_id = getattr(message, "id", None)
-                if message.usage:
-                    usage = ChatUsage(
-                        input_tokens=message.usage.input_tokens,
-                        output_tokens=getattr(
-                            message.usage,
-                            "output_tokens",
-                            0,
-                        ),
-                        time=(datetime.now() - start_datetime).total_seconds(),
-                    )
+            match event.type:
+                case "message_start":
+                    message = event.message
+                    if message.usage:
+                        usage = ChatUsage(
+                            input_tokens=message.usage.input_tokens,
+                            output_tokens=getattr(
+                                message.usage,
+                                "output_tokens",
+                                0,
+                            ),
+                            time=(datetime.now() - start_datetime).total_seconds(),
+                        )
+                case "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        block_index = event.index
+                        tool_block = event.content_block
+                        acc_tool_calls[block_index] = {
+                            "id": tool_block.id,
+                            "name": tool_block.name,
+                            "input": "",
+                        }
 
-            elif event.type == "content_block_start":
-                if event.content_block.type == "tool_use":
+                case "content_block_delta":
                     block_index = event.index
-                    tool_block = event.content_block
-                    acc_tool_calls[block_index] = {
-                        "id": tool_block.id,
-                        "name": tool_block.name,
-                        "input": "",
-                    }
+                    delta = event.delta
 
-            elif event.type == "content_block_delta":
-                block_index = event.index
-                delta = event.delta
-                if delta.type == "text_delta":
-                    acc_text += delta.text
-                    delta_content.append(TextBlock(text=delta.text))
-                elif delta.type == "thinking_delta":
-                    acc_thinking += delta.thinking
-                    delta_content.append(
-                        ThinkingBlock(thinking=delta.thinking),
-                    )
-                elif delta.type == "signature_delta":
-                    thinking_signature = delta.signature
-                elif (
-                    delta.type == "input_json_delta"
-                    and block_index in acc_tool_calls
-                ):
-                    fragment = delta.partial_json or ""
-                    acc_tool_calls[block_index]["input"] += fragment
-                    tc = acc_tool_calls[block_index]
-                    delta_content.append(
-                        ToolCallBlock(
-                            id=tc["id"],
-                            name=tc["name"],
-                            input=fragment,
-                        ),
-                    )
+                    match delta.type:
+                        case "text_delta":
+                            acc_text += delta.text
+                            delta_content.append(TextBlock(text=delta.text))
 
-            elif event.type == "message_delta":
-                if event.usage and usage:
-                    usage.output_tokens = event.usage.output_tokens
+                        case "thinking_delta":
+                            acc_thinking += delta.thinking
+                            delta_content.append(
+                                ThinkingBlock(thinking=delta.thinking)
+                            )
+
+                        case "signature_delta":
+                            thinking_signature = delta.signature
+
+                        case "input_json_delta":
+                            if block_index in acc_tool_calls:
+                                fragment = delta.partial_json or ""
+                                acc_tool_calls[block_index]["input"] += fragment
+                                tc = acc_tool_calls[block_index]
+                                delta_content.append(
+                                    ToolCallBlock(
+                                        id=tc["id"],
+                                        name=tc["name"],
+                                        input=fragment,
+                                    ),
+                                )
+
+                case "message_delta":
+                    if event.usage and usage:
+                        usage.output_tokens = event.usage.output_tokens
 
             if delta_content:
-                _kwargs: dict[str, Any] = {
-                    "content": delta_content,
-                    "is_last": False,
-                    "usage": usage,
-                }
-                if response_id:
-                    _kwargs["id"] = response_id
-                yield ChatResponse(**_kwargs)
+                yield ChatResponse(
+                    content=delta_content,
+                    is_last=False,
+                    usage=usage,
+                )
 
         # Build final accumulated content
         final_content: list = []
@@ -381,14 +357,11 @@ class AnthropicChatModel(ChatModelBase):
                 ),
             )
 
-        _final_kwargs: dict[str, Any] = {
-            "content": final_content,
-            "is_last": True,
-            "usage": usage,
-        }
-        if response_id:
-            _final_kwargs["id"] = response_id
-        yield ChatResponse(**_final_kwargs)
+        yield ChatResponse(
+            content=final_content,
+            is_last=True,
+            usage=usage,
+        )
 
     def _format_tools_json_schemas(
         self,

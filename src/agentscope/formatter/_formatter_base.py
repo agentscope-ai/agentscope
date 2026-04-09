@@ -38,9 +38,14 @@ class FormatterBase:
         self.supported_input_media_types = supported_input_media_types
 
     @abstractmethod
-    async def format(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format the Msg objects to a list of dictionaries that satisfy the
-        API requirements."""
+        API requirements.
+
+        Args:
+            msgs (`list[Msg]`):
+                The list of message objects to format.
+        """
 
     @staticmethod
     def assert_list_of_msgs(msgs: list[Msg]) -> None:

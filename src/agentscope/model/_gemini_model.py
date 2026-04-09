@@ -15,6 +15,7 @@ from typing import (
 
 from pydantic import BaseModel
 
+from ._utils import ThinkingConfig
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
@@ -112,12 +113,6 @@ def _flatten_json_schema(schema: dict) -> dict:
 class GeminiChatModel(ChatModelBase):
     """The Google Gemini chat model class in agentscope."""
 
-    class ThinkingConfig(BaseModel):
-        """Configuration for enabling thinking blocks in Gemini responses."""
-
-        enable_thinking: bool
-        thinking_budget: int = 1024
-
     def __init__(
         self,
         model_name: str,
@@ -212,8 +207,8 @@ class GeminiChatModel(ChatModelBase):
         }
         if self.thinking_config:
             config["thinking_config"] = {
-                "include_thoughts": self.thinking_config.enable_thinking,
-                "thinking_budget": self.thinking_config.thinking_budget,
+                "include_thoughts": self.thinking_config.enable,
+                "thinking_budget": self.thinking_config.budget,
             }
 
         if tools:

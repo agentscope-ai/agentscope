@@ -1,0 +1,38 @@
+name: qwen3.6-plus
+label: Qwen3.6 Plus
+
+status: active
+
+input: ['text', 'image']
+output: ['text', 'thinking']
+
+parameters: {
+  type: 'object',
+    properties: {
+        temperature: {
+            type: 'number',
+            default: 0.7,
+            description: 'The temperature controls the randomness of the output. Higher values (e.g., 0.8) make the output more random, while lower values (e.g., 0.2) make it more focused and deterministic.'
+        },
+        max_tokens: {
+            type: 'integer',
+            default: 2048,
+            description: 'The maximum number of tokens to generate in the response.'
+        },
+        top_p: {
+            type: 'number',
+            default: 0.9,
+            description: 'The nucleus sampling parameter. It controls the diversity of the output by considering only the most probable tokens whose cumulative probability exceeds the specified value.'
+        },
+        frequency_penalty: {
+            type: 'number',
+            default: 0,
+            description: 'The frequency penalty reduces the likelihood of generating tokens that have already appeared in the text. A higher value (e.g., 1.0) makes it less likely to repeat tokens.'
+        },
+        presence_penalty: {
+            type: 'number',
+            default: 0,
+            description: 'The presence penalty reduces the likelihood of generating tokens that have already appeared in the text, regardless of their frequency. A higher value (e.g., 1.0) makes it less likely to repeat tokens.'
+        }
+    }
+}

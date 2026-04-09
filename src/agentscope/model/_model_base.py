@@ -28,7 +28,7 @@ class ChatModelBase:
     fallback_model_name: str | None
     """Fallback model name to use after all retries fail"""
 
-    formatter: Any | None
+    formatter: FormatterBase
     """The API formatter that format the messages into the required format for
     the underlying API."""
 
@@ -36,9 +36,9 @@ class ChatModelBase:
         self,
         model_name: str,
         stream: bool,
+        formatter: FormatterBase,
         max_retries: int = 0,
         fallback_model_name: str | None = None,
-        formatter: FormatterBase | None = None,
     ) -> None:
         """Initialize the chat model base class.
 
@@ -47,12 +47,12 @@ class ChatModelBase:
                 The name of the model
             stream (`bool`):
                 Whether the model output is streaming or not
-            max_retries (`int`, optional):
+            formatter (`FormatterBase`):
+                Formatter for message preprocessing.
+            max_retries (`int`, defaults to 0):
                 Maximum number of retries on failure. Defaults to 0.
             fallback_model_name (`str | None`, optional):
                 Fallback model name to use after all retries fail.
-            formatter (`FormatterBase | None`, optional):
-                Formatter for message preprocessing.
         """
         self.model_name = model_name
         self.stream = stream
@@ -83,17 +83,15 @@ class ChatModelBase:
             **kwargs:
                 Additional keyword arguments passed to the underlying API.
         """
-        if self.formatter is not None:
-            messages = await self.formatter.format(messages)
+        formatted_messages = await self.formatter.format(messages)
 
         last_error: Exception | None = None
-
         for model_name in self._models_to_try():
             for attempt in range(self.max_retries + 1):
                 try:
                     return await self._call_api(
                         model_name,
-                        messages=messages,
+                        messages=formatted_messages,
                         tools=tools,
                         tool_choice=tool_choice,
                         **kwargs,
@@ -129,7 +127,7 @@ class ChatModelBase:
     async def _call_api(
         self,
         model_name: str,
-        messages: list[Msg],
+        messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: ToolChoice | None = None,
         **kwargs: Any,
@@ -139,8 +137,8 @@ class ChatModelBase:
         Args:
             model_name (`str`):
                 The model name to use for this call.
-            messages (`list[Msg]`):
-                The messages to send to the model.
+            messages (`list[dict]`):
+                A list of formatted messages to send to the model.
             tools (`list[dict] | None`, optional):
                 The tools available to the model.
             tool_choice (`ToolChoice | None`, optional):
