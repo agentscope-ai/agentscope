@@ -112,7 +112,7 @@ class QdrantStore(VDBStoreBase):
                         ),
                     ),
                     vector=_.embedding,
-                    payload=_.metadata,
+                    payload=_.metadata.to_dict(),
                 )
                 for _ in documents
             ],
@@ -151,7 +151,7 @@ class QdrantStore(VDBStoreBase):
                 Document(
                     embedding=point.vector,
                     score=point.score,
-                    metadata=DocMetadata(**point.payload),
+                    metadata=DocMetadata.from_dict(point.payload),
                 ),
             )
         return collected_res

@@ -590,6 +590,187 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             await store.close()
             mock_client.close.assert_called()
 
+    async def test_doc_metadata_roundtrip_preserves_extra_fields(self) -> None:
+        """DocMetadata should preserve dynamic fields across payload rebuilds."""
+        metadata = DocMetadata(
+            content=TextBlock(type="text", text="hello"),
+            doc_id="doc-extra",
+            chunk_id=3,
+            total_chunks=9,
+        )
+        metadata.filename = "notes.pdf"
+        metadata.source = "knowledge-base"
+
+        rebuilt = DocMetadata.from_dict(metadata.to_dict())
+
+        self.assertEqual(rebuilt.doc_id, "doc-extra")
+        self.assertEqual(rebuilt.chunk_id, 3)
+        self.assertEqual(rebuilt.total_chunks, 9)
+        self.assertEqual(rebuilt.content["text"], "hello")
+        self.assertEqual(rebuilt.filename, "notes.pdf")
+        self.assertEqual(rebuilt.source, "knowledge-base")
+
+    async def test_qdrant_store_preserves_custom_metadata_fields(self) -> None:
+        """QdrantStore should round-trip custom metadata payload fields."""
+        store = QdrantStore(
+            location=":memory:",
+            collection_name="test_extra_metadata",
+            dimensions=3,
+        )
+
+        metadata = DocMetadata(
+            content=TextBlock(
+                type="text",
+                text="Document with custom metadata.",
+            ),
+            doc_id="doc-extra",
+            chunk_id=0,
+            total_chunks=1,
+        )
+        metadata.filename = "custom.pdf"
+        metadata.section = "appendix"
+
+        await store.add(
+            [
+                Document(
+                    embedding=[0.2, 0.3, 0.4],
+                    metadata=metadata,
+                ),
+            ],
+        )
+
+        res = await store.search(
+            query_embedding=[0.2, 0.3, 0.4],
+            limit=1,
+            score_threshold=0.8,
+        )
+
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].metadata.filename, "custom.pdf")
+        self.assertEqual(res[0].metadata.section, "appendix")
+        self.assertEqual(
+            res[0].metadata.content["text"],
+            "Document with custom metadata.",
+        )
+
+    async def test_mongodb_store_preserves_custom_metadata_fields(self) -> None:
+        """MongoDBStore should store and rebuild custom metadata payload fields."""
+        mock_pymongo = MagicMock()
+        mock_operations = MagicMock()
+        mock_pymongo.operations = mock_operations
+
+        mock_client = MagicMock()
+        mock_db = MagicMock()
+        mock_collection = MagicMock()
+
+        mock_pymongo.AsyncMongoClient.return_value = mock_client
+        mock_client.get_database.return_value = mock_db
+        mock_db.list_collection_names = AsyncMock(return_value=[])
+        mock_db.create_collection = AsyncMock(return_value=mock_collection)
+        mock_db.get_collection.return_value = mock_collection
+        mock_collection.create_search_index = AsyncMock()
+        mock_collection.bulk_write = AsyncMock()
+        mock_collection.delete_many = AsyncMock()
+        mock_collection.drop = AsyncMock()
+
+        async def mock_index_iter() -> AsyncGenerator:
+            yield {"queryable": True}
+
+        mock_collection.list_search_indexes = AsyncMock(
+            return_value=mock_index_iter(),
+        )
+
+        mock_search_results = [
+            {
+                "vector": [0.2, 0.3, 0.4],
+                "payload": {
+                    "doc_id": "doc-extra",
+                    "chunk_id": 0,
+                    "total_chunks": 1,
+                    "content": {
+                        "type": "text",
+                        "text": "Document with custom metadata.",
+                    },
+                    "filename": "custom.pdf",
+                    "section": "appendix",
+                },
+                "score": 0.99,
+            },
+        ]
+
+        async def mock_aggregate_iter() -> AsyncGenerator:
+            for item in mock_search_results:
+                yield item
+
+        mock_collection.aggregate = AsyncMock(
+            return_value=mock_aggregate_iter(),
+        )
+
+        mock_client.close = AsyncMock()
+        mock_client.drop_database = AsyncMock()
+
+        def _build_replace_one(filter_doc: dict, replacement: dict, upsert: bool = False) -> dict:
+            return {
+                "filter": filter_doc,
+                "replacement": replacement,
+                "upsert": upsert,
+            }
+
+        mock_pymongo.ReplaceOne = MagicMock(side_effect=_build_replace_one)
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "pymongo": mock_pymongo,
+                "pymongo.operations": mock_operations,
+            },
+        ):
+            store = MongoDBStore(
+                host="mongodb://localhost:27017",
+                db_name="test_db",
+                collection_name="test_collection_extra_metadata",
+                dimensions=3,
+                distance="cosine",
+            )
+
+            metadata = DocMetadata(
+                content=TextBlock(
+                    type="text",
+                    text="Document with custom metadata.",
+                ),
+                doc_id="doc-extra",
+                chunk_id=0,
+                total_chunks=1,
+            )
+            metadata.filename = "custom.pdf"
+            metadata.section = "appendix"
+
+            await store.add(
+                [
+                    Document(
+                        embedding=[0.2, 0.3, 0.4],
+                        metadata=metadata,
+                    ),
+                ],
+            )
+
+            operations = mock_collection.bulk_write.await_args.args[0]
+            self.assertEqual(len(operations), 1)
+            stored_payload = operations[0]["replacement"]["payload"]
+            self.assertEqual(stored_payload["filename"], "custom.pdf")
+            self.assertEqual(stored_payload["section"], "appendix")
+
+            res = await store.search(
+                query_embedding=[0.2, 0.3, 0.4],
+                limit=1,
+                score_threshold=0.8,
+            )
+
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0].metadata.filename, "custom.pdf")
+            self.assertEqual(res[0].metadata.section, "appendix")
+            self.assertEqual(res[0].metadata.doc_id, "doc-extra")
+
     async def asyncTearDown(self) -> None:
         """Clean up after tests."""
         # Remove Milvus Lite database file
