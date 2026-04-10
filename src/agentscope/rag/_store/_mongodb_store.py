@@ -219,12 +219,7 @@ class MongoDBStore(VDBStoreBase):
         docs_to_insert = []
         for doc in documents:
             # Convert DocMetadata to dict for storage
-            payload = {
-                "doc_id": doc.metadata.doc_id,
-                "chunk_id": doc.metadata.chunk_id,
-                "total_chunks": doc.metadata.total_chunks,
-                "content": doc.metadata.content,
-            }
+            payload = doc.metadata.to_dict()
 
             # Create document record
             doc_record = {
@@ -326,7 +321,7 @@ class MongoDBStore(VDBStoreBase):
 
             payload = item.get("payload", {})
             # Rebuild Document
-            metadata = DocMetadata(**payload)
+            metadata = DocMetadata.from_dict(payload)
 
             results.append(
                 Document(
