@@ -11,6 +11,10 @@ from ._text_file import (
     write_text_file,
     insert_text_file,
 )
+from ._search import (
+    grep_search,
+    glob_search,
+)
 from ._multi_modality import (
     dashscope_text_to_image,
     dashscope_text_to_audio,
@@ -32,6 +36,8 @@ __all__ = [
     "view_text_file",
     "write_text_file",
     "insert_text_file",
+    "grep_search",
+    "glob_search",
     "dashscope_text_to_image",
     "dashscope_text_to_audio",
     "dashscope_image_to_text",
