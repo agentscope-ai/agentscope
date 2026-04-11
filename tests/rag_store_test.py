@@ -14,6 +14,7 @@ from agentscope.rag import (
     DocMetadata,
     MilvusLiteStore,
     OceanBaseStore,
+    AlibabaCloudAnalyticDBStore,
     AlibabaCloudMySQLStore,
     MongoDBStore,
 )
@@ -288,6 +289,161 @@ class RAGStoreTest(IsolatedAsyncioTestCase):
             )
         finally:
             client.drop_collection(collection_name)
+
+    async def test_alibabacloud_analyticdb_store(self) -> None:
+        """Test the AlibabaCloudAnalyticDBStore implementation using mocks."""
+        # Create mock pymysql module
+        mock_pymysql = MagicMock()
+        mock_connections = MagicMock()
+
+        # Create mock cursor and connection
+        mock_cursor = MagicMock()
+        mock_conn = MagicMock()
+
+        # Configure mock connection to return mock cursor
+        mock_pymysql.connect.return_value = mock_conn
+        mock_conn.cursor.return_value = mock_cursor
+
+        # Mock the search query result
+        mock_search_result = [
+            (
+                "test-uuid-1",
+                "doc1",
+                0,
+                '{"type": "text", "text": "This is a test document."}',
+                2,
+                0.03,
+            ),
+        ]
+
+        # Configure cursor
+        mock_cursor.fetchall.return_value = mock_search_result
+        mock_cursor.description = [
+            ("id",),
+            ("doc_id",),
+            ("chunk_id",),
+            ("content",),
+            ("total_chunks",),
+            ("distance",),
+        ]
+
+        # Use patch.dict to mock sys.modules
+        with patch.dict(
+            "sys.modules",
+            {
+                "pymysql": mock_pymysql,
+                "pymysql.connections": mock_connections,
+            },
+        ):
+            # Create store instance
+            store = AlibabaCloudAnalyticDBStore(
+                host="test-host",
+                port=3306,
+                user="test-user",
+                password="test-password",
+                database="test-database",
+                table_name="test_vectors",
+                dimensions=3,
+                distance="EUCLIDEAN",
+            )
+
+            # Verify connection
+            mock_pymysql.connect.assert_called_once_with(
+                host="test-host",
+                port=3306,
+                user="test-user",
+                password="test-password",
+                database="test-database",
+            )
+
+            # Test add operation
+            await store.add(
+                [
+                    Document(
+                        embedding=[0.1, 0.2, 0.3],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is a test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=0,
+                            total_chunks=2,
+                        ),
+                    ),
+                    Document(
+                        embedding=[2.0, 3.8, 2.7],
+                        metadata=DocMetadata(
+                            content=TextBlock(
+                                type="text",
+                                text="This is another test document.",
+                            ),
+                            doc_id="doc1",
+                            chunk_id=1,
+                            total_chunks=2,
+                        ),
+                    ),
+                ],
+            )
+
+            # Verify add operations
+            self.assertTrue(
+                mock_cursor.executemany.called or mock_cursor.execute.called,
+            )
+
+            # Reset mock for search operation
+            mock_cursor.reset_mock()
+
+            # Reconfigure mock to return search results
+            mock_cursor.fetchall.return_value = mock_search_result
+            mock_cursor.description = [
+                ("id",),
+                ("doc_id",),
+                ("chunk_id",),
+                ("content",),
+                ("total_chunks",),
+                ("distance",),
+            ]
+
+            # Test search operation
+            res = await store.search(
+                query_embedding=[0.15, 0.25, 0.35],
+                limit=3,
+                score_threshold=0.1,
+            )
+
+            # Verify search results
+            self.assertEqual(len(res), 1)
+            # EUCLIDEAN Score = distance
+            self.assertAlmostEqual(res[0].score, 0.03, places=2)
+            self.assertEqual(
+                res[0].metadata.content["text"],
+                "This is a test document.",
+            )
+            self.assertEqual(res[0].metadata.doc_id, "doc1")
+            self.assertEqual(res[0].metadata.chunk_id, 0)
+            self.assertEqual(res[0].metadata.total_chunks, 2)
+
+            # Verify search executed SQL query
+            self.assertTrue(mock_cursor.execute.called)
+
+            # Test delete operation by ids
+            await store.delete(ids=["test-uuid-1"])
+
+            # Verify delete
+            self.assertTrue(mock_cursor.execute.called)
+
+            # Test delete all
+            await store.delete()
+
+            # Verify delete
+            self.assertTrue(mock_cursor.execute.called)
+
+            # Test close
+            store.close()
+
+            # Verify connections were closed
+            mock_conn.close.assert_called()
 
     async def test_alibabacloud_mysql_store(self) -> None:
         """Test the AlibabaCloudMySQLStore implementation using mocks."""
