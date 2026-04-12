@@ -345,7 +345,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
 
     Jarvis: {
         "type": "tool_use",
-        "id": "call_9b7717f0e1c3438f85f171",
+        "id": "call_008069f5d1f74db6bc8a90",
         "name": "example_tool_function",
         "input": {
             "tag": "tag1"
@@ -354,7 +354,7 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     Jarvis: {
         "type": "tool_use",
-        "id": "call_67e2792b6c0e478ca63ee8",
+        "id": "call_1c3c60dc81044c8dbf1d5e",
         "name": "example_tool_function",
         "input": {
             "tag": "tag2"
@@ -363,30 +363,32 @@ they will be executed in parallel by the ``asyncio.gather`` function.
     }
     system: {
         "type": "tool_result",
-        "id": "call_9b7717f0e1c3438f85f171",
+        "id": "call_008069f5d1f74db6bc8a90",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag1 started at 06:04:00.582758 and ended at 06:04:03.586070. "
+                "text": "Tag tag1 started at 07:49:47.143772 and ended at 07:49:50.147001. "
             }
         ]
     }
     system: {
         "type": "tool_result",
-        "id": "call_67e2792b6c0e478ca63ee8",
+        "id": "call_1c3c60dc81044c8dbf1d5e",
         "name": "example_tool_function",
         "output": [
             {
                 "type": "text",
-                "text": "Tag tag2 started at 06:04:00.582880 and ended at 06:04:03.586701. "
+                "text": "Tag tag2 started at 07:49:47.143845 and ended at 07:49:50.147553. "
             }
         ]
     }
     Jarvis: The 'example_tool_function' has been called in parallel with the tags 'tag1' and 'tag2'. Here are the results:
 
-    - For 'tag1', the function started at 06:04:00.582758 and ended at 06:04:03.586070.
-    - For 'tag2', the function started at 06:04:00.582880 and ended at 06:04:03.586701.
+    - For tag 'tag1', the function started at 07:49:47.143772 and ended at 07:49:50.147001.
+    - For tag 'tag2', the function started at 07:49:47.143845 and ended at 07:49:50.147553.
+
+    Both functions executed concurrently, as evidenced by their overlapping start and end times.
 
 
 
@@ -465,7 +467,7 @@ Taking introducing Einstein as an example:
       warnings.warn(
     Jarvis: {
         "type": "tool_use",
-        "id": "call_f73739396c13415889e9be",
+        "id": "call_fcedda785c6744cb9c6007",
         "name": "generate_response",
         "input": {
             "name": "Albert Einstein",
@@ -481,7 +483,7 @@ Taking introducing Einstein as an example:
     }
     system: {
         "type": "tool_result",
-        "id": "call_f73739396c13415889e9be",
+        "id": "call_fcedda785c6744cb9c6007",
         "name": "generate_response",
         "output": [
             {
@@ -490,7 +492,7 @@ Taking introducing Einstein as an example:
             }
         ]
     }
-    Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity, which revolutionized our understanding of space, time, and gravity. Born in 1879, Einstein's contributions to science have left an indelible mark on the field of physics. He was awarded the Nobel Prize in Physics in 1921, primarily for his work on the photoelectric effect, though his theory of relativity is perhaps even more famous. Throughout his career, Einstein received numerous honors including the Copley Medal in 1925 and the Max Planck Medal in 1929. He passed away at the age of 76, leaving behind a legacy as one of the most influential scientists of the 20th century.
+    Jarvis: Albert Einstein was a renowned theoretical physicist, best known for developing the theory of relativity. Born in 1879, he became one of the most influential scientists of the 20th century. Throughout his illustrious career, Einstein received numerous accolades, including the Nobel Prize in Physics in 1921, the Copley Medal in 1925, and the Max Planck Medal in 1929. His contributions to the field of physics have left an indelible mark on science and our understanding of the universe. Einstein passed away at the age of 76, but his legacy continues to inspire and influence generations.
 
     The structured output:
     {
@@ -579,7 +581,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 44.888 seconds)
+   **Total running time of the script:** (0 minutes 24.394 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_agent.py:
