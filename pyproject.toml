@@ -58,10 +58,12 @@ realtime = ["websockets>=14.0", "scipy"]
 
 # ------------ Model APIs ------------
 gemini = ["google-genai"]
+groq = ["groq>=0.9.0"]
 ollama = ["ollama>=0.5.4"]
 models = [
     "agentscope[ollama]",
     "agentscope[gemini]",
+    "agentscope[groq]",
 ]
 
 # ------------ Tokenizers ------------
