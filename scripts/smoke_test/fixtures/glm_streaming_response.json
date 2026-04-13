@@ -1,0 +1,17 @@
+{
+  "id": "202604131600407a1910480f4144af",
+  "type": "chat",
+  "created_at": "2026-04-13 16:00:46.479",
+  "content": [
+    {
+      "type": "text",
+      "text": "我是一个专注于提供有帮助、有创意回答的人工智能助手。"
+    }
+  ],
+  "usage": {
+    "input_tokens": 9,
+    "output_tokens": 14,
+    "time": 1.214836
+  },
+  "metadata": null
+}
