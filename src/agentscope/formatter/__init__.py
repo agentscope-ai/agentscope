@@ -45,7 +45,7 @@ _BUILTIN_FORMATTERS: list[Type[FormatterBase]] = [
 ]
 
 
-def deserialize_formatter(
+def _deserialize_formatter(
     data: dict[str, Any],
     custom_classes: list[Type[FormatterBase]] | None = None,
     context: dict[str, Any] | None = None,
@@ -53,9 +53,12 @@ def deserialize_formatter(
     """Deserialize a formatter from a dictionary.
 
     Args:
-        data: Dictionary containing serialized formatter data with 'type' field.
-        custom_classes: Optional list of custom formatter classes to support.
-        context: Optional context dict to pass to nested validators.
+        data (`dict[str, Any]`):
+            Dictionary containing serialized formatter data with 'type' field.
+        custom_classes (`list[Type[FormatterBase]] | None`, optional):
+            Optional list of custom formatter classes to support.
+        context (`dict[str, Any] | None`, optional):
+            Optional context dict to pass to nested validators.
 
     Returns:
         Deserialized formatter instance.

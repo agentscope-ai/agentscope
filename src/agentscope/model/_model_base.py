@@ -8,7 +8,7 @@ from pydantic import BaseModel, SerializeAsAny, field_validator, ValidationInfo
 
 from ._model_response import ChatResponse
 from .._logging import logger
-from ..formatter import FormatterBase, deserialize_formatter
+from ..formatter import FormatterBase, _deserialize_formatter
 from ..message import Msg
 from ..types import ToolChoice
 
@@ -41,7 +41,8 @@ class ChatModelBase(BaseModel):
         v: Any,
         info: ValidationInfo,
     ) -> Any:
-        """Deserialize formatter from dict using context-injected custom classes."""
+        """Deserialize formatter from dict using context-injected custom
+        classes."""
         if not isinstance(v, dict):
             return v
         custom_classes = (
@@ -49,7 +50,7 @@ class ChatModelBase(BaseModel):
             if info.context
             else []
         )
-        return deserialize_formatter(
+        return _deserialize_formatter(
             v,
             custom_classes=custom_classes,
             context=info.context,
