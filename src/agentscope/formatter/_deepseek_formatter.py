@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """The DeepSeek formatter module."""
-from typing import Any
+from typing import Any, Literal
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
@@ -19,6 +19,8 @@ class DeepSeekChatFormatter(FormatterBase):
     and an agent are involved. We use the `role` field to identify different
     entities in the conversation.
     """
+
+    type: Literal["deepseek_chat_formatter"] = "deepseek_chat_formatter"
 
     def __init__(
         self,
@@ -117,6 +119,10 @@ class DeepSeekMultiAgentFormatter(FormatterBase):
     DeepSeek formatter for multi-agent conversations, where more than
     a user and an agent are involved.
     """
+
+    type: Literal[
+        "deepseek_multiagent_formatter"
+    ] = "deepseek_multiagent_formatter"
 
     def __init__(
         self,

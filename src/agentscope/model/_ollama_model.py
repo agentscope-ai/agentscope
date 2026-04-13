@@ -31,6 +31,8 @@ else:
 class OllamaChatModel(ChatModelBase):
     """The Ollama chat model class in agentscope."""
 
+    type: Literal["ollama_chat_model"] = "ollama_chat_model"
+
     class ThinkingConfig(BaseModel):
         """Configuration for thinking in Ollama chat models."""
 

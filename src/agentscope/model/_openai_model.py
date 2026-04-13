@@ -64,6 +64,8 @@ def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
 class OpenAIChatModel(ChatModelBase):
     """The OpenAI chat model class."""
 
+    type: Literal["openai_chat_model"] = "openai_chat_model"
+
     class ThinkingConfig(BaseModel):
         """Configuration for reasoning effort levels."""
 

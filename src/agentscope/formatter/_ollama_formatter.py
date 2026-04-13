@@ -3,7 +3,7 @@
 import base64
 import fnmatch
 from abc import ABC
-from typing import Any
+from typing import Any, Literal
 
 import requests
 
@@ -103,6 +103,8 @@ class OllamaChatFormatter(_OllamaFormatterBase):
     and an agent are involved. We use the `role` field to identify different
     participants in the conversation.
     """
+
+    type: Literal["ollama_chat_formatter"] = "ollama_chat_formatter"
 
     def __init__(
         self,
@@ -227,6 +229,10 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     Ollama formatter for multi-agent conversations, where more than
     a user and an agent are involved.
     """
+
+    type: Literal[
+        "ollama_multiagent_formatter"
+    ] = "ollama_multiagent_formatter"
 
     def __init__(
         self,

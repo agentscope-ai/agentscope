@@ -58,6 +58,9 @@ class Msg(BaseModel):
     """The metadata of the message"""
     created_at: str = Field(default_factory=datetime.now().isoformat)
     """The creation time of the message"""
+    ended_at: str = Field(default_factory=datetime.now().isoformat)
+    """The end time of the message, used for calculating the response time of
+    the assistant message."""
 
     @model_validator(mode="after")
     def validate_role_content(self) -> Self:

@@ -4,16 +4,18 @@
 from abc import abstractmethod
 from typing import AsyncGenerator, Any
 
+from pydantic import BaseModel, SerializeAsAny, field_validator, ValidationInfo
+
 from ._model_response import ChatResponse
 from .._logging import logger
-from ..formatter import FormatterBase
+from ..formatter import FormatterBase, deserialize_formatter
 from ..message import Msg
 from ..types import ToolChoice
 
 _TOOL_CHOICE_MODES = ["auto", "none", "required"]
 
 
-class ChatModelBase:
+class ChatModelBase(BaseModel):
     """Base class for chat models."""
 
     model_name: str
@@ -28,37 +30,30 @@ class ChatModelBase:
     fallback_model_name: str | None
     """Fallback model name to use after all retries fail"""
 
-    formatter: Any | None
+    formatter: SerializeAsAny[FormatterBase] | None
     """The API formatter that format the messages into the required format for
     the underlying API."""
 
-    def __init__(
-        self,
-        model_name: str,
-        stream: bool,
-        max_retries: int = 0,
-        fallback_model_name: str | None = None,
-        formatter: FormatterBase | None = None,
-    ) -> None:
-        """Initialize the chat model base class.
-
-        Args:
-            model_name (`str`):
-                The name of the model
-            stream (`bool`):
-                Whether the model output is streaming or not
-            max_retries (`int`, optional):
-                Maximum number of retries on failure. Defaults to 0.
-            fallback_model_name (`str | None`, optional):
-                Fallback model name to use after all retries fail.
-            formatter (`FormatterBase | None`, optional):
-                Formatter for message preprocessing.
-        """
-        self.model_name = model_name
-        self.stream = stream
-        self.max_retries = max_retries
-        self.fallback_model_name = fallback_model_name
-        self.formatter = formatter
+    @field_validator("formatter", mode="before")
+    @classmethod
+    def validate_formatter(
+        cls,
+        v: Any,
+        info: ValidationInfo,
+    ) -> Any:
+        """Deserialize formatter from dict using context-injected custom classes."""
+        if not isinstance(v, dict):
+            return v
+        custom_classes = (
+            info.context.get("custom_formatter_classes", [])
+            if info.context
+            else []
+        )
+        return deserialize_formatter(
+            v,
+            custom_classes=custom_classes,
+            context=info.context,
+        )
 
     async def __call__(
         self,

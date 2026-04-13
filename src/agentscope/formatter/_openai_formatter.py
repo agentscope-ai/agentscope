@@ -3,7 +3,7 @@
 import base64
 from abc import ABC
 from fnmatch import fnmatch
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import requests
@@ -197,6 +197,8 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
     identify different entities in the conversation.
     """
 
+    type: Literal["openai_chat_formatter"] = "openai_chat_formatter"
+
     def __init__(
         self,
         supported_input_media_types: list[str] | None = None,
@@ -335,6 +337,10 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
     .. tip:: This formatter is compatible with OpenAI API and
         OpenAI-compatible services like vLLM, Azure OpenAI, and others.
     """
+
+    type: Literal[
+        "openai_multiagent_formatter"
+    ] = "openai_multiagent_formatter"
 
     def __init__(
         self,

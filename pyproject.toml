@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ------------ Storage APIs ------------
+redis = ["redis[async]"]
+storage = [
+    "agentscope[redis]",
+]
+
 # ------------ Model APIs ------------
 gemini = ["google-genai"]
 ollama = ["ollama>=0.5.4"]
@@ -52,6 +58,7 @@ models = [
 
 # ------------ Full ------------
 full = [
+    "agentscope[storage]",
     "agentscope[models]",
 ]
 
@@ -64,6 +71,7 @@ dev = [
     "pytest",
     "pytest-forked",
     "sphinx-gallery",
+    "fakeredis",
     "furo",
     "myst_parser",
     "matplotlib",
