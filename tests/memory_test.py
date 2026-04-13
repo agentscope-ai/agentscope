@@ -3,7 +3,9 @@
 import asyncio
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
 from agentscope.memory import (
     MemoryBase,
@@ -638,6 +640,129 @@ class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
         await self._multi_tenant_tests()
         await self._multi_session_tests()
         await self._test_serialization()
+
+    async def test_add_with_marks_under_foreign_key_enforcement(self) -> None:
+        """Adding messages with marks should work when message FK checks are enforced."""
+        await self.memory.get_memory()
+        engine = self._create_foreign_key_engine()
+        memory = AsyncSQLAlchemyMemory(
+            session_id="session_fk_1",
+            user_id="user_fk_1",
+            engine_or_session=engine,
+        )
+
+        msg = Msg("user", "foreign-key-safe", "user")
+        msg.id = "foreign-key-safe"
+
+        await memory.add(msg, marks="hint")
+
+        all_msgs = await memory.get_memory()
+        hint_msgs = await memory.get_memory(mark="hint")
+
+        self.assertEqual([_.id for _ in all_msgs], ["foreign-key-safe"])
+        self.assertEqual([_.id for _ in hint_msgs], ["foreign-key-safe"])
+
+        await engine.dispose()
+
+    async def test_add_multiple_messages_with_multiple_marks_under_foreign_keys(
+        self,
+    ) -> None:
+        """Bulk mark insertion should preserve all message-mark rows under FK enforcement."""
+        await self.memory.get_memory()
+        engine = self._create_foreign_key_engine()
+        memory = AsyncSQLAlchemyMemory(
+            session_id="session_fk_2",
+            user_id="user_fk_2",
+            engine_or_session=engine,
+        )
+
+        msgs = [
+            Msg("user", "first", "user"),
+            Msg("assistant", "second", "assistant"),
+            Msg("system", "third", "system"),
+        ]
+        for idx, msg in enumerate(msgs):
+            msg.id = str(idx)
+
+        await memory.add(msgs, marks=["important", "todo"])
+
+        important_msgs = await memory.get_memory(mark="important")
+        todo_msgs = await memory.get_memory(mark="todo")
+
+        self.assertEqual([_.id for _ in important_msgs], ["0", "1", "2"])
+        self.assertEqual([_.id for _ in todo_msgs], ["0", "1", "2"])
+
+        await engine.dispose()
+
+    async def test_skip_duplicated_messages_with_marks_under_foreign_keys(
+        self,
+    ) -> None:
+        """Duplicate-skipping path should still insert marks safely under FK enforcement."""
+        await self.memory.get_memory()
+        engine = self._create_foreign_key_engine()
+        memory = AsyncSQLAlchemyMemory(
+            session_id="session_fk_3",
+            user_id="user_fk_3",
+            engine_or_session=engine,
+        )
+
+        msgs = [Msg("user", "first", "user"), Msg("assistant", "second", "assistant")]
+        for idx, msg in enumerate(msgs):
+            msg.id = str(idx)
+
+        await memory.add(msgs, marks="hint")
+        await memory.add(msgs, marks="hint", skip_duplicated=True)
+
+        all_msgs = await memory.get_memory()
+        hint_msgs = await memory.get_memory(mark="hint")
+
+        self.assertEqual([_.id for _ in all_msgs], ["0", "1"])
+        self.assertEqual([_.id for _ in hint_msgs], ["0", "1"])
+
+        await engine.dispose()
+
+    async def test_add_with_marks_using_external_no_autoflush_session(
+        self,
+    ) -> None:
+        """Message rows must be flushed before marks when the caller disables autoflush."""
+        await self.memory.get_memory()
+        engine = self._create_foreign_key_engine()
+        session_factory = async_sessionmaker(
+            bind=engine,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+
+        async with session_factory() as session:
+            memory = AsyncSQLAlchemyMemory(
+                session_id="session_fk_4",
+                user_id="user_fk_4",
+                engine_or_session=session,
+            )
+
+            msg = Msg("user", "no-autoflush", "user")
+            msg.id = "no-autoflush"
+
+            await memory.add(msg, marks="hint")
+
+            hint_msgs = await memory.get_memory(mark="hint")
+            self.assertEqual([_.id for _ in hint_msgs], ["no-autoflush"])
+
+        await engine.dispose()
+
+    @staticmethod
+    def _create_foreign_key_engine():
+        """Create an async SQLite engine with foreign key checks enabled."""
+        engine = create_async_engine(
+            url="sqlite+aiosqlite:///:memory:",
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(engine.sync_engine, "connect")
+        def _enable_foreign_keys(dbapi_connection, _connection_record):
+            dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+        return engine
 
     async def asyncTearDown(self) -> None:
         """Clean up after unittests"""

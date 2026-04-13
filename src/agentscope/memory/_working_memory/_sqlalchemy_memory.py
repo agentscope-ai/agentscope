@@ -453,6 +453,13 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
         # Create mark records if marks are provided (use bulk insert)
         if marks:
+            # Bulk insert bypasses the ORM unit-of-work autoflush behavior. If
+            # callers provide an external AsyncSession with autoflush disabled,
+            # the pending message rows above may not be visible yet and the
+            # message_mark FK insert can fail. Flush first so parent message
+            # rows exist before any related marks are inserted.
+            await self.session.flush()
+
             mark_records = [
                 {"msg_id": self._make_message_id(msg.id), "mark": mark}
                 for msg in messages_to_add
