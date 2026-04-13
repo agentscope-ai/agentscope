@@ -1,28 +1,23 @@
 # -*- coding: utf-8 -*-
 """Unit tests for RedisStorage."""
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest import skipIf
 
-try:
-    import fakeredis.aioredis
-
-    FAKEREDIS_AVAILABLE = True
-except ImportError:
-    FAKEREDIS_AVAILABLE = False
+import fakeredis.aioredis  # type: ignore
 
 from agentscope.storage import RedisStorage
 from agentscope.message import Msg
 from agentscope.agent import AgentState
 
 
-@skipIf(not FAKEREDIS_AVAILABLE, "fakeredis not installed")
 class RedisStorageTest(IsolatedAsyncioTestCase):
     """Test cases for RedisStorage."""
 
     async def asyncSetUp(self) -> None:
         """Setup fake redis storage for each test."""
-        self.fake_redis = fakeredis.aioredis.FakeRedis()
-        self.storage = RedisStorage(client=self.fake_redis)
+        self.fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.storage = RedisStorage(
+            connection_pool=self.fake_redis.connection_pool,
+        )
 
     async def asyncTearDown(self) -> None:
         """Cleanup fake redis."""

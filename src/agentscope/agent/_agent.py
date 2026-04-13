@@ -67,7 +67,7 @@ class AgentState(BaseModel):
     final message of the reply."""
     cur_iter: int = 0
     """The current iteration of the agent's reasoning-acting loop."""
-    confirmed_tool_call_ids: list[str] = None
+    confirmed_tool_call_ids: list[str] | None = None
     """The list of tool call ids that have been confirmed by the user."""
 
 
