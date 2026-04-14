@@ -58,6 +58,11 @@ class RegisteredToolFunction:
     """If this tool function is executed in an async manner, a reminder with
     task id will be sent to the agent, allowing the agent to view, cancel or
     check the status of the async task."""
+    max_calls: int | None = None
+    """Maximum number of times this tool can be called. None means
+    unlimited."""
+    call_count: int = 0
+    """Current number of times this tool has been called."""
 
     @property
     def extended_json_schema(self) -> dict:
