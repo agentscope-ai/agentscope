@@ -300,6 +300,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "rename",
         ] = "raise",
         async_execution: bool = False,
+        return_direct: bool = False,
     ) -> None:
         """Register a tool function to the toolkit.
 
@@ -362,13 +363,15 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 agent to view, cancel or check the status of the async task.
                 **This is an experimental feature and may cause unexpected
                 issues, please use it with caution.**
+            return_direct (`bool`, defaults to `False`):
+                If `True`, the ReAct agent will return tool output directly
+                after this tool call, without entering further loops.
         """
         # Arguments checking
         if group_name not in self.groups and group_name != "basic":
             raise ValueError(
                 f"Tool group '{group_name}' not found.",
             )
-
         # Check the manually provided JSON schema if provided
         if json_schema:
             assert (
@@ -470,6 +473,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             mcp_name=mcp_name,
             postprocess_func=postprocess_func,
             async_execution=async_execution,
+            return_direct=return_direct,
         )
 
         if func_name in self.tools:
