@@ -155,7 +155,7 @@ def _calculate_tokens_for_tools(
             for key in properties.keys():
                 func_token_count += prop_key
                 p_name = key
-                p_type = properties[key]["type"]
+                p_type = properties[key].get("type", "")
                 p_desc = (
                     properties[key].get("description", "").removesuffix(".")
                 )
