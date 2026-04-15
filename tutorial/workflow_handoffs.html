@@ -351,7 +351,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
     &quot;input&quot;: {
         &quot;task_description&quot;: &quot;Print &#39;Hello, World!&#39; using Python&quot;
     },
-    &quot;id&quot;: &quot;call_dc88ca12680348af8c3110&quot;
+    &quot;id&quot;: &quot;call_1b4febec4b7d412e80bd66&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
@@ -360,11 +360,11 @@ Worker: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
         &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_f6b89489f0124aaea7d6f0&quot;
+    &quot;id&quot;: &quot;call_b8b9bf2d501d4da49f6ab9&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_f6b89489f0124aaea7d6f0&quot;,
+    &quot;id&quot;: &quot;call_b8b9bf2d501d4da49f6ab9&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -376,7 +376,7 @@ system: {
 Worker: The Python code has successfully printed &#39;Hello, World!&#39; to the standard output.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_dc88ca12680348af8c3110&quot;,
+    &quot;id&quot;: &quot;call_1b4febec4b7d412e80bd66&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
@@ -468,7 +468,7 @@ Orchestrator: The worker has executed the Python code, and it has successfully p
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.648 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 10.570 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>
