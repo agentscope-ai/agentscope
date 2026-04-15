@@ -351,7 +351,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
     &quot;input&quot;: {
         &quot;task_description&quot;: &quot;Print &#39;Hello, World!&#39; using Python&quot;
     },
-    &quot;id&quot;: &quot;call_1b4febec4b7d412e80bd66&quot;
+    &quot;id&quot;: &quot;call_8598a2cf1b3e45489ef3ee&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
@@ -360,11 +360,11 @@ Worker: {
         &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
         &quot;timeout&quot;: 300
     },
-    &quot;id&quot;: &quot;call_b8b9bf2d501d4da49f6ab9&quot;
+    &quot;id&quot;: &quot;call_bad5a96952274d2f9d5546&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_b8b9bf2d501d4da49f6ab9&quot;,
+    &quot;id&quot;: &quot;call_bad5a96952274d2f9d5546&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
@@ -376,7 +376,7 @@ system: {
 Worker: The Python code has successfully printed &#39;Hello, World!&#39; to the standard output.
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_1b4febec4b7d412e80bd66&quot;,
+    &quot;id&quot;: &quot;call_8598a2cf1b3e45489ef3ee&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
@@ -385,7 +385,7 @@ system: {
         }
     ]
 }
-Orchestrator: The worker has executed the Python code, and it has successfully printed &#39;Hello, World!&#39; to the standard output.
+Orchestrator: The task has been completed and the message &#39;Hello, World!&#39; was printed to the standard output by the Python code.
 </pre></div>
 </div>
 <div class="line-block">
@@ -468,7 +468,7 @@ Orchestrator: The worker has executed the Python code, and it has successfully p
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 10.570 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 10.395 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>
