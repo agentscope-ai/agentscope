@@ -39,6 +39,8 @@ dependencies = [
     "shortuuid",
     "python-frontmatter",
     "aiofiles",
+    "tree_sitter",
+    "tree_sitter_bash",
 ]
 
 [project.optional-dependencies]
