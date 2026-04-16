@@ -144,11 +144,13 @@ class BashCommandParser:
         Commands with output redirections (>, >>) are NOT considered read-only.
 
         Args:
-            command: The bash command string
+            command (`str`):
+                The bash command string
 
         Returns:
-            True if the command (and all subcommands) are read-only,
-            False otherwise
+            `bool`:
+                True if the command (and all subcommands) are read-only,
+                False otherwise
         """
         # Normalize command (strip leading/trailing whitespace)
         cmd = command.strip()
@@ -181,10 +183,12 @@ class BashCommandParser:
         """Check if a single (non-compound) command is read-only.
 
         Args:
-            cmd: A single command string (no &&, ||, ;, |)
+            cmd (`str`):
+                A single command string (no &&, ||, ;, |)
 
         Returns:
-            True if the command is read-only, False otherwise
+            `bool`:
+                True if the command is read-only, False otherwise
         """
         # Check exact match in read-only commands
         if cmd in READ_ONLY_COMMANDS:
@@ -222,10 +226,12 @@ class BashCommandParser:
         (rm, mv, cp, chmod, chown, etc.) and output redirection targets.
 
         Args:
-            command: The bash command string
+            command (`str`):
+                The bash command string
 
         Returns:
-            List of tuples (command_name, file_path)
+            `List[Tuple[str, str]]`:
+                List of tuples (command_name, file_path)
         """
         paths = []
 
@@ -252,9 +258,12 @@ class BashCommandParser:
         """Recursively extract file paths from AST nodes.
 
         Args:
-            node: The AST node to process
-            command: The original command string
-            paths: List to append (command_name, path) tuples to
+            node (`Node`):
+                The AST node to process
+            command (`str`):
+                The original command string
+            paths (`List[Tuple[str, str]]`):
+                List to append (command_name, path) tuples to
         """
         # Check for redirections
         if node.type == "file_redirect":
@@ -304,10 +313,12 @@ class BashCommandParser:
         """Fallback path extraction using simple token parsing.
 
         Args:
-            command: The bash command string
+            command (`str`):
+                The bash command string
 
         Returns:
-            List of tuples (command_name, file_path)
+            `List[Tuple[str, str]]`:
+                List of tuples (command_name, file_path)
         """
         paths = []
         tokens = command.split()
@@ -348,10 +359,12 @@ class BashCommandParser:
         """Extract output redirection targets from a bash command.
 
         Args:
-            command: The bash command string
+            command (`str`):
+                The bash command string
 
         Returns:
-            List of file paths that are redirection targets
+            `List[str]`:
+                List of file paths that are redirection targets
         """
         redirections = []
 
@@ -382,9 +395,12 @@ class BashCommandParser:
         """Recursively extract redirections from AST nodes.
 
         Args:
-            node: The AST node to process
-            command: The original command string
-            redirections: List to append redirection targets to
+            node (`Node`):
+                The AST node to process
+            command (`str`):
+                The original command string
+            redirections (`List[str]`):
+                List to append redirection targets to
         """
         if node.type == "file_redirect":
             # Extract the target file

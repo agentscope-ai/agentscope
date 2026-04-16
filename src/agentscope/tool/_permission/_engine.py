@@ -85,11 +85,14 @@ class PermissionEngine:
         """Initialize the permission engine.
 
         Args:
-            context: The permission context containing rules and mode
-            additional_dangerous_files: Additional dangerous files to check
+            context (`PermissionContext`):
+                The permission context containing rules and mode
+            additional_dangerous_files (`list[str] | None`, optional):
+                Additional dangerous files to check
                 (added to built-in defaults). Use this to add project-specific
                 sensitive files like '.env' or '.secrets'.
-            additional_dangerous_directories: Additional dangerous directories
+            additional_dangerous_directories (`list[str] | None`, optional):
+                Additional dangerous directories
                 to check (added to built-in defaults). Use this to add
                 project-specific sensitive directories.
 
@@ -119,7 +122,8 @@ class PermissionEngine:
         """Add a permission rule to the context.
 
         Args:
-            rule: The permission rule to add
+            rule (`PermissionRule`):
+                The permission rule to add
 
         Example:
             >>> engine.add_rule(PermissionRule(
@@ -159,10 +163,12 @@ class PermissionEngine:
         8. Default behavior (passthrough → ask)
 
         Args:
-            tool_call: The tool call block containing tool name and input
+            tool_call (`ToolCallBlock`):
+                The tool call block containing tool name and input
 
         Returns:
-            PermissionDecision indicating whether to allow, deny, or ask
+            `PermissionDecision`:
+                Decision indicating whether to allow, deny, or ask
         """
 
         tool_name = tool_call.name
@@ -262,11 +268,15 @@ class PermissionEngine:
         Note: ACCEPT_EDITS mode logic is handled separately after allow rules.
 
         Args:
-            tool_name: The name of the tool
-            input_data: The tool input data
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
 
         Returns:
-            PermissionDecision if tool has specific logic, None for passthrough
+            `PermissionDecision | None`:
+                PermissionDecision if tool has specific logic, None for
+                passthrough
         """
         # EXPLORE mode: read-only tools only
         if self.context.mode == PermissionMode.EXPLORE:
@@ -297,11 +307,14 @@ class PermissionEngine:
         Uses tree-sitter to extract file paths from bash commands.
 
         Args:
-            tool_name: The name of the tool
-            input_data: The tool input data
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
 
         Returns:
-            ASK decision if dangerous path detected, None otherwise
+            `PermissionDecision | None`:
+                ASK decision if dangerous path detected, None otherwise
         """
         # Check Write/Edit tools
         if tool_name in ["Write", "Edit"]:
@@ -342,10 +355,12 @@ class PermissionEngine:
         - Output redirections (>, >>)
 
         Args:
-            command: The bash command string
+            command (`str`):
+                The bash command string
 
         Returns:
-            List of dangerous paths found in the command
+            `list[str]`:
+                List of dangerous paths found in the command
         """
         dangerous_paths = []
 
@@ -362,10 +377,12 @@ class PermissionEngine:
         """Check permissions in EXPLORE (read-only) mode.
 
         Args:
-            tool_name: The name of the tool
+            tool_name (`str`):
+                The name of the tool
 
         Returns:
-            ALLOW for read-only tools, DENY for modification tools
+            `PermissionDecision | None`:
+                ALLOW for read-only tools, DENY for modification tools
         """
         # Read-only tools are allowed
         read_only_tools = ["Read", "Grep", "Glob"]
@@ -409,11 +426,15 @@ class PermissionEngine:
         - Common filesystem commands (mkdir, rm, mv, cp) are auto-allowed
 
         Args:
-            tool_name: The name of the tool
-            input_data: The tool input data
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
 
         Returns:
-            ALLOW if operation is safe and in working directory, None otherwise
+            `PermissionDecision | None`:
+                ALLOW if operation is safe and in working directory,
+                None otherwise
         """
         # Handle Write tool
         if tool_name == "Write":
@@ -502,7 +523,7 @@ class PermissionEngine:
         case-insensitive filesystems (macOS, Windows).
 
         Args:
-            file_path (`file_path`):
+            file_path (`str`):
                 The file path to check
 
         Returns:
@@ -545,10 +566,12 @@ class PermissionEngine:
         """Check if a file path is within any allowed working directory.
 
         Args:
-            file_path: The file path to check
+            file_path (`str`):
+                The file path to check
 
         Returns:
-            True if the path is within any allowed working directory
+            `bool`:
+                True if the path is within any allowed working directory
         """
         # Get all working directories (current directory + additional)
         all_working_dirs = self._get_all_working_directories()
@@ -564,7 +587,8 @@ class PermissionEngine:
         """Get all allowed working directories.
 
         Returns:
-            List of absolute directory paths
+            `list[str]`:
+                List of absolute directory paths
         """
         # Current working directory (always included)
         current_dir = os.getcwd()
@@ -578,11 +602,14 @@ class PermissionEngine:
         """Check if a file path is within a specific working directory.
 
         Args:
-            file_path: The file path to check
-            working_dir: The working directory path
+            file_path (`str`):
+                The file path to check
+            working_dir (`str`):
+                The working directory path
 
         Returns:
-            True if file_path is inside working_dir
+            `bool`:
+                True if file_path is inside working_dir
         """
 
         # Convert to absolute paths
@@ -611,7 +638,18 @@ class PermissionEngine:
         tool_name: str,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
-        """Check if any deny rules match the request."""
+        """Check if any deny rules match the request.
+
+        Args:
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
+
+        Returns:
+            `PermissionDecision | None`:
+                DENY decision if a rule matches, None otherwise
+        """
         rules = self.context.deny_rules.get(tool_name, [])
         for rule in rules:
             if self._rule_matches(rule, input_data):
@@ -627,7 +665,18 @@ class PermissionEngine:
         tool_name: str,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
-        """Check if any ask rules match the request."""
+        """Check if any ask rules match the request.
+
+        Args:
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
+
+        Returns:
+            `PermissionDecision | None`:
+                ASK decision if a rule matches, None otherwise
+        """
         rules = self.context.ask_rules.get(tool_name, [])
         for rule in rules:
             if self._rule_matches(rule, input_data):
@@ -643,7 +692,18 @@ class PermissionEngine:
         tool_name: str,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
-        """Check if any allow rules match the request."""
+        """Check if any allow rules match the request.
+
+        Args:
+            tool_name (`str`):
+                The name of the tool
+            input_data (`dict[str, Any]`):
+                The tool input data
+
+        Returns:
+            `PermissionDecision | None`:
+                ALLOW decision if a rule matches, None otherwise
+        """
         rules = self.context.allow_rules.get(tool_name, [])
         for rule in rules:
             if self._rule_matches(rule, input_data):
@@ -667,11 +727,14 @@ class PermissionEngine:
         - Other: Generic pattern matching
 
         Args:
-            rule: The permission rule to check
-            input_data: The tool input data
+            rule (`PermissionRule`):
+                The permission rule to check
+            input_data (`dict[str, Any]`):
+                The tool input data
 
         Returns:
-            True if the rule matches, False otherwise
+            `bool`:
+                True if the rule matches, False otherwise
         """
         # Empty rule_content matches everything
         if not rule.rule_content:
@@ -700,11 +763,14 @@ class PermissionEngine:
          in command
 
         Args:
-            pattern: The command pattern to match
-            input_data: Must contain a "command" key with the command string
+            pattern (`str`):
+                The command pattern to match
+            input_data (`dict[str, Any]`):
+                Must contain a "command" key with the command string
 
         Returns:
-            True if pattern matches the command
+            `bool`:
+                True if pattern matches the command
 
         Examples:
             pattern="git:*" matches "git status", "git add .", etc.
@@ -731,11 +797,14 @@ class PermissionEngine:
         """Match file path using glob pattern matching.
 
         Args:
-            pattern: The glob pattern to match (e.g., "src/**", "*.py")
-            input_data: Must contain a "file_path" key with the file path
+            pattern (`str`):
+                The glob pattern to match (e.g., "src/**", "*.py")
+            input_data (`dict[str, Any]`):
+                Must contain a "file_path" key with the file path
 
         Returns:
-            True if the file path matches the glob pattern
+            `bool`:
+                True if the file path matches the glob pattern
 
         Example:
             pattern="src/**" matches file_path="src/main.py"
@@ -771,11 +840,14 @@ class PermissionEngine:
         Performs substring matching against all string values in input_data.
 
         Args:
-            pattern: The pattern to match
-            input_data: The tool input data
+            pattern (`str`):
+                The pattern to match
+            input_data (`dict[str, Any]`):
+                The tool input data
 
         Returns:
-            True if pattern is found in any string value
+            `bool`:
+                True if pattern is found in any string value
         """
         for value in input_data.values():
             if isinstance(value, str) and pattern in value:
@@ -786,10 +858,12 @@ class PermissionEngine:
         """Return default ASK decision.
 
         Args:
-            tool_name: The name of the tool
+            tool_name (`str`):
+                The name of the tool
 
         Returns:
-            PermissionDecision with ASK behavior
+            `PermissionDecision`:
+                PermissionDecision with ASK behavior
         """
         # DONT_ASK: Convert ASK to DENY (user not available)
         if self.context.mode == PermissionMode.DONT_ASK:
@@ -824,11 +898,13 @@ class PermissionEngine:
         - For other tools: Generate exact match rule
 
         Args:
-            tool_call: The tool call block containing name and parameters
+            tool_call (`ToolCallBlock`):
+                The tool call block containing name and parameters
 
         Returns:
-            List of suggested permission rules (usually 1, max 5 for compound
-            commands)
+            `List[PermissionRule]`:
+                List of suggested permission rules (usually 1, max 5 for
+                compound commands)
         """
         tool_name = tool_call.name
 
@@ -848,6 +924,14 @@ class PermissionEngine:
 
         Generates prefix rules based on command + subcommand (two words).
         For example, "git commit -m 'xxx'" generates "git commit:*".
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block containing name and input
+
+        Returns:
+            `List[PermissionRule]`:
+                List of suggested permission rules based on command prefixes
         """
         input_data = json.loads(tool_call.input)
         command = input_data.get("command", "")
@@ -885,6 +969,14 @@ class PermissionEngine:
         """Generate suggestions for file operations.
 
         Suggests allowing the entire directory containing the file.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block containing name and input
+
+        Returns:
+            `List[PermissionRule]`:
+                List of suggested permission rules based on file directory
         """
         input_data = json.loads(tool_call.input)
         file_path = input_data.get("file_path", "")
@@ -912,6 +1004,14 @@ class PermissionEngine:
         """Generate exact match rule (fallback strategy).
 
         Used when no specific suggestion strategy is available.
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block containing name and input
+
+        Returns:
+            `List[PermissionRule]`:
+                List containing a single exact-match permission rule
         """
         input_data = json.loads(tool_call.input)
         rule_content = json.dumps(input_data, sort_keys=True)
