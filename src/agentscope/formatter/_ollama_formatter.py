@@ -50,17 +50,19 @@ def _format_ollama_image_block(
 
 def _convert_ollama_image_url_to_base64_data(url: str) -> str:
     """Convert image url to base64."""
-    parsed_url = urlparse(url)
+    raw_url = url.removeprefix("file://")
+    parsed_url = urlparse(raw_url)
 
-    if not os.path.exists(url) and parsed_url.scheme != "":
-        # Web url
-        data = _get_bytes_from_web_url(url)
-        return data
-    if os.path.exists(url):
+    if os.path.exists(raw_url):
         # Local file
-        with open(url, "rb") as f:
+        with open(raw_url, "rb") as f:
             data = base64.b64encode(f.read()).decode("utf-8")
 
+        return data
+
+    if parsed_url.scheme not in ["", "file"]:
+        # Web url
+        data = _get_bytes_from_web_url(url)
         return data
 
     raise ValueError(

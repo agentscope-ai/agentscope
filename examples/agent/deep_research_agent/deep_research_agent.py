@@ -970,7 +970,7 @@ class DeepResearchAgent(ReActAgent):
                 ensure_ascii=False,
             ),
         )
-        self.memory.add(summarize_result)
+        await self.memory.add(summarize_result)
         return summarize_result
 
     async def reflect_failure(self) -> ToolResponse:
