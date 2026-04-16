@@ -2,6 +2,8 @@
 """Permission rule model for tool usage."""
 from pydantic import BaseModel
 
+from ._types import PermissionBehavior
+
 
 class PermissionRule(BaseModel):
     """Permission rule for tool usage.
@@ -26,7 +28,7 @@ class PermissionRule(BaseModel):
     rule_content: str | None
     """Optional filter pattern - semantics depend on tool_name."""
 
-    behavior: str
+    behavior: PermissionBehavior
     """The permission behavior ("allow", "deny", or "ask")."""
 
     source: str

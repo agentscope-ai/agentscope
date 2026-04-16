@@ -2,10 +2,11 @@
 """The permission engine for checking and enforcing permission rules."""
 import fnmatch
 import os
+import json
 from pathlib import Path
 from typing import Any, List
 
-from ._bash_parser import get_bash_parser
+from ._bash_parser import BashCommandParser
 from ._context import PermissionContext
 from ._rule import PermissionRule
 from ._decision import PermissionDecision, PermissionBehavior
@@ -111,96 +112,251 @@ class PermissionEngine:
         if additional_dangerous_directories:
             self.dangerous_directories.extend(additional_dangerous_directories)
 
-        # Initialize bash parser (lazy loading)
-        self._bash_parser = None
+        # Initialize bash parser
+        self._bash_parser = BashCommandParser()
+
+    def add_rule(self, rule: PermissionRule) -> None:
+        """Add a permission rule to the context.
+
+        Args:
+            rule: The permission rule to add
+
+        Example:
+            >>> engine.add_rule(PermissionRule(
+            ...     tool_name="Bash",
+            ...     rule_content="git:*",
+            ...     behavior=PermissionBehavior.ALLOW,
+            ... ))
+        """
+
+        if rule.behavior == PermissionBehavior.ALLOW:
+            if rule.tool_name not in self.context.allow_rules:
+                self.context.allow_rules[rule.tool_name] = []
+            self.context.allow_rules[rule.tool_name].append(rule)
+        elif rule.behavior == PermissionBehavior.DENY:
+            if rule.tool_name not in self.context.deny_rules:
+                self.context.deny_rules[rule.tool_name] = []
+            self.context.deny_rules[rule.tool_name].append(rule)
+        elif rule.behavior == PermissionBehavior.ASK:
+            if rule.tool_name not in self.context.ask_rules:
+                self.context.ask_rules[rule.tool_name] = []
+            self.context.ask_rules[rule.tool_name].append(rule)
 
     async def check_permission(
         self,
-        tool_name: str,
-        input_data: dict[str, Any],
-        tool_call: ToolCallBlock | None = None,
+        tool_call: ToolCallBlock,
     ) -> PermissionDecision:
         """Check permission for a tool execution request.
 
-        The evaluation order is:
-        1. Check deny rules (highest priority)
-        2. Check mode-specific logic (EXPLORE, ACCEPT_EDITS, etc.)
-        3. Check ask rules
-        4. Check allow rules
-        5. Apply default behavior based on permission mode
+        The evaluation order:
+        1. Tool-level deny rules (highest priority)
+        2. Tool-level ask rules
+        3. Tool-specific checks (dangerous paths, content rules), bypass-immune
+        4. Allow rules (exact + content-specific)
+        5. Mode-specific logic (ACCEPT_EDITS auto-allow)
+        6. Read-only check (for Bash commands)
+        7. BYPASS mode check
+        8. Default behavior (passthrough → ask)
 
         Args:
-            tool_name: The name of the tool to execute
-            input_data: The input parameters for the tool
-            tool_call: Optional ToolCallBlock for generating suggestions
+            tool_call: The tool call block containing tool name and input
 
         Returns:
             PermissionDecision indicating whether to allow, deny, or ask
         """
-        # 1. Check deny rules (highest priority)
+
+        tool_name = tool_call.name
+        input_data = json.loads(tool_call.input)
+
+        # 1. Check tool-level deny rules (highest priority)
         deny_decision = self._check_deny_rules(tool_name, input_data)
         if deny_decision:
             return deny_decision
 
-        # 2. Check mode-specific logic
-        mode_decision = self._check_mode_specific(tool_name, input_data)
-        if mode_decision:
-            return mode_decision
-
-        # 3. Check ask rules
+        # 2. Check tool-level ask rules
         ask_decision = self._check_ask_rules(tool_name, input_data)
         if ask_decision:
             # Generate suggestions for ASK decisions
-            if tool_call:
-                ask_decision.suggested_rules = self._generate_suggestions(
-                    tool_call,
-                )
+            ask_decision.suggested_rules = self._generate_suggestions(
+                tool_call,
+            )
             return ask_decision
+
+        # 3. Tool-specific permission checks (dangerous paths, etc.)
+        # These are bypass-immune
+        tool_decision = self._tool_check_permissions(tool_name, input_data)
+
+        # 3a. Tool denied permission (bypass-immune)
+        if tool_decision and tool_decision.behavior == PermissionBehavior.DENY:
+            return tool_decision
+
+        # 3b. Tool allowed permission (e.g., EXPLORE mode allows Read)
+        if (
+            tool_decision
+            and tool_decision.behavior == PermissionBehavior.ALLOW
+        ):
+            return tool_decision
+
+        # 3c. Safety checks (bypass-immune)
+        if (
+            tool_decision
+            and tool_decision.behavior == PermissionBehavior.ASK
+            and tool_decision.decision_reason
+            and "safety" in tool_decision.decision_reason.lower()
+        ):
+            tool_decision.suggested_rules = self._generate_suggestions(
+                tool_call,
+            )
+            return tool_decision
 
         # 4. Check allow rules
         allow_decision = self._check_allow_rules(tool_name, input_data)
         if allow_decision:
             return allow_decision
 
-        # 5. Apply default behavior based on mode
-        default_decision = self._default_decision(tool_name)
-        # Generate suggestions for default ASK decisions
-        if default_decision.behavior == PermissionBehavior.ASK and tool_call:
-            default_decision.suggested_rules = self._generate_suggestions(
-                tool_call,
+        # 5. Mode-specific auto-allow (ACCEPT_EDITS)
+        if self.context.mode == PermissionMode.ACCEPT_EDITS:
+            mode_decision = self._check_accept_edits_mode(
+                tool_name,
+                input_data,
             )
+            if mode_decision:
+                return mode_decision
+
+        # 6. Read-only check (for Bash commands)
+        if tool_name == "Bash":
+            command = input_data.get("command", "")
+            if self._bash_parser.is_read_only_command(command):
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message="Permission granted for read-only command",
+                    decision_reason="Read-only command is allowed",
+                )
+
+        # 7. BYPASS mode check
+        if self.context.mode == PermissionMode.BYPASS:
+            return PermissionDecision(
+                behavior=PermissionBehavior.ALLOW,
+                message=f"Permission granted for {tool_name} (bypass mode)",
+                decision_reason="Bypass mode allows all operations",
+            )
+
+        # 8. Default behavior (passthrough → ask)
+        default_decision = self._default_decision_ask(tool_name)
+        default_decision.suggested_rules = self._generate_suggestions(
+            tool_call,
+        )
         return default_decision
 
-    def _check_mode_specific(
+    def _tool_check_permissions(
         self,
         tool_name: str,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
-        """Check mode-specific permission logic.
+        """Tool-specific permission checks.
 
-        Different modes have special handling:
-        - EXPLORE: Only allow read-only tools (Read, Grep, Glob)
-        - ACCEPT_EDITS: Auto-allow file operations in working directories
-        - BYPASS: Handled in _default_decision
-        - DONT_ASK: Handled in _default_decision
-        - DEFAULT: No special handling
+        This includes:
+        - EXPLORE mode logic (read-only tools only)
+        - Dangerous path checks (safety checks) - bypass-immune
+
+        Note: ACCEPT_EDITS mode logic is handled separately after allow rules.
 
         Args:
             tool_name: The name of the tool
             input_data: The tool input data
 
         Returns:
-            PermissionDecision if mode-specific logic applies, None otherwise
+            PermissionDecision if tool has specific logic, None for passthrough
         """
-        # EXPLORE mode: read-only
+        # EXPLORE mode: read-only tools only
         if self.context.mode == PermissionMode.EXPLORE:
-            return self._check_explore_mode(tool_name)
+            explore_decision = self._check_explore_mode(tool_name)
+            if explore_decision:
+                return explore_decision
 
-        # ACCEPT_EDITS mode: auto-allow file operations in working directories
-        if self.context.mode == PermissionMode.ACCEPT_EDITS:
-            return self._check_accept_edits_mode(tool_name, input_data)
+        # Check dangerous paths for file operations and bash commands
+        # This is a safety check that is bypass-immune
+        dangerous_path_decision = self._check_dangerous_paths(
+            tool_name,
+            input_data,
+        )
+        if dangerous_path_decision:
+            return dangerous_path_decision
+
+        # No specific tool logic, passthrough
+        return None
+
+    def _check_dangerous_paths(
+        self,
+        tool_name: str,
+        input_data: dict[str, Any],
+    ) -> PermissionDecision | None:
+        """Check for dangerous paths in file operations and bash commands.
+
+        This is a safety check that is bypass-immune.
+        Uses tree-sitter to extract file paths from bash commands.
+
+        Args:
+            tool_name: The name of the tool
+            input_data: The tool input data
+
+        Returns:
+            ASK decision if dangerous path detected, None otherwise
+        """
+        # Check Write/Edit tools
+        if tool_name in ["Write", "Edit"]:
+            file_path = input_data.get("file_path")
+            if file_path and self._is_dangerous_path(file_path):
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ASK,
+                    message=f"Permission required: {tool_name} operation on "
+                    f"sensitive file {file_path}",
+                    decision_reason="Safety check: dangerous file or "
+                    "directory",
+                )
+
+        # Check Bash tool for dangerous paths in commands
+        if tool_name == "Bash":
+            command = input_data.get("command", "")
+            dangerous_paths = self._extract_dangerous_paths_from_bash(command)
+            if dangerous_paths:
+                paths_str = ", ".join(dangerous_paths)
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ASK,
+                    message=f"Permission required: Bash command operates on "
+                    f"sensitive paths: {paths_str}",
+                    decision_reason="Safety check: dangerous file or "
+                    "directory in bash command",
+                )
 
         return None
+
+    def _extract_dangerous_paths_from_bash(
+        self,
+        command: str,
+    ) -> list[str]:
+        """Extract dangerous paths from a bash command using tree-sitter.
+
+        Checks for dangerous paths in:
+        - File-manipulating commands (rm, mv, cp, chmod, chown, sed, touch)
+        - Output redirections (>, >>)
+
+        Args:
+            command: The bash command string
+
+        Returns:
+            List of dangerous paths found in the command
+        """
+        dangerous_paths = []
+
+        # Use tree-sitter to extract file paths
+        file_paths = self._bash_parser.extract_file_paths(command)
+
+        for _cmd_name, path in file_paths:
+            if self._is_dangerous_path(path):
+                dangerous_paths.append(path)
+
+        return dangerous_paths
 
     def _check_explore_mode(self, tool_name: str) -> PermissionDecision | None:
         """Check permissions in EXPLORE (read-only) mode.
@@ -246,7 +402,8 @@ class PermissionEngine:
         """Check permissions in ACCEPT_EDITS mode.
 
         In ACCEPT_EDITS mode:
-        - Dangerous paths are NOT auto-allowed (require explicit permission)
+        - Dangerous paths are NOT auto-allowed
+         (handled by _check_dangerous_paths)
         - File writes in working directories are auto-allowed
         - File reads in working directories are auto-allowed
         - Common filesystem commands (mkdir, rm, mv, cp) are auto-allowed
@@ -264,12 +421,8 @@ class PermissionEngine:
             if not file_path:
                 return None
 
-            # 1. Check if path is dangerous (highest priority)
-            if self._is_dangerous_path(file_path):
-                # Don't auto-allow dangerous paths, let it fall through to ASK
-                return None
-
-            # 2. Check if in working directory
+            # Dangerous paths are already checked in _check_dangerous_paths
+            # Here we only check if in working directory
             if self._path_in_allowed_working_path(file_path):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
@@ -289,6 +442,24 @@ class PermissionEngine:
                     message=f"Permission granted for reading {file_path} "
                     f"(accept edits mode - in working directory)",
                     decision_reason="File is in working directory",
+                    updated_input=input_data,
+                )
+
+        # Handle Edit tool
+        if tool_name == "Edit":
+            file_path = input_data.get("file_path")
+            if not file_path:
+                return None
+
+            # Dangerous paths are already checked in _check_dangerous_paths
+            # Here we only check if in working directory
+            if self._path_in_allowed_working_path(file_path):
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message=f"Permission granted for editing {file_path} "
+                    f"(accept edits mode - in working directory)",
+                    decision_reason="File is in working directory and not "
+                    "a dangerous path",
                     updated_input=input_data,
                 )
 
@@ -509,29 +680,47 @@ class PermissionEngine:
         # Route to appropriate matching logic based on tool type
         if rule.tool_name == "Bash":
             return self._match_bash_rule(rule.rule_content, input_data)
-        elif rule.tool_name in ["Write", "Read"]:
+
+        if rule.tool_name in ["Write", "Read"]:
             return self._match_filesystem_rule(rule.rule_content, input_data)
-        else:
-            return self._match_generic_rule(rule.rule_content, input_data)
+
+        return self._match_generic_rule(rule.rule_content, input_data)
 
     def _match_bash_rule(
         self,
         pattern: str,
         input_data: dict[str, Any],
     ) -> bool:
-        """Match Bash command using substring matching.
+        """Match Bash command using substring or prefix matching.
+
+        Supports two matching modes:
+        1. Prefix pattern (e.g., "git:*"): matches commands starting
+         with "git "
+        2. Substring pattern (e.g., "npm install"): matches if pattern is
+         in command
 
         Args:
-            pattern: The command substring pattern to match
+            pattern: The command pattern to match
             input_data: Must contain a "command" key with the command string
 
         Returns:
-            True if pattern is found in the command
+            True if pattern matches the command
 
-        Example:
-            pattern="npm install" matches command="npm install express"
+        Examples:
+            pattern="git:*" matches "git status", "git add .", etc.
+            pattern="npm install" matches "npm install express"
         """
         command = input_data.get("command", "")
+
+        # Check if pattern is a prefix pattern (ends with :*)
+        if pattern.endswith(":*"):
+            # Extract prefix (remove :*)
+            prefix = pattern[:-2].strip()
+            # Match if command starts with prefix followed by space or is
+            # exactly the prefix
+            return command.startswith(prefix + " ") or command == prefix
+
+        # Otherwise, use substring matching
         return pattern in command
 
     def _match_filesystem_rule(
@@ -593,22 +782,15 @@ class PermissionEngine:
                 return True
         return False
 
-    def _default_decision(self, tool_name: str) -> PermissionDecision:
-        """Determine the default permission behavior based on mode.
+    def _default_decision_ask(self, tool_name: str) -> PermissionDecision:
+        """Return default ASK decision.
 
         Args:
             tool_name: The name of the tool
 
         Returns:
-            PermissionDecision with the default behavior for the current mode
+            PermissionDecision with ASK behavior
         """
-        # BYPASS: Allow all operations
-        if self.context.mode == PermissionMode.BYPASS:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message=f"Permission granted for {tool_name} (bypass mode)",
-            )
-
         # DONT_ASK: Convert ASK to DENY (user not available)
         if self.context.mode == PermissionMode.DONT_ASK:
             return PermissionDecision(
@@ -619,26 +801,12 @@ class PermissionEngine:
                 "permission prompts",
             )
 
-        # EXPLORE: Already handled in _check_mode_specific, but as fallback
-        if self.context.mode == PermissionMode.EXPLORE:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ASK,
-                message=f"Permission required for {tool_name}",
-                decision_reason=f"Mode: {self.context.mode.value}",
-            )
-
-        # DEFAULT and ACCEPT_EDITS: Ask for permission
+        # DEFAULT and other modes: Ask for permission
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
             message=f"Permission required for {tool_name}",
             decision_reason=f"Mode: {self.context.mode.value}",
         )
-
-    def _get_bash_parser(self) -> Any:
-        """Get or create bash parser instance (lazy loading)."""
-        if self._bash_parser is None:
-            self._bash_parser = get_bash_parser()
-        return self._bash_parser
 
     def _generate_suggestions(
         self,
@@ -678,63 +846,37 @@ class PermissionEngine:
     ) -> List[PermissionRule]:
         """Generate suggestions for Bash commands.
 
-        For single commands: generates 1 prefix rule
-        For compound commands: generates multiple rules (max 5)
+        Generates prefix rules based on command + subcommand (two words).
+        For example, "git commit -m 'xxx'" generates "git commit:*".
         """
-        command = tool_call.parameters.get("command", "")
+        input_data = json.loads(tool_call.input)
+        command = input_data.get("command", "")
         if not command:
             return []
 
-        parser = self._get_bash_parser()
+        # Use bash parser to extract command prefixes
+        prefixes = self._bash_parser.extract_command_prefixes(
+            command,
+            max_prefixes=5,
+        )
 
-        # Split compound commands
-        subcommands = parser.split_compound_command(command)
+        if not prefixes:
+            # Cannot extract any prefix, return empty
+            return []
 
-        if len(subcommands) == 1:
-            # Single command: generate one rule
-            prefix = parser.extract_command_prefix(command)
-            if prefix:
-                return [
-                    PermissionRule(
-                        tool_name="Bash",
-                        rule_content=f"{prefix}:*",
-                        behavior=PermissionBehavior.ALLOW,
-                        source="suggested",
-                    ),
-                ]
-            else:
-                # Cannot extract prefix, use exact match
-                return [
-                    PermissionRule(
-                        tool_name="Bash",
-                        rule_content=command,
-                        behavior=PermissionBehavior.ALLOW,
-                        source="suggested",
-                    ),
-                ]
-        else:
-            # Compound command: generate rules for each subcommand (max 5)
-            MAX_SUGGESTED_RULES = 5
-            rules = []
-            seen_contents = set()
+        # Generate rules for each prefix
+        rules = []
+        for prefix in prefixes:
+            rules.append(
+                PermissionRule(
+                    tool_name="Bash",
+                    rule_content=f"{prefix}:*",
+                    behavior=PermissionBehavior.ALLOW,
+                    source="suggested",
+                ),
+            )
 
-            for subcmd in subcommands[:MAX_SUGGESTED_RULES]:
-                prefix = parser.extract_command_prefix(subcmd.strip())
-                if prefix:
-                    rule_content = f"{prefix}:*"
-                    # Avoid duplicate rules
-                    if rule_content not in seen_contents:
-                        rules.append(
-                            PermissionRule(
-                                tool_name="Bash",
-                                rule_content=rule_content,
-                                behavior=PermissionBehavior.ALLOW,
-                                source="suggested",
-                            ),
-                        )
-                        seen_contents.add(rule_content)
-
-            return rules
+        return rules
 
     def _generate_file_suggestions(
         self,
@@ -744,7 +886,8 @@ class PermissionEngine:
 
         Suggests allowing the entire directory containing the file.
         """
-        file_path = tool_call.parameters.get("file_path", "")
+        input_data = json.loads(tool_call.input)
+        file_path = input_data.get("file_path", "")
         if not file_path:
             return []
 
@@ -770,9 +913,8 @@ class PermissionEngine:
 
         Used when no specific suggestion strategy is available.
         """
-        import json
-
-        rule_content = json.dumps(tool_call.parameters, sort_keys=True)
+        input_data = json.loads(tool_call.input)
+        rule_content = json.dumps(input_data, sort_keys=True)
 
         return [
             PermissionRule(

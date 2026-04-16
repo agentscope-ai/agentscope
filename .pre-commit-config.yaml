@@ -102,6 +102,7 @@ repos:
           --max-branches=30,
           --max-nested-blocks=7,
           --max-statements=100,
+          --max-returns=10,
         ]
   - repo: https://github.com/regebro/pyroma
     rev: "5.0"
