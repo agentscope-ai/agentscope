@@ -9,7 +9,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15]
-        python-version: ['3.12']
+        python-version: ['3.11']
     env:
       OS: ${{ matrix.os }}
     steps:

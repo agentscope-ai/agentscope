@@ -54,7 +54,7 @@ class EventBase(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    created_at: str = Field(default_factory=datetime.now().isoformat)
     """ISO 8601 timestamp of when the event was created."""
 
 

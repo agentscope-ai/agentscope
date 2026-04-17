@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
 from datetime import datetime
-from typing import Literal, List, overload, Sequence
+from typing import Literal, List, overload, Sequence, Self
 
 import shortuuid
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ._block import (
     TextBlock,
@@ -43,15 +43,33 @@ def _assert_system_content_blocks(
 
 
 class Msg(BaseModel):
-    """The message class in agentscope."""
+    """The message class in AgentScope, responsible for information storage
+    and transmission among different agents."""
 
     name: str
+    """The name of the sender."""
     content: str | list[ContentBlock]
+    """The message content, a string or a list of content blocks."""
     role: Literal["user", "assistant", "system"]
-
+    """The role of the sender."""
     id: str = Field(default_factory=shortuuid.uuid)
+    """The message identifier."""
     metadata: dict = Field(default_factory=dict)
+    """The metadata of the message"""
     created_at: str = Field(default_factory=datetime.now().isoformat)
+    """The creation time of the message"""
+
+    @model_validator(mode="after")
+    def validate_role_content(self) -> Self:
+        """Validate content blocks according to the role."""
+        match self.role:
+            case "user":
+                _assert_user_content_blocks(self.content)
+            case "system":
+                _assert_system_content_blocks(self.content)
+            case "assistant":
+                pass
+        return self
 
     def has_content_blocks(
         self,
@@ -198,7 +216,6 @@ def UserMsg(
         `Msg`:
             The created user message.
     """
-    _assert_user_content_blocks(content)
 
     return Msg(
         name=name,
@@ -264,7 +281,6 @@ def SystemMsg(
         `Msg`:
             The created system message.
     """
-    _assert_system_content_blocks(content)
 
     return Msg(
         name=name,
