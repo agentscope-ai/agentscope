@@ -16,3 +16,11 @@ class AgentOrientedExceptionBase(Exception):
     def __str__(self) -> str:
         """Return the string representation of the exception."""
         return f"{self.__class__.__name__}: {self.message}"
+
+class DeveloperOrientedException(Exception):
+    """The exception should be raised to the developers."""
+
+    def __init__(self, message: str):
+        """Initialize the exception with a message."""
+        super().__init__(message)
+        self.message = message

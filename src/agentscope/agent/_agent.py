@@ -4,6 +4,9 @@ import uuid
 from dataclasses import dataclass
 from typing import AsyncGenerator, Literal
 
+from agentscope.tool import PermissionContext
+from pydantic import BaseModel, Field
+
 from ..event import (
     AgentEvent,
     EventType,
@@ -56,23 +59,30 @@ DEFAULT_COMPRESSION_PROMPT = (
 )
 
 
-@dataclass
-class AgentState:
+class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
-    context: list[Msg]
+    summary: str | list[TextBlock | DataBlock] = ""
+    """The compressed summary of the context, which will be prepended to the
+    context when feed into the LLM."""
+    context: list[Msg] = []
     """The uncompressed conversation context, that will be feed into the LLM"""
-
-    reply_id: str
+    reply_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""
-
     cur_iter: int = 0
     """The current iteration of the agent's reasoning-acting loop."""
 
-    cur_summary: str = ""
-    """The current compressed summary of the context, which will be prepended
-    to the context when feed into the LLM."""
+    # The tool state, e.g. the active tool groups
+    activated_groups: list[str] = []
+    """The names of the activated tool groups, each group contains a set of 
+    tools."""
+
+    permissionContext: PermissionContext = Field(
+        default_factory=PermissionContext
+    )
+    """The permission context that will be passed to the toolkit to determine 
+    the tool permissions."""
 
 
 class Agent:

@@ -8,9 +8,8 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
-from . import MCPToolFunction
 from ._client_base import MCPClientBase
-from ..tool import ToolResponse
+from ..tool import MCPTool
 
 
 class HttpStatelessClient(MCPClientBase):
@@ -89,29 +88,26 @@ class HttpStatelessClient(MCPClientBase):
             "Supported types are 'sse' and 'streamable_http'.",
         )
 
-    async def get_callable_function(
+    async def get_tool(
         self,
         func_name: str,
-        wrap_tool_result: bool = True,
         execution_timeout: float | None = None,
-    ) -> Callable[..., Awaitable[mcp.types.CallToolResult | ToolResponse]]:
-        """Get a tool function by its name.
+    ) -> MCPTool:
+        """Get a tool object by its name.
+
+        The returned MCPTool object implements ToolProtocol and can be:
+        - Called directly: `await tool(arg1=val1)`
+        - Registered to toolkit: `toolkit.register_tool(tool)`
 
         Args:
             func_name (`str`):
                 The name of the tool function.
-            wrap_tool_result (`bool`, defaults to `True`):
-                Whether to wrap the tool result into agentscope's
-                `ToolResponse` object. If `False`, the raw result type
-                `mcp.types.CallToolResult` will be returned.
             execution_timeout (`float | None`, optional):
                 The preset timeout in seconds for calling the tool function.
 
         Returns:
-            `Callable[..., Awaitable[mcp.types.CallToolResult | \
-            ToolResponse]]`:
-                An async tool function that returns either
-                `mcp.types.CallToolResult` or `ToolResponse` when called.
+            `MCPTool`:
+                A tool object that implements ToolProtocol.
         """
 
         if self._tools is None:
@@ -128,10 +124,9 @@ class HttpStatelessClient(MCPClientBase):
                 f"Tool '{func_name}' not found in the MCP server ",
             )
 
-        return MCPToolFunction(
+        return MCPTool(
             mcp_name=self.name,
             tool=target_tool,
-            wrap_tool_result=wrap_tool_result,
             client_gen=self.get_client,
             timeout=execution_timeout,
         )

@@ -236,32 +236,6 @@ def _extract_json_schema_from_mcp_tool(tool: Tool) -> dict[str, Any]:
     }
 
 
-def _remove_title_field(schema: dict) -> None:
-    """Remove the title field from the JSON schema to avoid
-    misleading the LLM."""
-    # The top level title field
-    if "title" in schema:
-        schema.pop("title")
-
-    # properties
-    if "properties" in schema:
-        for prop in schema["properties"].values():
-            if isinstance(prop, dict):
-                _remove_title_field(prop)
-
-    # items
-    if "items" in schema and isinstance(schema["items"], dict):
-        _remove_title_field(schema["items"])
-
-    # additionalProperties
-    if "additionalProperties" in schema and isinstance(
-        schema["additionalProperties"],
-        dict,
-    ):
-        _remove_title_field(
-            schema["additionalProperties"],
-        )
-
 
 def _create_tool_from_base_model(
     structured_model: Type[BaseModel],

@@ -9,31 +9,27 @@ from typing import (
     Generator,
     Coroutine,
     Any,
-    TYPE_CHECKING,
     TypeAlias,
     Literal,
 )
 
-if TYPE_CHECKING:
-    from ..tool import ToolResponse
-else:
-    ToolResponse = "ToolResponse"
+from ..tool import ToolChunk
 
-ToolFunction = Callable[
+ToolFunction: TypeAlias = Callable[
     ...,
     Union[
         # sync function
-        ToolResponse,
+        ToolChunk,
         # async function
-        Awaitable[ToolResponse],
+        Awaitable[ToolChunk],
         # sync generator function
-        Generator[ToolResponse, None, None],
+        Generator[ToolChunk, None, None],
         # async generator function
-        AsyncGenerator[ToolResponse, None],
+        AsyncGenerator[ToolChunk, None],
         # async function that returns async generator
-        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
+        Coroutine[Any, Any, AsyncGenerator[ToolChunk, None]],
         # async function that returns sync generator
-        Coroutine[Any, Any, Generator[ToolResponse, None, None]],
+        Coroutine[Any, Any, Generator[ToolChunk, None, None]],
     ],
 ]
 
