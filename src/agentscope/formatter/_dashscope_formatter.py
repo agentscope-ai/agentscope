@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The dashscope formatter module."""
 
-from typing import Any
+from typing import Any, Literal
 from fnmatch import fnmatch
 from abc import ABC
 
@@ -23,8 +23,6 @@ from ..message import (
 class _DashScopeFormatterBase(FormatterBase, ABC):
     """Base class for DashScope formatters, providing shared data block
     formatting logic."""
-
-    supported_input_media_types: list[str]
 
     def _format_dashscope_data_block(
         self,
@@ -90,21 +88,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
         list ``[]`` for messages without valid content blocks.
     """
 
-    def __init__(
-        self,
-        supported_input_media_type: list[str] | None = None,
-    ) -> None:
-        """Initialize the DashScope chat formatter.
-
-        Args:
-            supported_input_media_type (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ["image/*", "audio/*", "video/*"].
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_type
-            or ["image/*", "audio/*", "video/*"],
-        )
+    type: Literal["dashscope_chat_formatter"] = "dashscope_chat_formatter"
+    supported_input_media_types: list[str] = ["image/*", "audio/*", "video/*"]
 
     async def format(
         self,
@@ -247,6 +232,10 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
      is playing as.
 
     """
+
+    type: Literal[
+        "dashscope_multiagent_formatter"
+    ] = "dashscope_multiagent_formatter"
 
     def __init__(
         self,

@@ -3,7 +3,7 @@
 import base64
 import fnmatch
 from abc import ABC
-from typing import Any
+from typing import Any, Literal
 
 import requests
 
@@ -265,6 +265,8 @@ class AnthropicChatFormatter(_AnthropicFormatterBase):
     entities in the conversation.
     """
 
+    type: Literal["anthropic_chat_formatter"] = "anthropic_chat_formatter"
+
     def __init__(
         self,
         supported_input_media_types: list[str] | None = None,
@@ -308,6 +310,10 @@ class AnthropicMultiAgentFormatter(_AnthropicFormatterBase):
     """Anthropic formatter for multi-agent conversations, where more than
     a user and an agent are involved.
     """
+
+    type: Literal[
+        "anthropic_multiagent_formatter"
+    ] = "anthropic_multiagent_formatter"
 
     def __init__(
         self,

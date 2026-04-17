@@ -11,9 +11,16 @@ from typing import (
     Union,
     TYPE_CHECKING,
     List,
+    Literal,
 )
 
-from pydantic import BaseModel
+from pydantic import (
+    BaseModel,
+    SecretStr,
+    Field,
+    field_validator,
+    SerializeAsAny,
+)
 from aioitertools import iter as giter
 
 from ._model_base import ChatModelBase
@@ -22,8 +29,7 @@ from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, DashScopeChatFormatter
 from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject, ToolChoice
-from .._logging import logger
+from ..types import ToolChoice
 
 
 if TYPE_CHECKING:
@@ -66,93 +72,117 @@ class DashScopeChatModel(ChatModelBase):
     class ThinkingConfig(BaseModel):
         """The configuration for the thinking process in DashScope API."""
 
-        enable_thinking: bool
+        enable_thinking: bool = False
         thinking_budget: int = 2000
         preserve_thinking: bool = False
 
-    def __init__(
-        self,
-        model_name: str,
-        api_key: str,
-        stream: bool = True,
-        max_retries: int = 0,
-        fallback_model_name: str | None = None,
-        formatter: FormatterBase | None = None,
-        thinking_config: ThinkingConfig | None = None,
-        multimodality: bool = False,
-        generate_kwargs: dict[str, JSONSerializableObject] | None = None,
-        base_http_api_url: str | None = None,
-        **_kwargs: Any,
-    ) -> None:
-        """Initialize the DashScope chat model.
+    type: Literal["dashscope_chat_model"] = "dashscope_chat_model"
 
-        Args:
-            model_name (`str`):
-                The model names.
-            api_key (`str`):
-                The dashscope API key.
-            stream (`bool`):
-                The streaming output or not
-            enable_thinking (`bool | None`, optional):
-                Enable thinking or not, only support Qwen3, QwQ, DeepSeek-R1.
-                Refer to `DashScope documentation
-                <https://help.aliyun.com/zh/model-studio/deep-thinking>`_
-                for more details.
-            multimodality (`bool | None`, optional):
-                Whether to use multimodal conversation API. If `True`,
-                it will use `dashscope.AioMultiModalConversation.call`
-                to process multimodal inputs such as images and text. If
-                `False`, it will use
-                `dashscope.aigc.generation.AioGeneration.call` to process
-                text inputs. If `None` (default), the choice is based on
-                the model name.
-            generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
-            optional):
-               The extra keyword arguments used in DashScope API generation,
-               e.g. `temperature`, `seed`.
-            base_http_api_url (`str | None`, optional):
-                The base URL for DashScope API requests. If not provided,
-                the default base URL from the DashScope SDK will be used.
-            stream_tool_parsing (`bool`, default to `True`):
-                Whether to parse incomplete tool use JSON in streaming mode
-                with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
-                is repaired to valid dicts (`{"a": "x"}`) in real-time for
-                immediate tool function input. Otherwise, the input field
-                remains {} until the final chunk arrives.
-            **_kwargs (`Any`):
-                Additional keyword arguments.
-        """
+    model_name: str
+    api_key: SecretStr
+    stream: bool = True
+    max_retries: int = 0
+    fallback_model_name: str | None = None
+    formatter: SerializeAsAny[FormatterBase] = Field(
+        default_factory=DashScopeChatFormatter,
+    )
+    thinking_config: ThinkingConfig = Field(default_factory=ThinkingConfig)
+    multimodality: bool = False
+    generate_kwargs: dict[str, Any] = {}
+    base_http_api_url: str | None = None
 
-        self.thinking_config = (
-            thinking_config
-            or DashScopeChatModel.ThinkingConfig(
-                enable_thinking=False,
-            )
-        )
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def parse_api_key(cls, v: str | SecretStr) -> SecretStr:
+        """Parse the API key, converting it to SecretStr if it's a plain
+        string."""
+        if isinstance(v, str):
+            return SecretStr(v)  # str → SecretStr
+        return v
 
-        if self.thinking_config.enable_thinking and not stream:
-            logger.info(
-                "In DashScope API, `stream` must be True when "
-                "`enable_thinking` is True. ",
-            )
-            stream = True
-
-        super().__init__(
-            model_name,
-            stream,
-            max_retries,
-            fallback_model_name,
-            formatter or DashScopeChatFormatter(),
-        )
-
-        self.api_key = api_key
-        self.multimodality = multimodality
-        self.generate_kwargs = generate_kwargs or {}
-
-        if base_http_api_url is not None:
-            import dashscope
-
-            dashscope.base_http_api_url = base_http_api_url
+    # def __init__(
+    #     self,
+    #     model_name: str,
+    #     api_key: str,
+    #     stream: bool = True,
+    #     max_retries: int = 0,
+    #     fallback_model_name: str | None = None,
+    #     formatter: FormatterBase | None = None,
+    #     thinking_config: ThinkingConfig | None = None,
+    #     multimodality: bool = False,
+    #     generate_kwargs: dict[str, JSONSerializableObject] | None = None,
+    #     base_http_api_url: str | None = None,
+    #     **_kwargs: Any,
+    # ) -> None:
+    #     """Initialize the DashScope chat model.
+    #
+    #     Args:
+    #         model_name (`str`):
+    #             The model names.
+    #         api_key (`str`):
+    #             The dashscope API key.
+    #         stream (`bool`):
+    #             The streaming output or not
+    #         enable_thinking (`bool | None`, optional):
+    #             Enable thinking or not, only support Qwen3, QwQ, DeepSeek-R1.
+    #             Refer to `DashScope documentation
+    #             <https://help.aliyun.com/zh/model-studio/deep-thinking>`_
+    #             for more details.
+    #         multimodality (`bool | None`, optional):
+    #             Whether to use multimodal conversation API. If `True`,
+    #             it will use `dashscope.AioMultiModalConversation.call`
+    #             to process multimodal inputs such as images and text. If
+    #             `False`, it will use
+    #             `dashscope.aigc.generation.AioGeneration.call` to process
+    #             text inputs. If `None` (default), the choice is based on
+    #             the model name.
+    #         generate_kwargs (`dict[str, JSONSerializableObject] | None`, \
+    #         optional):
+    #            The extra keyword arguments used in DashScope API generation,
+    #            e.g. `temperature`, `seed`.
+    #         base_http_api_url (`str | None`, optional):
+    #             The base URL for DashScope API requests. If not provided,
+    #             the default base URL from the DashScope SDK will be used.
+    #         stream_tool_parsing (`bool`, default to `True`):
+    #             Whether to parse incomplete tool use JSON in streaming mode
+    #             with auto-repair. If True, partial JSON (e.g., `'{"a": "x'`)
+    #             is repaired to valid dicts (`{"a": "x"}`) in real-time for
+    #             immediate tool function input. Otherwise, the input field
+    #             remains {} until the final chunk arrives.
+    #         **_kwargs (`Any`):
+    #             Additional keyword arguments.
+    #     """
+    #
+    #     self.thinking_config = (
+    #         thinking_config
+    #         or DashScopeChatModel.ThinkingConfig(
+    #             enable_thinking=False,
+    #         )
+    #     )
+    #
+    #     if self.thinking_config.enable_thinking and not stream:
+    #         logger.info(
+    #             "In DashScope API, `stream` must be True when "
+    #             "`enable_thinking` is True. ",
+    #         )
+    #         stream = True
+    #
+    #     super().__init__(
+    #         model_name,
+    #         stream,
+    #         max_retries,
+    #         fallback_model_name,
+    #         formatter or DashScopeChatFormatter(),
+    #     )
+    #
+    #     self.api_key = api_key
+    #     self.multimodality = multimodality
+    #     self.generate_kwargs = generate_kwargs or {}
+    #
+    #     if base_http_api_url is not None:
+    #         import dashscope
+    #
+    #         dashscope.base_http_api_url = base_http_api_url
 
     @trace_llm
     async def _call_api(
@@ -232,13 +262,13 @@ class DashScopeChatModel(ChatModelBase):
             and ("qvq" in self.model_name or "-vl" in self.model_name)
         ):
             response = await dashscope.AioMultiModalConversation.call(
-                api_key=self.api_key,
+                api_key=self.api_key.get_secret_value(),
                 **kwargs,
             )
 
         else:
             response = await dashscope.aigc.generation.AioGeneration.call(
-                api_key=self.api_key,
+                api_key=self.api_key.get_secret_value(),
                 **kwargs,
             )
 

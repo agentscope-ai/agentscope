@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import uuid
-from dataclasses import dataclass
-from typing import AsyncGenerator, Literal
+from typing import Any, AsyncGenerator
+
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    ValidationInfo,
+    SerializeAsAny,
+)
 
 from ..event import (
     AgentEvent,
@@ -29,8 +36,8 @@ from ..event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
 )
-from ..message import Msg
-from ..model import ChatResponse
+from ..message import Msg, AssistantMsg
+from ..model import ChatResponse, _deserialize_model
 from ..model import ChatUsage
 
 from ..message import (
@@ -44,63 +51,226 @@ from ..message import (
 )
 
 from ..model import ChatModelBase
+from ..types import ToolChoice
 
 
-DEFAULT_COMPRESSION_PROMPT = (
-    "<system-hint>You have been working on the task described above but have "
-    "not yet completed it. "
-    "Now write a continuation summary that will allow you to resume work "
-    "efficiently in a future context window "
-    "where the conversation history will be replaced with this summary. "
-    "Your summary should be structured, concise, and actionable.</system-hint>"
-)
-
-
-@dataclass
-class AgentState:
+class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
-    context: list[Msg]
+    summary: str | list[TextBlock | DataBlock] = ""
+    """The compressed summary of the context, which will be prepended to the
+    context when feed into the LLM."""
+    context: list[Msg] = []
     """The uncompressed conversation context, that will be feed into the LLM"""
-
-    reply_id: str
+    reply_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The id of the current reply, which is also used as the id of the
     final message of the reply."""
-
     cur_iter: int = 0
     """The current iteration of the agent's reasoning-acting loop."""
-
-    cur_summary: str = ""
-    """The current compressed summary of the context, which will be prepended
-    to the context when feed into the LLM."""
+    confirmed_tool_call_ids: list[str] | None = None
+    """The list of tool call ids that have been confirmed by the user."""
 
 
-class Agent:
-    """The unified agent class in AgentScope library."""
+class SummarySchema(BaseModel):
+    """The compressed memory model, used to generate summary of old memories"""
 
-    def __init__(
-        self,
-        name: str,
-        sys_prompt: str,
-        model: "ChatModelBase",
-        max_iters: int = 20,
-    ) -> None:
-        """Initialize an agent instance."""
-        if max_iters <= 0:
-            raise ValueError("max_iters must be greater than 0")
+    task_overview: str = Field(
+        max_length=300,
+        description=(
+            "The user's core request and success criteria.\n"
+            "Any clarifications or constraints they specified"
+        ),
+    )
+    current_state: str = Field(
+        max_length=300,
+        description=(
+            "What has been completed so far.\n"
+            "File created, modified, or analyzed (with paths if relevant).\n"
+            "Key outputs or artifacts produced."
+        ),
+    )
+    important_discoveries: str = Field(
+        max_length=300,
+        description=(
+            "Technical constraints or requirements uncovered.\n"
+            "Decisions made and their rationale.\n"
+            "Errors encountered and how they were resolved.\n"
+            "What approaches were tried that didn't work (and why)"
+        ),
+    )
+    next_steps: str = Field(
+        max_length=200,
+        description=(
+            "Specific actions needed to complete the task.\n"
+            "Any blockers or open questions to resolve.\n"
+            "Priority order if multiple steps remain"
+        ),
+    )
+    context_to_preserve: str = Field(
+        max_length=300,
+        description=(
+            "User preferences or style requirements.\n"
+            "Domain-specific details that aren't obvious.\n"
+            "Any promises made to the user"
+        ),
+    )
 
-        self.name = name
-        self._sys_prompt = sys_prompt
-        self.model = model
-        self.max_iters = max_iters
 
-        # TODO: storage - these should be loaded from storage
-        self._loaded = False
-        self.context: list[Msg] = []
-        self.reply_id: str = ""
-        self.cur_iter: int = 0
-        self.confirmed_tool_call_ids: list[str] = []
-        self.cur_summary: str = ""
+class CompressionConfig(BaseModel):
+    """The compression related configuration in AgentScope"""
+
+    model_config = {"arbitrary_types_allowed": True}
+    """Allow arbitrary types in the pydantic model."""
+
+    trigger_threshold: int = 20000
+    """The token threshold to trigger the compression process. When the
+    total token count in the memory exceeds this threshold, the
+    compression will be activated."""
+
+    keep_recent: int = 5
+    """The number of most recent messages to keep uncompressed in the
+    memory to preserve the recent context."""
+
+    compression_prompt: str = (
+        "<system-hint>You have been working on the task described above "
+        "but have not yet completed it. "
+        "Now write a continuation summary that will allow you to resume "
+        "work efficiently in a future context window where the "
+        "conversation history will be replaced with this summary. "
+        "Your summary should be structured, concise, and actionable."
+        "</system-hint>"
+    )
+    """The prompt used to guide the compression model to generate the
+    compressed summary, which will be wrapped into a user message and
+    attach to the end of the current memory."""
+
+    summary_template: str = (
+        "<system-info>Here is a summary of your previous work\n"
+        "# Task Overview\n"
+        "{task_overview}\n\n"
+        "# Current State\n"
+        "{current_state}\n\n"
+        "# Important Discoveries\n"
+        "{important_discoveries}\n\n"
+        "# Next Steps\n"
+        "{next_steps}\n\n"
+        "# Context to Preserve\n"
+        "{context_to_preserve}"
+        "</system-info>"
+    )
+    """The string template to present the compressed summary to the agent,
+    which will be formatted with the fields from the
+    `compression_summary_model`."""
+
+    summary_schema: dict = Field(
+        default_factory=SummarySchema.model_json_schema,
+    )
+    """The structured model used to guide the agent to generate the
+    structured compressed summary."""
+
+    compression_model: SerializeAsAny[ChatModelBase] | None = None
+    """The compression model used to generate the compressed summary. If
+    not provided, the agent's model will be used."""
+
+    @field_validator("compression_model", mode="before")
+    @classmethod
+    def validate_compression_model(cls, v: Any, info: ValidationInfo) -> Any:
+        """Deserialize compression_model from dict using context-injected
+        custom classes."""
+        if not isinstance(v, dict):
+            return v
+        custom_classes = (
+            info.context.get("custom_model_classes", [])
+            if info.context
+            else []
+        )
+        return _deserialize_model(
+            v,
+            custom_classes=custom_classes,
+            context=info.context,
+        )
+
+
+class ReasoningConfig(BaseModel):
+    """The reasoning related configuration"""
+
+    max_iters: int = 20
+    """The maximum number of iterations for the reasoning-acting loop."""
+
+
+class ActingConfig(BaseModel):
+    """The acting related configuration in AgentScope"""
+
+    parallel: bool = True
+    """Whether to execute tool calls in parallel when there are multiple tool
+    calls awaiting execution."""
+
+
+class Agent(BaseModel):
+    """The agent class."""
+
+    name: str = Field(description="The identifier of the agent.")
+    """The name of the agent."""
+
+    system_prompt: str = Field(default="You're a helpful assistant.")
+    """The base system prompt of the agent, extra hints will be attached to
+    this prompt during agent's reply."""
+
+    model: SerializeAsAny[ChatModelBase] = Field(
+        description="The language model used by the agent.",
+    )
+    """The language model used by the agent."""
+
+    max_retries: int = Field(
+        default=10,
+        gt=0,
+        description="Maximum number of retries when the model call fails.",
+    )
+    """The maximum number of retries when the model call fails. Must be
+    greater than 0."""
+
+    fallback_model: SerializeAsAny[ChatModelBase] | None = Field(
+        default=None,
+        description="The fallback model used when the main model fails.",
+    )
+    """The fallback model used when the main model fails. Also supports the
+    max_retries logic."""
+
+    compression: CompressionConfig = Field(
+        default_factory=CompressionConfig,
+        description="The compression related configuration for the agent.",
+    )
+    """The agent compression related configuration."""
+
+    reasoning: ReasoningConfig = Field(
+        default_factory=ReasoningConfig,
+        description="The reasoning related configuration for the agent.",
+    )
+    """The reasoning related configuration for the agent."""
+
+    acting: ActingConfig = Field(
+        default_factory=ActingConfig,
+        description="The acting related configuration for the agent.",
+    )
+    """The acting, i.e. tool execution, related configuration for the agent."""
+
+    @field_validator("model", "fallback_model", mode="before")
+    @classmethod
+    def validate_model(cls, v: Any, info: ValidationInfo) -> Any:
+        """Deserialize model from dict using context-injected custom
+        classes."""
+        if not isinstance(v, dict):
+            return v
+        custom_classes = (
+            info.context.get("custom_model_classes", [])
+            if info.context
+            else []
+        )
+        return _deserialize_model(
+            v,
+            custom_classes=custom_classes,
+            context=info.context,
+        )
 
     @property
     def sys_prompt(self) -> str:
@@ -108,27 +278,18 @@ class Agent:
         # TODO: Add toolkit skills prompt when toolkit is implemented
         return self._sys_prompt
 
-    async def load_state(self) -> None:
-        """Load the state from storage if available."""
-        # TODO: Implement storage loading
-
-    async def save_state(self) -> None:
-        """Save the state to storage if available."""
-        # TODO: Implement storage saving
-
     async def reply_stream(
         self,
-        msgs: Msg | list[Msg] | None = None,
+        msgs: Msg | list[Msg] | AgentEvent | None = None,
         event: AgentEvent | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Reply to the given message and stream agent events."""
-        await self.load_state()
         try:
             async for chunk in self._reply(msgs=msgs, event=event):
                 if not isinstance(chunk, Msg):
                     yield chunk
         finally:
-            await self.save_state()
+            pass
 
     async def reply(
         self,
@@ -136,7 +297,6 @@ class Agent:
         event: AgentEvent | None = None,
     ) -> Msg:
         """Reply to the given message, consuming all streamed events."""
-        await self.load_state()
         try:
             final_msg: Msg | None = None
             async for chunk in self._reply(msgs=msgs, event=event):
@@ -146,7 +306,7 @@ class Agent:
                 raise RuntimeError("Agent did not produce a final message.")
             return final_msg
         finally:
-            await self.save_state()
+            pass
 
     def _save_to_context(
         self,
@@ -154,32 +314,31 @@ class Agent:
         _usage: ChatUsage | None = None,
     ) -> None:
         """Save content blocks into the context."""
-        if len(self.context) == 0:
-            self.context.append(
-                Msg(name=self.name, content=list(blocks), role="assistant"),
+        if len(self.state.context) == 0:
+            self.state.context.append(
+                AssistantMsg(name=self.name, content=list(blocks)),
             )
         else:
-            last_msg = self.context[-1]
+            last_msg = self.state.context[-1]
             if last_msg.role == "assistant" and last_msg.name == self.name:
                 if isinstance(last_msg.content, str):
                     last_msg.content = [TextBlock(text=last_msg.content)]
                 last_msg.content.extend(blocks)
                 # TODO: Merge usage if needed
             else:
-                self.context.append(
-                    Msg(
+                self.state.context.append(
+                    AssistantMsg(
                         name=self.name,
                         content=list(blocks),
-                        role="assistant",
                     ),
                 )
 
     def _get_pending_tool_calls(self) -> list[ToolCallBlock]:
         """Get tool calls from the last assistant message that have no result
         yet."""
-        if len(self.context) == 0:
+        if len(self.state.context) == 0:
             return []
-        last_msg = self.context[-1]
+        last_msg = self.state.context[-1]
         if last_msg.role != "assistant":
             return []
         content = (
@@ -230,7 +389,9 @@ class Agent:
                     confirmed = result.confirmed
                     tool_call = result.tool_call
                     if confirmed:
-                        self.confirmed_tool_call_ids.append(tool_call["id"])
+                        self.state.confirmed_tool_call_ids.append(
+                            tool_call["id"],
+                        )
                     else:
                         rejection_text = (
                             f"<system-info>**Note** the user rejected the "
@@ -238,17 +399,17 @@ class Agent:
                             f'"{tool_call["name"]}"!</system-info>'
                         )
                         yield ToolResultStartEvent(
-                            reply_id=self.reply_id,
+                            reply_id=self.state.reply_id,
                             tool_call_id=tool_call["id"],
                             tool_call_name=tool_call["name"],
                         )
                         yield ToolResultTextDeltaEvent(
-                            reply_id=self.reply_id,
+                            reply_id=self.state.reply_id,
                             tool_call_id=tool_call["id"],
                             delta=rejection_text,
                         )
                         yield ToolResultEndEvent(
-                            reply_id=self.reply_id,
+                            reply_id=self.state.reply_id,
                             tool_call_id=tool_call["id"],
                             state="interrupted",
                         )
@@ -267,8 +428,8 @@ class Agent:
                     r.get("tool_call", {}).get("id")
                     for r in event.confirm_results
                 }
-                if self.context:
-                    last_content = self.context[-1].content
+                if self.state.context:
+                    last_content = self.state.context[-1].content
                     if isinstance(last_content, list):
                         for block in last_content:
                             if (
@@ -278,23 +439,23 @@ class Agent:
                                 block.await_user_confirmation = False
 
         else:
-            self.cur_iter = 0
-            self.reply_id = str(uuid.uuid4())
-            self.confirmed_tool_call_ids = []
+            self.state.cur_iter = 0
+            self.state.reply_id = str(uuid.uuid4())
+            self.state.confirmed_tool_call_ids = []
 
             yield RunStartedEvent(
                 session_id="",
-                reply_id=self.reply_id,
+                reply_id=self.state.reply_id,
                 name=self.name,
                 role="assistant",
             )
 
         if isinstance(msgs, list):
-            self.context.extend(msgs)
+            self.state.context.extend(msgs)
         elif msgs is not None:
-            self.context.append(msgs)
+            self.state.context.append(msgs)
 
-        while self.cur_iter < self.max_iters:
+        while self.state.cur_iter < self.max_iters:
             pending_tool_calls = self._get_pending_tool_calls()
             if len(pending_tool_calls) == 0:
                 await self._compress_memory_if_needed()
@@ -309,21 +470,21 @@ class Agent:
             for tool_call in pre_tool_calls:
                 async for evt in self._acting(tool_call=tool_call):
                     yield evt
-                self.confirmed_tool_call_ids = [
+                self.state.confirmed_tool_call_ids = [
                     cid
-                    for cid in self.confirmed_tool_call_ids
+                    for cid in self.state.confirmed_tool_call_ids
                     if cid != tool_call.id
                 ]
 
             if awaiting_type is not None:
                 if awaiting_type == EventType.REQUIRE_USER_CONFIRM:
                     yield RequireUserConfirmEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         tool_calls=awaiting_tool_calls,
                     )
                 else:
                     yield RequireExternalExecutionEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         tool_calls=awaiting_tool_calls,
                     )
                 waiting_text = (
@@ -341,11 +502,11 @@ class Agent:
             if len(pre_tool_calls) == 0:
                 break
 
-            self.cur_iter += 1
+            self.state.cur_iter += 1
 
         last_block = None
-        if self.context:
-            last_content = self.context[-1].content
+        if self.state.context:
+            last_content = self.state.context[-1].content
             if isinstance(last_content, list) and last_content:
                 last_block = last_content[-1]
         if last_block is None or not isinstance(last_block, TextBlock):
@@ -354,16 +515,16 @@ class Agent:
 
         yield RunFinishedEvent(
             session_id="",
-            reply_id=self.reply_id,
+            reply_id=self.state.reply_id,
         )
 
         final_block = None
-        if self.context:
-            last_content = self.context[-1].content
+        if self.state.context:
+            last_content = self.state.context[-1].content
             if isinstance(last_content, list) and last_content:
                 final_block = last_content[-1]
         yield Msg(
-            id=self.reply_id,
+            id=self.state.reply_id,
             name=self.name,
             content=[final_block] if final_block else [],
             role="assistant",
@@ -371,13 +532,13 @@ class Agent:
 
     async def _reasoning(
         self,
-        tool_choice: Literal["auto", "none", "required"] = "auto",
+        tool_choice: ToolChoice = "auto",
     ) -> AsyncGenerator:
         """Core reasoning logic. Yields chunks with is_last flag."""
         # TODO: Pass tool schemas from toolkit when toolkit is implemented
 
         yield ModelCallStartedEvent(
-            reply_id=self.reply_id,
+            reply_id=self.state.reply_id,
             model_name=self.model.model_name,
         )
 
@@ -387,15 +548,15 @@ class Agent:
             role="system",
         )
         messages = [system_msg]
-        if self.cur_summary:
+        if self.state.summary:
             messages.append(
                 Msg(
                     name="user",
-                    content=[TextBlock(text=self.cur_summary)],
+                    content=[TextBlock(text=self.state.summary)],
                     role="user",
                 ),
             )
-        messages.extend(self.context)
+        messages.extend(self.state.context)
 
         # TODO: Pass tools and tool_choice when toolkit is implemented
         res = await self.model(
@@ -430,22 +591,22 @@ class Agent:
 
         if block_ids["text_block_id"] is not None:
             yield TextBlockEndEvent(
-                reply_id=self.reply_id,
+                reply_id=self.state.reply_id,
                 block_id=block_ids["text_block_id"],
             )
         if block_ids["thinking_block_id"] is not None:
             yield ThinkingBlockEndEvent(
-                reply_id=self.reply_id,
+                reply_id=self.state.reply_id,
                 block_id=block_ids["thinking_block_id"],
             )
         for tool_call_id in block_ids["tool_call_ids"]:
             yield ToolCallEndEvent(
-                reply_id=self.reply_id,
+                reply_id=self.state.reply_id,
                 tool_call_id=tool_call_id,
             )
 
         yield ModelCallEndedEvent(
-            reply_id=self.reply_id,
+            reply_id=self.state.reply_id,
             input_tokens=completed_response.usage.input_tokens
             if completed_response.usage
             else 0,
@@ -465,7 +626,7 @@ class Agent:
     ) -> AsyncGenerator:
         """Core acting logic. Yields chunks with is_last flag."""
         yield ToolResultStartEvent(
-            reply_id=self.reply_id,
+            reply_id=self.state.reply_id,
             tool_call_id=tool_call.id,
             tool_call_name=tool_call.name,
         )
@@ -494,9 +655,9 @@ class Agent:
         context."""
         await self.load_state()
         if isinstance(msgs, list):
-            self.context.extend(msgs)
+            self.state.context.extend(msgs)
         elif msgs is not None:
-            self.context.append(msgs)
+            self.state.context.append(msgs)
 
     async def _convert_chat_response_to_event(
         self,
@@ -509,11 +670,11 @@ class Agent:
                 if block_ids["text_block_id"] is None:
                     block_ids["text_block_id"] = str(uuid.uuid4())
                     yield TextBlockStartEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         block_id=block_ids["text_block_id"],
                     )
                 yield TextBlockDeltaEvent(
-                    reply_id=self.reply_id,
+                    reply_id=self.state.reply_id,
                     block_id=block_ids["text_block_id"],
                     delta=block.text,
                 )
@@ -522,11 +683,11 @@ class Agent:
                 if block_ids["thinking_block_id"] is None:
                     block_ids["thinking_block_id"] = str(uuid.uuid4())
                     yield ThinkingBlockStartEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         block_id=block_ids["thinking_block_id"],
                     )
                 yield ThinkingBlockDeltaEvent(
-                    reply_id=self.reply_id,
+                    reply_id=self.state.reply_id,
                     block_id=block_ids["thinking_block_id"],
                     delta=block.thinking,
                 )
@@ -535,12 +696,12 @@ class Agent:
                 if block.id not in block_ids["tool_call_ids"]:
                     block_ids["tool_call_ids"].append(block.id)
                     yield ToolCallStartEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         tool_call_id=block.id,
                         tool_call_name=block.name,
                     )
                 yield ToolCallDeltaEvent(
-                    reply_id=self.reply_id,
+                    reply_id=self.state.reply_id,
                     tool_call_id=block.id,
                     delta=block.input,
                 )
@@ -555,7 +716,7 @@ class Agent:
         for block in tool_res.content:  # type: ignore[attr-defined]
             if isinstance(block, TextBlock):
                 yield ToolResultTextDeltaEvent(
-                    reply_id=self.reply_id,
+                    reply_id=self.state.reply_id,
                     tool_call_id=tool_call.id,
                     delta=block.text,
                 )
@@ -563,21 +724,21 @@ class Agent:
             elif isinstance(block, DataBlock):
                 if isinstance(block.source, Base64Source):
                     yield ToolResultBinaryDeltaEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
                     yield ToolResultBinaryDeltaEvent(
-                        reply_id=self.reply_id,
+                        reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         media_type=block.source.media_type,
                         url=block.source.url,
                     )
 
         yield ToolResultEndEvent(
-            reply_id=self.reply_id,
+            reply_id=self.state.reply_id,
             tool_call_id=tool_call.id,
             state=tool_res.state,  # type: ignore[attr-defined]
         )
@@ -586,7 +747,7 @@ class Agent:
         """Split context into parts to compress and parts to keep recent."""
         # TODO: Implement full splitting logic when compression_config is
         #  available
-        return [], list(self.context)
+        return [], list(self.state.context)
 
     async def _compress_memory_if_needed(self) -> None:
         """Compress the agent's memory if the token count exceeds the

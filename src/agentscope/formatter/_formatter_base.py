@@ -8,6 +8,7 @@ from fnmatch import fnmatch
 from typing import Any, List, AsyncGenerator
 
 import shortuuid
+from pydantic import BaseModel
 
 from ..message import (
     Msg,
@@ -18,24 +19,16 @@ from ..message import (
 )
 
 
-class FormatterBase:
+class FormatterBase(BaseModel):
     """The base class for formatters."""
+
+    type: str
+    """The type identifier for discriminated union deserialization."""
 
     supported_input_media_types: list[str]
     """The supported media types for multimodal data in the input messages,
     supporting mime types like "image/*", "image/png", "audio/*", "video/*",
      etc."""
-
-    def __init__(self, supported_input_media_types: list[str]) -> None:
-        """Initialize the formatter base class.
-
-        Args:
-            supported_input_media_types (`list[str]`):
-                The supported media types for multimodal data in the input
-                messages, supporting mime types like "image/*", "image/png",
-                "audio/*", "video/*", etc.
-        """
-        self.supported_input_media_types = supported_input_media_types
 
     @abstractmethod
     async def format(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:

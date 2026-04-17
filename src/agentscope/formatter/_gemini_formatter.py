@@ -3,7 +3,7 @@
 import base64
 import fnmatch
 from abc import ABC
-from typing import Any
+from typing import Any, Literal
 
 import requests
 
@@ -114,6 +114,8 @@ class GeminiChatFormatter(_GeminiFormatterBase):
     and an agent are involved. We use the `role` field to identify different
     entities in the conversation.
     """
+
+    type: Literal["gemini_chat_formatter"] = "gemini_chat_formatter"
 
     def __init__(
         self,
@@ -245,6 +247,10 @@ class GeminiMultiAgentFormatter(_GeminiFormatterBase):
      is playing as.
 
     """
+
+    type: Literal[
+        "gemini_multiagent_formatter"
+    ] = "gemini_multiagent_formatter"
 
     def __init__(
         self,

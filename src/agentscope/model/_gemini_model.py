@@ -112,6 +112,8 @@ def _flatten_json_schema(schema: dict) -> dict:
 class GeminiChatModel(ChatModelBase):
     """The Google Gemini chat model class in agentscope."""
 
+    type: Literal["gemini_chat_model"] = "gemini_chat_model"
+
     class ThinkingConfig(BaseModel):
         """Configuration for enabling thinking blocks in Gemini responses."""
 

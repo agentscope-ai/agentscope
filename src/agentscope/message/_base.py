@@ -58,10 +58,13 @@ class Msg(BaseModel):
     """The metadata of the message"""
     created_at: str = Field(default_factory=datetime.now().isoformat)
     """The creation time of the message"""
+    ended_at: str | None = Field(default=None)
+    """The end time of the message, used for calculating the response time of
+    the assistant message."""
 
     @model_validator(mode="after")
-    def validate_role_content(self) -> Self:
-        """Validate content blocks according to the role."""
+    def validate_msg(self) -> Self:
+        """Validate the message fields."""
         match self.role:
             case "user":
                 _assert_user_content_blocks(self.content)
@@ -69,6 +72,15 @@ class Msg(BaseModel):
                 _assert_system_content_blocks(self.content)
             case "assistant":
                 pass
+
+        if self.ended_at is not None and datetime.fromisoformat(
+            self.ended_at,
+        ) < datetime.fromisoformat(self.created_at):
+            raise ValueError(
+                f"ended_at ({self.ended_at}) must be >= created_at "
+                f"({self.created_at}).",
+            )
+
         return self
 
     def has_content_blocks(

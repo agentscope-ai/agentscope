@@ -34,6 +34,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 "content": "hello world",
                 "metadata": {},
                 "created_at": AnyString(),
+                "ended_at": None,
             },
         )
 
@@ -54,6 +55,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "ended_at": None,
             },
         )
 
@@ -108,6 +110,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "ended_at": None,
             },
         )
 
@@ -131,6 +134,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "ended_at": None,
             },
         )
 
@@ -150,6 +154,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ],
                 "metadata": {},
                 "created_at": AnyString(),
+                "ended_at": None,
             },
         )
 

@@ -31,6 +31,8 @@ else:
 class AnthropicChatModel(ChatModelBase):
     """The Anthropic model wrapper for AgentScope."""
 
+    type: Literal["anthropic_chat_model"] = "anthropic_chat_model"
+
     class ThinkingConfig(BaseModel):
         """Configuration for Claude's internal reasoning process."""
 
