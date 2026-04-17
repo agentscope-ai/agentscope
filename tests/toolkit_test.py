@@ -416,9 +416,6 @@ class ToolkitTest(IsolatedAsyncioTestCase):
 class RegisterFunctionTest(IsolatedAsyncioTestCase):
     """Test registering different functions in the toolkit."""
 
-    # TODO: 测试toolkit.register_function这个接口，测试不同类型的函数，测试点包括：
-    #  解析出来的schema，toolkit中的执行结果是否正确（包括ToolChunk和ToolResponse）
-
     async def test_sync_non_streaming_function(self) -> None:
         """Test registering a synchronous non-streaming function."""
 
