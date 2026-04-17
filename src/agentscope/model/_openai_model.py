@@ -2,7 +2,6 @@
 # pylint: disable=too-many-branches
 """OpenAI Chat model class."""
 import copy
-import json
 import warnings
 from datetime import datetime
 from typing import (
@@ -21,7 +20,10 @@ from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
 from .._logging import logger
-from .._utils._common import _json_loads_with_repair
+from .._utils._common import (
+    _json_loads_with_repair,
+    _parse_streaming_json_dict,
+)
 from ..message import (
     ToolUseBlock,
     TextBlock,
@@ -334,6 +336,7 @@ class OpenAIChatModel(ChatModelBase):
             will be stored in the metadata of the `ChatResponse`.
         """
         usage, res = None, None
+        response_id: str | None = None
         text = ""
         thinking = ""
         audio = ""
@@ -354,6 +357,9 @@ class OpenAIChatModel(ChatModelBase):
                 else:
                     chunk = item
 
+                if response_id is None:
+                    response_id = getattr(chunk, "id", None)
+
                 if chunk.usage:
                     usage = ChatUsage(
                         input_tokens=chunk.usage.prompt_tokens,
@@ -364,19 +370,30 @@ class OpenAIChatModel(ChatModelBase):
 
                 if not chunk.choices:
                     if usage and contents:
-                        res = ChatResponse(
-                            content=contents,
-                            usage=usage,
-                            metadata=metadata,
-                        )
+                        _kwargs: dict[str, Any] = {
+                            "content": contents,
+                            "usage": usage,
+                            "metadata": metadata,
+                        }
+                        if response_id:
+                            _kwargs["id"] = response_id
+                        res = ChatResponse(**_kwargs)
                         yield res
                     continue
 
                 choice = chunk.choices[0]
 
-                thinking += (
-                    getattr(choice.delta, "reasoning_content", None) or ""
+                delta_reasoning = getattr(
+                    choice.delta,
+                    "reasoning_content",
+                    None,
                 )
+                if not isinstance(delta_reasoning, str):
+                    delta_reasoning = getattr(choice.delta, "reasoning", None)
+                if not isinstance(delta_reasoning, str):
+                    delta_reasoning = ""
+
+                thinking += delta_reasoning
                 text += getattr(choice.delta, "content", None) or ""
 
                 if (
@@ -450,16 +467,10 @@ class OpenAIChatModel(ChatModelBase):
 
                     # If parsing the tool input in streaming mode
                     if self.stream_tool_parsing:
-                        repaired_input = _json_loads_with_repair(
-                            input_str or "{}",
+                        repaired_input = _parse_streaming_json_dict(
+                            input_str,
+                            last_input_objs.get(tool_id),
                         )
-                        # If the new repaired input is shorter than one in the
-                        # last chunk, use the last one to avoid regression
-                        last_input = last_input_objs.get(tool_id, {})
-                        if len(json.dumps(last_input)) > len(
-                            json.dumps(repaired_input),
-                        ):
-                            repaired_input = last_input
                         last_input_objs[tool_id] = repaired_input
 
                     else:
@@ -478,11 +489,14 @@ class OpenAIChatModel(ChatModelBase):
                     )
 
                 if contents:
-                    res = ChatResponse(
-                        content=contents,
-                        usage=usage,
-                        metadata=metadata,
-                    )
+                    _kwargs = {
+                        "content": contents,
+                        "usage": usage,
+                        "metadata": metadata,
+                    }
+                    if response_id:
+                        _kwargs["id"] = response_id
+                    res = ChatResponse(**_kwargs)
                     yield res
                     last_contents = copy.deepcopy(contents)
 
@@ -499,11 +513,14 @@ class OpenAIChatModel(ChatModelBase):
                     if structured_model:
                         metadata = input_obj
 
-            yield ChatResponse(
-                content=last_contents,
-                usage=usage,
-                metadata=metadata,
-            )
+            _kwargs = {
+                "content": last_contents,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _kwargs["id"] = response_id
+            yield ChatResponse(**_kwargs)
 
     def _parse_openai_completion_response(
         self,
@@ -538,14 +555,17 @@ class OpenAIChatModel(ChatModelBase):
 
         if response.choices:
             choice = response.choices[0]
-            if (
-                hasattr(choice.message, "reasoning_content")
-                and choice.message.reasoning_content is not None
-            ):
+            reasoning = getattr(choice.message, "reasoning_content", None)
+            if not isinstance(reasoning, str):
+                reasoning = getattr(choice.message, "reasoning", None)
+            if not isinstance(reasoning, str):
+                reasoning = None
+
+            if reasoning is not None:
                 content_blocks.append(
                     ThinkingBlock(
                         type="thinking",
-                        thinking=response.choices[0].message.reasoning_content,
+                        thinking=reasoning,
                     ),
                 )
 
@@ -604,13 +624,16 @@ class OpenAIChatModel(ChatModelBase):
                 metadata=response.usage,
             )
 
-        parsed_response = ChatResponse(
-            content=content_blocks,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return parsed_response
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,

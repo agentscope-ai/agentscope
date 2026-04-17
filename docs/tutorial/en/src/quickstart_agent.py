@@ -63,7 +63,7 @@ from agentscope.tool import Toolkit, execute_python_code
 #     - The model used by the agent to generate responses
 #   * - ``formatter`` (required)
 #     - :ref:`prompt`
-#     - The prompt construction strategy, should be consisted with the model
+#     - The prompt construction strategy, should be consistent with the model
 #   * - ``toolkit``
 #     - :ref:`tool`
 #     - The toolkit to register/call tool functions.

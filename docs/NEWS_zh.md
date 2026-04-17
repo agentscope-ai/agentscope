@@ -2,6 +2,7 @@
 <!-- The first 10 items are automatically synced to README.md and README_zh.md via GitHub Actions. -->
 <!-- To update news in READMEs, modify this file and push to trigger the workflow. -->
 
+- **[2026-04] `社区`:** AgentScope 2.0 路线图公布，欢迎查看并参与讨论！[路线图](https://github.com/orgs/agentscope-ai/projects/2) | [讨论](https://github.com/agentscope-ai/agentscope/discussions/1441)
 - **[2026-02] `功能`:** 支持实时语音交互。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent) | [多智能体实时交互](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime) | [文档](https://doc.agentscope.io/tutorial/task_realtime.html)
 - **[2026-01] `社区`:** AgentScope 双周会议启动，分享生态更新和开发计划 - 欢迎加入！[详情与安排](https://github.com/agentscope-ai/agentscope/discussions/1126)
 - **[2026-01] `功能`:** 记忆模块新增数据库支持和记忆压缩。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) | [教程](https://doc.agentscope.io/tutorial/task_memory.html)
@@ -9,7 +10,7 @@
 - **[2025-12] `功能`:** TTS（文本转语音）支持。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/tts) | [教程](https://doc.agentscope.io/zh_CN/tutorial/task_tts.html)
 - **[2025-11] `集成`:** Anthropic Agent Skill 支持。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/agent_skill) | [教程](https://doc.agentscope.io/zh_CN/tutorial/task_agent_skill.html)
 - **[2025-11] `发布`:** 面向多样化真实任务的 Alias-Agent 和数据处理的 Data-Juicer Agent 开源。[Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) | [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent)
-- **[2025-11] `集成`:** 通过 Trinity-RFT 库实现智能体强化学习。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/react_agent) | [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT)
+- **[2025-11] `集成`:** 通过 Trinity-RFT 库实现智能体强化学习。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/model_tuning) | [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT)
 - **[2025-11] `集成`:** ReMe 增强长期记忆。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme)
 - **[2025-11] `发布`:** agentscope-samples 样例库上线，agentscope-runtime 升级支持 Docker/K8s 部署和 VNC 图形沙盒。[样例库](https://github.com/agentscope-ai/agentscope-samples) | [Runtime](https://github.com/agentscope-ai/agentscope-runtime)
 - **[2025-11] `文档`:** 贡献指南上线 - 欢迎参与贡献！[指南](./CONTRIBUTING_zh.md)

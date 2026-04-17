@@ -303,6 +303,37 @@ class GeminiChatModel(ChatModelBase):
 
         return parsed_response
 
+    def _extract_usage(
+        self,
+        usage_metadata: Any,
+        start_datetime: datetime,
+    ) -> ChatUsage | None:
+        """Extract ChatUsage from usage_metadata safely, returning None if
+        unavailable or if token counts are None.
+
+        Args:
+            usage_metadata:
+                The usage metadata object from the Gemini response.
+            start_datetime (`datetime`):
+                The start datetime of the generation.
+
+        Returns:
+            `ChatUsage | None`:
+                A ChatUsage object, or None if data is unavailable.
+        """
+        if not usage_metadata:
+            return None
+        prompt_tokens = usage_metadata.prompt_token_count
+        total_tokens = usage_metadata.total_token_count
+        if prompt_tokens is not None and total_tokens is not None:
+            return ChatUsage(
+                input_tokens=prompt_tokens,
+                output_tokens=total_tokens - prompt_tokens,
+                time=(datetime.now() - start_datetime).total_seconds(),
+            )
+        return None
+
+    # pylint: disable=too-many-branches
     async def _parse_gemini_stream_generation_response(
         self,
         start_datetime: datetime,
@@ -336,6 +367,7 @@ class GeminiChatModel(ChatModelBase):
         thinking = ""
         tool_calls: list[ToolUseBlock] = []
         metadata: dict | None = None
+        response_id: str | None = None
         async for chunk in response:
             if (
                 chunk.candidates
@@ -383,14 +415,7 @@ class GeminiChatModel(ChatModelBase):
             if text and structured_model:
                 metadata = _json_loads_with_repair(text)
 
-            usage = None
-            if chunk.usage_metadata:
-                usage = ChatUsage(
-                    input_tokens=chunk.usage_metadata.prompt_token_count,
-                    output_tokens=chunk.usage_metadata.total_token_count
-                    - chunk.usage_metadata.prompt_token_count,
-                    time=(datetime.now() - start_datetime).total_seconds(),
-                )
+            usage = self._extract_usage(chunk.usage_metadata, start_datetime)
 
             # The content blocks for the current chunk
             content_blocks: list = []
@@ -411,11 +436,17 @@ class GeminiChatModel(ChatModelBase):
                     ),
                 )
 
-            yield ChatResponse(
-                content=content_blocks + tool_calls,
-                usage=usage,
-                metadata=metadata,
-            )
+            if response_id is None:
+                response_id = getattr(chunk, "response_id", None)
+
+            _kwargs: dict[str, Any] = {
+                "content": content_blocks + tool_calls,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _kwargs["id"] = response_id
+            yield ChatResponse(**_kwargs)
 
     def _parse_gemini_generation_response(
         self,
@@ -502,22 +533,18 @@ class GeminiChatModel(ChatModelBase):
         if response.text and structured_model:
             metadata = _json_loads_with_repair(response.text)
 
-        if response.usage_metadata:
-            usage = ChatUsage(
-                input_tokens=response.usage_metadata.prompt_token_count,
-                output_tokens=response.usage_metadata.total_token_count
-                - response.usage_metadata.prompt_token_count,
-                time=(datetime.now() - start_datetime).total_seconds(),
-            )
+        usage = self._extract_usage(response.usage_metadata, start_datetime)
 
-        else:
-            usage = None
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks + tool_calls,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "response_id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return ChatResponse(
-            content=content_blocks + tool_calls,
-            usage=usage,
-            metadata=metadata,
-        )
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,

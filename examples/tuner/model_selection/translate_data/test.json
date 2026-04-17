@@ -1,0 +1,122 @@
+[
+  {
+    "question": "量子退相干是限制量子计算机可扩展性的主要障碍之一。",
+    "answer": "Quantum decoherence is one of the primary obstacles limiting the scalability of quantum computers."
+  },
+  {
+    "question": "他因小失大，为省小钱而丢了大合同。",
+    "answer": "He lost the big contract over a minor saving—penny wise, pound foolish."
+  },
+  {
+    "question": "尽管双方在仲裁条款的适用范围上存在分歧，但法院裁定该争议仍受协议中排他性管辖条款的约束。",
+    "answer": "Although the parties disagreed on the scope of the arbitration clause, the court ruled that the dispute remains subject to the exclusive jurisdiction clause in the agreement."
+  },
+  {
+    "question": "Transformer 架构通过自注意力机制实现了对序列依赖关系的全局建模。",
+    "answer": "The Transformer architecture enables global modeling of sequential dependencies through self-attention mechanisms."
+  },
+  {
+    "question": "天行健，君子以自强不息。",
+    "answer": "As Heaven maintains vigor through movement, a noble person should constantly strive for self-perfection."
+  },
+  {
+    "question": "鉴于全球供应链的脆弱性在疫情后暴露无遗，各国正重新评估其对外部制造中心的过度依赖所蕴含的系统性风险。",
+    "answer": "Given the fragility of global supply chains exposed by the pandemic, countries are reassessing the systemic risks inherent in their overreliance on external manufacturing hubs."
+  },
+  {
+    "question": "CRISPR-Cas9 基因编辑技术可精准靶向特定DNA序列并诱导双链断裂。",
+    "answer": "CRISPR-Cas9 gene-editing technology can precisely target specific DNA sequences and induce double-strand breaks."
+  },
+  {
+    "question": "冰冻三尺，非一日之寒。",
+    "answer": "It takes more than one cold day for the river to freeze three feet deep."
+  },
+  {
+    "question": "正如海德格尔所言，此在（Dasein）的本质在于其存在方式，而非某种现成的实体属性。",
+    "answer": "As Heidegger argued, the essence of Dasein lies in its mode of being, not in any ready-made ontic property."
+  },
+  {
+    "question": "央行通过公开市场操作调节基础货币供应，以实现通胀目标制下的利率调控。",
+    "answer": "The central bank adjusts base money supply via open market operations to conduct interest rate management under an inflation-targeting regime."
+  },
+  {
+    "question": "他是个\"老黄牛\"，默默耕耘从不抱怨。",
+    "answer": "He is a 'diligent ox'—working tirelessly without complaint."
+  },
+  {
+    "question": "尽管生成式人工智能在内容创作领域展现出巨大潜力，但其训练数据中的偏见可能被放大并导致有害输出，这引发了监管机构对算法透明度和问责机制的迫切要求。",
+    "answer": "Although generative AI demonstrates immense potential in content creation, biases in its training data may be amplified and lead to harmful outputs, prompting regulators to urgently demand algorithmic transparency and accountability mechanisms."
+  },
+  {
+    "question": "碳捕集与封存（CCS）技术旨在将工业排放的二氧化碳注入深层地质构造中永久封存。",
+    "answer": "Carbon Capture and Storage (CCS) technology aims to permanently sequester CO₂ emissions from industrial sources into deep geological formations."
+  },
+  {
+    "question": "此事已成定局，覆水难收。",
+    "answer": "The matter is settled; what's done cannot be undone."
+  },
+  {
+    "question": "在多极化世界格局加速演进的背景下，新兴经济体呼吁改革以美国为主导的布雷顿森林体系，以更好地反映21世纪全球经济力量的现实分布。",
+    "answer": "Against the backdrop of accelerating multipolarity, emerging economies are calling for reform of the U.S.-dominated Bretton Woods system to better reflect the realities of 21st-century global economic power distribution."
+  },
+  {
+    "question": "零信任架构要求对所有用户和设备进行持续验证，无论其位于网络内部还是外部。",
+    "answer": "Zero Trust Architecture requires continuous verification of all users and devices, regardless of whether they reside inside or outside the network perimeter."
+  },
+  {
+    "question": "落霞与孤鹜齐飞，秋水共长天一色。",
+    "answer": "The evening glow flies with the lone wild goose; autumn waters blend with the vast sky in one hue."
+  },
+  {
+    "question": "当基因编辑技术能够修改人类胚胎的生殖系基因时，我们必须审慎权衡其治愈遗传病的潜力与引发不可逆社会分化的伦理风险。",
+    "answer": "When gene-editing technologies can modify germline genes in human embryos, we must carefully weigh their potential to cure hereditary diseases against the ethical risks of triggering irreversible social stratification."
+  },
+  {
+    "question": "可重复使用运载火箭通过垂直回收技术显著降低了进入太空的成本。",
+    "answer": "Reusable launch vehicles have significantly reduced the cost of space access through vertical landing technology."
+  },
+  {
+    "question": "欲速则不达。",
+    "answer": "Haste makes waste."
+  },
+  {
+    "question": "根据《伯尔尼公约》第5条，作者在作品起源国以外的成员国享有与该国国民同等的版权保护，且不受作品是否在该国首次发表的影响。",
+    "answer": "Under Article 5 of the Berne Convention, authors enjoy copyright protection in member countries other than the country of origin equivalent to that granted to nationals of those countries, irrespective of whether the work was first published therein."
+  },
+  {
+    "question": "石墨烯因其超高电子迁移率和机械强度，被视为下一代半导体器件的理想候选材料。",
+    "answer": "Graphene is regarded as an ideal candidate material for next-generation semiconductor devices due to its ultra-high electron mobility and mechanical strength."
+  },
+  {
+    "question": "色即是空，空即是色。",
+    "answer": "Form is emptiness, emptiness is form."
+  },
+  {
+    "question": "由于人口老龄化加剧了财政压力，政府不得不在提高退休年龄、增加社保缴费率与削减福利支出之间寻求艰难平衡。",
+    "answer": "Faced with mounting fiscal pressures from population aging, the government is forced to strike a difficult balance among raising the retirement age, increasing social security contribution rates, and cutting benefit expenditures."
+  },
+  {
+    "question": "智能合约在满足预设条件时自动执行，无需可信第三方介入。",
+    "answer": "Smart contracts execute automatically when predefined conditions are met, without requiring a trusted third party."
+  },
+  {
+    "question": "卧薪尝胆，三千越甲可吞吴。",
+    "answer": "Sleeping on firewood and tasting gall, three thousand Yue soldiers could conquer Wu."
+  },
+  {
+    "question": "尽管可再生能源装机容量快速增长，但其间歇性特征对电网稳定性构成挑战，因此亟需发展大规模储能技术和需求侧响应机制。",
+    "answer": "Despite the rapid growth in renewable energy capacity, its intermittent nature poses challenges to grid stability, necessitating the urgent development of large-scale energy storage and demand-side response mechanisms."
+  },
+  {
+    "question": "功能性磁共振成像（fMRI）通过检测血氧水平依赖信号来间接反映神经元活动。",
+    "answer": "Functional MRI (fMRI) indirectly reflects neuronal activity by detecting blood-oxygen-level-dependent (BOLD) signals."
+  },
+  {
+    "question": "他说话总是闪烁其词，让人捉摸不透。",
+    "answer": "He always speaks evasively, leaving others unable to fathom his true intent."
+  },
+  {
+    "question": "若自动化决策系统在招聘、信贷或司法等领域广泛应用却缺乏可解释性，不仅会削弱个体的程序性权利，还可能固化甚至加剧现有社会偏见。",
+    "answer": "If opaque automated decision systems are widely deployed in hiring, credit, or judicial domains, they may not only undermine individuals' procedural rights but also entrench or even exacerbate existing societal biases."
+  }
+]

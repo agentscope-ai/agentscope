@@ -26,6 +26,8 @@ jobs:
         pip install -q -e .[dev]
         pip install coverage pytest
     - name: Run tests with coverage
+      env:
+        GRPC_VERBOSITY: ERROR
       run: |
         coverage run -m pytest tests
     - name: Generate coverage report

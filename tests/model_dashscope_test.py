@@ -2,7 +2,7 @@
 """Unit tests for DashScope API model class."""
 from typing import Any, AsyncGenerator
 from unittest.async_case import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 from http import HTTPStatus
 from pydantic import BaseModel
 
@@ -340,6 +340,62 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             ]
             self.assertEqual(final_response.content, expected_content)
 
+    async def test_streaming_tool_input_prefers_valid_final_json(self) -> None:
+        """Test streaming tool input keeps the final valid JSON dict."""
+        model = DashScopeChatModel(
+            model_name="qwen-turbo",
+            api_key="test_key",
+            stream=True,
+        )
+
+        chunks = [
+            self._create_mock_chunk(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "name": "score",
+                            "arguments": '{"points": ',
+                        },
+                    },
+                ],
+            ),
+            self._create_mock_chunk(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_123",
+                        "function": {
+                            "arguments": "1}",
+                        },
+                    },
+                ],
+            ),
+        ]
+
+        with patch(
+            "dashscope.aigc.generation.AioGeneration.call",
+        ) as mock_call:
+            mock_call.return_value = self._create_async_generator(chunks)
+            result = await model([{"role": "user", "content": "Score it"}])
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            final_response = responses[-1]
+            expected_content = [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="call_123",
+                    name="score",
+                    input={"points": 1},
+                    raw_input='{"points": 1}',
+                ),
+            ]
+            self.assertEqual(final_response.content, expected_content)
+
     def test_tools_schema_validation_through_api(self) -> None:
         """Test tools schema validation through API call."""
         model = DashScopeChatModel(
@@ -381,6 +437,32 @@ class TestDashScopeChatModel(IsolatedAsyncioTestCase):
             except Exception as e:
                 if "schema must be a dict" in str(e):
                     self.fail("Valid tools schema was rejected")
+
+    async def test_call_with_multimodal_model(self) -> None:
+        """Test multimodal model uses AioMultiModalConversation (async)."""
+        model = DashScopeChatModel(
+            model_name="qwen-vl-plus",
+            api_key="test_key",
+            stream=False,
+            multimodality=True,
+        )
+        messages = [{"role": "user", "content": "Describe this image."}]
+        mock_response = self._create_mock_response("This is a test image.")
+        with patch(
+            "dashscope.AioMultiModalConversation.call",
+            new_callable=AsyncMock,
+        ) as mock_call:
+            mock_call.return_value = mock_response
+            result = await model(messages)
+            mock_call.assert_called_once()
+            call_kwargs = mock_call.call_args[1]
+            self.assertEqual(call_kwargs["messages"], messages)
+            self.assertEqual(call_kwargs["model"], "qwen-vl-plus")
+            self.assertIsInstance(result, ChatResponse)
+            self.assertEqual(
+                result.content,
+                [TextBlock(type="text", text="This is a test image.")],
+            )
 
     async def test_error_handling_scenarios(self) -> None:
         """Test various error handling scenarios."""

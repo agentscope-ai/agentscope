@@ -249,6 +249,64 @@ class TestOpenAIChatModel(IsolatedAsyncioTestCase):
             expected_content = [TextBlock(type="text", text="Hello there!")]
             self.assertEqual(final_response.content, expected_content)
 
+    async def test_streaming_tool_input_prefers_valid_final_json(self) -> None:
+        """Test streaming tool input keeps the final valid JSON dict."""
+        with patch("openai.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value = mock_client
+
+            model = OpenAIChatModel(
+                model_name="gpt-4",
+                api_key="test_key",
+                stream=True,
+            )
+            model.client = mock_client
+
+            stream_mock = self._create_stream_mock(
+                [
+                    {
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "name": "score",
+                                "arguments": '{"points": ',
+                            },
+                        ],
+                    },
+                    {
+                        "tool_calls": [
+                            {
+                                "id": "call_123",
+                                "name": "score",
+                                "arguments": "1}",
+                            },
+                        ],
+                    },
+                ],
+            )
+
+            mock_client.chat.completions.create = AsyncMock(
+                return_value=stream_mock,
+            )
+
+            result = await model([{"role": "user", "content": "Score it"}])
+
+            responses = []
+            async for response in result:
+                responses.append(response)
+
+            final_response = responses[-1]
+            expected_content = [
+                ToolUseBlock(
+                    type="tool_use",
+                    id="call_123",
+                    name="score",
+                    input={"points": 1},
+                    raw_input='{"points": 1}',
+                ),
+            ]
+            self.assertEqual(final_response.content, expected_content)
+
     # Auxiliary methods - ensure all Mock objects have complete attributes
     def _create_mock_response(
         self,

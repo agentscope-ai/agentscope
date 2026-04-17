@@ -69,8 +69,37 @@ def _json_loads_with_repair(
     return {}
 
 
+def _parse_streaming_json_dict(
+    json_str: str,
+    last_input: dict | None = None,
+) -> dict:
+    """Parse a streaming JSON dict without regressing on incomplete chunks.
+
+    If the current chunk already forms a valid JSON dict, prefer it directly.
+    Otherwise, fall back to repaired JSON and keep the previous parsed value
+    only when repair would shrink the intermediate structure.
+    """
+    json_str = json_str or "{}"
+    try:
+        result = json.loads(json_str)
+        if isinstance(result, dict):
+            return result
+    except Exception:
+        pass
+
+    repaired_input = _json_loads_with_repair(json_str)
+    last_input = last_input or {}
+    if len(json.dumps(last_input)) > len(json.dumps(repaired_input)):
+        return last_input
+    return repaired_input
+
+
 def _is_accessible_local_file(url: str) -> bool:
     """Check if the given URL is a local URL."""
+    # First identify if it's an uri with 'file://' schema,
+    if url.startswith("file://"):
+        local_path = url.removeprefix("file://")
+        return os.path.isfile(local_path)
     return os.path.isfile(url)
 
 
@@ -170,18 +199,17 @@ def _save_base64_data(
     Args:
         media_type (`str`):
             The MIME type of the data, e.g. "image/png", "audio/mpeg".
-        base64_data (`str):
+        base64_data (`str`):
             The base64 data to be saved.
     """
     extension = "." + media_type.split("/")[-1]
 
     with tempfile.NamedTemporaryFile(
-        suffix=f".{extension}",
+        suffix=extension,
         delete=False,
     ) as temp_file:
         decoded_data = base64.b64decode(base64_data)
         temp_file.write(decoded_data)
-        temp_file.close()
         return temp_file.name
 
 

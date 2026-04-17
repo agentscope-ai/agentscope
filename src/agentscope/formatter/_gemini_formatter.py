@@ -59,8 +59,9 @@ def _format_gemini_media_block(
 
 def _to_gemini_inline_data(url: str) -> dict:
     """Convert url into the Gemini API required format."""
-    parsed_url = urlparse(url)
-    extension = url.split(".")[-1].lower()
+    raw_url = url.removeprefix("file://")
+    parsed_url = urlparse(raw_url)
+    extension = raw_url.split(".")[-1].lower()
 
     # Pre-calculate media type from extension (image/audio/video).
     typ = None
@@ -69,7 +70,23 @@ def _to_gemini_inline_data(url: str) -> dict:
             typ = k
             break
 
-    if not os.path.exists(url) and parsed_url.scheme != "":
+    if os.path.exists(raw_url):
+        # Local file
+        if typ is None:
+            raise TypeError(
+                f"Unsupported file extension: {extension}, expected "
+                f"{GeminiChatFormatter.supported_extensions}",
+            )
+
+        with open(raw_url, "rb") as f:
+            data = base64.b64encode(f.read()).decode("utf-8")
+
+        return {
+            "data": data,
+            "mime_type": f"{typ}/{extension}",
+        }
+
+    elif parsed_url.scheme not in ["", "file"]:
         # Web url
         if typ is None:
             raise TypeError(
@@ -78,22 +95,6 @@ def _to_gemini_inline_data(url: str) -> dict:
             )
 
         data = _get_bytes_from_web_url(url)
-        return {
-            "data": data,
-            "mime_type": f"{typ}/{extension}",
-        }
-
-    elif os.path.exists(url):
-        # Local file
-        if typ is None:
-            raise TypeError(
-                f"Unsupported file extension: {extension}, expected "
-                f"{GeminiChatFormatter.supported_extensions}",
-            )
-
-        with open(url, "rb") as f:
-            data = base64.b64encode(f.read()).decode("utf-8")
-
         return {
             "data": data,
             "mime_type": f"{typ}/{extension}",

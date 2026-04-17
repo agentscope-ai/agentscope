@@ -25,6 +25,7 @@ from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from .._utils._common import (
     _json_loads_with_repair,
+    _parse_streaming_json_dict,
     _create_tool_from_base_model,
 )
 from ..message import TextBlock, ToolUseBlock, ThinkingBlock
@@ -97,7 +98,7 @@ class DashScopeChatModel(ChatModelBase):
                 for more details.
             multimodality (`bool | None`, optional):
                 Whether to use multimodal conversation API. If `True`,
-                it will use `dashscope.MultiModalConversation.call`
+                it will use `dashscope.AioMultiModalConversation.call`
                 to process multimodal inputs such as images and text. If
                 `False`, it will use
                 `dashscope.aigc.generation.AioGeneration.call` to process
@@ -214,12 +215,12 @@ class DashScopeChatModel(ChatModelBase):
             "messages": messages,
             "model": self.model_name,
             "stream": self.stream,
-            **self.generate_kwargs,
-            **kwargs,
             "result_format": "message",
             # In agentscope, the `incremental_output` must be `True` when
             # `self.stream` is True
             "incremental_output": self.stream,
+            **self.generate_kwargs,
+            **kwargs,
         }
 
         if tools:
@@ -270,7 +271,7 @@ class DashScopeChatModel(ChatModelBase):
                 or "-vl" in self.model_name
             )
         ):
-            response = dashscope.MultiModalConversation.call(
+            response = await dashscope.AioMultiModalConversation.call(
                 api_key=self.api_key,
                 **kwargs,
             )
@@ -302,6 +303,7 @@ class DashScopeChatModel(ChatModelBase):
         start_datetime: datetime,
         response: Union[
             AsyncGenerator[GenerationResponse, None],
+            AsyncGenerator[MultiModalConversationResponse, None],
             Generator[MultiModalConversationResponse, None, None],
         ],
         structured_model: Type[BaseModel] | None = None,
@@ -313,11 +315,12 @@ class DashScopeChatModel(ChatModelBase):
             start_datetime (`datetime`):
                 The start datetime of the response generation.
             response (
-                `Union[AsyncGenerator[GenerationResponse, None], Generator[ \
-                MultiModalConversationResponse, None, None]]`
+                `Union[AsyncGenerator[GenerationResponse, None], \
+                AsyncGenerator[MultiModalConversationResponse, None], \
+                Generator[MultiModalConversationResponse, None, None]]`
             ):
-                DashScope streaming response generator (GenerationResponse or
-                MultiModalConversationResponse) to parse.
+                DashScope streaming response (async) generator
+                (GenerationResponse or MultiModalConversationResponse).
             structured_model (`Type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
@@ -338,12 +341,16 @@ class DashScopeChatModel(ChatModelBase):
         metadata = None
         last_content = None
         usage = None
+        response_id: str | None = None
 
         async for chunk in giter(response):
             if chunk.status_code != HTTPStatus.OK:
                 raise RuntimeError(
                     f"Failed to get response from _ API: {chunk}",
                 )
+
+            if response_id is None:
+                response_id = getattr(chunk, "request_id", None)
 
             message = chunk.output.choices[0].message
 
@@ -411,16 +418,10 @@ class DashScopeChatModel(ChatModelBase):
 
                 # If parsing the tool input in streaming mode
                 if self.stream_tool_parsing:
-                    repaired_input = _json_loads_with_repair(
-                        input_str or "{}",
+                    repaired_input = _parse_streaming_json_dict(
+                        input_str,
+                        last_input_objs.get(tool_id),
                     )
-                    # If the new repaired input is shorter than one in the last
-                    # chunk, use the last one to avoid regression
-                    last_input = last_input_objs.get(tool_id, {})
-                    if len(json.dumps(last_input)) > len(
-                        json.dumps(repaired_input),
-                    ):
-                        repaired_input = last_input
                     last_input_objs[tool_id] = repaired_input
 
                 else:
@@ -449,11 +450,14 @@ class DashScopeChatModel(ChatModelBase):
                 )
 
             if content_blocks:
-                parsed_chunk = ChatResponse(
-                    content=content_blocks,
-                    usage=usage,
-                    metadata=metadata,
-                )
+                _kwargs: dict[str, Any] = {
+                    "content": content_blocks,
+                    "usage": usage,
+                    "metadata": metadata,
+                }
+                if response_id:
+                    _kwargs["id"] = response_id
+                parsed_chunk = ChatResponse(**_kwargs)
                 yield parsed_chunk
                 last_content = copy.deepcopy(content_blocks)
 
@@ -471,11 +475,14 @@ class DashScopeChatModel(ChatModelBase):
                     if structured_model:
                         metadata = input_obj
 
-            yield ChatResponse(
-                content=last_content,
-                usage=usage,
-                metadata=metadata,
-            )
+            _final_kwargs: dict[str, Any] = {
+                "content": last_content,
+                "usage": usage,
+                "metadata": metadata,
+            }
+            if response_id:
+                _final_kwargs["id"] = response_id
+            yield ChatResponse(**_final_kwargs)
 
     async def _parse_dashscope_generation_response(
         self,
@@ -572,13 +579,16 @@ class DashScopeChatModel(ChatModelBase):
                 metadata=response.usage,
             )
 
-        parsed_response = ChatResponse(
-            content=content_blocks,
-            usage=usage,
-            metadata=metadata,
-        )
+        resp_kwargs: dict[str, Any] = {
+            "content": content_blocks,
+            "usage": usage,
+            "metadata": metadata,
+        }
+        response_id = getattr(response, "request_id", None)
+        if response_id:
+            resp_kwargs["id"] = response_id
 
-        return parsed_response
+        return ChatResponse(**resp_kwargs)
 
     def _format_tools_json_schemas(
         self,
