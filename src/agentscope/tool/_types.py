@@ -2,20 +2,24 @@
 """The types for the tool module in AgentScope."""
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Literal, Type, Any, TypedDict
+from typing import (
+    Literal,
+    Type,
+    Any,
+    TypedDict,
+    TypeAlias,
+    Coroutine,
+    AsyncGenerator,
+    Generator,
+    Awaitable,
+    Callable,
+)
 
 from pydantic import BaseModel
 
-from ._protocol import ToolProtocol
-from .._utils._common import _remove_title_field, _extract_input_schema, \
-    _extract_func_description
-
-
-
-class _Tool:
-
-    tool: ToolProtocol
-
+from ._response import ToolChunk
+from ._base import ToolBase
+from .._utils._common import _remove_title_field
 
 
 @dataclass
@@ -23,13 +27,10 @@ class RegisteredTool:
     """The registered tool function class, used to store the tool function and
     its registration information."""
 
-    tool: ToolProtocol
+    tool: ToolBase
     """The original tool function."""
 
     # Execution related fields
-    preset_kwargs: dict[str, Any] = field(default_factory=dict)
-    """The preset keyword arguments, which won't be presented in the JSON
-    schema and exposed to the agent."""
     extended_model: Type[BaseModel] | None = field(init=False, default=None)
     """The base model used to extend the JSON schema of the original tool
     function, so that we can dynamically adjust the tool function."""
@@ -40,8 +41,7 @@ class RegisteredTool:
     original_name: str | None = field(default=None)
     """The original name of the tool function when it has been renamed."""
 
-
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate the registered tool function after initialization."""
         # validate schema
         if self.tool.input_schema is not None:
@@ -51,7 +51,10 @@ class RegisteredTool:
                 and isinstance(self.tool.input_schema.get("properties"), dict)
             ), f"Invalid input_schema: {self.tool.input_schema}. "
 
-    def get_function_schema(self, extended_model: Type[BaseModel] | None = None) -> dict:
+    def get_function_schema(
+        self,
+        extended_model: Type[BaseModel] | None = None,
+    ) -> dict:
         """Get the JSON schema of the tool function via the following steps:
 
         1. Remove preset_kwargs from the JSON schema, since they are not
@@ -68,15 +71,15 @@ class RegisteredTool:
         Returns:
             `dict`: The JSON schema of the tool function.
         """
-        # TODO: Remove the preset_kwargs
-
-        function_schema = {
+        input_schema = deepcopy(self.tool.input_schema)
+        _remove_title_field(input_schema)
+        function_schema: dict = {
             "type": "function",
             "function": {
                 "name": self.tool.name,
                 "description": self.tool.description,
-                "parameters": deepcopy(self.tool.input_schema),
-            }
+                "parameters": input_schema,
+            },
         }
 
         extended_model = extended_model or self.extended_model
@@ -98,12 +101,16 @@ class RegisteredTool:
                     "different name.",
                 )
 
-            function_schema["function"]["parameters"]["properties"][key] = value
+            function_schema["function"]["parameters"]["properties"][
+                key
+            ] = value
 
             if key in extended_schema.get("required", []):
                 if "required" not in function_schema["function"]["parameters"]:
                     function_schema["function"]["parameters"]["required"] = []
-                function_schema["function"]["parameters"]["required"].append(key)
+                function_schema["function"]["parameters"]["required"].append(
+                    key,
+                )
 
         # Merge $defs from extended schema to support nested models
         if "$defs" in extended_schema:
@@ -148,6 +155,7 @@ class RegisteredTool:
 class ToolGroup:
     """The tool group abstraction that provides a higher level of organization
     for tools."""
+
     name: str
     """The group name, which will be used in the reset function as the group
     identifier."""
@@ -155,7 +163,7 @@ class ToolGroup:
     """The description of the tool group to tell the agent what the tool
     group is about."""
     instructions: str | None = None
-    """The instructions that will be contained when this tool group is 
+    """The instructions that will be contained when this tool group is
     activated."""
 
 
@@ -168,3 +176,28 @@ class AgentSkill(TypedDict):
     """The description of the skill."""
     dir: str
     """The directory of the agent skill."""
+
+
+# The function types that can be registered as tools in AgentScope.
+Function: TypeAlias = (
+    # Sync function
+    Callable[..., ToolChunk]
+    |
+    # Async function
+    Callable[..., Awaitable[ToolChunk]]
+    |
+    # Sync generator function
+    Callable[..., Generator[ToolChunk, None, None]]
+    |
+    # Async generator function
+    Callable[..., AsyncGenerator[ToolChunk, None]]
+    |
+    # Async function that returns async generator
+    Callable[..., Coroutine[Any, Any, AsyncGenerator[ToolChunk, None]]]
+    |
+    # Async function that returns sync generator
+    Callable[..., Coroutine[Any, Any, Generator[ToolChunk, None, None]]]
+)
+
+
+ToolChoice: TypeAlias = Literal["auto", "none", "required"] | str

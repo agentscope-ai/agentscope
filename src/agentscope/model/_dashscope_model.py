@@ -21,8 +21,9 @@ from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, DashScopeChatFormatter
 from ..message import TextBlock, ToolCallBlock, ThinkingBlock, Msg
+from ..tool import ToolChoice
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject, ToolChoice
+from ..types import JSONSerializableObject
 from .._logging import logger
 
 

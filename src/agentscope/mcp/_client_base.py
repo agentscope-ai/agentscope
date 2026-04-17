@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """The base class for MCP clients in AgentScope."""
 from abc import abstractmethod
-from typing import List
+from typing import Any, TYPE_CHECKING
 
-import mcp.types
-
-from .._logging import logger
+if TYPE_CHECKING:
+    from ..tool import MCPTool
+else:
+    MCPTool = Any
 
 
 class MCPClientBase:
@@ -24,12 +25,12 @@ class MCPClientBase:
     @abstractmethod
     async def get_tool(
         self,
-        func_name: str,
-    ) -> "MCPTool":
+        name: str,
+    ) -> MCPTool:
         """Get a tool object by its name.
 
         Args:
-            func_name (`str`):
+            name (`str`):
                 The name of the tool to get.
 
         Returns:

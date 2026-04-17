@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-""""""
+"""The tool module utils."""
 import inspect
 from typing import Any, Dict, Callable
 
@@ -34,7 +34,6 @@ def _remove_title_field(schema: dict) -> None:
         )
 
 
-
 def _extract_func_description(docstring: str) -> str:
     """Extract the function description from the docstring.
 
@@ -55,6 +54,7 @@ def _extract_func_description(docstring: str) -> str:
         descriptions.append(parsed_docstring.long_description)
 
     return "\n".join(descriptions)
+
 
 def _extract_input_schema(
     tool_func: Callable,

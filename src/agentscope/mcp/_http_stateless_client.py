@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The MCP streamable HTTP server."""
 from contextlib import _AsyncGeneratorContextManager
-from typing import Any, Callable, Awaitable, Literal, List
+from typing import Any, Literal, List, TYPE_CHECKING
 
 import mcp.types
 from mcp import ClientSession
@@ -9,7 +9,11 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
 from ._client_base import MCPClientBase
-from ..tool import MCPTool
+
+if TYPE_CHECKING:
+    from ..tool import MCPTool
+else:
+    MCPTool = Any
 
 
 class HttpStatelessClient(MCPClientBase):
@@ -90,7 +94,7 @@ class HttpStatelessClient(MCPClientBase):
 
     async def get_tool(
         self,
-        func_name: str,
+        name: str,
         execution_timeout: float | None = None,
     ) -> MCPTool:
         """Get a tool object by its name.
@@ -100,7 +104,7 @@ class HttpStatelessClient(MCPClientBase):
         - Registered to toolkit: `toolkit.register_tool(tool)`
 
         Args:
-            func_name (`str`):
+            name (`str`):
                 The name of the tool function.
             execution_timeout (`float | None`, optional):
                 The preset timeout in seconds for calling the tool function.
@@ -115,14 +119,16 @@ class HttpStatelessClient(MCPClientBase):
 
         target_tool = None
         for tool in self._tools:
-            if tool.name == func_name:
+            if tool.name == name:
                 target_tool = tool
                 break
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{func_name}' not found in the MCP server ",
+                f"Tool '{name}' not found in the MCP server ",
             )
+
+        from ..tool import MCPTool
 
         return MCPTool(
             mcp_name=self.name,

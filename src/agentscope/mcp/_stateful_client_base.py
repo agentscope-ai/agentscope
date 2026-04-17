@@ -3,14 +3,18 @@
  functionality for stateful MCP clients."""
 from abc import ABC
 from contextlib import AsyncExitStack
-from typing import List
+from typing import List, TYPE_CHECKING, Any
 
 import mcp
 from mcp import ClientSession
 
 from ._client_base import MCPClientBase
 from .._logging import logger
-from ..tool import MCPTool
+
+if TYPE_CHECKING:
+    from ..tool import MCPTool
+else:
+    MCPTool = Any
 
 
 class StatefulClientBase(MCPClientBase, ABC):
@@ -111,7 +115,7 @@ class StatefulClientBase(MCPClientBase, ABC):
 
     async def get_tool(
         self,
-        func_name: str,
+        name: str,
         execution_timeout: float | None = None,
     ) -> MCPTool:
         """Get a tool object from the MCP server by its name.
@@ -121,7 +125,7 @@ class StatefulClientBase(MCPClientBase, ABC):
         - Registered to toolkit: `toolkit.register_tool(tool)`
 
         Args:
-            func_name (`str`):
+            name (`str`):
                 The name of the tool function to get.
             execution_timeout (`float | None`, optional):
                 The preset timeout in seconds for calling the tool function.
@@ -137,14 +141,16 @@ class StatefulClientBase(MCPClientBase, ABC):
 
         target_tool = None
         for tool in self._cached_tools:
-            if tool.name == func_name:
+            if tool.name == name:
                 target_tool = tool
                 break
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{func_name}' not found in the MCP server",
+                f"Tool '{name}' not found in the MCP server",
             )
+
+        from ..tool import MCPTool
 
         return MCPTool(
             mcp_name=self.name,

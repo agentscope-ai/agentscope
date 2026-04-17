@@ -25,8 +25,9 @@ from ..message import (
     DataBlock,
     ToolCallBlock,
 )
+from ..tool import ToolChoice
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject, ToolChoice
+from ..types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion

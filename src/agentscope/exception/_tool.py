@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The tool-related exceptions in agentscope."""
 
-from ._exception_base import AgentOrientedExceptionBase
+from ._base import AgentOrientedExceptionBase
 
 
 class ToolNotFoundError(AgentOrientedExceptionBase):

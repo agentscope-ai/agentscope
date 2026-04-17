@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """The tool module in agentscope."""
 
+from ._types import ToolChoice, Function
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
-from ._protocol import ToolProtocol
-from ._adapters import FunctionTool, MCPTool
+from ._base import ToolBase
+from ._adapters import MCPTool
 from ._permission import (
     PermissionContext,
     AdditionalWorkingDirectory,
@@ -27,7 +28,8 @@ __all__ = [
     "PermissionMode",
     "PermissionBehavior",
     "ToolChunk",
-    "ToolProtocol",
-    "FunctionTool",
+    "ToolBase",
     "MCPTool",
+    "ToolChoice",
+    "Function",
 ]

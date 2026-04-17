@@ -28,7 +28,7 @@ class PermissionContext(BaseModel):
     permission rules organized by behavior type (allow, deny, ask).
     """
 
-    mode: PermissionMode
+    mode: PermissionMode = PermissionMode.DEFAULT
     """The current permission mode."""
 
     working_directories: dict[str, AdditionalWorkingDirectory] = Field(

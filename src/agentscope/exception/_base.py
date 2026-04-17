@@ -17,6 +17,7 @@ class AgentOrientedExceptionBase(Exception):
         """Return the string representation of the exception."""
         return f"{self.__class__.__name__}: {self.message}"
 
+
 class DeveloperOrientedException(Exception):
     """The exception should be raised to the developers."""
 

@@ -17,7 +17,6 @@ from json_repair import repair_json
 from pydantic import BaseModel, Field, create_model, ConfigDict
 
 from .._logging import logger
-from ..types import ToolFunction
 
 
 def _json_loads_with_repair(
@@ -248,7 +247,7 @@ def _map_text_to_uuid(text: str) -> str:
 
 
 def _parse_tool_function(
-    tool_func: ToolFunction,
+    tool_func: Callable,
     include_long_description: bool,
     include_var_positional: bool,
     include_var_keyword: bool,

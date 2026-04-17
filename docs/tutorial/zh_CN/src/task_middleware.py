@@ -136,7 +136,7 @@ async def example_logging_middleware() -> None:
     toolkit.register_middleware(logging_middleware)
 
     # 调用工具
-    result = await toolkit.call_tool_function(
+    result = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="1",
@@ -187,7 +187,7 @@ async def example_transform_middleware() -> None:
     toolkit.register_tool_function(search_tool)
     toolkit.register_middleware(transform_middleware)
 
-    result = await toolkit.call_tool_function(
+    result = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="2",
@@ -268,7 +268,7 @@ async def example_authorization_middleware() -> None:
 
     # 尝试授权的工具
     print("\n调用已授权的工具：")
-    result = await toolkit.call_tool_function(
+    result = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="3",
@@ -281,7 +281,7 @@ async def example_authorization_middleware() -> None:
 
     # 尝试未授权的工具
     print("\n调用未授权的工具：")
-    result = await toolkit.call_tool_function(
+    result = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="4",
@@ -360,7 +360,7 @@ async def example_multiple_middleware() -> None:
     toolkit.register_middleware(middleware_1)
     toolkit.register_middleware(middleware_2)
 
-    result = await toolkit.call_tool_function(
+    result = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="5",

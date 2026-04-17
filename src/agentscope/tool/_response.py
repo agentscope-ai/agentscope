@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """The tool response class."""
 import uuid
-from dataclasses import dataclass, field
 from typing import List, Literal, Self
+
+from pydantic import BaseModel, Field
 
 from ..message import DataBlock, TextBlock, Base64Source
 
 
-@dataclass
-class ToolChunk:
+class ToolChunk(BaseModel):
     """The tool result chunk from a tool execution."""
 
     content: List[TextBlock | DataBlock]
-    """The chunk data blocks, note for one multimodal data, the DataBlock 
-    instance should have the same block id, so that the agent can group them 
+    """The chunk data blocks, note for one multimodal data, the DataBlock
+    instance should have the same block id, so that the agent can group them
     together."""
 
     state: Literal["error", "interrupted", "running"] = "running"
@@ -22,29 +22,29 @@ class ToolChunk:
     is_last: bool = True
     """Whether this is the last response in a stream tool execution."""
 
-    metadata: dict = field(default_factory=dict)
+    metadata: dict = Field(default_factory=dict)
     """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The identity of the tool response."""
 
-@dataclass
-class ToolResponse:
+
+class ToolResponse(BaseModel):
     """The tool response from a tool execution, which contains the completed
     tool result (compared to ToolChunk)."""
 
-    content: List[TextBlock | DataBlock] = field(default_factory=list)
+    content: List[TextBlock | DataBlock] = Field(default_factory=list)
     """The completed tool result data blocks."""
 
     state: Literal["error", "interrupted", "finished"] = "finished"
     """The execution state of the tool response."""
 
-    metadata: dict = field(default_factory=dict)
-    """The metadata to be accessed within the agent, so that we don't need to 
+    metadata: dict = Field(default_factory=dict)
+    """The metadata to be accessed within the agent, so that we don't need to
     parse the tool result block."""
 
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The identity of the tool response."""
 
     def append_chunk(self, chunk: ToolChunk) -> Self:
@@ -52,25 +52,44 @@ class ToolResponse:
         data blocks and update the state and metadata."""
 
         # Update content blocks
-        current_ids_to_index = {_.id: index for index, _ in enumerate(self.content)}
+        current_ids_to_index = {
+            _.id: index for index, _ in enumerate(self.content)
+        }
         for chunk_block in chunk.content:
             if chunk_block.id in current_ids_to_index:
                 # Append to the existing block
-                target_block = self.content[current_ids_to_index[chunk_block.id]]
+                target_block = self.content[
+                    current_ids_to_index[chunk_block.id]
+                ]
 
-                if isinstance(target_block, TextBlock) and isinstance(chunk_block, TextBlock):
+                if isinstance(target_block, TextBlock) and isinstance(
+                    chunk_block,
+                    TextBlock,
+                ):
                     target_block.text += chunk_block.text
-                elif isinstance(target_block, DataBlock) and isinstance(chunk_block, DataBlock):
-                    if isinstance(target_block.source, Base64Source) and isinstance(chunk_block.source, Base64Source):
+                elif isinstance(target_block, DataBlock) and isinstance(
+                    chunk_block,
+                    DataBlock,
+                ):
+                    if isinstance(
+                        target_block.source,
+                        Base64Source,
+                    ) and isinstance(chunk_block.source, Base64Source):
                         # Accumulate the base64 data
-                        target_block.source.data += chunk_block.data
+                        target_block.source.data += chunk_block.source.data
                         # Update the newest media type and name if provided
-                        target_block.name = chunk_block.name or target_block.name
-                        target_block.source.media_type = chunk_block.media_type or chunk_block.media_type
+                        target_block.name = (
+                            chunk_block.name or target_block.name
+                        )
+                        target_block.source.media_type = (
+                            chunk_block.source.media_type
+                            or target_block.source.media_type
+                        )
                     else:
                         raise ValueError(
                             "Cannot append DataBlock with URL source or "
-                            f"different source types: {target_block.source} vs {chunk_block.source}",
+                            f"different source types: {target_block.source} "
+                            f"vs {chunk_block.source}",
                         )
                 else:
                     # For different block types with the same ID, we just
@@ -79,8 +98,8 @@ class ToolResponse:
                     self.content.append(chunk_block)
 
             else:
-                # Append to the end
-                self.content.append(chunk_block)
+                # Append a copy to avoid modifying the original chunk
+                self.content.append(chunk_block.model_copy(deep=True))
 
         # Update id, state and metadata
         # TODO: what's the relationship between the chunk id and response id?
@@ -92,5 +111,24 @@ class ToolResponse:
             self.state = "interrupted"
 
         self.metadata.update(chunk.metadata)
+
+        # Post-processing: merge consecutive TextBlocks
+        # DataBlocks are kept separate and only merged by explicit id matching
+        merged_content: List[TextBlock | DataBlock] = []
+        for block in self.content:
+            if isinstance(block, TextBlock) and merged_content:
+                # Check if the last block is also a TextBlock
+                last_block = merged_content[-1]
+                if isinstance(last_block, TextBlock):
+                    # Merge consecutive TextBlocks
+                    last_block.text += block.text
+                else:
+                    # Last block is DataBlock, append current TextBlock
+                    merged_content.append(block)
+            else:
+                # First block or current block is DataBlock
+                merged_content.append(block)
+
+        self.content = merged_content
 
         return self
