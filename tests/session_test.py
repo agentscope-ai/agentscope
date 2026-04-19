@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Session module tests."""
+import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Union
 from unittest import IsolatedAsyncioTestCase
@@ -102,6 +104,41 @@ class SessionTest(IsolatedAsyncioTestCase):
         session_file = "./user_1.json"
         if os.path.exists(session_file):
             os.remove(session_file)
+
+    async def test_load_session_state_skips_empty_assistant_messages(
+        self,
+    ) -> None:
+        """Test that session loading drops invalid empty assistant turns."""
+        agent = MyAgent()
+        user_msg = Msg("Alice", "Hi!", "user")
+        empty_assistant_msg = Msg("Friday", [], "assistant")
+        assistant_msg = Msg("Friday", "Hello!", "assistant")
+
+        state = agent.state_dict()
+        state["memory"]["content"] = [
+            [user_msg.to_dict(), []],
+            [empty_assistant_msg.to_dict(), []],
+            [assistant_msg.to_dict(), []],
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session = JSONSession(save_dir=temp_dir)
+            session_file = session._get_save_path("user_1", user_id="")
+
+            with open(session_file, "w", encoding="utf-8") as file:
+                json.dump({"agent": state}, file, ensure_ascii=False)
+
+            await session.load_session_state(
+                session_id="user_1",
+                agent=agent,
+            )
+
+        loaded_msgs = await agent.memory.get_memory()
+        self.assertEqual(len(loaded_msgs), 2)
+        self.assertEqual(
+            [msg.get_text_content() for msg in loaded_msgs],
+            ["Hi!", "Hello!"],
+        )
 
 
 class RedisSessionTest(IsolatedAsyncioTestCase):

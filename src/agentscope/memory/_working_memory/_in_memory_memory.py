@@ -3,8 +3,28 @@
 from copy import deepcopy
 from typing import Any
 
+from ..._logging import logger
 from ...message import Msg
 from ._base import MemoryBase
+
+
+def _message_has_meaningful_content(msg: Msg) -> bool:
+    """Check whether a message contains payload worth replaying."""
+    if isinstance(msg.content, str):
+        return msg.content != ""
+
+    for block in msg.get_content_blocks():
+        if block.get("type") != "text":
+            return True
+        if block.get("text"):
+            return True
+
+    return False
+
+
+def _is_invalid_empty_assistant_message(msg: Msg) -> bool:
+    """Check whether a persisted assistant turn is effectively empty."""
+    return msg.role == "assistant" and not _message_has_meaningful_content(msg)
 
 
 class InMemoryMemory(MemoryBase):
@@ -126,6 +146,12 @@ class InMemoryMemory(MemoryBase):
                 f"The mark should be a string, a list of strings, or None, "
                 f"but got {type(marks)}.",
             )
+
+        memories = [
+            msg
+            for msg in memories
+            if not _is_invalid_empty_assistant_message(msg)
+        ]
 
         if not allow_duplicates:
             existing_ids = {msg.id for msg, _ in self.content}
@@ -288,18 +314,31 @@ class InMemoryMemory(MemoryBase):
         self._compressed_summary = state_dict.get("_compressed_summary", "")
 
         self.content = []
+        skipped_invalid_messages = 0
         for item in state_dict.get("content", []):
             if isinstance(item, (tuple, list)) and len(item) == 2:
                 msg_dict, marks = item
                 msg = Msg.from_dict(msg_dict)
-                self.content.append((msg, marks))
 
             elif isinstance(item, dict):
                 # For compatibility with older versions
                 msg = Msg.from_dict(item)
-                self.content.append((msg, []))
+                marks = []
 
             else:
                 raise ValueError(
                     "Invalid item format in state_dict for InMemoryMemory.",
                 )
+
+            if _is_invalid_empty_assistant_message(msg):
+                skipped_invalid_messages += 1
+                continue
+
+            self.content.append((msg, marks))
+
+        if skipped_invalid_messages:
+            logger.warning(
+                "Skipped %d invalid empty assistant message(s) while "
+                "loading memory state.",
+                skipped_invalid_messages,
+            )

@@ -600,6 +600,24 @@ class InMemoryMemoryTest(ShortTermMemoryTest):
             },
         )
 
+    async def test_skips_empty_assistant_messages(self) -> None:
+        """Test that invalid empty assistant messages are not stored."""
+        await self.memory.add(
+            [
+                Msg("user", "question", "user"),
+                Msg("assistant", [], "assistant"),
+                Msg("assistant", "", "assistant"),
+                Msg("assistant", "answer", "assistant"),
+            ],
+        )
+
+        stored_msgs = await self.memory.get_memory()
+        self.assertEqual(len(stored_msgs), 2)
+        self.assertEqual(
+            [msg.get_text_content() for msg in stored_msgs],
+            ["question", "answer"],
+        )
+
 
 class AsyncSQLAlchemyMemoryTest(ShortTermMemoryTest):
     """The SQLAlchemy short-term memory tests."""
