@@ -14,6 +14,7 @@ from ._message_block import (
     URLSource,
 )
 from ._message_base import Msg
+from .topic_filter import TopicFilter
 
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "ToolResultBlock",
     "ContentBlock",
     "Msg",
+    "TopicFilter",
 ]

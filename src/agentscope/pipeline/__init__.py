@@ -10,6 +10,11 @@ from ._functional import (
     stream_printing_messages,
 )
 from ._chat_room import ChatRoom
+from .branching_pipeline import (
+    IfElsePipeline,
+    SwitchPipeline,
+    ParallelBranchPipeline,
+)
 
 __all__ = [
     "MsgHub",
@@ -19,4 +24,7 @@ __all__ = [
     "fanout_pipeline",
     "stream_printing_messages",
     "ChatRoom",
+    "IfElsePipeline",
+    "SwitchPipeline",
+    "ParallelBranchPipeline",
 ]
