@@ -49,8 +49,6 @@ _LOG_PATH = os.path.join(
     _LOG_DIR,
     f"log_{datetime.now().strftime('%y%m%d%H%M%S')}.md",
 )
-os.makedirs(_LOG_DIR, exist_ok=True)
-setup_logger(level="INFO", filepath=_LOG_PATH)
 
 
 class SubTaskItem(BaseModel):
@@ -187,6 +185,27 @@ class DeepResearchAgent(ReActAgent):
         self.toolkit.register_tool_function(self.reflect_failure)
         self.toolkit.register_tool_function(
             self.summarize_intermediate_results,
+        )
+        # set up a logger to record the researching process
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        setup_logger(level="INFO", filepath=_LOG_PATH)
+
+    def _extract_text_from_blocks(
+        self,
+        blocks: list,
+    ) -> str:
+        """Extract the text content from the output blocks
+        returned by the model.
+
+        This method is designed to make deep research agents
+        applicable to both thinking and non-thinking models.
+        """
+        for block in blocks:
+            if block.get("type") == "text":
+                return block["text"]
+        raise ValueError(
+            f"No text block found in model output. "
+            f"Received block types: {[b.get('type') for b in blocks]}",
         )
 
     async def _ensure_mcp_initialized(self) -> None:
@@ -770,9 +789,11 @@ class DeepResearchAgent(ReActAgent):
                 ],
                 stream=self.model.stream,
             )
-            self.current_subtask[-1].working_plan = blocks[0][
-                "text"
-            ]  # type: ignore[index]
+            self.current_subtask[
+                -1
+            ].working_plan = self._extract_text_from_blocks(
+                blocks,
+            )  # type: ignore[index]
         report_prefix = "#" * len(self.current_subtask)
         summarize_sys_prompt = self.prompt_dict[
             "summarize_sys_prompt"
@@ -810,7 +831,9 @@ class DeepResearchAgent(ReActAgent):
             ],
             stream=self.model.stream,
         )
-        intermediate_report = blocks[0]["text"]  # type: ignore[index]
+        intermediate_report = self._extract_text_from_blocks(
+            blocks,
+        )  # type: ignore[index]
 
         # Write the intermediate report
         intermediate_report_path = os.path.join(
@@ -876,7 +899,7 @@ class DeepResearchAgent(ReActAgent):
                 The expected output items of the original task.
         """
         reporting_sys_prompt = self.prompt_dict["reporting_sys_prompt"]
-        reporting_sys_prompt.format_map(
+        reporting_sys_prompt = reporting_sys_prompt.format_map(
             {
                 "original_task": self.user_query,
                 "checklist": checklist,
@@ -928,7 +951,9 @@ class DeepResearchAgent(ReActAgent):
             msgs=msgs,
             stream=self.model.stream,
         )
-        final_report_content = blocks[0]["text"]  # type: ignore[index]
+        final_report_content = self._extract_text_from_blocks(
+            blocks,
+        )  # type: ignore[index]
         logger.info(
             "The final Report is generated: %s",
             final_report_content,
