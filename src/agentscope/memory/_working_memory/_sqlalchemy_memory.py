@@ -470,6 +470,10 @@ class AsyncSQLAlchemyMemory(MemoryBase):
 
             # Create mark records if marks are provided (bulk insert)
             if marks:
+                # Flush the session to ensure message records are written to
+                # the database before bulk_insert_mappings for message_mark
+                # records to satisfy foreign key constraints
+                await self.session.flush()
                 mark_records = [
                     {
                         "msg_id": self._make_message_id(msg.id),
