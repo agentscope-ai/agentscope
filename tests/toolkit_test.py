@@ -3,6 +3,7 @@
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest.async_case import IsolatedAsyncioTestCase
+from utils import AnyString
 
 from agentscope.agent import AgentState
 from agentscope.message import (
@@ -20,7 +21,6 @@ from agentscope.tool import (
     PermissionBehavior,
     ToolResponse,
 )
-from tests.utils import AnyString
 
 
 class Tool1(ToolBase):

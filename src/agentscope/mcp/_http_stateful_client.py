@@ -2,6 +2,7 @@
 """The MCP stateful HTTP client module in AgentScope."""
 from typing import Any, Literal
 
+import httpx
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
@@ -35,7 +36,6 @@ class HttpStatefulClient(StatefulClientBase):
         url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 30,
-        sse_read_timeout: float = 60 * 5,
         **client_kwargs: Any,
     ) -> None:
         """Initialize the streamable HTTP MCP client.
@@ -54,9 +54,6 @@ class HttpStatefulClient(StatefulClientBase):
                 Additional headers to include in the HTTP request.
             timeout (`float`, optional):
                 The timeout for the HTTP request in seconds. Defaults to 30.
-            sse_read_timeout (`float`, optional):
-                The timeout for reading Server-Sent Events (SSE) in seconds.
-                Defaults to 300 (5 minutes).
             **client_kwargs (`Any`):
                 The additional keyword arguments to pass to the streamable
                 HTTP client.
@@ -67,11 +64,16 @@ class HttpStatefulClient(StatefulClientBase):
         self.transport = transport
 
         if self.transport == "streamable_http":
+            if headers or timeout:
+                client = httpx.AsyncClient(
+                    headers=headers,
+                    timeout=timeout,
+                )
+            else:
+                client = None
             self.client = streamable_http_client(
                 url=url,
-                headers=headers,
-                timeout=timeout,
-                sse_read_timeout=sse_read_timeout,
+                http_client=client,
                 **client_kwargs,
             )
         else:
@@ -79,6 +81,5 @@ class HttpStatefulClient(StatefulClientBase):
                 url=url,
                 headers=headers,
                 timeout=timeout,
-                sse_read_timeout=sse_read_timeout,
                 **client_kwargs,
             )
