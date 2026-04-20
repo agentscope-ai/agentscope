@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student interested in literature and art. It's nice to meet you! What about you?
-    Bob: Hi Alice! I'm Bob. I'm into science and technology, but I also enjoy playing basketball in my free time. Great to meet you too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and play the guitar. I also love hiking and exploring new places. Nice to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and its impact on our daily lives. I love exploring new gadgets and learning about the latest in tech. How about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and fitness. I spend a lot of my free time playing basketball and learning about nutrition. It's cool to meet someone who's so into tech!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I have a big passion for music and play the guitar in a band with some friends. It's great to meet you both!
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student interested in literature and art. It's nice to meet you! What about you?
-    Bob: Hi Alice! I'm Bob. I'm into science and technology, but I also enjoy playing basketball in my free time. Great to meet you too!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm really into music and play the guitar. I also love hiking and exploring new places. Nice to meet you both!
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and its impact on our daily lives. I love exploring new gadgets and learning about the latest in tech. How about you?
+    Bob: Hey Alice! I'm Bob. I'm also a student, and I'm really into sports and fitness. I spend a lot of my free time playing basketball and learning about nutrition. It's cool to meet someone who's so into tech!
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student too. I have a big passion for music and play the guitar in a band with some friends. It's great to meet you both!
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 16.208 seconds)
+   **Total running time of the script:** (0 minutes 12.715 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:
