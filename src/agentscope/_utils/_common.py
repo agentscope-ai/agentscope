@@ -269,7 +269,7 @@ def _parse_tool_function(
         `dict`:
             The extracted JSON schema.
     """
-    docstring = parse(tool_func.__doc__)
+    docstring = parse(tool_func.__doc__ or "")
     params_docstring = {_.arg_name: _.description for _ in docstring.params}
 
     # Function description

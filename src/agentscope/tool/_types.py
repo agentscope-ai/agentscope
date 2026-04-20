@@ -45,11 +45,14 @@ class RegisteredTool:
         """Validate the registered tool function after initialization."""
         # validate schema
         if self.tool.input_schema is not None:
-            assert (
+            if not (
                 isinstance(self.tool.input_schema, dict)
                 and self.tool.input_schema.get("type") == "object"
                 and isinstance(self.tool.input_schema.get("properties"), dict)
-            ), f"Invalid input_schema: {self.tool.input_schema}. "
+            ):
+                raise ValueError(
+                    f"Invalid input_schema: {self.tool.input_schema}. ",
+                )
 
     def get_function_schema(
         self,

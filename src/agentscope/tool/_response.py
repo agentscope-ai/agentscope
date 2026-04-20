@@ -94,12 +94,16 @@ class ToolResponse(BaseModel):
                 else:
                     # For different block types with the same ID, we just
                     # append the new block with a new ID to avoid the conflict
-                    chunk_block.id = uuid.uuid4().hex
-                    self.content.append(chunk_block)
+                    new_chunk_block = chunk_block.model_copy(deep=True)
+                    new_chunk_block.id = uuid.uuid4().hex
+                    self.content.append(new_chunk_block)
 
             else:
                 # Append a copy to avoid modifying the original chunk
                 self.content.append(chunk_block.model_copy(deep=True))
+
+                # Update the index mapping for the new block
+                current_ids_to_index[chunk_block.id] = len(self.content) - 1
 
         # Update id, state and metadata
         # TODO: what's the relationship between the chunk id and response id?

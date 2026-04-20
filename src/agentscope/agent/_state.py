@@ -23,11 +23,11 @@ class AgentState(BaseModel):
     """The current iteration of the agent's reasoning-acting loop."""
 
     # The tool state, e.g. the active tool groups
-    activated_groups: list[str] = []
+    activated_groups: list[str] = Field(default_factory=list)
     """The names of the activated tool groups, each group contains a set of
     tools."""
 
-    permissionContext: PermissionContext = Field(
+    permission_context: PermissionContext = Field(
         default_factory=PermissionContext,
     )
     """The permission context that will be passed to the toolkit to determine

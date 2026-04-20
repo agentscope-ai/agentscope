@@ -23,6 +23,9 @@ class ToolBase:
     checking."""
     is_mcp: bool
     """If this tool is an MCP tool, which will be used in the permission"""
+    mcp_name: str | None = None
+    """The name of the MCP server this tool belongs to, which is required if
+    this tool is an MCP tool."""
 
     @abstractmethod
     async def check_permissions(

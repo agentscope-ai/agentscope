@@ -45,7 +45,7 @@ def _extract_func_description(docstring: str) -> str:
         `str`:
             The extracted function description.
     """
-    parsed_docstring = parse(docstring)
+    parsed_docstring = parse(docstring or "")
     descriptions = []
     if parsed_docstring.short_description is not None:
         descriptions.append(parsed_docstring.short_description)
@@ -76,7 +76,7 @@ def _extract_input_schema(
         `dict`:
             The extracted input JSON schema.
     """
-    docstring = parse(tool_func.__doc__)
+    docstring = parse(tool_func.__doc__ or "")
     params_docstring = {_.arg_name: _.description for _ in docstring.params}
 
     # Create a dynamic model with the function signature

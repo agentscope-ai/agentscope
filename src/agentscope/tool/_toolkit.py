@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import os
+from collections import OrderedDict
 from copy import deepcopy
 from functools import wraps
 from typing import (
@@ -12,7 +13,6 @@ from typing import (
     Generator,
     Callable,
     Coroutine,
-    OrderedDict,
     TYPE_CHECKING,
 )
 
@@ -198,6 +198,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 # TODO: handle the name conflict here
                 self.tools[tool.name] = RegisteredTool(tool=tool)
 
+        self.meta_tool_response_template = meta_tool_response_template
+
         self.mcp_tool_name = mcp_tool_name
 
         self.groups: dict[str, ToolGroup] = {}
@@ -334,6 +336,16 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             is_concurrency_safe=is_concurrency_safe,
             is_read_only=is_read_only,
         )
+
+        # Check if the group exists
+        groups = ["basic"] + list(self.groups.keys())
+        if group not in groups:
+            raise ValueError(
+                f"Tool group '{group}' does not exist. Available groups: "
+                f"{groups}. You can create a new group by calling "
+                "`toolkit.create_tool_group()` method.",
+            )
+
         # Register the tool
         registered = RegisteredTool(
             tool=tool,
@@ -467,7 +479,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         to_removed = []
         func_names = deepcopy(list(self.tools.keys()))
         for func_name in func_names:
-            if self.tools[func_name].mcp_name in client_names:
+            if self.tools[func_name].tool.mcp_name in client_names:
                 self.tools.pop(func_name)
                 to_removed.append(func_name)
 

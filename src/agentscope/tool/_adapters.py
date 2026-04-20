@@ -106,6 +106,9 @@ class MCPTool(ToolBase):
     AgentScope's ToolChunk format.
     """
 
+    is_mcp: bool = True
+    """Whether this tool is an MCP tool."""
+
     def __init__(
         self,
         mcp_name: str,
@@ -150,8 +153,6 @@ class MCPTool(ToolBase):
         if tool.annotations and hasattr(tool.annotations, "readOnlyHint"):
             self.is_read_only = tool.annotations.readOnlyHint or False
 
-        self.is_mcp = True
-
         # Store MCP tool and connection info
         self._tool = tool
         self._client_gen = client_gen
@@ -190,7 +191,7 @@ class MCPTool(ToolBase):
             )
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
-            message="xxx",
+            message="MCP tools must be explicitly allowed by the user.",
         )
 
     async def __call__(
