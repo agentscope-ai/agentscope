@@ -139,9 +139,9 @@ Then we start a meeting and let them introduce themselves without manual message
 
  .. code-block:: none
 
-    Alice: Hello, I'm Alice, a 50-year-old teacher with a passion for literature and a dedication to fostering young minds.
-    Bob: Hi, I'm Bob, a 35-year-old engineer with a focus on sustainable technology and innovation.
-    Charlie: Hi, I'm Charlie, a 28-year-old designer with a keen interest in creating impactful and user-friendly digital experiences.
+    Alice: Hello, I'm Alice, a 50-year-old teacher with a passion for education and a wealth of experience in the classroom.
+    Bob: Hi, I'm Bob, a 35-year-old engineer with a focus on innovation and problem-solving in the tech industry.
+    Charlie: Hi, I'm Charlie, a 28-year-old designer with a creative flair for bringing ideas to life through visual and interactive experiences.
 
 
 
@@ -180,9 +180,9 @@ Now let's check if Bob, Charlie and David received Alice's message.
 
  .. code-block:: none
 
-    Bob: Alice is a 50-year-old teacher who has a passion for literature and is dedicated to educating young minds.
-    Charlie: Alice is a 50-year-old teacher who has a passion for literature and is dedicated to educating young minds.
-    David: I don't have specific information about an Alice without more context, as it's a common name and could refer to many different people. Could you provide more details, like her last name or the field she works in?
+    Bob: Alice is a 50-year-old teacher who is passionate about education and has extensive experience in the classroom.
+    Charlie: Alice is a 50-year-old teacher who is passionate about education and has extensive experience in the classroom.
+    David: I don't have specific information about an Alice without more context. There could be many people named Alice, and they could do a wide variety of things. Could you provide more details or specify which Alice you're referring to?
 
 
 
@@ -349,14 +349,14 @@ Taking the following code snippet as an example:
 
  .. code-block:: none
 
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': 'Hi'}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': 'Hi there! I'}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice,"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 2"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') False
-    Msg(id='cjr5D8USstdbXR3egc5YRS', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 11:40:52.759', invocation_id='1f994741-5cd4-99aa-8522-87a1c25c36a1') True
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': 'Hi'}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': 'Hi there! I'}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice,"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 2"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') False
+    Msg(id='9gkJK9HoBYaHz7yGGoGxjs', name='Alice', content=[{'type': 'text', 'text': "Hi there! I'm Alice, a 20-year-old student. How can I help you today?"}], role='assistant', metadata={}, timestamp='2026-04-20 12:47:51.765', invocation_id='09df366e-353e-9538-be49-3afc30e98f59') True
 
 
 
@@ -402,7 +402,7 @@ Additionally, for reusability, we also provide a class-based implementation:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 19.398 seconds)
+   **Total running time of the script:** (0 minutes 21.572 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_pipeline.py:
