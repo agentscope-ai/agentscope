@@ -129,7 +129,7 @@ print(json.dumps(toolkit.get_json_schemas(), indent=4, ensure_ascii=False))
 
 async def example_tool_execution() -> None:
     """工具调用执行示例。"""
-    res = await toolkit.call_tool_function(
+    res = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="123",
@@ -228,7 +228,7 @@ async def example_tool_interruption() -> None:
     """工具中断示例。"""
     toolkit = Toolkit()
     toolkit.register_tool_function(non_streaming_function)
-    res = await toolkit.call_tool_function(
+    res = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="123",
@@ -286,7 +286,7 @@ async def example_streaming_tool_interruption() -> None:
     toolkit = Toolkit()
     toolkit.register_tool_function(streaming_function)
 
-    res = await toolkit.call_tool_function(
+    res = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="xxx",
@@ -412,7 +412,7 @@ print(
 
 async def mock_agent_reset_tools() -> None:
     """模拟智能体调用 reset_equipped_tools 函数。"""
-    res = await toolkit.call_tool_function(
+    res = await toolkit.call_tool(
         ToolUseBlock(
             type="tool_use",
             id="456",

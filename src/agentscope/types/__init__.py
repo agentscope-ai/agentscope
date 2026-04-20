@@ -10,7 +10,6 @@ from ._json import (
     JSONPrimitive,
     JSONSerializableObject,
 )
-from ._tool import ToolFunction, ToolChoice
 
 __all__ = [
     "AgentHookTypes",
@@ -18,6 +17,4 @@ __all__ = [
     "Embedding",
     "JSONPrimitive",
     "JSONSerializableObject",
-    "ToolFunction",
-    "ToolChoice",
 ]

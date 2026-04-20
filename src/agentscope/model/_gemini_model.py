@@ -22,7 +22,8 @@ from ._model_usage import ChatUsage
 from ._model_base import ChatModelBase
 from ._model_response import ChatResponse
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject, ToolChoice
+from ..types import JSONSerializableObject
+from ..tool import ToolChoice
 
 if TYPE_CHECKING:
     from google.genai.types import GenerateContentResponse

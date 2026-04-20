@@ -38,6 +38,7 @@ dependencies = [
     "python-socketio",
     "shortuuid",
     "python-frontmatter",
+    "jinja2",
     "aiofiles",
     "tree_sitter",
     "tree_sitter_bash",

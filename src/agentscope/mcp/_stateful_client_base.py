@@ -3,14 +3,18 @@
  functionality for stateful MCP clients."""
 from abc import ABC
 from contextlib import AsyncExitStack
-from typing import List
+from typing import List, TYPE_CHECKING, Any
 
 import mcp
 from mcp import ClientSession
 
 from ._client_base import MCPClientBase
-from ._mcp_function import MCPToolFunction
 from .._logging import logger
+
+if TYPE_CHECKING:
+    from ..tool import MCPTool
+else:
+    MCPTool = Any
 
 
 class StatefulClientBase(MCPClientBase, ABC):
@@ -109,33 +113,26 @@ class StatefulClientBase(MCPClientBase, ABC):
         self._cached_tools = res.tools
         return res.tools
 
-    async def get_callable_function(
+    async def get_tool(
         self,
-        func_name: str,
-        wrap_tool_result: bool = True,
+        name: str,
         execution_timeout: float | None = None,
-    ) -> MCPToolFunction:
-        """Get an async tool function from the MCP server by its name, so
-        that you can call it directly, wrap it into your own function, or
-        anyway you like.
+    ) -> MCPTool:
+        """Get a tool object from the MCP server by its name.
 
-        .. note:: Currently, only the text, image, and audio results are
-         supported in this function.
+        The returned MCPTool object implements ToolProtocol and can be:
+        - Called directly: `await tool(arg1=val1)`
+        - Registered to toolkit: `toolkit.register_tool(tool)`
 
         Args:
-            func_name (`str`):
+            name (`str`):
                 The name of the tool function to get.
-            wrap_tool_result (`bool`):
-                Whether to wrap the tool result into agentscope's
-                `ToolResponse` object. If `False`, the raw result type
-                `mcp.types.CallToolResult` will be returned.
             execution_timeout (`float | None`, optional):
                 The preset timeout in seconds for calling the tool function.
 
         Returns:
-            `MCPToolFunction`:
-                A callable async function that returns either
-                `mcp.types.CallToolResult` or `ToolResponse` when called.
+            `MCPTool`:
+                A tool object that implements ToolProtocol.
         """
         self._validate_connection()
 
@@ -144,19 +141,20 @@ class StatefulClientBase(MCPClientBase, ABC):
 
         target_tool = None
         for tool in self._cached_tools:
-            if tool.name == func_name:
+            if tool.name == name:
                 target_tool = tool
                 break
 
         if target_tool is None:
             raise ValueError(
-                f"Tool '{func_name}' not found in the MCP server",
+                f"Tool '{name}' not found in the MCP server",
             )
 
-        return MCPToolFunction(
+        from ..tool import MCPTool
+
+        return MCPTool(
             mcp_name=self.name,
             tool=target_tool,
-            wrap_tool_result=wrap_tool_result,
             session=self.session,
             timeout=execution_timeout,
         )

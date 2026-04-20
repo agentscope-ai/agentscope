@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """The base class for MCP clients in AgentScope."""
 from abc import abstractmethod
-from typing import Callable, List
+from typing import Any, TYPE_CHECKING
 
-import mcp.types
-
-from .._logging import logger
-from ..message import (
-    Base64Source,
-    TextBlock,
-    DataBlock,
-)
+if TYPE_CHECKING:
+    from ..tool import MCPTool
+else:
+    MCPTool = Any
 
 
 class MCPClientBase:
@@ -27,59 +23,17 @@ class MCPClientBase:
         self.name = name
 
     @abstractmethod
-    async def get_callable_function(
+    async def get_tool(
         self,
-        func_name: str,
-        wrap_tool_result: bool = True,
-    ) -> Callable:
-        """Get a tool function by its name."""
+        name: str,
+    ) -> MCPTool:
+        """Get a tool object by its name.
 
-    @staticmethod
-    def _convert_mcp_content_to_as_blocks(
-        mcp_content_blocks: list,
-    ) -> List[TextBlock | DataBlock]:
-        """Convert MCP content to AgentScope blocks."""
+        Args:
+            name (`str`):
+                The name of the tool to get.
 
-        as_content: list = []
-        for content in mcp_content_blocks:
-            if isinstance(content, mcp.types.TextContent):
-                as_content.append(TextBlock(text=content.text))
-            elif isinstance(
-                content,
-                (mcp.types.ImageContent, mcp.types.AudioContent),
-            ):
-                as_content.append(
-                    DataBlock(
-                        source=Base64Source(
-                            type="base64",
-                            media_type=content.mimeType,
-                            data=content.data,
-                        ),
-                    ),
-                )
-            elif isinstance(content, mcp.types.EmbeddedResource):
-                if isinstance(
-                    content.resource,
-                    mcp.types.TextResourceContents,
-                ):
-                    as_content.append(
-                        TextBlock(
-                            text=content.resource.model_dump_json(indent=2),
-                        ),
-                    )
-                else:
-                    # TODO: support the BlobResourceContents in the future,
-                    #  which is a base64-encoded string representing the
-                    #  binary data
-                    logger.error(
-                        "Unsupported EmbeddedResource content type: %s. "
-                        "Skipping this content.",
-                        type(content.resource),
-                    )
-
-            else:
-                logger.warning(
-                    "Unsupported content type: %s. Skipping this content.",
-                    type(content),
-                )
-        return as_content
+        Returns:
+            `MCPTool`:
+                A tool object that implements ToolProtocol.
+        """

@@ -1,43 +1,36 @@
 # -*- coding: utf-8 -*-
-"""The toolkit class for tool calls in agentscope.
-
-TODO: We should consider to split this `Toolkit` class in the future.
-"""
-# pylint: disable=too-many-lines
+"""The toolkit class for tool calls in AgentScope."""
 import asyncio
 import inspect
 import os
+from collections import OrderedDict
 from copy import deepcopy
-from functools import partial, wraps
+from functools import wraps
 from typing import (
     AsyncGenerator,
-    Literal,
     Any,
     Type,
     Generator,
     Callable,
-    Awaitable,
     Coroutine,
+    TYPE_CHECKING,
 )
 
 import mcp
-import shortuuid
 from pydantic import (
     BaseModel,
     Field,
     create_model,
 )
 
-from ._async_wrapper import (
-    _async_generator_wrapper,
-    _object_wrapper,
-    _sync_generator_wrapper,
-)
-from ._response import ToolResponse
-from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
-from .._utils._common import _parse_tool_function
+from ._builtin import ResetTools
+from ._base import ToolBase
+from ._adapters import _FunctionTool
+from ._response import ToolResponse, ToolChunk
+from ._types import ToolGroup, AgentSkill, RegisteredTool
+from .._utils._common import _json_loads_with_repair
+from ..exception import DeveloperOrientedException
 from ..mcp import (
-    MCPToolFunction,
     MCPClientBase,
     StatefulClientBase,
 )
@@ -45,12 +38,12 @@ from ..message import (
     ToolCallBlock,
     TextBlock,
 )
-from ..types import (
-    JSONSerializableObject,
-    ToolFunction,
-)
-from ..tracing._trace import trace_toolkit
 from .._logging import logger
+
+if TYPE_CHECKING:
+    from ..agent import AgentState
+else:
+    AgentState = "AgentState"
 
 
 def _apply_middlewares(
@@ -113,7 +106,15 @@ def _apply_middlewares(
     return wrapper
 
 
-class Toolkit:  # pylint: disable=too-many-public-methods
+# pylint: disable=line-too-long
+DEFAULT_META_TOOL_RESPONSE_TEMPLATE = """{% if groups | length == 0 %}All tool groups are currently deactivated.{% else %}The currently activated tool group(s): {{ groups | map(attribute='name') | join(', ') }}.{% if groups | selectattr('instructions', 'ne', None) | list | length > 0 %}
+<tool-instructions>
+The tool instructions are a collection of suggestions, rules and notifications about how to use the tools in the activated groups.
+{% for group in groups %}{% if group.instructions %}<group name="{{ group.name }}">{{ group.instructions }}</group>{% endif %}{% endfor %}
+</tool-instructions>{% endif %}{% endif %}"""  # noqa: E501
+
+
+class Toolkit:
     """Toolkit is the core module to register, manage and delete tool
     functions, MCP clients, Agent skills in AgentScope.
 
@@ -148,14 +149,38 @@ class Toolkit:  # pylint: disable=too-many-public-methods
 {description}
 Check "{dir}/SKILL.md" for how to use this skill"""
 
+    def _get_meta_tool_schema(self) -> Type[BaseModel]:
+        """Get the meta tool schema based on the current tool groups."""
+        fields = {}
+        for group_name, group in self.groups.items():
+            if group_name == "basic":
+                continue
+            fields[group_name] = (
+                bool,
+                Field(
+                    default=False,
+                    description=group.description,
+                ),
+            )
+        return create_model("_DynamicModel", **fields)
+
     def __init__(
         self,
+        tools: list[ToolBase] | None = None,
+        meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
+        mcp_tool_name: str = "mcp__{server}__{tool}",
         agent_skill_instruction: str | None = None,
         agent_skill_template: str | None = None,
     ) -> None:
         """Initialize the toolkit.
 
         Args:
+            tools (`list[ToolProtocol] | None`, optional):
+                The tool objects that implement the ToolProtocol interface.
+            meta_tool_response_template (`str`, optional):
+                The template for meta tool responses.
+            mcp_tool_name (`str`, optional):
+                The naming pattern for MCP tools.
             agent_skill_instruction (`str | None`, optional):
                 The instruction for agent skills in the system prompt. If not
                 provided, a default instruction will be used.
@@ -166,7 +191,16 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         """
         super().__init__()
 
-        self.tools: dict[str, RegisteredToolFunction] = {}
+        self.tools: dict[str, RegisteredTool] = OrderedDict()
+        if tools:
+            for tool in tools:
+                # TODO: handle the name conflict here
+                self.tools[tool.name] = RegisteredTool(tool=tool)
+
+        self.meta_tool_response_template = meta_tool_response_template
+
+        self.mcp_tool_name = mcp_tool_name
+
         self.groups: dict[str, ToolGroup] = {}
         self.skills: dict[str, AgentSkill] = {}
         self._middlewares: list = []  # Store registered middlewares
@@ -178,17 +212,21 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
         )
 
-        # This is an experimental feature to allow the tool function to be
-        # executed in an async way
-        self._async_tasks: dict[str, asyncio.Task] = {}
-        self._async_results: dict[str, ToolResponse] = {}
+        self.builtin_meta_tool = RegisteredTool(
+            tool=ResetTools(
+                # An inference value for groups so that it can generate the
+                # corresponding input schema.
+                groups=self.groups,
+                response_template=meta_tool_response_template,
+            ),
+        )
 
     def create_tool_group(
         self,
         group_name: str,
         description: str,
-        active: bool = False,
-        notes: str | None = None,
+        instructions: str | None = None,
+        tools: list[ToolBase] | None = None,
     ) -> None:
         """Create a tool group to organize tool functions
 
@@ -197,13 +235,13 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 The name of the tool group.
             description (`str`):
                 The description of the tool group.
-            active (`bool`, defaults to `False`):
-                If the group is active, meaning the tool functions in this
-                group are included in the JSON schema.
-            notes (`str | None`, optional):
-                The notes used to remind the agent how to use the tool
-                functions properly, which can be combined into the system
-                prompt.
+            instructions (`str | None`, optional):
+                The instructions about how to use the tool functions in this
+                group.
+            tools (`list[ToolProtocol] | None`, optional):
+                The tool objects that implement the ToolProtocol interface to
+                be added into this group. Note that these tools will also be
+                added to the toolkit if they are not already in the toolkit.
         """
         if group_name in self.groups or group_name == "basic":
             raise ValueError(
@@ -214,28 +252,18 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         self.groups[group_name] = ToolGroup(
             name=group_name,
             description=description,
-            notes=notes,
-            active=active,
+            instructions=instructions,
         )
 
-    def update_tool_groups(self, group_names: list[str], active: bool) -> None:
-        """Update the activation status of the given tool groups.
-
-        Args:
-            group_names (`list[str]`):
-                The list of tool group names to be updated.
-            active (`bool`):
-                If the tool groups should be activated or deactivated.
-        """
-
-        for group_name in group_names:
-            if group_name == "basic":
-                logger.warning(
-                    "The 'basic' tool group is always active, skipping it.",
+        if isinstance(tools, list) and all(
+            isinstance(_, ToolBase) for _ in tools
+        ):
+            for tool in tools:
+                registered = RegisteredTool(
+                    tool=tool,
+                    group=group_name,
                 )
-
-            if group_name in self.groups:
-                self.groups[group_name].active = active
+                self.tools[tool.name] = registered
 
     def remove_tool_groups(self, group_names: str | list[str]) -> None:
         """Remove tool functions from the toolkit by their group names.
@@ -269,270 +297,62 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             if self.tools[tool_name].group in group_names:
                 self.tools.pop(tool_name)
 
-    # pylint: disable=too-many-branches, too-many-statements
-    def register_tool_function(
+    def register_function(
         self,
-        tool_func: ToolFunction,
-        group_name: str | Literal["basic"] = "basic",
-        preset_kwargs: dict[str, JSONSerializableObject] | None = None,
-        func_name: str | None = None,
-        func_description: str | None = None,
-        json_schema: dict | None = None,
-        include_long_description: bool = True,
-        include_var_positional: bool = False,
-        include_var_keyword: bool = False,
-        postprocess_func: (
-            Callable[
-                [ToolCallBlock, ToolResponse],
-                ToolResponse | None,
-            ]
-            | Callable[
-                [ToolCallBlock, ToolResponse],
-                Awaitable[ToolResponse | None],
-            ]
-        )
-        | None = None,
-        namesake_strategy: Literal[
-            "override",
-            "skip",
-            "raise",
-            "rename",
-        ] = "raise",
-        async_execution: bool = False,
+        func: Callable,
+        group: str = "basic",
+        name: str | None = None,
+        description: str | None = None,
+        is_concurrency_safe: bool = True,
+        is_read_only: bool = False,
     ) -> None:
-        """Register a tool function to the toolkit.
+        """Register a Python function as a tool in the toolkit.
+
+        This method wraps a regular Python function into a FunctionTool and
+        registers it to the toolkit.
 
         Args:
-            tool_func (`ToolFunction`):
-                The tool function, which can be async or sync, streaming or
-                not-streaming, but the response must be a `ToolResponse`
-                object.
-            group_name (`str | Literal["basic"]`, defaults to `"basic"`):
-                The belonging group of the tool function. Tools in "basic"
-                group is always included in the JSON schema, while the others
-                are only included when their group is active.
-            preset_kwargs (`dict[str, JSONSerializableObject] | None`, \
-            optional):
-                Preset arguments by the user, which will not be included in
-                the JSON schema, nor exposed to the agent.
-            func_name (`str | None`, optional):
-                The custom function name, which should be consistent with the
-                name in function_description and json_schema (if provided).
-                By default, the function name will be extracted from the
-                function automatically.
-            func_description (`str | None`, optional):
-                The function description. If not provided, the description
-                will be extracted from the docstring automatically.
-            json_schema (`dict | None`, optional):
-                Manually provided JSON schema for the tool function, which
-                should be `{"type": "function", "function": {"name":
-                "function_name": "xx", "description": "xx",
-                "parameters": {...}}}`
-            include_long_description (`bool`, defaults to `True`):
-                When extracting function description from the docstring, if
-                the long description will be included.
-            include_var_positional (`bool`, defaults to `False`):
-                Whether to include the variable positional arguments (`*args`)
-                in the function schema.
-            include_var_keyword (`bool`, defaults to `False`):
-                Whether to include the variable keyword arguments (`**kwargs`)
-                in the function schema.
-            postprocess_func (`(Callable[[ToolCallBlock, ToolResponse], \
-            ToolResponse | None] | Callable[[ToolCallBlock, ToolResponse], \
-            Awaitable[ToolResponse | None]]) | None`, optional):
-                A post-processing function that will be called after the tool
-                function is executed, taking the tool call block and tool
-                response as arguments. The function can be either sync or
-                async. If it returns `None`, the tool result will be
-                returned as is. If it returns a `ToolResponse`,
-                the returned block will be used as the final tool result.
-            namesake_strategy (`Literal['raise', 'override', 'skip', \
-            'rename']`, defaults to `'raise'`):
-                The strategy to handle the tool function name conflict:
-                - 'raise': raise a ValueError (default behavior).
-                - 'override': override the existing tool function with the new
-                  one.
-                - 'skip': skip the registration of the new tool function.
-                - 'rename': rename the new tool function by appending a random
-                  suffix to make it unique.
-            async_execution (`bool`, defaults to `False`):
-                If this tool function is executed in an async manner, a
-                reminder with task id will be sent to the agent, allowing the
-                agent to view, cancel or check the status of the async task.
-                **This is an experimental feature and may cause unexpected
-                issues, please use it with caution.**
+            func (`Callable`):
+                A Python function to be registered as a tool.
+            group (`str`, defaults to `"basic"`):
+                The belonging group of the tool. Tools in "basic" group are
+                always included in the JSON schema, while others are only
+                included when their group is active.
+            name (`str | None`, optional):
+                Custom tool name. If None, uses the function name.
+            description (`str | None`, optional):
+                Custom tool description. If None, extracts from docstring.
+            is_concurrency_safe (`bool`, defaults to `True`):
+                Whether this tool is safe to call concurrently.
+            is_read_only (`bool`, defaults to `False`):
+                Whether this tool only reads data without side effects.
         """
-        # Arguments checking
-        if group_name not in self.groups and group_name != "basic":
-            raise ValueError(
-                f"Tool group '{group_name}' not found.",
-            )
-
-        # Check the manually provided JSON schema if provided
-        if json_schema:
-            assert (
-                isinstance(json_schema, dict)
-                and "type" in json_schema
-                and json_schema["type"] == "function"
-                and "function" in json_schema
-                and isinstance(json_schema["function"], dict)
-            ), "Invalid JSON schema for the tool function."
-
-        # Handle MCP tool function and regular function respectively
-        mcp_name = None
-        if isinstance(tool_func, MCPToolFunction):
-            input_func_name = tool_func.name
-            original_func = tool_func.__call__
-            json_schema = json_schema or tool_func.json_schema
-            mcp_name = tool_func.mcp_name
-
-        elif isinstance(tool_func, partial):
-            # partial function
-            kwargs = tool_func.keywords
-            # Turn args into keyword arguments
-            if tool_func.args:
-                param_names = list(
-                    inspect.signature(tool_func.func).parameters.keys(),
-                )
-                for i, arg in enumerate(tool_func.args):
-                    if i < len(param_names):
-                        kwargs[param_names[i]] = arg
-
-            preset_kwargs = {
-                **kwargs,
-                **(preset_kwargs or {}),
-            }
-
-            input_func_name = tool_func.func.__name__
-            original_func = tool_func.func
-            json_schema = json_schema or _parse_tool_function(
-                tool_func.func,
-                include_long_description=include_long_description,
-                include_var_positional=include_var_positional,
-                include_var_keyword=include_var_keyword,
-            )
-
-        else:
-            # normal function
-            input_func_name = tool_func.__name__
-            original_func = tool_func
-            json_schema = json_schema or _parse_tool_function(
-                tool_func,
-                include_long_description=include_long_description,
-                include_var_positional=include_var_positional,
-                include_var_keyword=include_var_keyword,
-            )
-
-        # Record the original function name if the func_name is given
-        original_name = input_func_name if func_name else None
-
-        # Use the given function name if provided
-        func_name = func_name or input_func_name
-
-        # Always set the function name in json_schema
-        json_schema["function"]["name"] = func_name
-
-        # Override the description if provided
-        if func_description:
-            json_schema["function"]["description"] = func_description
-
-        # Remove the preset kwargs from the JSON schema
-        for arg_name in preset_kwargs or {}:
-            if arg_name in json_schema["function"]["parameters"]["properties"]:
-                json_schema["function"]["parameters"]["properties"].pop(
-                    arg_name,
-                )
-
-        if "required" in json_schema["function"]["parameters"]:
-            for arg_name in preset_kwargs or {}:
-                if (
-                    arg_name
-                    in json_schema["function"]["parameters"]["required"]
-                ):
-                    json_schema["function"]["parameters"]["required"].remove(
-                        arg_name,
-                    )
-
-            # Remove the required field if it is empty
-            if len(json_schema["function"]["parameters"]["required"]) == 0:
-                json_schema["function"]["parameters"].pop("required", None)
-
-        func_obj = RegisteredToolFunction(
-            name=func_name,
-            group=group_name,
-            source="function",
-            original_func=original_func,
-            json_schema=json_schema,
-            preset_kwargs=preset_kwargs or {},
-            original_name=original_name,
-            extended_model=None,
-            mcp_name=mcp_name,
-            postprocess_func=postprocess_func,
-            async_execution=async_execution,
+        # Wrap the function into a FunctionTool
+        tool = _FunctionTool(
+            func,
+            name=name,
+            description=description,
+            is_concurrency_safe=is_concurrency_safe,
+            is_read_only=is_read_only,
         )
 
-        if func_name in self.tools:
-            if namesake_strategy == "raise":
-                raise ValueError(
-                    f"A function with name '{func_name}' is already "
-                    f"registered in the toolkit.",
-                )
+        # Check if the group exists
+        groups = ["basic"] + list(self.groups.keys())
+        if group not in groups:
+            raise ValueError(
+                f"Tool group '{group}' does not exist. Available groups: "
+                f"{groups}. You can create a new group by calling "
+                "`toolkit.create_tool_group()` method.",
+            )
 
-            if namesake_strategy == "skip":
-                logger.warning(
-                    "A function with name '%s' is already "
-                    "registered in the toolkit. Skipping registration.",
-                    func_name,
-                )
+        # Register the tool
+        registered = RegisteredTool(
+            tool=tool,
+            group=group,
+        )
+        self.tools[tool.name] = registered
 
-            elif namesake_strategy == "override":
-                logger.warning(
-                    "A function with name '%s' is already registered "
-                    "in the toolkit. Overriding with the new function.",
-                    func_name,
-                )
-                self.tools[func_name] = func_obj
-
-            elif namesake_strategy == "rename":
-                new_func_name = func_name
-                for _ in range(100):
-                    suffix = shortuuid.uuid()[:5]
-                    new_func_name = f"{func_name}_{suffix}"
-                    if new_func_name not in self.tools:
-                        break
-
-                # Raise error if failed to find a unique name
-                if new_func_name in self.tools:
-                    raise RuntimeError(
-                        f"Failed to register tool function '{func_name}' with "
-                        "a unique name after 100 attempts.",
-                    )
-                logger.warning(
-                    "A function with name '%s' is already "
-                    "registered in the toolkit. Renaming the new function to "
-                    "'%s'.",
-                    func_name,
-                    new_func_name,
-                )
-
-                # Replace the function name with the new one
-                func_obj.original_name = original_name or func_name
-                func_obj.name = new_func_name
-                func_obj.json_schema["function"]["name"] = new_func_name
-
-                self.tools[new_func_name] = func_obj
-
-            else:
-                raise ValueError(
-                    f"Invalid namesake_strategy: {namesake_strategy}. "
-                    "Supported strategies are 'raise', 'override', 'skip', "
-                    "and 'rename'.",
-                )
-
-        else:
-            self.tools[func_name] = func_obj
-
-    def remove_tool_function(
+    def unregister_tool(
         self,
         tool_name: str,
         allow_not_exist: bool = True,
@@ -554,14 +374,20 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         self.tools.pop(tool_name, None)
 
-    def get_json_schemas(
+    def get_function_schemas(
         self,
+        groups: list[str] | None = None,
     ) -> list[dict]:
-        """Get the JSON schemas from the tool functions that belong to the
-        active groups.
+        """Get the function JSON schemas.
 
         .. note:: The preset keyword arguments is removed from the JSON
          schema, and the extended model is applied if it is set.
+
+         Args:
+             groups (`list[str] | None`, optional):
+                A list of group names to filter the tool function. The "basic"
+                group will always be included regardless of the filter. If not
+                provided, only the "basic" group will be included.
 
         Example:
             .. code-block:: JSON
@@ -592,30 +418,12 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             `list[dict]`:
                 A list of function JSON schemas.
         """
-        # If meta tool is set here, update its extended model here
-        if "reset_equipped_tools" in self.tools:
-            fields = {}
-            for group_name, group in self.groups.items():
-                if group_name == "basic":
-                    continue
-                fields[group_name] = (
-                    bool,
-                    Field(
-                        default=False,
-                        description=group.description,
-                    ),
-                )
-            extended_model = create_model("_DynamicModel", **fields)
-            self.set_extended_model(
-                "reset_equipped_tools",
-                extended_model,
-            )
+        function_schemas = []
 
-        return [
-            tool.extended_json_schema
-            for tool in self.tools.values()
-            if tool.group == "basic" or self.groups[tool.group].active
-        ]
+        for tool in self._get_available_tools(groups).values():
+            function_schemas.append(tool.get_function_schema())
+
+        return function_schemas
 
     def set_extended_model(
         self,
@@ -670,7 +478,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         to_removed = []
         func_names = deepcopy(list(self.tools.keys()))
         for func_name in func_names:
-            if self.tools[func_name].mcp_name in client_names:
+            if self.tools[func_name].tool.mcp_name in client_names:
                 self.tools.pop(func_name)
                 to_removed.append(func_name)
 
@@ -681,355 +489,164 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             ", ".join(to_removed),
         )
 
-    async def _execute_tool_in_background(
-        self,
-        task_id: str,
-        tool_func: RegisteredToolFunction,
-        kwargs: dict,
-        partial_postprocess_func: (
-            Callable[[ToolResponse], ToolResponse | None]
-            | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
-        )
-        | None,
-    ) -> None:
-        """Execute a tool function in the background and store the result.
-
-        This function handles both streaming and non-streaming tool functions.
-        For streaming functions (generators/async generators), it accumulates
-        all chunks into a single final ToolResponse.
-
-        Args:
-            task_id (`str`):
-                The unique identifier for this async task.
-            tool_func (`RegisteredToolFunction`):
-                The registered tool function to execute.
-            kwargs (`dict`):
-                The keyword arguments to pass to the tool function.
-            partial_postprocess_func (`Callable | None`):
-                Optional postprocess function to apply to the result.
-        """
-        try:
-            # Execute the tool function
-            if inspect.iscoroutinefunction(tool_func.original_func):
-                try:
-                    res = await tool_func.original_func(**kwargs)
-                except asyncio.CancelledError:
-                    res = ToolResponse(
-                        content=[
-                            TextBlock(
-                                type="text",
-                                text="<system-info>"
-                                "The tool call has been interrupted "
-                                "by the user."
-                                "</system-info>",
-                            ),
-                        ],
-                        stream=True,
-                        is_last=True,
-                        is_interrupted=True,
-                    )
-            else:
-                # When `tool_func.original_func` is Async generator function or
-                # Sync function
-                res = tool_func.original_func(**kwargs)
-
-        except mcp.shared.exceptions.McpError as e:
-            res = ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error occurred when calling MCP tool: {e}",
-                    ),
-                ],
-            )
-
-        except Exception as e:
-            res = ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error: {e}",
-                    ),
-                ],
-            )
-
-        # Handle different return types and accumulate streaming results
-        final_result: ToolResponse = ToolResponse(content=[])
-
-        try:
-            # If return an async generator - accumulate all chunks
-            if isinstance(res, AsyncGenerator):
-                accumulated_content = []
-                last_chunk = None
-                async for chunk in res:
-                    accumulated_content.extend(chunk.content)
-                    last_chunk = chunk
-
-                # Create final accumulated response
-                final_result = ToolResponse(
-                    content=accumulated_content,
-                    stream=False,
-                    is_last=True,
-                    is_interrupted=last_chunk.is_interrupted
-                    if last_chunk
-                    else False,
-                )
-
-            # If return a sync generator - accumulate all chunks
-            elif isinstance(res, Generator):
-                accumulated_content = []
-                last_chunk = None
-                for chunk in res:
-                    accumulated_content.extend(chunk.content)
-                    last_chunk = chunk
-
-                # Create final accumulated response
-                final_result = ToolResponse(
-                    content=accumulated_content,
-                    stream=False,
-                    is_last=True,
-                    is_interrupted=last_chunk.is_interrupted
-                    if last_chunk
-                    else False,
-                )
-
-            elif isinstance(res, ToolResponse):
-                final_result = res
-
-            else:
-                raise TypeError(
-                    "The tool function must return a ToolResponse "
-                    "object, or an AsyncGenerator/Generator of "
-                    "ToolResponse objects, "
-                    f"but got {type(res)}.",
-                )
-
-            # Apply postprocess function if provided
-            if partial_postprocess_func:
-                from .._utils._common import _execute_async_or_sync_func
-
-                processed_result = await _execute_async_or_sync_func(
-                    partial_postprocess_func,
-                    final_result,
-                )
-                if processed_result:
-                    final_result = processed_result
-
-        except asyncio.CancelledError:
-            # Handle cancellation during execution
-            final_result = ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="<system-info>"
-                        "The tool call has been cancelled by the user."
-                        "</system-info>",
-                    ),
-                ],
-                is_interrupted=True,
-                is_last=True,
-            )
-
-        except Exception as e:
-            # Handle any other errors during execution
-            final_result = ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Error during async execution: {e}",
-                    ),
-                ],
-            )
-
-        finally:
-            # Store the result and remove from active tasks
-            self._async_results[task_id] = final_result
-            if task_id in self._async_tasks:
-                self._async_tasks.pop(task_id)
-
-    @trace_toolkit
-    @_apply_middlewares
-    async def call_tool_function(
+    # @trace_toolkit
+    # @_apply_middlewares
+    async def call_tool(
         self,
         tool_call: ToolCallBlock,
-    ) -> AsyncGenerator[ToolResponse, None]:
-        """Execute the tool function by the `ToolCallBlock` and return the
-        tool response chunk in unified streaming mode, i.e. an async
-        generator of `ToolResponse` objects.
-
-        .. note:: The tool response chunk is **accumulated**.
+        state: AgentState,
+    ) -> AsyncGenerator[ToolChunk | ToolResponse, None]:
+        """Call the tool function, return the incremental tool result in
+        a ToolChunk stream, and finally return the complete tool result in a
+        ToolResponse object. **Note the accumulation process occurs within this
+        function, so the tool functions only need to return/yield the
+        ToolChunk objects in an incremental manner.**
 
         Args:
             tool_call (`ToolCallBlock`):
                 A tool call block.
+            state: AgentState:
+                The current agent state, used to state injection.
 
         Yields:
-            `ToolResponse`:
-                The tool response chunk, in accumulative manner.
+            `ToolChunk | ToolResponse`:
+                The incremental tool result in a ToolChunk stream, and finally
+                the complete tool result in a ToolResponse object.
         """
+        tool_response = ToolResponse(id=tool_call.id)
 
         # Check
-        if tool_call["name"] not in self.tools:
-            return _object_wrapper(
-                ToolResponse(
+        available_tools = self._get_available_tools(state.activated_groups)
+
+        if tool_call.name not in available_tools:
+            # Not activate
+            if tool_call.name in self.tools:
+                group_name = self.tools[tool_call.name].group
+                chunk = ToolChunk(
                     content=[
                         TextBlock(
-                            type="text",
-                            text="FunctionNotFoundError: Cannot find the "
-                            f"function named {tool_call['name']}",
+                            text=(
+                                "ToolGroupInactiveError: The tool "
+                                f"'{tool_call.name}' in group '{group_name}' "
+                                "is currently inactive. You should first "
+                                "activate the group by calling the "
+                                f"'{self.builtin_meta_tool.tool.name}' tool."
+                            ),
                         ),
                     ],
-                ),
-                None,
+                    state="error",
+                )
+                yield chunk
+                yield tool_response.append_chunk(chunk)
+                return
+
+            # Not exist
+            chunk = ToolChunk(
+                content=[
+                    TextBlock(
+                        text=f"ToolNotFoundError: The tool named "
+                        f"'{tool_call.name}' doesn't exist.",
+                    ),
+                ],
+                state="error",
             )
+            yield chunk
+            yield tool_response.append_chunk(chunk)
+            return
 
         # Obtain the tool function
-        tool_func = self.tools[tool_call["name"]]
-
-        # Check if the tool function is in an inactive group
-        if (
-            tool_func.group != "basic"
-            and not self.groups[tool_func.group].active
-        ):
-            return _object_wrapper(
-                ToolResponse(
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text="FunctionInactiveError: The function "
-                            f"'{tool_call['name']}' is in the inactive "
-                            f"group '{tool_func.group}'. Activate the tool "
-                            "group by calling 'reset_equipped_tools' "
-                            "first to use this tool.",
-                        ),
-                    ],
-                ),
-                None,
-            )
+        tool_func = available_tools[tool_call.name].tool
 
         # Prepare keyword arguments
-        kwargs = {
-            **tool_func.preset_kwargs,
-            **(tool_call.get("input", {}) or {}),
-        }
+        kwargs = _json_loads_with_repair(tool_call.input)
 
-        # Prepare postprocess function
-        if tool_func.postprocess_func:
-            # Type: partial wraps the postprocess_func with tool_call bound,
-            # reducing it from (ToolCallBlock, ToolResponse) to (ToolResponse)
-            partial_postprocess_func: (
-                Callable[[ToolResponse], ToolResponse | None]
-                | Callable[[ToolResponse], Awaitable[ToolResponse | None]]
-            ) | None = partial(
-                tool_func.postprocess_func,
-                tool_call,
-            )
-        else:
-            partial_postprocess_func = None
-
-        # Check if async execution is enabled
-        if tool_func.async_execution:
-            # Generate a unique task ID
-            task_id = shortuuid.uuid()
-
-            # Create and store the background task
-            task = asyncio.create_task(
-                self._execute_tool_in_background(
-                    task_id=task_id,
-                    tool_func=tool_func,
-                    kwargs=kwargs,
-                    partial_postprocess_func=partial_postprocess_func,
-                ),
-            )
-            self._async_tasks[task_id] = task
-
-            # Return a response with the task ID
-            return _object_wrapper(
-                ToolResponse(
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text=f"<system-reminder>"
-                            f"Tool '{tool_call['name']}' is executing "
-                            f"asynchronously. "
-                            f"Task ID: {task_id}. "
-                            f"Use view_task('{task_id}') to check "
-                            f"status, "
-                            f"wait_task('{task_id}') to wait for "
-                            f"completion, "
-                            f"or cancel_task('{task_id}') to cancel "
-                            f"the task."
-                            f"</system-reminder>",
-                        ),
-                    ],
-                ),
-                None,
-            )
+        # TODO: we should be build a mechanism to support state injection in
+        # the future instead of hard coding here.
+        if tool_call.name == self.builtin_meta_tool.tool.name:
+            kwargs["state"] = state
 
         # Async function
         try:
-            if inspect.iscoroutinefunction(tool_func.original_func):
-                try:
-                    res = await tool_func.original_func(**kwargs)
-                except asyncio.CancelledError:
-                    res = ToolResponse(
-                        content=[
-                            TextBlock(
-                                type="text",
-                                text="<system-info>"
-                                "The tool call has been interrupted "
-                                "by the user."
-                                "</system-info>",
-                            ),
-                        ],
-                        stream=True,
-                        is_last=True,
-                        is_interrupted=True,
-                    )
-
+            if inspect.iscoroutinefunction(tool_func.__call__):
+                res = await tool_func(**kwargs)
             else:
                 # When `tool_func.original_func` is Async generator function or
                 # Sync function
-                res = tool_func.original_func(**kwargs)
+                res = tool_func(**kwargs)
+
+            if isinstance(res, ToolChunk):
+                yield res
+                tool_response.append_chunk(res)
+
+            # If return an async generator
+            elif isinstance(res, AsyncGenerator):
+                async for chunk in res:
+                    yield chunk
+                    tool_response.append_chunk(chunk)
+
+            # If return a sync generator
+            elif isinstance(res, Generator):
+                for chunk in res:
+                    yield chunk
+                    tool_response.append_chunk(chunk)
+
+            else:
+                raise DeveloperOrientedException(
+                    "The tool function must return a ToolChunk object, or an "
+                    "AsyncGenerator/Generator of ToolChunk objects, "
+                    f"but got {type(res)}.",
+                )
 
         except mcp.shared.exceptions.McpError as e:
-            res = ToolResponse(
+            chunk = ToolChunk(
                 content=[
                     TextBlock(
                         type="text",
                         text=f"Error occurred when calling MCP tool: {e}",
                     ),
                 ],
+                state="error",
             )
+            yield chunk
+            tool_response.append_chunk(chunk)
 
         except Exception as e:
-            res = ToolResponse(
+            # Raise the developer-oriented exception
+            if isinstance(e, DeveloperOrientedException):
+                raise e from None
+
+            # The exceptions should be handled by the agent
+            chunk = ToolChunk(
                 content=[
                     TextBlock(
                         type="text",
                         text=f"Error: {e}",
                     ),
                 ],
+                state="error",
             )
+            yield chunk
+            tool_response.append_chunk(chunk)
 
-        # Handle different return type
+        except asyncio.CancelledError:
+            chunk = ToolChunk(
+                content=[
+                    TextBlock(
+                        type="text",
+                        text="<system-reminder>"
+                        "The tool call has been interrupted "
+                        "by the user."
+                        "</system-reminder>",
+                    ),
+                ],
+                state="interrupted",
+            )
+            yield chunk
+            tool_response.append_chunk(chunk)
 
-        # If return an async generator
-        if isinstance(res, AsyncGenerator):
-            return _async_generator_wrapper(res, partial_postprocess_func)
-
-        # If return a sync generator
-        if isinstance(res, Generator):
-            return _sync_generator_wrapper(res, partial_postprocess_func)
-
-        if isinstance(res, ToolResponse):
-            return _object_wrapper(res, partial_postprocess_func)
-
-        raise TypeError(
-            "The tool function must return a ToolResponse object, or an "
-            "AsyncGenerator/Generator of ToolResponse objects, "
-            f"but got {type(res)}.",
-        )
+        finally:
+            # Finally, yield the complete tool response
+            yield tool_response
 
     async def register_mcp_client(
         self,
@@ -1037,24 +654,6 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         group_name: str = "basic",
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
-        preset_kwargs_mapping: dict[str, dict[str, Any]] | None = None,
-        postprocess_func: (
-            Callable[
-                [ToolCallBlock, ToolResponse],
-                ToolResponse | None,
-            ]
-            | Callable[
-                [ToolCallBlock, ToolResponse],
-                Awaitable[ToolResponse | None],
-            ]
-        )
-        | None = None,
-        namesake_strategy: Literal[
-            "override",
-            "skip",
-            "raise",
-            "rename",
-        ] = "raise",
     ) -> None:
         """Register tool functions from an MCP client.
 
@@ -1069,28 +668,6 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             disable_funcs (`list[str] | None`, optional):
                 The functions that will be filtered out. If `None`, no
                 tool functions will be filtered out.
-            preset_kwargs_mapping: (`Optional[dict[str, dict[str, Any]]]`, \
-            defaults to `None`):
-                The preset keyword arguments mapping, whose keys are the tool
-                function names and values are the preset keyword arguments.
-            postprocess_func (`(Callable[[ToolCallBlock, ToolResponse], \
-            ToolResponse | None] | Callable[[ToolCallBlock, ToolResponse], \
-            Awaitable[ToolResponse | None]]) | None`, optional):
-                A post-processing function that will be called after the tool
-                function is executed, taking the tool call block and tool
-                response as arguments. The function can be either sync or
-                async. If it returns `None`, the tool result will be
-                returned as is. If it returns a `ToolResponse`,
-                the returned block will be used as the final tool result.
-            namesake_strategy (`Literal['raise', 'override', 'skip', \
-            'rename']`, defaults to `'raise'`):
-                The strategy to handle the tool function name conflict:
-                - 'raise': raise a ValueError (default behavior).
-                - 'override': override the existing tool function with the new
-                  one.
-                - 'skip': skip the registration of the new tool function.
-                - 'rename': rename the new tool function by appending a random
-                  suffix to make it unique.
         """
         if (
             isinstance(mcp_client, StatefulClientBase)
@@ -1124,15 +701,6 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 f"should not overlap, but got {intersection}."
             )
 
-        if not (
-            preset_kwargs_mapping is None
-            or isinstance(preset_kwargs_mapping, dict)
-        ):
-            raise TypeError(
-                f"The preset_kwargs_mapping must be a dictionary or None, "
-                f"but got {type(preset_kwargs_mapping)}.",
-            )
-
         tool_names = []
         for mcp_tool in await mcp_client.list_tools():
             # Skip the functions that are not in the enable_funcs if
@@ -1147,162 +715,22 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             tool_names.append(mcp_tool.name)
 
             # Obtain callable function object
-            func_obj = await mcp_client.get_callable_function(
-                func_name=mcp_tool.name,
-                wrap_tool_result=True,
+            tool_obj = await mcp_client.get_tool(
+                name=mcp_tool.name,
             )
 
-            # Prepare preset kwargs
-            preset_kwargs = None
-            if preset_kwargs_mapping is not None:
-                preset_kwargs = preset_kwargs_mapping.get(mcp_tool.name, {})
-
-            self.register_tool_function(
-                tool_func=func_obj,
-                group_name=group_name,
-                preset_kwargs=preset_kwargs,
-                postprocess_func=postprocess_func,
-                namesake_strategy=namesake_strategy,
+            # Register the tool function to the toolkit
+            registered = RegisteredTool(
+                tool=tool_obj,
+                group=group_name,
             )
+
+            self.tools[tool_obj.name] = registered
 
         logger.info(
             "Registered %d tool functions from MCP: %s.",
             len(tool_names),
             ", ".join(tool_names),
-        )
-
-    def state_dict(self) -> dict[str, Any]:
-        """Get the state dictionary of the toolkit.
-
-        Returns:
-            `dict[str, Any]`:
-                A dictionary containing the active tool group names.
-        """
-        return {
-            "active_groups": [
-                name for name, group in self.groups.items() if group.active
-            ],
-        }
-
-    def load_state_dict(
-        self,
-        state_dict: dict[str, Any],
-        strict: bool = True,
-    ) -> None:
-        """Load the state dictionary into the toolkit.
-
-        Args:
-            state_dict (`dict`):
-                The state dictionary to load, which should have "active_groups"
-                key and its value must be a list of group names.
-            strict (`bool`, defaults to `True`):
-                If `True`, raises an error if any key in the module is not
-                found in the state_dict. If `False`, skips missing keys.
-        """
-        if (
-            not isinstance(state_dict, dict)
-            or "active_groups" not in state_dict
-            or not isinstance(state_dict["active_groups"], list)
-        ):
-            raise ValueError(
-                "The state_dict for toolkit must be a dictionary with "
-                "active_groups key and its value must be a list, "
-                f"but got {type(state_dict)}.",
-            )
-
-        if strict and list(state_dict.keys()) != ["active_groups"]:
-            raise ValueError(
-                "Get additional keys in the state_dict: "
-                f'{list(state_dict.keys())}, but only "active_groups" '
-                "is expected.",
-            )
-
-        for group_name, group in self.groups.items():
-            if group_name in state_dict["active_groups"]:
-                group.active = True
-            else:
-                group.active = False
-
-    def get_activated_notes(self) -> str:
-        """Get the notes from the active tool groups, which can be used to
-        construct the system prompt for the agent.
-
-        Returns:
-            `str`:
-                The combined notes from the active tool groups.
-        """
-        collected_notes = []
-        for group_name, group in self.groups.items():
-            if group.active and group.notes:
-                collected_notes.append(
-                    "\n".join(
-                        [f"## About Tool Group '{group_name}'", group.notes],
-                    ),
-                )
-        return "\n".join(collected_notes)
-
-    def reset_equipped_tools(self, **kwargs: Any) -> ToolResponse:
-        """This function allows you to activate or deactivate tool groups
-        dynamically based on your current task requirements.
-        **Important: Each call sets the absolute final state of ALL tool
-        groups, not incremental changes**. Any group not explicitly set to True
-        will be deactivated, regardless of its previous state.
-
-        **Best practice**: Actively manage your tool groups——activate only
-        what you need for the current task, and promptly deactivate groups as
-        soon as they are no longer needed to conserve context space.
-
-        The function will return the usage instructions for the activated tool
-        groups, which you **MUST pay attention to and follow**. You can also
-        reuse this function to check the notes of the tool groups."""
-
-        # Deactivate all tool groups first
-        self.update_tool_groups(list(self.groups.keys()), active=False)
-
-        to_activate = []
-        for key, value in kwargs.items():
-            if not isinstance(value, bool):
-                return ToolResponse(
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text=f"Invalid arguments: the argument {key} "
-                            f"should be a bool value, but got {type(value)}.",
-                        ),
-                    ],
-                )
-
-            if value:
-                to_activate.append(key)
-
-        self.update_tool_groups(to_activate, active=True)
-
-        notes = self.get_activated_notes()
-
-        text_response = ""
-        if to_activate:
-            text_response += (
-                "Now tool groups "
-                + ", ".join([f"'{_}'" for _ in to_activate])
-                + " are activated."
-            )
-
-        if notes:
-            text_response += (
-                f" You MUST follow these notes to use these tools:\n"
-                f"<notes>{notes}</notes>"
-            )
-
-        if not text_response:
-            text_response = "All tool groups are now deactivated currently."
-
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=text_response,
-                ),
-            ],
         )
 
     def clear(self) -> None:
@@ -1532,147 +960,33 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
         # The @apply_middlewares decorator will handle the execution
         self._middlewares.append(middleware)
 
-    async def view_task(self, task_id: str) -> ToolResponse:
-        """View the status of an async tool task by its task ID.
-
-        Args:
-            task_id (`str`):
-                The ID of the async tool task.
-
-        Returns:
-            `ToolResponse`:
-                The tool response containing the status information of the
-                async task.
-        """
-        if (
-            task_id not in self._async_tasks
-            and task_id not in self._async_results
-        ):
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"InvalidTaskIdError: Cannot find async "
-                        f"task with ID {task_id}.",
-                    ),
-                ],
-            )
-
-        if task_id in self._async_tasks:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Task {task_id} is still running.",
-                    ),
-                ],
-            )
-
-        # If the task is completed, return the result or error
-        return self._async_results.pop(task_id)
-
-    async def cancel_task(self, task_id: str) -> ToolResponse:
-        """Cancel an async tool task by its task ID.
-
-        Args:
-            task_id (`str`):
-                The ID of the async tool task.
-
-        Returns:
-            `ToolResponse`:
-                The tool response indicating whether the cancellation was
-                successful.
-        """
-        if (
-            task_id not in self._async_tasks
-            and task_id not in self._async_results
-        ):
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"InvalidTaskIdError: Cannot find async "
-                        f"task with ID {task_id}.",
-                    ),
-                ],
-            )
-
-        if task_id in self._async_results:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Task {task_id} has already completed "
-                        f"and cannot be cancelled.",
-                    ),
-                ],
-            )
-
-        # Cancel the running task
-        task = self._async_tasks.pop(task_id)
-        task.cancel()
-
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Task {task_id} has been cancelled.",
-                ),
-            ],
-        )
-
-    async def wait_task(
+    def _get_available_tools(
         self,
-        task_id: str,
-        timeout: float = 10,
-    ) -> ToolResponse:
-        """Wait for an async tool execution to complete by its task ID. Note
-        the timeout shouldn't be too large, you can check the task status
-        by this tool every short period of time to avoid long waiting time.
+        groups: list[str] | None,
+    ) -> dict[str, RegisteredTool]:
+        """Return the currently available tools based on the given
+        activated tool groups. Tools in the ``"basic"`` group are always
+        included. When at least one tool group is registered, the built-in
+        meta tool is also included.
 
         Args:
-            task_id (`str`):
-                The ID of the async tool task.
-            timeout (`float`, defaults to `10`):
-                The maximum time to wait for the task to complete, in seconds.
+            groups (`list[str]`):
+                The list of currently activated tool group names.
 
         Returns:
-            `ToolResponse`:
-                The tool response containing the result of the async task if
-                it completes within the timeout, or an error message if the
-                task is still running after the timeout.
+            `dict[str, RegisteredTool]`:
+                The dictionary of available tool name and their corresponding
+                RegisteredTool objects.
         """
-        if (
-            task_id not in self._async_tasks
-            and task_id not in self._async_results
-        ):
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"InvalidTaskIdError: Cannot find async "
-                        f"task with ID {task_id}.",
-                    ),
-                ],
-            )
+        available_tools = {}
+        if len(self.groups) > 0:
+            available_tools[
+                self.builtin_meta_tool.tool.name
+            ] = self.builtin_meta_tool
 
-        if task_id in self._async_results:
-            return self._async_results.pop(task_id)
+        groups_filter = ["basic"] + (groups or [])
+        for tool_name, tool in self.tools.items():
+            if tool.group in groups_filter:
+                available_tools[tool_name] = tool
 
-        # Wait for the running task to complete or timeout
-        task = self._async_tasks[task_id]
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError:
-            return ToolResponse(
-                content=[
-                    TextBlock(
-                        type="text",
-                        text=f"Task {task_id} is still running after "
-                        f"waiting for {timeout} seconds.",
-                    ),
-                ],
-            )
-
-        # If the task is completed, return the result or error
-        return self._async_results.pop(task_id)
+        return available_tools

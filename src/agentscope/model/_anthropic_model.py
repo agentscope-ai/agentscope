@@ -17,8 +17,9 @@ from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, AnthropicChatFormatter
 from ..message import TextBlock, ToolCallBlock, ThinkingBlock
+from ..tool import ToolChoice
 from ..tracing import trace_llm
-from ..types import JSONSerializableObject, ToolChoice
+from ..types import JSONSerializableObject
 
 if TYPE_CHECKING:
     from anthropic.types.message import Message

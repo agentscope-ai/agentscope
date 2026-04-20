@@ -2,13 +2,17 @@
 """The chat model base class."""
 
 from abc import abstractmethod
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, TYPE_CHECKING
 
 from ._model_response import ChatResponse
 from .._logging import logger
 from ..formatter import FormatterBase
 from ..message import Msg
-from ..types import ToolChoice
+
+if TYPE_CHECKING:
+    from ..tool import ToolChoice
+else:
+    ToolChoice = Any
 
 _TOOL_CHOICE_MODES = ["auto", "none", "required"]
 

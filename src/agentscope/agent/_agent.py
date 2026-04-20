@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import uuid
-from dataclasses import dataclass
 from typing import AsyncGenerator, Literal
 
 from ..event import (
@@ -29,11 +28,9 @@ from ..event import (
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
 )
-from ..message import Msg
-from ..model import ChatResponse
-from ..model import ChatUsage
-
+from ..model import ChatResponse, ChatUsage, ChatModelBase
 from ..message import (
+    Msg,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
@@ -42,8 +39,6 @@ from ..message import (
     Base64Source,
     URLSource,
 )
-
-from ..model import ChatModelBase
 
 
 DEFAULT_COMPRESSION_PROMPT = (
@@ -54,25 +49,6 @@ DEFAULT_COMPRESSION_PROMPT = (
     "where the conversation history will be replaced with this summary. "
     "Your summary should be structured, concise, and actionable.</system-hint>"
 )
-
-
-@dataclass
-class AgentState:
-    """The agent state that should be saved and loaded from storage."""
-
-    context: list[Msg]
-    """The uncompressed conversation context, that will be feed into the LLM"""
-
-    reply_id: str
-    """The id of the current reply, which is also used as the id of the
-    final message of the reply."""
-
-    cur_iter: int = 0
-    """The current iteration of the agent's reasoning-acting loop."""
-
-    cur_summary: str = ""
-    """The current compressed summary of the context, which will be prepended
-    to the context when feed into the LLM."""
 
 
 class Agent:
