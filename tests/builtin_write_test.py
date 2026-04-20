@@ -4,9 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._builtin._write import Write
-from agentscope.tool import ToolChunk, PermissionContext, PermissionBehavior
-from agentscope.message import TextBlock
+from agentscope.tool import PermissionContext, PermissionBehavior, Write
 
 
 class WriteToolTest(IsolatedAsyncioTestCase):
@@ -20,6 +18,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         """Clean up temporary files."""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -49,7 +48,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.write_tool(
             file_path=file_path,
-            content=content
+            content=content,
         ):
             chunks.append(chunk)
 
@@ -59,7 +58,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Verify file was created and content is correct
         self.assertTrue(os.path.exists(file_path))
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             written_content = f.read()
         self.assertEqual(written_content, content)
 
@@ -71,7 +70,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.write_tool(
             file_path=file_path,
-            content=content
+            content=content,
         ):
             chunks.append(chunk)
 
@@ -80,7 +79,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Verify directory and file were created
         self.assertTrue(os.path.exists(file_path))
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             written_content = f.read()
         self.assertEqual(written_content, content)
 
@@ -89,7 +88,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         file_path = os.path.join(self.temp_dir, "test.txt")
 
         # Write initial content
-        with open(file_path, 'w') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             f.write("Initial content")
 
         # Overwrite with new content
@@ -97,14 +96,14 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.write_tool(
             file_path=file_path,
-            content=new_content
+            content=new_content,
         ):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
 
         # Verify content was overwritten
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             written_content = f.read()
         self.assertEqual(written_content, new_content)
         self.assertNotIn("Initial", written_content)
@@ -116,13 +115,13 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.write_tool(
             file_path=file_path,
-            content=""
+            content="",
         ):
             chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
         self.assertTrue(os.path.exists(file_path))
 
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "")

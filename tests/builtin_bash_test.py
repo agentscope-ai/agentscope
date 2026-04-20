@@ -2,10 +2,8 @@
 """Bash tool test case."""
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._builtin._bash import Bash
-from agentscope.tool import ToolChunk, PermissionContext
+from agentscope.tool import ToolChunk, PermissionContext, Bash
 from agentscope.message import TextBlock
-from tests.utils import AnyString
 
 
 class BashToolTest(IsolatedAsyncioTestCase):
@@ -64,7 +62,7 @@ class BashToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.bash_tool(
             command="sleep 10",
-            timeout=100  # 100ms timeout
+            timeout=100,  # 100ms timeout
         ):
             chunks.append(chunk)
 

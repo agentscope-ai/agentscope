@@ -43,15 +43,15 @@ class Grep(ToolBase):
 
     description: str = """A powerful search tool built on ripgrep
 
-  Usage:
-  - ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
-  - Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
-  - Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
-  - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts per file
-  - Context lines: use context parameter or -A/-B/-C for lines after/before/around matches
-  - Case-insensitive search: set case_insensitive to true
-  - Multiline regex: set multiline to true for patterns spanning multiple lines
-  - Limit results: use head_limit to cap the number of results returned"""
+Usage:
+- ALWAYS use Grep for search tasks. NEVER invoke `grep` or `rg` as a Bash command. The Grep tool has been optimized for correct permissions and access.
+- Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+")
+- Filter files with glob parameter (e.g., "*.js", "**/*.tsx") or type parameter (e.g., "js", "py", "rust")
+- Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts per file
+- Context lines: use context parameter or -A/-B/-C for lines after/before/around matches
+- Case-insensitive search: set case_insensitive to true
+- Multiline regex: set multiline to true for patterns spanning multiple lines
+- Limit results: use head_limit to cap the number of results returned"""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -63,21 +63,27 @@ class Grep(ToolBase):
             },
             "path": {
                 "type": "string",
-                "description": "The directory or file path to search in. Defaults to current working directory.",
+                "description": "The directory or file path to search in. "
+                "Defaults to current working directory.",
             },
             "output_mode": {
                 "type": "string",
                 "enum": ["content", "files_with_matches", "count"],
-                "description": "Output mode: 'content' shows matching lines, 'files_with_matches' shows only file paths, 'count' shows match counts.",
+                "description": "Output mode: 'content' shows matching lines, "
+                "'files_with_matches' shows only file paths, "
+                "'count' shows match counts.",
                 "default": "files_with_matches",
             },
             "glob": {
                 "type": "string",
-                "description": "Glob pattern to filter files (e.g., '*.js', '**/*.tsx').",
+                "description": "Glob pattern to filter files (e.g., '*.js', "
+                "'**/*.tsx').",
             },
             "type": {
                 "type": "string",
-                "description": "File type to filter by (e.g., 'js', 'py', 'rust'). See TYPE_EXTENSIONS for supported types.",
+                "description": "File type to filter by (e.g., 'js', 'py', "
+                "'rust'). See TYPE_EXTENSIONS for supported "
+                "types.",
             },
             "case_insensitive": {
                 "type": "boolean",
@@ -86,7 +92,8 @@ class Grep(ToolBase):
             },
             "context": {
                 "type": "integer",
-                "description": "Number of context lines to show around matches.",
+                "description": "Number of context lines to show around "
+                "matches.",
             },
             "multiline": {
                 "type": "boolean",
@@ -149,7 +156,8 @@ class Grep(ToolBase):
         glob: str | None = None,
         file_type: str | None = None,
     ) -> list[str]:
-        """Collect all files under a base directory, optionally filtered by glob or type.
+        """Collect all files under a base directory, optionally filtered
+        by glob or type.
 
         Args:
             base_dir: The base directory to search from
@@ -206,7 +214,7 @@ class Grep(ToolBase):
             "count",
         ] = "files_with_matches",
         glob: str | None = None,
-        type: str | None = None,
+        type: str | None = None,  # pylint: disable=redefined-builtin
         case_insensitive: bool = False,
         context: int | None = None,
         multiline: bool = False,

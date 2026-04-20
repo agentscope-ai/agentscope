@@ -4,9 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._builtin._grep import Grep
-from agentscope.tool import ToolChunk, PermissionContext, PermissionBehavior
-from agentscope.message import TextBlock
+from agentscope.tool import PermissionContext, PermissionBehavior, Grep
 
 
 class GrepToolTest(IsolatedAsyncioTestCase):
@@ -19,18 +17,31 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
 
         # Create test files
-        with open(os.path.join(self.temp_dir, "test1.py"), 'w') as f:
+        with open(
+            os.path.join(self.temp_dir, "test1.py"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write("def hello():\n    print('Hello World')\n")
 
-        with open(os.path.join(self.temp_dir, "test2.py"), 'w') as f:
+        with open(
+            os.path.join(self.temp_dir, "test2.py"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write("def goodbye():\n    print('Goodbye')\n")
 
-        with open(os.path.join(self.temp_dir, "test.txt"), 'w') as f:
+        with open(
+            os.path.join(self.temp_dir, "test.txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             f.write("This is a text file\nHello from text\n")
 
     async def asyncTearDown(self) -> None:
         """Clean up temporary files."""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -57,7 +68,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         async for chunk in self.grep_tool(
             pattern="Hello",
             path=self.temp_dir,
-            output_mode="files_with_matches"
+            output_mode="files_with_matches",
         ):
             chunks.append(chunk)
 
@@ -76,7 +87,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             pattern="def",
             path=self.temp_dir,
             output_mode="content",
-            type="py"
+            type="py",
         ):
             chunks.append(chunk)
 
@@ -94,7 +105,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             pattern="HELLO",
             path=self.temp_dir,
             case_insensitive=True,
-            output_mode="files_with_matches"
+            output_mode="files_with_matches",
         ):
             chunks.append(chunk)
 
@@ -107,7 +118,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.grep_tool(
             pattern="NonExistentPattern",
-            path=self.temp_dir
+            path=self.temp_dir,
         ):
             chunks.append(chunk)
 
@@ -121,7 +132,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
             pattern="Hello",
             path=self.temp_dir,
             type="py",
-            output_mode="files_with_matches"
+            output_mode="files_with_matches",
         ):
             chunks.append(chunk)
 

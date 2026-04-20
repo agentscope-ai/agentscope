@@ -20,11 +20,14 @@ class Glob(ToolBase):
     name: str = "glob"
     """The tool name presented to the agent."""
 
-    description: str = """Fast file pattern matching tool that works with any codebase size.
+    description: str = """Fast file pattern matching tool that works with
+any codebase size.
 
-Supports glob patterns like "**/*.js" or "src/**/*.ts" and returns matching file paths sorted by modification time (newest first).
+Supports glob patterns like "**/*.js" or "src/**/*.ts" and returns
+matching file paths sorted by modification time (newest first).
 
-Use this tool when you need to find files by pattern across the codebase."""
+Use this tool when you need to find files by pattern across the
+codebase."""  # ignore: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -32,11 +35,13 @@ Use this tool when you need to find files by pattern across the codebase."""
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "The glob pattern to match against (e.g., '**/*.py', 'src/**/*.ts')",
+                "description": "The glob pattern to match against "
+                "(e.g., '**/*.py', 'src/**/*.ts')",
             },
             "path": {
                 "type": "string",
-                "description": "The base directory to search from (defaults to current working directory)",
+                "description": "The base directory to search from "
+                "(defaults to current working directory)",
             },
         },
         "required": ["pattern"],
@@ -163,7 +168,8 @@ Use this tool when you need to find files by pattern across the codebase."""
                 pass
 
     def glob_match(self, pattern: str, base_dir: str) -> list[str]:
-        """Match files against a glob pattern starting from the given base directory.
+        """Match files against a glob pattern starting from the given
+        base directory.
 
         Args:
             pattern: The glob pattern to match against

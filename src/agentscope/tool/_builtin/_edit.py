@@ -24,11 +24,20 @@ class Edit(ToolBase):
     description: str = """Performs exact string replacements in files.
 
 Usage:
-- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if `old_string` is not unique in the file."""
+- You must use your `Read` tool at least once in the conversation
+  before editing. This tool will error if you attempt an edit without
+  reading the file.
+- When editing text from Read tool output, ensure you preserve the
+  exact indentation (tabs/spaces) as it appears AFTER the line number
+  prefix. The line number prefix format is: line number + tab.
+  Everything after that is the actual file content to match. Never
+  include any part of the line number prefix in the old_string or
+  new_string.
+- ALWAYS prefer editing existing files in the codebase. NEVER write
+  new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding
+  emojis to files unless asked.
+- The edit will FAIL if `old_string` is not unique in the file."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -40,7 +49,10 @@ Usage:
             },
             "old_string": {
                 "type": "string",
-                "description": "The exact string to replace. Must match exactly including whitespace and indentation.",
+                "description": (
+                    "The exact string to replace. Must match exactly "
+                    "including whitespace and indentation."
+                ),
             },
             "new_string": {
                 "type": "string",
@@ -48,7 +60,11 @@ Usage:
             },
             "replace_all": {
                 "type": "boolean",
-                "description": "If true, replace all occurrences. If false (default), only replace if there is exactly one occurrence.",
+                "description": (
+                    "If true, replace all occurrences. If false "
+                    "(default), only replace if there is exactly one "
+                    "occurrence."
+                ),
                 "default": False,
             },
         },
@@ -87,7 +103,10 @@ Usage:
             yield ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"Error: file_path must be an absolute path, got: {file_path}",
+                        text=(
+                            f"Error: file_path must be an absolute "
+                            f"path, got: {file_path}"
+                        ),
                     ),
                 ],
                 state="error",
@@ -111,7 +130,10 @@ Usage:
             yield ToolChunk(
                 content=[
                     TextBlock(
-                        text="Error: old_string and new_string are identical. No changes to make.",
+                        text=(
+                            "Error: old_string and new_string are "
+                            "identical. No changes to make."
+                        ),
                     ),
                 ],
                 state="error",
@@ -121,7 +143,11 @@ Usage:
 
         # Read file content
         try:
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+            async with aiofiles.open(
+                file_path,
+                "r",
+                encoding="utf-8",
+            ) as f:
                 content = await f.read()
         except Exception as e:
             yield ToolChunk(
@@ -152,8 +178,12 @@ Usage:
             yield ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"Error: old_string appears {occurrences} times in {file_path}. "
-                        f"Set replace_all=true to replace all occurrences, or make old_string more specific.",
+                        text=(
+                            f"Error: old_string appears {occurrences} "
+                            f"times in {file_path}. Set replace_all=true "
+                            f"to replace all occurrences, or make "
+                            f"old_string more specific."
+                        ),
                     ),
                 ],
                 state="error",
@@ -165,11 +195,19 @@ Usage:
         if replace_all:
             updated_content = content.replace(old_string, new_string)
         else:
-            updated_content = content.replace(old_string, new_string, 1)
+            updated_content = content.replace(
+                old_string,
+                new_string,
+                1,
+            )
 
         # Write updated content back to file
         try:
-            async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
+            async with aiofiles.open(
+                file_path,
+                "w",
+                encoding="utf-8",
+            ) as f:
                 await f.write(updated_content)
         except Exception as e:
             yield ToolChunk(
@@ -186,7 +224,8 @@ Usage:
         yield ToolChunk(
             content=[
                 TextBlock(
-                    text=f"Successfully replaced {replacement_msg} in {file_path}",
+                    text=f"Successfully replaced {replacement_msg} "
+                    f"in {file_path}",
                 ),
             ],
             state="running",

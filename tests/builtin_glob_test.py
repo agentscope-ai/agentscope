@@ -4,9 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._builtin._glob import Glob
-from agentscope.tool import ToolChunk, PermissionContext, PermissionBehavior
-from agentscope.message import TextBlock
+from agentscope.tool import PermissionContext, PermissionBehavior, Glob
 
 
 class GlobToolTest(IsolatedAsyncioTestCase):
@@ -19,18 +17,35 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         self.temp_dir = tempfile.mkdtemp()
 
         # Create test files
-        open(os.path.join(self.temp_dir, "test1.py"), 'w').close()
-        open(os.path.join(self.temp_dir, "test2.py"), 'w').close()
-        open(os.path.join(self.temp_dir, "test.txt"), 'w').close()
+        with open(
+            os.path.join(self.temp_dir, "test1.py"),
+            "w",
+            encoding="utf-8",
+        ):
+            pass
+        with open(
+            os.path.join(self.temp_dir, "test2.py"),
+            "w",
+            encoding="utf-8",
+        ):
+            pass
+        with open(
+            os.path.join(self.temp_dir, "test.txt"),
+            "w",
+            encoding="utf-8",
+        ):
+            pass
 
         # Create subdirectory
         sub_dir = os.path.join(self.temp_dir, "subdir")
         os.makedirs(sub_dir)
-        open(os.path.join(sub_dir, "test3.py"), 'w').close()
+        with open(os.path.join(sub_dir, "test3.py"), "w", encoding="utf-8"):
+            pass
 
     async def asyncTearDown(self) -> None:
         """Clean up temporary files."""
         import shutil
+
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
@@ -56,7 +71,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.glob_tool(
             pattern="*.py",
-            path=self.temp_dir
+            path=self.temp_dir,
         ):
             chunks.append(chunk)
 
@@ -74,7 +89,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.glob_tool(
             pattern="**/*.py",
-            path=self.temp_dir
+            path=self.temp_dir,
         ):
             chunks.append(chunk)
 
@@ -91,7 +106,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         chunks = []
         async for chunk in self.glob_tool(
             pattern="*.nonexistent",
-            path=self.temp_dir
+            path=self.temp_dir,
         ):
             chunks.append(chunk)
 

@@ -4,8 +4,12 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._builtin._read import Read
-from agentscope.tool import ToolResponse, PermissionContext, PermissionBehavior
+from agentscope.tool import (
+    ToolResponse,
+    PermissionContext,
+    PermissionBehavior,
+    Read,
+)
 from agentscope.message import TextBlock
 
 
@@ -17,9 +21,9 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         self.read_tool = Read()
         # Create a temporary file for testing
         self.temp_file = tempfile.NamedTemporaryFile(
-            mode='w',
+            mode="w",
             delete=False,
-            suffix='.txt'
+            suffix=".txt",
         )
         # Write multiple lines
         for i in range(1, 11):
@@ -66,7 +70,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         """Test reading with offset."""
         response = await self.read_tool(
             file_path=self.temp_file.name,
-            offset=5
+            offset=5,
         )
 
         self.assertEqual(response.state, "finished")
@@ -74,9 +78,12 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
         # Should start from line 5
         self.assertIn("Line 5", content)
-        # Line 1 should not appear (but Line 10 contains "1", so check more specifically)
-        lines = content.split('\n')
-        line_numbers = [int(line.split('\t')[0].strip()) for line in lines if line.strip()]
+        # Line 1 should not appear (but Line 10 contains "1",
+        # so check more specifically)
+        lines = content.split("\n")
+        line_numbers = [
+            int(line.split("\t")[0].strip()) for line in lines if line.strip()
+        ]
         self.assertNotIn(1, line_numbers)
         self.assertIn(5, line_numbers)
 
@@ -85,7 +92,7 @@ class ReadToolTest(IsolatedAsyncioTestCase):
         response = await self.read_tool(
             file_path=self.temp_file.name,
             offset=1,
-            limit=3
+            limit=3,
         )
 
         self.assertEqual(response.state, "finished")

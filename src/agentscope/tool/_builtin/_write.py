@@ -22,6 +22,7 @@ class Write(ToolBase):
     name: str = "write"
     """The tool name presented to the agent."""
 
+    # pylint: disable=line-too-long
     description: str = """Writes a file to the local filesystem.
 
 Usage:
@@ -29,7 +30,7 @@ Usage:
 - If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
-- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -37,7 +38,8 @@ Usage:
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "The absolute path to the file to write (must be absolute, not relative)",
+                "description": "The absolute path to the file to write "
+                "(must be absolute, not relative)",
             },
             "content": {
                 "type": "string",
@@ -76,7 +78,8 @@ Usage:
             yield ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"Error: file_path must be an absolute path, got: {file_path}",
+                        text=f"Error: file_path must be an absolute path, "
+                        f"got: {file_path}",
                     ),
                 ],
                 state="error",
@@ -99,7 +102,8 @@ Usage:
         yield ToolChunk(
             content=[
                 TextBlock(
-                    text=f"The file {file_path} has been written successfully ({line_count} lines).",
+                    text=f"The file {file_path} has been written successfully "
+                    f"({line_count} lines).",
                 ),
             ],
             state="running",

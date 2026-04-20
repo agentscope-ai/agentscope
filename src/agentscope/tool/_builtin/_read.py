@@ -21,6 +21,7 @@ class Read(ToolBase):
     name: str = "read"
     """The tool name presented to the agent."""
 
+    # pylint: disable=line-too-long
     description: str = """Reads a file from the local filesystem. You can access any file directly by using this tool.
 Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
@@ -30,7 +31,7 @@ Usage:
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
 - Results are returned using cat -n format, with line numbers starting at 1
 - This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
-- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."""
+- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."""  # noqa: E501
     """The description presented to the agent."""
 
     input_schema: dict[str, Any] = {
@@ -42,13 +43,15 @@ Usage:
             },
             "offset": {
                 "type": "integer",
-                "description": "Optional 1-based line number to start reading from (default: 1)",
+                "description": "Optional 1-based line number to start reading "
+                "from (default: 1)",
                 "default": 1,
                 "minimum": 1,
             },
             "limit": {
                 "type": "integer",
-                "description": "Optional maximum number of lines to read (default: 2000, max: 2000)",
+                "description": "Optional maximum number of lines to read "
+                "(default: 2000, max: 2000)",
                 "default": 2000,
                 "maximum": 2000,
                 "minimum": 1,
@@ -89,7 +92,8 @@ Usage:
             return ToolResponse(
                 content=[
                     TextBlock(
-                        text=f"Error: file_path must be an absolute path, got: {file_path}",
+                        text=f"Error: file_path must be an absolute path, "
+                        f"got: {file_path}",
                     ),
                 ],
                 state="error",
@@ -109,7 +113,8 @@ Usage:
             return ToolResponse(
                 content=[
                     TextBlock(
-                        text=f"Error: Path is a directory, not a file: {file_path}",
+                        text=f"Error: Path is a directory, not a file: "
+                        f"{file_path}",
                     ),
                 ],
                 state="error",
