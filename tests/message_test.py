@@ -5,6 +5,8 @@ import json
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
+from pydantic import AnyUrl
+
 from agentscope.message import (
     UserMsg,
     AssistantMsg,
@@ -74,7 +76,9 @@ class UserMsgCreationTest(IsolatedAsyncioTestCase):
                 TextBlock(text="describe this"),
                 DataBlock(
                     source=URLSource(
-                        url="https://example.com/image.png",
+                        url=AnyUrl(
+                            "https://example.com/image.png",
+                        ),
                         media_type="image/png",
                     ),
                 ),
@@ -432,7 +436,9 @@ class SystemMsgValidationTest(IsolatedAsyncioTestCase):
                 content=[
                     DataBlock(
                         source=URLSource(
-                            url="https://example.com/image.png",
+                            url=AnyUrl(
+                                "https://example.com/image.png",
+                            ),
                             media_type="image/png",
                         ),
                     ),
@@ -598,7 +604,10 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
                 HintBlock(hint="h"),
             ],
         )
-        blocks = list(msg.get_content_blocks(["text", "hint"]))
+        block_types = ["text", "hint"]
+        blocks = list(
+            msg.get_content_blocks(block_types),  # type: ignore[arg-type]
+        )
         self.assertEqual(len(blocks), 2)
         types = {b.type for b in blocks}
         self.assertSetEqual(types, {"text", "hint"})
