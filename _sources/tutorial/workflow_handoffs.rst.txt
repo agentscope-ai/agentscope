@@ -46,20 +46,20 @@ First, we create a function to allow the orchestrator to create workers dynamica
         "input": {
             "task_description": "Print 'Hello, World!' using Python"
         },
-        "id": "call_27dc31f070074934ae24b9"
+        "id": "call_33ff1fcc91ce4142998ac1"
     }
     Worker: {
         "type": "tool_use",
         "name": "execute_python_code",
         "input": {
             "code": "print('Hello, World!')",
-            "timeout": 30
+            "timeout": 300
         },
-        "id": "call_922bb98a13604663a25920"
+        "id": "call_891d683326454eae9a251f"
     }
     system: {
         "type": "tool_result",
-        "id": "call_922bb98a13604663a25920",
+        "id": "call_891d683326454eae9a251f",
         "name": "execute_python_code",
         "output": [
             {
@@ -68,23 +68,23 @@ First, we create a function to allow the orchestrator to create workers dynamica
             }
         ]
     }
-    Worker: The Python code has been executed successfully and it printed:
+    Worker: The Python code has been executed and it printed:
 
     ```
     Hello, World!
     ```
     system: {
         "type": "tool_result",
-        "id": "call_27dc31f070074934ae24b9",
+        "id": "call_33ff1fcc91ce4142998ac1",
         "name": "create_worker",
         "output": [
             {
                 "type": "text",
-                "text": "The Python code has been executed successfully and it printed:\n\n```\nHello, World!\n```"
+                "text": "The Python code has been executed and it printed:\n\n```\nHello, World!\n```"
             }
         ]
     }
-    Orchestrator: The Python code has been executed successfully and it printed:
+    Orchestrator: The Python code has been executed and it printed:
 
     ```
     Hello, World!
@@ -179,7 +179,7 @@ First, we create a function to allow the orchestrator to create workers dynamica
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 17.581 seconds)
+   **Total running time of the script:** (0 minutes 9.227 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_handoffs.py:
