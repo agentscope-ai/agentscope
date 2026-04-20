@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from ._response import ToolChunk
 from ._base import ToolBase
-from .._utils._common import _remove_title_field
+from ._utils import _remove_title_field
 
 
 @dataclass

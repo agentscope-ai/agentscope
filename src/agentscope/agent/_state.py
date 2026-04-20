@@ -14,7 +14,7 @@ class AgentState(BaseModel):
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
     context when feed into the LLM."""
-    context: list[Msg] = []
+    context: list[Msg] = Field(default_factory=list)
     """The uncompressed conversation context, that will be feed into the LLM"""
     reply_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The id of the current reply, which is also used as the id of the

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """The tool protocol in agentscope."""
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from typing import AsyncGenerator, Any
 
 from ._permission import PermissionContext, PermissionDecision
 from ._response import ToolChunk
 
 
-class ToolBase:
+class ToolBase(ABC):
     """The tool protocol."""
 
     name: str

@@ -22,7 +22,6 @@ from pydantic import (
     Field,
     create_model,
 )
-from jinja2 import Template
 
 from ._builtin import ResetTools
 from ._base import ToolBase
@@ -386,9 +385,9 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
          Args:
              groups (`list[str] | None`, optional):
-                A list of group names to filter the tool function. If not
-                provided, all tool functions will be returned. Note the "basic"
-                group will always be included regardless of the filter.
+                A list of group names to filter the tool function. The "basic"
+                group will always be included regardless of the filter. If not
+                provided, only the "basic" group will be included.
 
         Example:
             .. code-block:: JSON
@@ -732,56 +731,6 @@ Check "{dir}/SKILL.md" for how to use this skill"""
             "Registered %d tool functions from MCP: %s.",
             len(tool_names),
             ", ".join(tool_names),
-        )
-
-    def _reset_equipped_tools(
-        self,
-        state: AgentState,
-        **kwargs: Any,
-    ) -> ToolChunk:
-        """This function allows you to activate or deactivate tool groups
-        dynamically based on your current task requirements.
-        **Important: Each call sets the absolute final state of ALL tool
-        groups, not incremental changes**. Any group not explicitly set to True
-        will be deactivated, regardless of its previous state.
-
-        **Best practice**: Actively manage your tool groups——activate only
-        what you need for the current task, and promptly deactivate groups as
-        soon as they are no longer needed to conserve context space.
-
-        The function will return the usage instructions for the activated tool
-        groups, which you **MUST pay attention to and follow**. You can also
-        reuse this function to check the notes of the tool groups."""
-
-        # Deactivate all tool groups first
-        state.activated_groups.clear()
-
-        to_activate = []
-        for key, value in kwargs.items():
-            if not isinstance(value, bool):
-                return ToolChunk(
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text=f"Invalid arguments: the argument {key} "
-                            f"should be a bool value, but got {type(value)}.",
-                        ),
-                    ],
-                )
-
-            if value:
-                to_activate.append(key)
-
-        state.activated_groups.extend(to_activate)
-
-        template = Template(self.meta_tool_response_template)
-
-        return ToolChunk(
-            content=[
-                TextBlock(
-                    text=template.render(groups=state.activated_groups),
-                ),
-            ],
         )
 
     def clear(self) -> None:
