@@ -35,7 +35,7 @@ class HttpStatefulClient(StatefulClientBase):
         transport: Literal["streamable_http", "sse"],
         url: str,
         headers: dict[str, str] | None = None,
-        timeout: float = 30,
+        timeout: float | None = None,
         **client_kwargs: Any,
     ) -> None:
         """Initialize the streamable HTTP MCP client.
@@ -53,7 +53,7 @@ class HttpStatefulClient(StatefulClientBase):
             headers (`dict[str, str] | None`, optional):
                 Additional headers to include in the HTTP request.
             timeout (`float`, optional):
-                The timeout for the HTTP request in seconds. Defaults to 30.
+                The timeout for the HTTP request in seconds.
             **client_kwargs (`Any`):
                 The additional keyword arguments to pass to the streamable
                 HTTP client.

@@ -192,7 +192,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         # with toolkit - Register MCPTool via Toolkit constructor
         toolkit_with_mcp = Toolkit(tools=[mcp_tool_1])
-        print(json.dumps(toolkit_with_mcp.get_function_schemas()))
+
         self.assertListEqual(
             toolkit_with_mcp.get_function_schemas(),
             self.schemas,
