@@ -77,7 +77,7 @@ AgentScope 生态
 
 ## 📢 新闻
 <!-- BEGIN NEWS -->
-- **[2026-03] `发布`:** 我们最近发布了一个名为 [CoPaw](https://github.com/agentscope-ai/CoPaw)（Co Personal Agent Workstation）的个人助理型产品，它基于 [AgentScope](https://github.com/agentscope-ai/agentscope)、[AgentScope-Runtime](https://github.com/agentscope-ai/agentscope-runtime) 和 [Reme](https://github.com/agentscope-ai/ReMe) 构建。
+- **[2026-04] `社区`:** AgentScope 2.0 路线图公布，欢迎查看并参与讨论！[路线图](https://github.com/orgs/agentscope-ai/projects/2) | [讨论](https://github.com/agentscope-ai/agentscope/discussions/1441)
 - **[2026-02] `功能`:** 支持实时语音交互。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/agent/realtime_voice_agent) | [多智能体实时交互](https://github.com/agentscope-ai/agentscope/tree/main/examples/workflows/multiagent_realtime) | [文档](https://doc.agentscope.io/tutorial/task_realtime.html)
 - **[2026-01] `社区`:** AgentScope 双周会议启动，分享生态更新和开发计划 - 欢迎加入！[详情与安排](https://github.com/agentscope-ai/agentscope/discussions/1126)
 - **[2026-01] `功能`:** 记忆模块新增数据库支持和记忆压缩。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/short_term_memory/memory_compression) | [教程](https://doc.agentscope.io/tutorial/task_memory.html)
@@ -87,7 +87,6 @@ AgentScope 生态
 - **[2025-11] `发布`:** 面向多样化真实任务的 Alias-Agent 和数据处理的 Data-Juicer Agent 开源。[Alias-Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/alias) | [Data-Juicer Agent](https://github.com/agentscope-ai/agentscope-samples/tree/main/data_juicer_agent)
 - **[2025-11] `集成`:** 通过 Trinity-RFT 库实现智能体强化学习。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/tuner/model_tuning) | [Trinity-RFT](https://github.com/agentscope-ai/Trinity-RFT)
 - **[2025-11] `集成`:** ReMe 增强长期记忆。[样例](https://github.com/agentscope-ai/agentscope/tree/main/examples/functionality/long_term_memory/reme)
-- **[2025-11] `发布`:** agentscope-samples 样例库上线，agentscope-runtime 升级支持 Docker/K8s 部署和 VNC 图形沙盒。[样例库](https://github.com/agentscope-ai/agentscope-samples) | [Runtime](https://github.com/agentscope-ai/agentscope-runtime)
 <!-- END NEWS -->
 
 [更多新闻 →](./docs/NEWS_zh.md)

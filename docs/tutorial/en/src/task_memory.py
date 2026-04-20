@@ -37,6 +37,8 @@ Currently, AgentScope provides the following memory storage implementations:
       - An asynchronous SQLAlchemy-based implementation of memory storage, which supports various databases such as SQLite, PostgreSQL, MySQL, etc.
     * - ``RedisMemory``
       - A Redis-based implementation of memory storage.
+    * - ``TablestoreMemory``
+      - An Alibaba Cloud Tablestore-based implementation of memory storage, enabling persistent and searchable memory across distributed environments.
 
 .. tip:: If you're interested in contributing new memory storage implementations, please refer to the
  `Contribution Guide <https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions>`_.
@@ -409,6 +411,122 @@ asyncio.run(redis_memory_example())
 #         client = memory.get_client()
 #         await client.aclose()
 #
+#
+# Tablestore Memory
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# AgentScope also provides a memory implementation based on
+# `Alibaba Cloud Tablestore <https://www.alibabacloud.com/product/tablestore>`_,
+# a fully managed NoSQL database service. ``TablestoreMemory`` enables
+# persistent and searchable memory across distributed environments, with
+# built-in support for multi-user and multi-session isolation.
+#
+# First, install the required packages:
+#
+# .. code-block:: bash
+#
+#     pip install tablestore tablestore-for-agent-memory
+#
+# Then, you can initialize the Tablestore memory as follows:
+#
+# .. code-block:: python
+#    :caption: Tablestore Memory Basic Usage
+#
+#     import asyncio
+#     from agentscope.memory import TablestoreMemory
+#     from agentscope.message import Msg
+#
+#
+#     async def tablestore_memory_example():
+#         # Create the Tablestore memory
+#         memory = TablestoreMemory(
+#             end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+#             instance_name="your-instance-name",
+#             access_key_id="your-access-key-id",
+#             access_key_secret="your-access-key-secret",
+#             # Optionally specify user_id and session_id
+#             user_id="user_1",
+#             session_id="session_1",
+#         )
+#
+#         # Add a message to the memory
+#         await memory.add(
+#             Msg("Alice", "Generate a report about AgentScope", "user"),
+#         )
+#
+#         # Add a hint message with the mark "hint"
+#         await memory.add(
+#             Msg(
+#                 "system",
+#                 "<system-hint>Create a plan first to collect information and "
+#                 "generate the report step by step.</system-hint>",
+#                 "system",
+#             ),
+#             marks="hint",
+#         )
+#
+#         # Retrieve messages with the mark "hint"
+#         msgs = await memory.get_memory(mark="hint")
+#         for msg in msgs:
+#             print(f"- {msg}")
+#
+#         # Close the Tablestore client connection when done
+#         await memory.close()
+#
+#
+#     asyncio.run(tablestore_memory_example())
+#
+# The ``TablestoreMemory`` can also be used as an async context manager:
+#
+# .. code-block:: python
+#    :caption: Tablestore Memory as Async Context Manager
+#
+#     async with TablestoreMemory(
+#         end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+#         instance_name="your-instance-name",
+#         access_key_id="your-access-key-id",
+#         access_key_secret="your-access-key-secret",
+#         user_id="user_1",
+#         session_id="session_1",
+#     ) as memory:
+#         await memory.add(
+#             Msg("Alice", "Generate a report about AgentScope", "user"),
+#         )
+#
+#         msgs = await memory.get_memory()
+#         for msg in msgs:
+#             print(f"- {msg}")
+#
+# Similarly, ``TablestoreMemory`` can be used in production environments with FastAPI:
+#
+# .. code-block:: python
+#    :caption: Tablestore Memory in FastAPI
+#
+#     import os
+#     from fastapi import FastAPI
+#     from agentscope.memory import TablestoreMemory
+#     from agentscope.message import Msg
+#
+#
+#     app = FastAPI()
+#
+#
+#     @app.post("/chat_endpoint")
+#     async def chat_endpoint(user_id: str, session_id: str, input: str):
+#         """A chat endpoint using Tablestore memory."""
+#         memory = TablestoreMemory(
+#             end_point=os.environ["TABLESTORE_ENDPOINT"],
+#             instance_name=os.environ["TABLESTORE_INSTANCE_NAME"],
+#             access_key_id=os.environ["TABLESTORE_ACCESS_KEY_ID"],
+#             access_key_secret=os.environ["TABLESTORE_ACCESS_KEY_SECRET"],
+#             user_id=user_id,
+#             session_id=session_id,
+#         )
+#
+#         # Use the memory with your agent
+#         ...
+#
+#         # Close the Tablestore client connection when done
+#         await memory.close()
 #
 #
 # Customizing Memory

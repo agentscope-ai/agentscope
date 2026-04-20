@@ -29,6 +29,8 @@ AgentScope 中的记忆模块负责：
       - 基于异步 SQLAlchemy 的记忆存储实现，支持如 SQLite、PostgreSQL、MySQL 等多种关系数据库。
     * - ``RedisMemory``
       - 基于 Redis 的记忆存储实现。
+    * - ``TablestoreMemory``
+      - 基于阿里云表格存储（Tablestore）的记忆存储实现，支持分布式环境下的持久化和可搜索记忆。
 
 .. tip:: 如果您有兴趣贡献新的记忆存储实现，请参考 `贡献指南 <https://github.com/agentscope-ai/agentscope/blob/main/CONTRIBUTING.md#types-of-contributions>`_。
 
@@ -396,6 +398,121 @@ asyncio.run(redis_memory_example())
 #         client = memory.get_client()
 #         await client.aclose()
 #
+#
+# 表格存储记忆（Tablestore Memory）
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# AgentScope 还提供了基于
+# `阿里云表格存储（Tablestore） <https://www.aliyun.com/product/ots>`_
+# 的记忆实现。``TablestoreMemory`` 支持分布式环境下的持久化和可搜索记忆，
+# 并内置多用户和多会话隔离。
+#
+# 首先，安装所需的依赖包：
+#
+# .. code-block:: bash
+#
+#     pip install tablestore tablestore-for-agent-memory
+#
+# 然后，可以按如下方式初始化 Tablestore 记忆：
+#
+# .. code-block:: python
+#    :caption: Tablestore 记忆基本用法
+#
+#     import asyncio
+#     from agentscope.memory import TablestoreMemory
+#     from agentscope.message import Msg
+#
+#
+#     async def tablestore_memory_example():
+#         # 创建 Tablestore 记忆
+#         memory = TablestoreMemory(
+#             end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+#             instance_name="your-instance-name",
+#             access_key_id="your-access-key-id",
+#             access_key_secret="your-access-key-secret",
+#             # 可选地指定 user_id 和 session_id
+#             user_id="user_1",
+#             session_id="session_1",
+#         )
+#
+#         # 向记忆中添加消息
+#         await memory.add(
+#             Msg("Alice", "生成一份关于AgentScope的报告", "user"),
+#         )
+#
+#         # 添加一条带有标记"hint"的提示消息
+#         await memory.add(
+#             Msg(
+#                 "system",
+#                 "<system-hint>首先创建一个计划来收集信息，"
+#                 "然后逐步生成报告。</system-hint>",
+#                 "system",
+#             ),
+#             marks="hint",
+#         )
+#
+#         # 检索带有标记"hint"的消息
+#         msgs = await memory.get_memory(mark="hint")
+#         for msg in msgs:
+#             print(f"- {msg}")
+#
+#         # 完成后关闭 Tablestore 客户端连接
+#         await memory.close()
+#
+#
+#     asyncio.run(tablestore_memory_example())
+#
+# ``TablestoreMemory`` 也可以用作异步上下文管理器：
+#
+# .. code-block:: python
+#    :caption: Tablestore 记忆作为异步上下文管理器
+#
+#     async with TablestoreMemory(
+#         end_point="https://your-instance.cn-hangzhou.ots.aliyuncs.com",
+#         instance_name="your-instance-name",
+#         access_key_id="your-access-key-id",
+#         access_key_secret="your-access-key-secret",
+#         user_id="user_1",
+#         session_id="session_1",
+#     ) as memory:
+#         await memory.add(
+#             Msg("Alice", "生成一份关于AgentScope的报告", "user"),
+#         )
+#
+#         msgs = await memory.get_memory()
+#         for msg in msgs:
+#             print(f"- {msg}")
+#
+# 同样，``TablestoreMemory`` 也可以在生产环境中与 FastAPI 一起使用：
+#
+# .. code-block:: python
+#    :caption: FastAPI 中使用 Tablestore 记忆
+#
+#     import os
+#     from fastapi import FastAPI
+#     from agentscope.memory import TablestoreMemory
+#     from agentscope.message import Msg
+#
+#
+#     app = FastAPI()
+#
+#
+#     @app.post("/chat_endpoint")
+#     async def chat_endpoint(user_id: str, session_id: str, input: str):
+#         """使用 Tablestore 记忆的聊天端点。"""
+#         memory = TablestoreMemory(
+#             end_point=os.environ["TABLESTORE_ENDPOINT"],
+#             instance_name=os.environ["TABLESTORE_INSTANCE_NAME"],
+#             access_key_id=os.environ["TABLESTORE_ACCESS_KEY_ID"],
+#             access_key_secret=os.environ["TABLESTORE_ACCESS_KEY_SECRET"],
+#             user_id=user_id,
+#             session_id=session_id,
+#         )
+#
+#         # 使用记忆与智能体交互
+#         ...
+#
+#         # 完成后关闭 Tablestore 客户端连接
+#         await memory.close()
 #
 #
 # 自定义记忆（Customizing Memory）
