@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Test cases for the message module."""
+
 import json
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
@@ -105,8 +106,14 @@ class UserMsgCreationTest(IsolatedAsyncioTestCase):
             ],
         )
         dumped = msg.model_dump()
-        self.assertEqual(dumped["content"][0]["source"]["data"], b64_data)
-        self.assertEqual(dumped["content"][0]["source"]["type"], "base64")
+        self.assertEqual(
+            dumped["content"][0]["source"]["data"],
+            b64_data,
+        )
+        self.assertEqual(
+            dumped["content"][0]["source"]["type"],
+            "base64",
+        )
 
     async def test_named_data_block(self) -> None:
         """DataBlock optional name field is preserved."""
@@ -115,11 +122,17 @@ class UserMsgCreationTest(IsolatedAsyncioTestCase):
             content=[
                 DataBlock(
                     name="screenshot",
-                    source=Base64Source(data="abc", media_type="image/png"),
+                    source=Base64Source(
+                        data="abc",
+                        media_type="image/png",
+                    ),
                 ),
             ],
         )
-        self.assertEqual(msg.model_dump()["content"][0]["name"], "screenshot")
+        self.assertEqual(
+            msg.model_dump()["content"][0]["name"],
+            "screenshot",
+        )
 
     async def test_data_block_name_defaults_to_none(self) -> None:
         """DataBlock name is None when not provided."""
@@ -127,7 +140,10 @@ class UserMsgCreationTest(IsolatedAsyncioTestCase):
             name="user",
             content=[
                 DataBlock(
-                    source=Base64Source(data="abc", media_type="image/png"),
+                    source=Base64Source(
+                        data="abc",
+                        media_type="image/png",
+                    ),
                 ),
             ],
         )
@@ -153,6 +169,7 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
     """Test cases for AssistantMsg creation with various block types."""
 
     async def test_string_content(self) -> None:
+        """AssistantMsg with plain string content."""
         msg = AssistantMsg(name="bot", content="hello")
         self.assertEqual(msg.role, "assistant")
         self.assertEqual(msg.content, "hello")
@@ -182,12 +199,14 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
         )
 
     async def test_hint_block(self) -> None:
+        """AssistantMsg with HintBlock."""
         msg = AssistantMsg(
             name="assistant",
             content=[HintBlock(hint="hint...")],
         )
-        self.assertEqual(msg.model_dump()["content"][0]["type"], "hint")
-        self.assertEqual(msg.model_dump()["content"][0]["hint"], "hint...")
+        dumped = msg.model_dump()
+        self.assertEqual(dumped["content"][0]["type"], "hint")
+        self.assertEqual(dumped["content"][0]["hint"], "hint...")
 
     async def test_tool_call_block(self) -> None:
         """ToolCallBlock defaults await_user_confirmation to False."""
@@ -223,6 +242,7 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
         self.assertTrue(block["await_user_confirmation"])
 
     async def test_tool_result_string_output(self) -> None:
+        """ToolResultBlock with string output."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -240,7 +260,7 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
         self.assertEqual(block["output"], "sunny")
 
     async def test_tool_result_list_output(self) -> None:
-        """ToolResultBlock output can be a list of TextBlock and DataBlock."""
+        """ToolResultBlock output can be a list of blocks."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -266,8 +286,13 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
         self.assertEqual(output[1]["type"], "data")
 
     async def test_all_tool_result_states(self) -> None:
-        """ToolResultBlock supports success, error, interrupted, running."""
-        for state in ("success", "error", "interrupted", "running"):
+        """ToolResultBlock supports all four execution states."""
+        for state in (
+            "success",
+            "error",
+            "interrupted",
+            "running",
+        ):
             msg = AssistantMsg(
                 name="assistant",
                 content=[
@@ -285,7 +310,7 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_mixed_blocks(self) -> None:
-        """Thinking + text + tool_call in a single assistant message."""
+        """Thinking + text + tool_call in one assistant message."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -295,16 +320,26 @@ class AssistantMsgCreationTest(IsolatedAsyncioTestCase):
             ],
         )
         types = [b["type"] for b in msg.model_dump()["content"]]
-        self.assertEqual(types, ["thinking", "text", "tool_call"])
+        self.assertEqual(
+            types,
+            ["thinking", "text", "tool_call"],
+        )
 
 
 class SystemMsgCreationTest(IsolatedAsyncioTestCase):
     """Test cases for SystemMsg creation."""
 
     async def test_string_content(self) -> None:
-        msg = SystemMsg(name="system", content="You are a helpful assistant.")
+        """SystemMsg with plain string content."""
+        msg = SystemMsg(
+            name="system",
+            content="You are a helpful assistant.",
+        )
         self.assertEqual(msg.role, "system")
-        self.assertEqual(msg.content, "You are a helpful assistant.")
+        self.assertEqual(
+            msg.content,
+            "You are a helpful assistant.",
+        )
 
     async def test_text_block(self) -> None:
         """SystemMsg can contain a list of TextBlocks."""
@@ -312,14 +347,18 @@ class SystemMsgCreationTest(IsolatedAsyncioTestCase):
             name="system",
             content=[TextBlock(text="Be concise.")],
         )
-        self.assertEqual(msg.model_dump()["content"][0]["type"], "text")
+        self.assertEqual(
+            msg.model_dump()["content"][0]["type"],
+            "text",
+        )
 
 
 class UserMsgValidationTest(IsolatedAsyncioTestCase):
-    """User messages can only contain text and data blocks. Anything else
-    should raise ValueError."""
+    """User messages can only contain text and data blocks.
+    Anything else should raise ValueError."""
 
     async def test_rejects_thinking_block(self) -> None:
+        """ThinkingBlock in user msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="user",
@@ -328,6 +367,7 @@ class UserMsgValidationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_rejects_hint_block(self) -> None:
+        """HintBlock in user msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="user",
@@ -336,14 +376,22 @@ class UserMsgValidationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_rejects_tool_call_block(self) -> None:
+        """ToolCallBlock in user msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="user",
                 role="user",
-                content=[ToolCallBlock(id="1", name="tool", input="{}")],
+                content=[
+                    ToolCallBlock(
+                        id="1",
+                        name="tool",
+                        input="{}",
+                    ),
+                ],
             )
 
     async def test_rejects_tool_result_block(self) -> None:
+        """ToolResultBlock in user msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="user",
@@ -359,8 +407,8 @@ class UserMsgValidationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_mixed_valid_and_invalid_still_rejected(self) -> None:
-        """Even if TextBlock is present, an invalid block should still cause
-        rejection."""
+        """Even if TextBlock is present, an invalid block should
+        still cause rejection."""
         with self.assertRaises(ValueError):
             Msg(
                 name="user",
@@ -376,6 +424,7 @@ class SystemMsgValidationTest(IsolatedAsyncioTestCase):
     """System messages can only contain text blocks."""
 
     async def test_rejects_data_block(self) -> None:
+        """DataBlock in system msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="system",
@@ -391,14 +440,18 @@ class SystemMsgValidationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_rejects_thinking_block(self) -> None:
+        """ThinkingBlock in system msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="system",
                 role="system",
-                content=[ThinkingBlock(thinking="thinking...")],
+                content=[
+                    ThinkingBlock(thinking="thinking..."),
+                ],
             )
 
     async def test_rejects_hint_block(self) -> None:
+        """HintBlock in system msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="system",
@@ -407,14 +460,22 @@ class SystemMsgValidationTest(IsolatedAsyncioTestCase):
             )
 
     async def test_rejects_tool_call_block(self) -> None:
+        """ToolCallBlock in system msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="system",
                 role="system",
-                content=[ToolCallBlock(id="1", name="tool", input="{}")],
+                content=[
+                    ToolCallBlock(
+                        id="1",
+                        name="tool",
+                        input="{}",
+                    ),
+                ],
             )
 
     async def test_rejects_tool_result_block(self) -> None:
+        """ToolResultBlock in system msg raises ValueError."""
         with self.assertRaises(ValueError):
             Msg(
                 name="system",
@@ -442,16 +503,26 @@ class MsgGetTextContentTest(IsolatedAsyncioTestCase):
         """Multiple TextBlocks joined with default separator."""
         msg = UserMsg(
             name="user",
-            content=[TextBlock(text="foo"), TextBlock(text="bar")],
+            content=[
+                TextBlock(text="foo"),
+                TextBlock(text="bar"),
+            ],
         )
         self.assertEqual(msg.get_text_content(), "foo\nbar")
 
     async def test_custom_separator(self) -> None:
+        """Custom separator joins TextBlocks."""
         msg = UserMsg(
             name="user",
-            content=[TextBlock(text="foo"), TextBlock(text="bar")],
+            content=[
+                TextBlock(text="foo"),
+                TextBlock(text="bar"),
+            ],
         )
-        self.assertEqual(msg.get_text_content(separator=" | "), "foo | bar")
+        self.assertEqual(
+            msg.get_text_content(separator=" | "),
+            "foo | bar",
+        )
 
     async def test_ignores_non_text_blocks(self) -> None:
         """Only TextBlocks contribute to the result."""
@@ -465,6 +536,7 @@ class MsgGetTextContentTest(IsolatedAsyncioTestCase):
         self.assertEqual(msg.get_text_content(), "visible")
 
     async def test_returns_none_when_no_text(self) -> None:
+        """Returns None when no TextBlock exists."""
         msg = AssistantMsg(
             name="assistant",
             content=[ThinkingBlock(thinking="only thinking")],
@@ -478,7 +550,7 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
     async def test_string_wrapped_to_text_block(self) -> None:
         """String content is converted to a single TextBlock."""
         msg = UserMsg(name="user", content="hello")
-        blocks = msg.get_content_blocks()
+        blocks = list(msg.get_content_blocks())
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0].type, "text")
         self.assertEqual(
@@ -487,6 +559,7 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
         )
 
     async def test_no_filter_returns_all(self) -> None:
+        """Without filter all blocks are returned."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -497,6 +570,7 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(msg.get_content_blocks()), 2)
 
     async def test_filter_by_single_type(self) -> None:
+        """Filtering by one type returns only that type."""
         msg = AssistantMsg(
             name="assistant",
             content=[
@@ -505,8 +579,14 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
                 TextBlock(text="b"),
             ],
         )
-        self.assertEqual(len(msg.get_content_blocks("text")), 2)
-        self.assertEqual(len(msg.get_content_blocks("thinking")), 1)
+        self.assertEqual(
+            len(msg.get_content_blocks("text")),
+            2,
+        )
+        self.assertEqual(
+            len(msg.get_content_blocks("thinking")),
+            1,
+        )
 
     async def test_filter_by_type_list(self) -> None:
         """Passing a list of types returns the union."""
@@ -518,33 +598,49 @@ class MsgGetContentBlocksTest(IsolatedAsyncioTestCase):
                 HintBlock(hint="h"),
             ],
         )
-        blocks = msg.get_content_blocks(["text", "hint"])
+        blocks = list(msg.get_content_blocks(["text", "hint"]))
         self.assertEqual(len(blocks), 2)
         types = {b.type for b in blocks}
         self.assertSetEqual(types, {"text", "hint"})
 
     async def test_no_match_returns_empty(self) -> None:
-        msg = UserMsg(name="user", content=[TextBlock(text="hi")])
-        self.assertEqual(len(msg.get_content_blocks("thinking")), 0)
+        """Empty list when no block matches the type."""
+        msg = UserMsg(
+            name="user",
+            content=[TextBlock(text="hi")],
+        )
+        self.assertEqual(
+            len(msg.get_content_blocks("thinking")),
+            0,
+        )
 
 
 class MsgHasContentBlocksTest(IsolatedAsyncioTestCase):
     """Test cases for Msg.has_content_blocks."""
 
     async def test_with_matching_type(self) -> None:
+        """Returns True when matching blocks exist."""
         msg = AssistantMsg(
             name="a",
-            content=[ThinkingBlock(thinking="t"), TextBlock(text="x")],
+            content=[
+                ThinkingBlock(thinking="t"),
+                TextBlock(text="x"),
+            ],
         )
         self.assertTrue(msg.has_content_blocks())
         self.assertTrue(msg.has_content_blocks("thinking"))
         self.assertTrue(msg.has_content_blocks("text"))
 
     async def test_with_non_matching_type(self) -> None:
-        msg = UserMsg(name="user", content=[TextBlock(text="hi")])
+        """Returns False when no matching blocks exist."""
+        msg = UserMsg(
+            name="user",
+            content=[TextBlock(text="hi")],
+        )
         self.assertFalse(msg.has_content_blocks("thinking"))
 
     async def test_string_content_counts_as_text(self) -> None:
+        """String content is treated as having a text block."""
         msg = UserMsg(name="user", content="hello")
         self.assertTrue(msg.has_content_blocks())
         self.assertTrue(msg.has_content_blocks("text"))
@@ -555,7 +651,7 @@ class MsgSerializationTest(IsolatedAsyncioTestCase):
     """Test cases for serialization round-trips."""
 
     async def test_round_trip_string_content(self) -> None:
-        """model_dump -> model_validate should preserve all fields."""
+        """model_dump -> model_validate preserves all fields."""
         original = UserMsg(name="user", content="hello")
         restored = Msg.model_validate(original.model_dump())
         self.assertEqual(restored.content, original.content)
@@ -563,6 +659,7 @@ class MsgSerializationTest(IsolatedAsyncioTestCase):
         self.assertEqual(restored.name, original.name)
 
     async def test_round_trip_mixed_blocks(self) -> None:
+        """Mixed blocks survive model_dump -> model_validate."""
         original = AssistantMsg(
             name="assistant",
             content=[
@@ -576,17 +673,25 @@ class MsgSerializationTest(IsolatedAsyncioTestCase):
             ],
         )
         restored = Msg.model_validate(original.model_dump())
-        self.assertEqual(len(restored.get_content_blocks()), 3)
         self.assertEqual(
-            restored.get_content_blocks("thinking")[0].thinking,  # type: ignore[attr-defined]
+            len(restored.get_content_blocks()),
+            3,
+        )
+        thinking = list(
+            restored.get_content_blocks("thinking"),
+        )
+        text = list(restored.get_content_blocks("text"))
+        self.assertEqual(
+            thinking[0].thinking,  # type: ignore[attr-defined]
             "hmm",
         )
         self.assertEqual(
-            restored.get_content_blocks("text")[0].text,  # type: ignore[attr-defined]
+            text[0].text,  # type: ignore[attr-defined]
             "answer",
         )
 
     async def test_to_json(self) -> None:
+        """model_dump_json produces valid JSON."""
         msg = UserMsg(name="user", content="hello")
         parsed = json.loads(msg.model_dump_json())
         self.assertEqual(parsed["content"], "hello")
@@ -606,7 +711,10 @@ class MsgSerializationTest(IsolatedAsyncioTestCase):
             ],
         )
         restored = Msg.model_validate(original.model_dump())
-        result_block = restored.get_content_blocks("tool_result")[0]
+        result_blocks = list(
+            restored.get_content_blocks("tool_result"),
+        )
+        result_block = result_blocks[0]
         self.assertIsInstance(
             result_block.output,  # type: ignore[union-attr]
             list,
