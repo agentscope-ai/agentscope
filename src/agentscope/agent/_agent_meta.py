@@ -63,6 +63,8 @@ def _wrap_with_hooks(
     """
     func_name = original_func.__name__.replace("_", "")
 
+    hook_guard_attr = f"_hook_running_{func_name}"
+
     @wraps(original_func)
     async def async_wrapper(
         self: AgentBase,
@@ -71,6 +73,12 @@ def _wrap_with_hooks(
     ) -> Any:
         """The wrapped function, which call the pre- and post-hooks before and
         after the original function."""
+
+        # Guard against re-entrant hook execution when multiple classes
+        # in the MRO define the same method (each wrapped independently
+        # by the metaclass).  Only the outermost wrapper runs hooks.
+        if getattr(self, hook_guard_attr, False):
+            return await original_func(self, *args, **kwargs)
 
         # Unify all positional and keyword arguments into a keyword arguments
         normalized_kwargs = _normalize_to_kwargs(
@@ -117,12 +125,16 @@ def _wrap_with_hooks(
             for k, v in current_normalized_kwargs.items()
             if k not in ["args", "kwargs"]
         }
-        current_output = await original_func(
-            self,
-            *args,
-            **others,
-            **kwargs,
-        )
+        setattr(self, hook_guard_attr, True)
+        try:
+            current_output = await original_func(
+                self,
+                *args,
+                **others,
+                **kwargs,
+            )
+        finally:
+            setattr(self, hook_guard_attr, False)
 
         # post_hooks
         post_hooks = list(

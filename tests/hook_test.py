@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-lines
 """Hook related tests in agentscope."""
 from typing import Any
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.agent import AgentBase
-from agentscope.message import Msg, TextBlock
+from pydantic import BaseModel, Field
+
+from agentscope.agent import AgentBase, ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.memory import InMemoryMemory
+from agentscope.message import Msg, TextBlock, ToolUseBlock
+from agentscope.model import ChatModelBase, ChatResponse
+from agentscope.tool import Toolkit
 
 
 class MyAgent(AgentBase):
@@ -32,7 +39,7 @@ class MyAgent(AgentBase):
         """Observe the message without generating a reply."""
         self.memory.append(msg)
 
-    async def handle_interrupt(self, *args: Any, **kwargs: Any) -> Msg:
+    async def handle_interrupt(self, *_args: Any, **_kwargs: Any) -> Msg:
         """Handle the interrupt signal."""
         # This is a placeholder for handling interrupts.
         return Msg("test", "Interrupt handled", "assistant")
@@ -46,6 +53,32 @@ class GrandChildAgent(ChildAgent):
     """Grandchild agent for testing deeper inheritance."""
 
 
+class ChildAgentWithReplyOverride(MyAgent):
+    """Child agent that overrides reply and calls super().reply(),
+    triggering double wrapping by the metaclass. Used to test
+    that hook_guard_attr prevents duplicate hook execution."""
+
+    async def reply(self, msg: Msg) -> Msg:
+        """Override reply, delegating to parent via super()."""
+        return await super().reply(msg)
+
+
+class ChildAgentWithObserveOverride(MyAgent):
+    """Child agent that overrides observe and calls super().observe()."""
+
+    async def observe(self, msg: Msg) -> None:
+        """Override observe, delegating to parent via super()."""
+        await super().observe(msg)
+
+
+class GrandChildAgentWithReplyOverride(ChildAgentWithReplyOverride):
+    """Three-level inheritance chain with each level overriding reply."""
+
+    async def reply(self, msg: Msg) -> Msg:
+        """Override reply again, delegating to parent via super()."""
+        return await super().reply(msg)
+
+
 class AgentA(MyAgent):
     """First parent class."""
 
@@ -56,6 +89,66 @@ class AgentB(MyAgent):
 
 class AgentC(AgentA, AgentB):
     """Multiple inheritance class."""
+
+
+class MockModel(ChatModelBase):
+    """Mock model that returns text-only on the first call and
+    text + tool_use on subsequent calls."""
+
+    def __init__(self) -> None:
+        """Initialize the mock model."""
+        super().__init__("mock_model", stream=False)
+        self.cnt = 1
+        self.fake_content_text = [
+            TextBlock(type="text", text="text_response"),
+        ]
+        self.fake_content_tool = [
+            TextBlock(type="text", text="tool_response"),
+            ToolUseBlock(
+                type="tool_use",
+                name="generate_response",
+                id="mock_id",
+                input={"result": "structured_value"},
+            ),
+        ]
+
+    async def __call__(
+        self,
+        _messages: list[dict],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Mock model call."""
+        self.cnt += 1
+        if self.cnt == 2:
+            return ChatResponse(content=self.fake_content_text)
+        else:
+            return ChatResponse(content=self.fake_content_tool)
+
+
+class MyReActAgent(ReActAgent):
+    """Subclass that overrides reply, _reasoning and _acting, each calling
+    super(). Used to test that hook_guard_attr prevents duplicate hook
+    execution when the metaclass wraps both the child's and parent's methods
+    independently."""
+
+    async def reply(
+        self,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Any = None,
+    ) -> Msg:
+        """Override reply, delegating to parent via super()."""
+        return await super().reply(msg, structured_model=structured_model)
+
+    async def _reasoning(
+        self,
+        tool_choice: Any = None,
+    ) -> Msg:
+        """Override _reasoning, delegating to parent via super()."""
+        return await super()._reasoning(tool_choice=tool_choice)
+
+    async def _acting(self, tool_call: Any) -> dict | None:
+        """Override _acting, delegating to parent via super()."""
+        return await super()._acting(tool_call)
 
 
 async def async_pre_func_w_modifying(
@@ -786,3 +879,282 @@ class HookTest(IsolatedAsyncioTestCase):
         AgentA.clear_class_hooks()
         AgentB.clear_class_hooks()
         AgentC.clear_class_hooks()
+
+
+class HookGuardTest(IsolatedAsyncioTestCase):
+    """Tests for the hook_guard_attr re-entrancy prevention mechanism.
+
+    When a child class overrides a hook-wrapped method (reply, observe,
+    _reasoning, _acting, etc.) and calls super().method(), the metaclass
+    wraps both the child's and the parent's method independently. Without
+    the guard, hooks would fire once per wrapper in the call chain. The
+    hook_guard_attr ensures hooks only execute in the outermost wrapper.
+
+    Covers both AgentBase-level (reply, observe) and ReActAgent-level
+    (reply, _reasoning, _acting) scenarios.
+    """
+
+    @property
+    def msg(self) -> Msg:
+        """Get the test message."""
+        return Msg(
+            "user",
+            [TextBlock(type="text", text="0")],
+            "user",
+        )
+
+    def _make_react_agent(self) -> MyReActAgent:
+        """Create a MyReActAgent with a fresh mock model."""
+        return MyReActAgent(
+            name="TestAgent",
+            sys_prompt="You are a helpful assistant.",
+            model=MockModel(),
+            formatter=DashScopeChatFormatter(),
+            memory=InMemoryMemory(),
+            toolkit=Toolkit(),
+        )
+
+    # ---- AgentBase-level tests ----
+
+    async def test_reply_hooks_execute_once_with_override(self) -> None:
+        """Pre and post reply hooks should each execute exactly once when
+        a child class overrides reply() and calls super().reply()."""
+        agent = ChildAgentWithReplyOverride()
+        pre_count = 0
+        post_count = 0
+
+        async def counting_pre_hook(
+            _self: Any,
+            _kwargs: dict[str, Any],
+        ) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        async def counting_post_hook(
+            _self: Any,
+            _kwargs: dict[str, Any],
+            _output: Any,
+        ) -> None:
+            nonlocal post_count
+            post_count += 1
+
+        agent.register_instance_hook(
+            "pre_reply",
+            "counter_pre",
+            counting_pre_hook,
+        )
+        agent.register_instance_hook(
+            "post_reply",
+            "counter_post",
+            counting_post_hook,
+        )
+
+        await agent(self.msg)
+        self.assertEqual(pre_count, 1)
+        self.assertEqual(post_count, 1)
+
+    async def test_observe_hooks_execute_once_with_override(self) -> None:
+        """Observe hooks should execute exactly once when a child class
+        overrides observe() and calls super().observe()."""
+        agent = ChildAgentWithObserveOverride()
+        pre_count = 0
+
+        async def counting_pre_hook(
+            _self: Any,
+            _kwargs: dict[str, Any],
+        ) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        agent.register_instance_hook(
+            "pre_observe",
+            "counter",
+            counting_pre_hook,
+        )
+
+        await agent.observe(self.msg)
+        self.assertEqual(pre_count, 1)
+
+    async def test_deep_inheritance_hooks_execute_once(self) -> None:
+        """Hooks should execute exactly once even with a 3-level override
+        chain (GrandChild -> Child -> MyAgent), each overriding reply and
+        calling super()."""
+        agent = GrandChildAgentWithReplyOverride()
+        pre_count = 0
+
+        async def counting_pre_hook(
+            _self: Any,
+            _kwargs: dict[str, Any],
+        ) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        agent.register_instance_hook(
+            "pre_reply",
+            "counter",
+            counting_pre_hook,
+        )
+
+        await agent(self.msg)
+        self.assertEqual(pre_count, 1)
+
+    async def test_hook_guard_cleared_after_exception(self) -> None:
+        """The guard flag should be properly cleaned up when the wrapped
+        method raises an exception, allowing hooks to work on retry."""
+
+        class FailingAgent(MyAgent):
+            """Agent whose reply always raises."""
+
+            async def reply(self, msg: Msg) -> Msg:
+                raise RuntimeError("intentional failure")
+
+        class ChildOfFailing(FailingAgent):
+            """Child that overrides reply and calls super()."""
+
+            async def reply(self, msg: Msg) -> Msg:
+                return await super().reply(msg)
+
+        agent = ChildOfFailing()
+        pre_count = 0
+
+        async def counting_pre_hook(
+            _self: Any,
+            _kwargs: dict[str, Any],
+        ) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        agent.register_instance_hook(
+            "pre_reply",
+            "counter",
+            counting_pre_hook,
+        )
+
+        with self.assertRaises(RuntimeError):
+            await agent(self.msg)
+        self.assertEqual(pre_count, 1)
+        self.assertFalse(
+            getattr(agent, "_hook_running_reply", False),
+            "Guard flag should be cleared after exception",
+        )
+
+        # Hooks should still work on subsequent calls
+        pre_count = 0
+        with self.assertRaises(RuntimeError):
+            await agent(self.msg)
+        self.assertEqual(pre_count, 1)
+
+    # ---- ReActAgent-level tests ----
+
+    async def test_react_reply_hooks_execute_once_with_override(
+        self,
+    ) -> None:
+        """ReActAgent reply hooks should execute exactly once when
+        a subclass overrides reply() and calls super().reply()."""
+        agent = self._make_react_agent()
+        pre_count = 0
+        post_count = 0
+
+        async def counting_pre(_self: Any, _kwargs: Any) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        async def counting_post(
+            _self: Any,
+            _kwargs: Any,
+            _output: Any,
+        ) -> None:
+            nonlocal post_count
+            post_count += 1
+
+        agent.register_instance_hook("pre_reply", "counter", counting_pre)
+        agent.register_instance_hook("post_reply", "counter", counting_post)
+
+        await agent()
+        self.assertEqual(pre_count, 1)
+        self.assertEqual(post_count, 1)
+
+    async def test_react_reasoning_hooks_execute_once_with_override(
+        self,
+    ) -> None:
+        """ReActAgent reasoning hooks should execute exactly once when
+        a subclass overrides _reasoning() and calls
+        super()._reasoning()."""
+        agent = self._make_react_agent()
+        pre_count = 0
+        post_count = 0
+
+        async def counting_pre(_self: Any, _kwargs: Any) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        async def counting_post(
+            _self: Any,
+            _kwargs: Any,
+            _output: Any,
+        ) -> None:
+            nonlocal post_count
+            post_count += 1
+
+        agent.register_instance_hook(
+            "pre_reasoning",
+            "counter",
+            counting_pre,
+        )
+        agent.register_instance_hook(
+            "post_reasoning",
+            "counter",
+            counting_post,
+        )
+
+        await agent()
+        self.assertEqual(pre_count, 1)
+        self.assertEqual(post_count, 1)
+
+    async def test_react_acting_hooks_execute_once_with_override(
+        self,
+    ) -> None:
+        """ReActAgent acting hooks should execute exactly once when
+        a subclass overrides _acting() and calls super()._acting()."""
+        agent = self._make_react_agent()
+        pre_count = 0
+        post_count = 0
+
+        async def counting_pre(_self: Any, _kwargs: Any) -> None:
+            nonlocal pre_count
+            pre_count += 1
+
+        async def counting_post(
+            _self: Any,
+            _kwargs: Any,
+            _output: Any,
+        ) -> None:
+            nonlocal post_count
+            post_count += 1
+
+        agent.register_instance_hook(
+            "pre_acting",
+            "counter",
+            counting_pre,
+        )
+        agent.register_instance_hook(
+            "post_acting",
+            "counter",
+            counting_post,
+        )
+
+        class TestStructuredModel(BaseModel):
+            """Test structured model."""
+
+            result: str = Field(description="Test result field.")
+
+        await agent(structured_model=TestStructuredModel)
+        self.assertEqual(pre_count, 1)
+        self.assertEqual(post_count, 1)
+
+    async def asyncTearDown(self) -> None:
+        """Tear down the test environment."""
+        ChildAgentWithReplyOverride.clear_class_hooks()
+        ChildAgentWithObserveOverride.clear_class_hooks()
+        GrandChildAgentWithReplyOverride.clear_class_hooks()
+        MyReActAgent.clear_class_hooks()
