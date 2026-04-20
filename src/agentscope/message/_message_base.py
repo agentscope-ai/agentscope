@@ -29,6 +29,7 @@ class Msg:
         metadata: dict[str, JSONSerializableObject] | None = None,
         timestamp: str | None = None,
         invocation_id: str | None = None,
+        topics: List[str] | None = None,
     ) -> None:
         """Initialize the Msg object.
 
@@ -47,6 +48,11 @@ class Msg:
             invocation_id (`str | None`, optional):
                 The related API invocation id, if any. This is useful for
                 tracking the message in the context of an API call.
+            topics (`List[str] | None`, optional):
+                The topic tags for message routing in MsgHub. If provided,
+                only subscribers interested in these topics will receive
+                the message. None or empty list means the message will be
+                broadcast to all subscribers.
         """
 
         self.name = name
@@ -71,10 +77,11 @@ class Msg:
             )[:-3]
         )
         self.invocation_id = invocation_id
+        self.topics = topics
 
     def to_dict(self) -> dict:
         """Convert the message into JSON dict data."""
-        return {
+        result = {
             "id": self.id,
             "name": self.name,
             "role": self.role,
@@ -82,6 +89,11 @@ class Msg:
             "metadata": self.metadata,
             "timestamp": self.timestamp,
         }
+        if self.topics is not None:
+            result["topics"] = self.topics
+        if self.invocation_id is not None:
+            result["invocation_id"] = self.invocation_id
+        return result
 
     @classmethod
     def from_dict(cls, json_data: dict) -> "Msg":
@@ -93,6 +105,7 @@ class Msg:
             metadata=json_data.get("metadata", None),
             timestamp=json_data.get("timestamp", None),
             invocation_id=json_data.get("invocation_id", None),
+            topics=json_data.get("topics", None),
         )
 
         new_obj.id = json_data.get("id", new_obj.id)
@@ -230,12 +243,15 @@ class Msg:
 
     def __repr__(self) -> str:
         """Get the string representation of the message."""
-        return (
-            f"Msg(id='{self.id}', "
-            f"name='{self.name}', "
-            f"content={repr(self.content)}, "
-            f"role='{self.role}', "
-            f"metadata={repr(self.metadata)}, "
-            f"timestamp='{self.timestamp}', "
-            f"invocation_id='{self.invocation_id}')"
-        )
+        parts = [
+            f"Msg(id='{self.id}', ",
+            f"name='{self.name}', ",
+            f"content={repr(self.content)}, ",
+            f"role='{self.role}', ",
+            f"metadata={repr(self.metadata)}, ",
+            f"timestamp='{self.timestamp}', ",
+        ]
+        if self.topics is not None:
+            parts.append(f"topics={repr(self.topics)}, ")
+        parts.append(f"invocation_id='{self.invocation_id}')")
+        return "".join(parts)
