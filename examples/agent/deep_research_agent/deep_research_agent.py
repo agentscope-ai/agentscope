@@ -348,6 +348,10 @@ class DeepResearchAgent(ReActAgent):
 
             # Async generator handling
             async for chunk in tool_res:
+                chunk_metadata = (
+                    chunk.metadata if isinstance(chunk.metadata, dict) else {}
+                )
+
                 # Turn into a tool result block
                 tool_res_msg.content[0][  # type: ignore[index]
                     "output"
@@ -357,19 +361,19 @@ class DeepResearchAgent(ReActAgent):
                 if (
                     tool_call["name"] != self.finish_function_name
                     or tool_call["name"] == self.finish_function_name
-                    and not chunk.metadata.get("success")
+                    and not chunk_metadata.get("success")
                 ):
                     await self.print(tool_res_msg, chunk.is_last)
 
                 # Return message if generate_response is called successfully
                 if tool_call[
                     "name"
-                ] == self.finish_function_name and chunk.metadata.get(
+                ] == self.finish_function_name and chunk_metadata.get(
                     "success",
                     True,
                 ):
                     if len(self.current_subtask) == 0:
-                        return chunk.metadata.get("response_msg")
+                        return chunk_metadata.get("response_msg")
 
                 # Summarize intermediate results into a draft report
                 elif tool_call["name"] == self.summarize_function:
@@ -398,11 +402,11 @@ class DeepResearchAgent(ReActAgent):
                     )
 
                 # Update memory when an intermediate report is generated
-                if isinstance(chunk.metadata, dict) and chunk.metadata.get(
+                if chunk_metadata.get(
                     "update_memory",
                 ):
                     update_memory = True
-                    intermediate_report = chunk.metadata.get(
+                    intermediate_report = chunk_metadata.get(
                         "intermediate_report",
                     )
             return None
