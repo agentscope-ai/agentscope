@@ -185,31 +185,7 @@ manage long-term memory through tool calls.
 
  .. code-block:: none
 
-    Friday: It sounds like you enjoy the cozy and personalized experience that homestays offer when visiting Hangzhou! Homestays can indeed be a wonderful way to immerse yourself in the local culture, enjoy a more authentic stay, and even connect with friendly hosts who can share insider tips about the city.
-
-    If you're planning another trip to Hangzhou, here are a few recommendations for areas or types of homestays you might enjoy:
-
-    ### 1. **West Lake (Xihu) Area**
-       - Staying near West Lake is ideal if you want to be close to Hangzhou's most iconic landmark. Many homestays in this area offer beautiful views of the lake or easy access to its scenic walking paths.
-       - Look for traditional Chinese-style homestays with courtyards or gardens for an extra touch of charm.
-
-    ### 2. **Longjing Tea Village**
-       - If you're a tea lover, consider staying at a homestay in one of the Longjing tea plantations. You'll wake up surrounded by lush greenery and have the chance to participate in tea-picking or tasting sessions hosted by your host.
-       - These homestays often emphasize tranquility and nature, perfect for relaxation.
-
-    ### 3. **Hefang Street or Qinghefang Ancient Street**
-       - For a mix of history and modern convenience, look for homestays near these ancient streets. They’re great places to explore traditional architecture, shop for souvenirs, and try local snacks.
-       - Some homestays here may feature antique decor, giving you a real sense of old Hangzhou.
-
-    ### 4. **Xixi National Wetland Park**
-       - If you prefer a quieter, nature-focused retreat, consider homestays near Xixi Wetland. This area offers serene waterways, boat rides, and eco-friendly accommodations.
-
-    ### Tips for Choosing a Homestay:
-    - **Host Interaction:** Since you enjoy homestays, you might appreciate hosts who are welcoming and willing to share stories or recommendations about Hangzhou.
-    - **Local Cuisine:** Some homestays provide home-cooked meals featuring Hangzhou specialties like Dongpo pork or West Lake fish in vinegar sauce—be sure to ask about this!
-    - **Transportation:** Make sure the homestay is conveniently located for getting around, especially if you plan to visit multiple attractions.
-
-    Would you like me to help you find specific homestay options or suggest activities to pair with your stay?
+    Friday: Got it! You prefer staying in homestays when traveling to Hangzhou. Homestays can be a great way to experience local culture and enjoy a more personalized stay. If you'd like, I can help you find some highly recommended homestays in Hangzhou or provide tips on choosing the best one for your trip. Let me know what you need! 😊
 
 
 
@@ -245,7 +221,7 @@ Then we clear the short-term memory and ask the agent about the user's preferenc
 
  .. code-block:: none
 
-    Friday: You prefer staying in homestays that offer cozy, personalized experiences, valuing tranquil, nature-focused retreats. You enjoy connecting with hosts for insider tips and appreciate authentic stays that immerse you in local culture.
+    Friday: You prefer staying in homestays when traveling to Hangzhou.
 
 
 
@@ -547,7 +523,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (1 minutes 7.495 seconds)
+   **Total running time of the script:** (0 minutes 36.783 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_long_term_memory.py:
