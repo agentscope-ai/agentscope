@@ -88,10 +88,11 @@ class StatefulClientBase(MCPClientBase, ABC):
 
             # Block until close() signals.  The wait may also be
             # interrupted by CancelledError if the session's internal
-            # anyio cancel scope is torn down; treat that as a stop.
+            # anyio cancel scope is torn down; treat only cancellation
+            # as a stop signal and let unexpected errors propagate.
             try:
                 await self._stop_event.wait()
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
 
         except Exception as e:
@@ -122,7 +123,10 @@ class StatefulClientBase(MCPClientBase, ABC):
         Spawns a background task that owns the full context-manager
         lifecycle so that ``close()`` can be called from any task.
         """
-        if self.is_connected:
+        if self.is_connected or (
+            self._lifecycle_task is not None
+            and not self._lifecycle_task.done()
+        ):
             raise RuntimeError(
                 "The MCP server is already connected. Call close() "
                 "before connecting again.",
@@ -178,11 +182,15 @@ class StatefulClientBase(MCPClientBase, ABC):
                 self._stop_event.set()
             if self._lifecycle_task:
                 await self._lifecycle_task
-                self._lifecycle_task = None
         except Exception as e:
             if not ignore_errors:
                 raise e
             logger.warning("Error during MCP client cleanup: %s", e)
+        finally:
+            if self._lifecycle_task is None or self._lifecycle_task.done():
+                self._lifecycle_task = None
+                self._stop_event = None
+                self._ready_event = None
 
     async def list_tools(self) -> List[mcp.types.Tool]:
         """Get all available tools from the server.
