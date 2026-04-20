@@ -42,6 +42,7 @@ dependencies = [
     "sqlalchemy",
     "python-frontmatter",
     "aiofiles",
+    "beanie"
 ]
 
 [project.optional-dependencies]

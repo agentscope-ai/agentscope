@@ -3,6 +3,7 @@
 import asyncio
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from bson import ObjectId
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentscope.memory import (
@@ -11,6 +12,7 @@ from agentscope.memory import (
     AsyncSQLAlchemyMemory,
     RedisMemory,
 )
+from agentscope.memory._working_memory import MongoDbMemory
 from agentscope.message import Msg
 
 
@@ -794,3 +796,66 @@ class RedisMemoryTestWithBytes(ShortTermMemoryTest):
             len(msgs),
             0,
         )
+
+
+class MongoDbMemoryTest(ShortTermMemoryTest):
+    """The Redis short-term memory tests."""
+
+    memory: MongoDbMemory
+    """The Redis memory instance."""
+
+    memory_session: MongoDbMemory
+    """The Redis memory instance for different session."""
+
+    memory_user: MongoDbMemory
+    """The Redis memory instance for different user."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up the Redis memory instance for testing."""
+        self.msgs = [
+            Msg("user", "0", "user"),
+            Msg("user", "1", "user"),
+            Msg("assistant", "2", "assistant"),
+            Msg("system", "3", "system"),
+            Msg("user", "4", "user"),
+            Msg("assistant", "5", "assistant"),
+            Msg("system", "6", "system"),
+            Msg("user", "7", "user"),
+            Msg("assistant", "8", "assistant"),
+            Msg("system", "9", "system"),
+        ]
+        for i, msg in enumerate(self.msgs):
+            msg.id = str(i)
+        self.memory = MongoDbMemory(
+            user_id='user_1',
+            session_id='session_1',
+        )
+
+        self.memory_session = MongoDbMemory(
+            user_id='user_1',
+            session_id='session_2'
+        )
+
+        self.memory_user = MongoDbMemory(
+            user_id='user_2',
+            session_id='session_2'
+        )
+
+    async def test_memory(self) -> None:
+        """Test the Redis memory functionalities."""
+        await self._basic_tests()
+        await self._mark_tests()
+        await self._test_add_duplicated_msgs()
+        await self._test_delete_nonexistent_msg()
+        await self._multi_tenant_tests()
+        await self._multi_session_tests()
+        await self._test_serialization()
+
+    async def asyncTearDown(self) -> None:
+        """Clean up after unittests"""
+        await self.memory.clear()
+        await self.memory_user.clear()
+        await self.memory_session.clear()
+        # Close the session or connection if applicable
+        if hasattr(self.memory, "close"):
+            await self.memory.close()
