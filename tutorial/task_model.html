@@ -448,7 +448,7 @@ The supported model APIs and providers include:</p>
 <span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;I should search for AgentScope on Google.&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;ll search for AgentScope on Google.&quot;}, {&#39;type&#39;: &#39;tool_use&#39;, &#39;id&#39;: &#39;642n298gjna&#39;, &#39;name&#39;: &#39;google_search&#39;, &#39;input&#39;: {&#39;query&#39;: &#39;AgentScope?&#39;}}], id=&#39;2026-04-20 10:28:15.765_3d7250&#39;, created_at=&#39;2026-04-20 10:28:15.765&#39;, type=&#39;chat&#39;, usage=None, metadata=None)
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;I should search for AgentScope on Google.&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;ll search for AgentScope on Google.&quot;}, {&#39;type&#39;: &#39;tool_use&#39;, &#39;id&#39;: &#39;642n298gjna&#39;, &#39;name&#39;: &#39;google_search&#39;, &#39;input&#39;: {&#39;query&#39;: &#39;AgentScope?&#39;}}], id=&#39;2026-04-20 11:17:09.408_a8aa5c&#39;, created_at=&#39;2026-04-20 11:17:09.408&#39;, type=&#39;chat&#39;, usage=None, metadata=None)
 </pre></div>
 </div>
 <p>Taking <code class="docutils literal notranslate"><span class="pre">DashScopeChatModel</span></code> as an example, we can use it to create a chat model instance and call it with messages and tools:</p>
@@ -476,8 +476,8 @@ The supported model APIs and providers include:</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">example_model_call</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The response: ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hello! How can I assist you today?&#39;}], id=&#39;58ec9e9d-eb6b-9989-a5fa-d01bb0f9a3bd&#39;, created_at=&#39;2026-04-20 10:28:17.689&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=10, output_tokens=9, time=1.923471, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=10, output_tokens=9)), metadata=None)
-The response as Msg: Msg(id=&#39;XPyiLbZVsTF7XWrf6txzP4&#39;, name=&#39;Friday&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hello! How can I assist you today?&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-04-20 10:28:17.690&#39;, invocation_id=&#39;None&#39;)
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The response: ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hello! How can I assist you today?&#39;}], id=&#39;71e35c37-3402-9d13-b155-50ce3ac03e04&#39;, created_at=&#39;2026-04-20 11:17:10.885&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=10, output_tokens=9, time=1.475922, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=10, output_tokens=9)), metadata=None)
+The response as Msg: Msg(id=&#39;NEVSPc86TVLSiynBHVNfKd&#39;, name=&#39;Friday&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;Hello! How can I assist you today?&#39;}], role=&#39;assistant&#39;, metadata={}, timestamp=&#39;2026-04-20 11:17:10.885&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <section id="streaming">
@@ -520,51 +520,51 @@ When streaming is enabled, the <code class="docutils literal notranslate"><span 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The type of the response: &lt;class &#39;async_generator&#39;&gt;
 Chunk 0
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:19.305&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=1, time=1.613663, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=1)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:11.938&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=1, time=1.050655, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=1)), metadata=None)
 
 Chunk 1
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:19.401&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=4, time=1.70988, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=4)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:12.004&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=4, time=1.116966, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=4)), metadata=None)
 
 Chunk 2
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:19.830&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=7, time=2.138772, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=7)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:12.073&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=7, time=1.18619, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=7)), metadata=None)
 
 Chunk 3
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:19.931&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=10, time=2.239457, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=10)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.144&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=10, time=2.25728, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=10)), metadata=None)
 
 Chunk 4
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:20.160&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=16, time=2.469234, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=16)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.308&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=16, time=2.421394, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=16)), metadata=None)
 
 Chunk 5
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:20.335&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=22, time=2.644147, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=22)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.435&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=22, time=2.548083, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=22)), metadata=None)
 
 Chunk 6
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:20.534&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=28, time=2.843184, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=28)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.582&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=28, time=2.695594, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=28)), metadata=None)
 
 Chunk 7
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:20.754&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=34, time=3.062506, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=34)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.738&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=34, time=2.850714, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=34)), metadata=None)
 
 Chunk 8
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:20.955&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=40, time=3.264226, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=40)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:13.854&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=40, time=2.967298, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=40)), metadata=None)
 
 Chunk 9
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n1&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:21.133&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=46, time=3.442045, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=46)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n1&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:14.869&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=46, time=3.982081, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=46)), metadata=None)
 
 Chunk 10
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:21.685&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=50, time=3.994219, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=50)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:15.407&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=50, time=4.519779, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=50)), metadata=None)
 
 Chunk 11
         type: &lt;class &#39;list&#39;&gt;
-        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;3f626db0-92a2-9ae3-aa0a-ef0e16ee1ce7&#39;, created_at=&#39;2026-04-20 10:28:21.706&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=50, time=4.014874, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=50)), metadata=None)
+        ChatResponse(content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20&#39;}], id=&#39;3fdc623c-6a1e-9022-91b6-de41ce9387e8&#39;, created_at=&#39;2026-04-20 11:17:15.429&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=27, output_tokens=50, time=4.541776, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=27, output_tokens=50)), metadata=None)
 </pre></div>
 </div>
 </section>
@@ -596,7 +596,7 @@ Chunk 11
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The final response:
-ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;Okay, the user asked, &quot;Who am I?&quot; I need to figure out how to respond. First, I should consider that they might be asking about their identity in a philosophical sense, or maybe they\&#39;re looking for a personal reflection. But since I\&#39;m an AI, I don\&#39;t have personal experiences or consciousness.\n\nI should start by acknowledging that I can\&#39;t know their personal identity. Then, maybe offer to help them explore their own identity through questions or discussions. It\&#39;s important to be respectful and not assume anything about them. Also, I should make sure the response is helpful and open-ended, encouraging them to share more if they want. Let me check if there\&#39;s any cultural context I should be aware of. The question is pretty universal, so probably not. Just keep it friendly and supportive.&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;The question &quot;Who am I?&quot; is a profound and timeless inquiry that touches on philosophy, identity, and self-awareness. As an AI, I don\&#39;t have a personal identity or consciousness, so I can\&#39;t answer this from my own perspective. However, I can help you explore it!\n\nIf you\&#39;re asking this question, you might be reflecting on your sense of self, purpose, or existence. Here are a few angles to consider:\n\n1. **Philosophical**: Think about what defines you—your values, beliefs, experiences, or relationships. Philosophers like Descartes (&quot;I think, therefore I am&quot;) or existentialists like Sartre might offer insights.\n2. **Psychological**: Your identity is shaped by your thoughts, emotions, and interactions with the world. Therapy or introspection can help unpack this.\n3. **Spiritual/Existential**: Some people find meaning through spirituality, creativity, or connection to something greater than themselves.\n4. **Practical**: Who you are might also be tied to your roles (e.g., friend, parent, professional) and how you contribute to the world.\n\nIf you\&#39;d like, I can help you brainstorm or reflect on this further. What resonates most with you? 😊&#39;}], id=&#39;5f525172-9f17-9604-ada0-cc80df04ea81&#39;, created_at=&#39;2026-04-20 10:28:27.314&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=12, output_tokens=419, time=5.604729, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=12, output_tokens=419)), metadata=None)
+ChatResponse(content=[{&#39;type&#39;: &#39;thinking&#39;, &#39;thinking&#39;: &#39;Okay, the user asked &quot;Who am I?&quot; and I need to figure out how to respond. First, I should consider the context. Since the user hasn\&#39;t provided any specific information about themselves, I can\&#39;t know their identity. My role is to assist them, so I should ask for more details.\n\nI need to make sure my response is helpful and guides them to provide the necessary information. Maybe they\&#39;re looking for a way to describe themselves or need help with something related to their identity. I should keep it friendly and open-ended.\n\nI should avoid making assumptions and instead invite them to share more about their situation. That way, I can better assist them. Let me phrase it in a way that\&#39;s encouraging and clear.\n&#39;}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;You are a person with unique thoughts, experiences, and qualities that define your identity. Since I don’t have access to personal information about you, I can’t know your specific details. However, you can explore your identity by reflecting on aspects like your values, passions, goals, and how you see yourself in the world. If you’d like, you can share more about your interests or experiences, and I’d be happy to help you explore or discuss them! 🌟&#39;}], id=&#39;33ab5705-11cc-9670-9151-833e5a5db0d5&#39;, created_at=&#39;2026-04-20 11:17:18.975&#39;, type=&#39;chat&#39;, usage=ChatUsage(input_tokens=12, output_tokens=247, time=3.542966, type=&#39;chat&#39;, metadata=GenerationUsage(input_tokens=12, output_tokens=247)), metadata=None)
 </pre></div>
 </div>
 </section>
@@ -636,7 +636,7 @@ To provide a unified interface, AgentScope solves the problem by:</p>
 <li><p><a class="reference internal" href="quickstart_message.html#message"><span class="std std-ref">Create Message</span></a></p></li>
 <li><p><a class="reference internal" href="task_prompt.html#prompt"><span class="std std-ref">Prompt Formatter</span></a></p></li>
 </ul>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 11.554 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 9.571 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-model-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/6d26becb6abae50c483b7d863e1725fb/task_model.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_model.ipynb</span></code></a></p>
