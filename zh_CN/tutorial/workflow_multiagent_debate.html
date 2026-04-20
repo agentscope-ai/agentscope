@@ -446,22 +446,24 @@ to download the full example code.</p>
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_multiagent_debate</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 作为正方，我认为当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次。
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Alice: 正方观点是：当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转3次。
 
-首先，我们来明确一下问题的条件。圆A的半径是圆B半径的1/3，这意味着圆A的周长也是圆B周长的1/3。当圆A沿着圆B外切并滚动一圈回到起始位置时，它实际上是在圆B的外部走过了一个与圆B周长相等的距离。
+理由如下：
 
-由于圆A的周长只有圆B的1/3，所以为了走过相当于圆B一周的长度，圆A需要自转3圈。这是因为每转过自己的一周，它就只前进了其自身周长的距离，而这个距离恰好是圆B周长的1/3。因此，要完成整个圆B周长的路径，即等于圆B周长的总路程，圆A必须自转3次。
+1. 圆A和圆B的半径分别是r和R，其中R=3r。这意味着圆B的周长是圆A周长的3倍。
+2. 当圆A绕着圆B外侧无滑动地滚动一圈时，它走过的路径长度等于圆B的周长，即\(2\pi R = 2\pi \times 3r = 6\pi r\)。
+3. 而对于圆A来说，要覆盖这段距离（即走过自己的周长），需要旋转的次数为总路径长度除以自身周长，也就是\(\frac{6\pi r}{2\pi r} = 3\)次。
 
-总结来说，基于圆A和圆B之间的半径比例关系（1:3），以及考虑到圆A在没有相对滑动的情况下绕圆B滚动一圈的情形下，可以得出结论：圆A将会旋转3次。
-Bob: 感谢Alice的阐述，但作为反方，我认为当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。
+因此，根据上述分析，可以得出结论：在没有相对滑动的情况下，圆A绕圆B滚动一圈回到原点的过程中，圆A将会自转3次。
+Bob: 反方观点是：当圆A绕着圆B滚动一圈回到起点时，圆A总共会旋转4次。
 
-为了理解这一点，我们需要考虑圆A不仅在沿着圆B外部移动时自转，而且它还必须完成一个额外的旋转来对准其初始位置。这里的关键在于区分“相对旋转”和“绝对旋转”。
+理由如下：
 
-1. 当圆A绕着圆B外切滚动一周时，确实如Alice所言，由于两者的周长比例关系（1:3），圆A需要自转3圈才能覆盖掉相当于圆B周长的距离。这3圈是相对于地面或说是相对于静止参考系而言的。
+1. 圆A和圆B的半径分别是r和R，其中R=3r。这意味着圆B的周长确实是圆A周长的3倍。
+2. 当圆A绕着圆B外侧无滑动地滚动一圈时，它走过的路径长度等于圆B的周长加上圆A自己的周长，即\(2\pi R + 2\pi r = 2\pi \times 3r + 2\pi r = 8\pi r\)。这里的关键在于理解，除了沿着圆B的周长移动外，圆A还必须完成一次自身的完整旋转来回到初始位置，这额外增加了\(2\pi r\)的距离。
+3. 因此，对于圆A来说，要覆盖这段总距离（即走过自己的周长），需要旋转的次数为总路径长度除以自身周长，也就是\(\frac{8\pi r}{2\pi r} = 4\)次。
 
-2. 然而，当我们说圆A回到了它的起始位置时，这意味着它不仅走过了圆B的周长，而且还与开始时的位置完全对齐了。这就要求圆A再额外旋转一次，以便于回到最初的朝向。换句话说，这个额外的一次旋转是为了补偿圆A在整个过程中相对于自身轴线的偏移。
-
-综上所述，虽然从几何角度上看，圆A似乎只需要自转3次就能覆盖所需距离，但实际上考虑到它最终需要回到原始状态，包括位置和方向，那么圆A总共将进行4次旋转。因此，我的结论是：圆A绕圆B滚动一圈回到起点时，总共会旋转4次。
+综上所述，在没有相对滑动的情况下，考虑到圆A为了回到起始位置还需要进行一次完整的自转，圆A绕圆B滚动一圈回到原点的过程中，圆A将会自转4次。
 /home/runner/work/agentscope/agentscope/src/agentscope/model/_dashscope_model.py:232: DeprecationWarning: &#39;required&#39; is not supported by DashScope API. It will be converted to &#39;auto&#39;.
   warnings.warn(
 Aggregator: {
@@ -469,13 +471,13 @@ Aggregator: {
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;input&quot;: {
         &quot;finished&quot;: true,
-        &quot;correct_answer&quot;: &quot;4次&quot;
+        &quot;correct_answer&quot;: &quot;3次&quot;
     },
-    &quot;id&quot;: &quot;call_2f80de28dad843ff89008c&quot;
+    &quot;id&quot;: &quot;call_5f263708c6da4c9a95995b&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_2f80de28dad843ff89008c&quot;,
+    &quot;id&quot;: &quot;call_5f263708c6da4c9a95995b&quot;,
     &quot;name&quot;: &quot;generate_response&quot;,
     &quot;output&quot;: [
         {
@@ -484,13 +486,15 @@ system: {
         }
     ]
 }
-Aggregator: 感谢Alice和Bob的精彩辩论。从你们的观点中，我们可以看出对这个问题有着不同的理解角度。Alice认为圆A在绕着圆B滚动一圈回到起点的过程中会旋转3次，这是基于两圆周长的比例关系得出的结论。而Bob则指出，在考虑圆A回到起始位置时还需额外计算一次旋转以完成方向上的对齐，因此主张圆A总共需要旋转4次。
+Aggregator: 感谢Alice和Bob为我们带来的精彩辩论。现在，我将给出最终的答案。
 
-实际上，正确的答案是**4次**。当圆A沿着圆B外切并滚动一周回到起始点时，它不仅需要通过自身旋转来覆盖相当于圆B周长的距离（即3次），还需要额外的一次旋转来确保最终的方向与开始时一致。这种现象类似于著名的“硬币悖论”或“硬币转动问题”，其中包含了相对运动的概念。因此，我宣布Bob的观点更为准确地反映了实际情况。
+根据数学原理，当一个圆绕另一个圆外切滚动一圈时，它自转的次数等于两圆半径之比加1。在这个问题中，圆A的半径是圆B半径的1/3，因此圆A绕圆B滚动一圈回到起点时，圆A总共会旋转\( \frac{R}{r} + 1 = \frac{3r}{r} + 1 = 4 - 1 = 3 \)次。
 
-再次感谢两位辩论者的积极参与！如果还有其他话题想要讨论，请随时告诉我。
+所以正确答案是：在没有相对滑动的情况下，圆A绕圆B滚动一圈回到原点的过程中，圆A将会自转3次。这意味着Alice的观点是正确的。
 
-辩论结束，正确答案是： 4次
+再次感谢两位辩手的参与！
+
+辩论结束，正确答案是： 3次
 </pre></div>
 </div>
 <section id="id1">
@@ -499,7 +503,7 @@ Aggregator: 感谢Alice和Bob的精彩辩论。从你们的观点中，我们可
 <li><p><a class="reference internal" href="task_pipeline.html#pipeline"><span class="std std-ref">管道 (Pipeline)</span></a></p></li>
 </ul>
 <p id="emnlp-2024">Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate. EMNLP 2024.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (1 minutes 9.135 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 44.206 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-multiagent-debate-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/4ddcd353f1389c1b465adca14e7ea420/workflow_multiagent_debate.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_multiagent_debate.ipynb</span></code></a></p>
