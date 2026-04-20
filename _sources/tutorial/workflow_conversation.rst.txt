@@ -280,9 +280,9 @@ Specifically, the agents within the same ``MsgHub`` will receive messages from o
 
  .. code-block:: none
 
-    Alice: Hi there! I'm Alice, a student currently studying literature and really into exploring different genres of books. I also love to spend my time writing and sometimes dabble in painting. How about you? What are your interests?
-    Bob: Hey Alice! I'm Bob, and I'm actually into a lot of different things. I love playing video games and I'm really into tech stuff. I also enjoy sports, especially basketball. It's cool to meet someone who's into literature and the arts; maybe you can recommend a good book sometime!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a bit of a mix between both of you. I enjoy reading, particularly science fiction and fantasy, and I also love technology and coding. I play a few video games too, mostly strategy and RPGs. It's great to meet you both! Maybe we can exchange some book and game recommendations.
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and music. It's great to meet you too! What kind of technology stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I love diving into books and exploring different cultures through travel and food. It's great to meet you both! Alice, that's really cool about your interest in technology. What specific areas or projects are you currently excited about?
 
 
 
@@ -317,9 +317,9 @@ Now we print the memory of Alice to check if her memory is updated correctly.
 
     Memory of Alice:
     system: Now you meet each other with a brief self-introduction.
-    Alice: Hi there! I'm Alice, a student currently studying literature and really into exploring different genres of books. I also love to spend my time writing and sometimes dabble in painting. How about you? What are your interests?
-    Bob: Hey Alice! I'm Bob, and I'm actually into a lot of different things. I love playing video games and I'm really into tech stuff. I also enjoy sports, especially basketball. It's cool to meet someone who's into literature and the arts; maybe you can recommend a good book sometime!
-    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a bit of a mix between both of you. I enjoy reading, particularly science fiction and fantasy, and I also love technology and coding. I play a few video games too, mostly strategy and RPGs. It's great to meet you both! Maybe we can exchange some book and game recommendations.
+    Alice: Hi there! I'm Alice, a student with a keen interest in technology and science. Nice to meet you! What about you?
+    Bob: Hey Alice! I'm Bob, and I'm also a student. I'm really into sports and music. It's great to meet you too! What kind of technology stuff are you into?
+    Charlie: Hey Alice and Bob! I'm Charlie, and I'm a student as well. I love diving into books and exploring different cultures through travel and food. It's great to meet you both! Alice, that's really cool about your interest in technology. What specific areas or projects are you currently excited about?
 
 
 
@@ -336,7 +336,7 @@ Further Reading
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 21.277 seconds)
+   **Total running time of the script:** (0 minutes 15.374 seconds)
 
 
 .. _sphx_glr_download_tutorial_workflow_conversation.py:

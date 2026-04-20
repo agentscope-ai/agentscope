@@ -331,9 +331,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='EA3ozsUS8mu7AqAiCbFsTa', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='krmpmVHjCeHzGh4E9DCEhs', embedding=None, score=0.5657136536003619) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='cRK5KjgwUTMXviNSWSvVxN', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='2wxfmyQw9Xd6Y7izaUCQrK', embedding=None, score=0.5062624400117309) 
 
 
 
@@ -455,27 +455,26 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any special memories you two have together? Or is there something I can help you with related to your friendship?
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any activities you enjoy doing together? Or is there something I can help you with related to your friendship?
 
 
     The second response: 
-    Friday: I don't have any specific information about John Doe's father, as the name "John Doe" is typically used as a placeholder for an unidentified or anonymous person. To find out who his father is, we would need more specific and real information about your friend.
-
-    If you can provide me with more details, I could try to help you find the information you're looking for. Would you like to share any additional information, or should I attempt to search for general knowledge about someone named John Doe, which may not be related to your friend? If it's the latter, please let me know and I will perform a search.
+    Friday: I don't have that information at hand. To find out who John Doe's father is, I will need to look up the information. Let me do a quick search for you.
     {
         "type": "tool_use",
-        "id": "call_1b56624092f24de28454bd",
+        "id": "call_ac6ed3e74f7e411ca8d75a",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
-            "limit": 5
+            "limit": 5,
+            "score_threshold": null
         },
-        "raw_input": "{\"query\": \"John Doe father\", \"limit\": 5}"
+        "raw_input": "{\"query\": \"John Doe father\", \"limit\": 5, \"score_threshold\": null}"
     }
 
     system: {
         "type": "tool_result",
-        "id": "call_1b56624092f24de28454bd",
+        "id": "call_ac6ed3e74f7e411ca8d75a",
         "name": "retrieve_knowledge",
         "output": [
             {
@@ -500,9 +499,7 @@ and providing a proper description for the tool.
             }
         ]
     }
-    Friday: Based on the information retrieved, one of the documents suggests that for someone with the name "John Doe," the father's name is mentioned as Michael Doe, who is a doctor. However, please keep in mind that "John Doe" is often used as a generic placeholder name, and this information may not be related to your specific friend.
-
-    If you're looking for information about your actual friend named John Doe, we would need more specific details or context. Can you provide any additional information that might help identify him more accurately?
+    Friday: According to the information I found, John Doe's father is Michael Doe, who is a doctor. If you need more details or if there's anything else you'd like to know, feel free to ask!
 
 
 
@@ -569,7 +566,7 @@ will automatically retrieve knowledge at the beginning of each reply.
 
  .. code-block:: none
 
-    Friday: According to the information provided, John Doe's father is Michael Doe, who is a doctor.
+    Friday: John Doe's father is Michael Doe, who is a doctor.
     Take a look at the agent's memory:
     [
       {
@@ -718,7 +715,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='mZLAMew6mRfUEjA72z794K', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata={}, timestamp='2026-04-20 08:48:22.983', invocation_id='None')
+    Msg(id='RcHwPgj3a3xJb9Nj5vsNKY', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata={}, timestamp='2026-04-20 10:03:59.194', invocation_id='None')
 
 
 
@@ -731,7 +728,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 58.239 seconds)
+   **Total running time of the script:** (0 minutes 40.403 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:
