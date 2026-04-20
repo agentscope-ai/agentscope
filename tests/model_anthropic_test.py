@@ -371,7 +371,7 @@ class TestAnthropicChatModel(IsolatedAsyncioTestCase):
                 ),
                 AnthropicEventMock(
                     "message_delta",
-                    usage=Mock(output_tokens=5),
+                    usage=Mock(output_tokens=5, input_tokens=0),
                 ),
             ]
 
