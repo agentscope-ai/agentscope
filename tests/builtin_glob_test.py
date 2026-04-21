@@ -51,7 +51,7 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
     async def test_tool_properties(self) -> None:
         """Test glob tool properties."""
-        self.assertEqual(self.glob_tool.name, "glob")
+        self.assertEqual(self.glob_tool.name, "Glob")
         self.assertIsInstance(self.glob_tool.description, str)
         self.assertIsInstance(self.glob_tool.input_schema, dict)
         self.assertFalse(self.glob_tool.is_mcp)
@@ -64,7 +64,8 @@ class GlobToolTest(IsolatedAsyncioTestCase):
         tool_input = {"pattern": "*.py"}
         decision = await self.glob_tool.check_permissions(tool_input, context)
 
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+        # Read/Glob/Grep are read-only, return PASSTHROUGH
+        self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
 
     async def test_simple_pattern(self) -> None:
         """Test simple glob pattern."""

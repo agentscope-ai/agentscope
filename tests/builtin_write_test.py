@@ -24,7 +24,7 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
     async def test_tool_properties(self) -> None:
         """Test write tool properties."""
-        self.assertEqual(self.write_tool.name, "write")
+        self.assertEqual(self.write_tool.name, "Write")
         self.assertIsInstance(self.write_tool.description, str)
         self.assertIsInstance(self.write_tool.input_schema, dict)
         self.assertFalse(self.write_tool.is_mcp)

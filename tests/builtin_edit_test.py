@@ -29,7 +29,7 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
     async def test_tool_properties(self) -> None:
         """Test edit tool properties."""
-        self.assertEqual(self.edit_tool.name, "edit")
+        self.assertEqual(self.edit_tool.name, "Edit")
         self.assertIsInstance(self.edit_tool.description, str)
         self.assertIsInstance(self.edit_tool.input_schema, dict)
         self.assertFalse(self.edit_tool.is_mcp)

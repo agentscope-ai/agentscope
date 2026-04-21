@@ -19,7 +19,7 @@ from ...message import TextBlock
 class Write(ToolBase):
     """The write tool."""
 
-    name: str = "write"
+    name: str = "Write"
     """The tool name presented to the agent."""
 
     # pylint: disable=line-too-long
@@ -53,19 +53,135 @@ Usage:
     is_read_only: bool = False
     is_concurrency_safe: bool = False
 
-    def __init__(self) -> None:
-        """Initialize the write tool."""
+    def __init__(
+        self,
+        additional_dangerous_files: list[str] | None = None,
+        additional_dangerous_directories: list[str] | None = None,
+    ) -> None:
+        """Initialize the write tool.
+
+        Args:
+            additional_dangerous_files (`list[str] | None`, optional):
+                Additional dangerous files to check (added to built-in
+                defaults). Use this to add project-specific sensitive files
+                like '.env' or '.secrets'.
+            additional_dangerous_directories (`list[str] | None`, optional):
+                Additional dangerous directories to check (added to built-in
+                defaults). Use this to add project-specific sensitive
+                directories.
+        """
+        # Merge class-level dangerous paths with additional ones
+        self.dangerous_files = self.__class__.dangerous_files.copy()
+        if additional_dangerous_files:
+            self.dangerous_files.extend(additional_dangerous_files)
+
+        self.dangerous_directories = (
+            self.__class__.dangerous_directories.copy()
+        )
+        if additional_dangerous_directories:
+            self.dangerous_directories.extend(additional_dangerous_directories)
 
     async def check_permissions(
         self,
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permissions for file writing."""
+        """Check permissions for file writing.
+
+        This method implements Write-specific permission checks:
+        1. Dangerous path check (safety check, bypass-immune)
+        2. ACCEPT_EDITS mode check for files in working directories
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input containing "file_path" key
+            context (`PermissionContext`):
+                The permission context with mode and rules
+
+        Returns:
+            `PermissionDecision`:
+                ASK for dangerous paths, ALLOW for safe operations in
+                ACCEPT_EDITS mode, PASSTHROUGH otherwise
+        """
+        from .._permission import PermissionMode
+
+        file_path = tool_input.get("file_path")
+        if not file_path:
+            return PermissionDecision(
+                behavior=PermissionBehavior.PASSTHROUGH,
+                message="No file path provided",
+            )
+
+        # 1. Check for dangerous paths (safety check, bypass-immune)
+        if self._is_dangerous_path(file_path):
+            return PermissionDecision(
+                behavior=PermissionBehavior.ASK,
+                message=f"Permission required: Write operation on "
+                f"sensitive file {file_path}",
+                decision_reason="Safety check: dangerous file or directory",
+            )
+
+        # 2. Check ACCEPT_EDITS mode for files in working directories
+        if context.mode == PermissionMode.ACCEPT_EDITS:
+            if self._path_in_allowed_working_path(file_path, context):
+                return PermissionDecision(
+                    behavior=PermissionBehavior.ALLOW,
+                    message=f"Permission granted for writing {file_path} "
+                    f"(accept edits mode - in working directory)",
+                    decision_reason="File is in working directory and not "
+                    "a dangerous path",
+                )
+
+        # 3. Default to asking for permission
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
-            message=f"Write file: {tool_input.get('file_path', '')}",
+            message=f"Claude requested permissions to write to {file_path}, "
+            f"but you haven't granted it yet.",
         )
+
+    def _path_in_allowed_working_path(
+        self,
+        file_path: str,
+        context: PermissionContext,
+    ) -> bool:
+        """Check if a file path is within any allowed working directory.
+
+        Args:
+            file_path (`str`):
+                The file path to check
+            context (`PermissionContext`):
+                The permission context containing working directories
+
+        Returns:
+            `bool`:
+                True if the path is within any allowed working directory
+        """
+
+        # Get all working directories (current directory + additional)
+        current_dir = os.getcwd()
+        additional_dirs = list(context.working_directories.keys())
+        all_working_dirs = [current_dir] + additional_dirs
+
+        # Normalize paths
+        abs_file_path = os.path.abspath(os.path.expanduser(file_path))
+
+        # Check if file path is in any working directory
+        for working_dir in all_working_dirs:
+            abs_working_dir = os.path.abspath(os.path.expanduser(working_dir))
+            try:
+                # Check if file_path is inside working_dir
+                os.path.relpath(abs_file_path, abs_working_dir)
+                if (
+                    abs_file_path.startswith(abs_working_dir + os.sep)
+                    or abs_file_path == abs_working_dir
+                ):
+                    return True
+            except ValueError:
+                # On Windows, relpath raises ValueError if paths are on
+                # different drives
+                continue
+
+        return False
 
     async def __call__(  # type: ignore[override]
         self,

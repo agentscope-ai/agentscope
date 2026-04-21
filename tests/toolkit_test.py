@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-argument
 """Toolkit test case."""
 import json
 from typing import Any, AsyncGenerator, Generator
@@ -16,7 +17,6 @@ from agentscope.tool import (
     Toolkit,
     ToolBase,
     ToolChunk,
-    PermissionContext,
     PermissionDecision,
     PermissionBehavior,
     ToolResponse,
@@ -38,8 +38,8 @@ class Tool1(ToolBase):
 
     async def check_permissions(
         self,
-        tool_input: dict[str, Any],
-        context: PermissionContext,
+        *args: Any,
+        **kwargs: Any,
     ) -> PermissionDecision:
         """Check permissions for the tool."""
         return PermissionDecision(
@@ -69,8 +69,8 @@ class Tool2(ToolBase):
 
     async def check_permissions(
         self,
-        tool_input: dict[str, Any],
-        context: PermissionContext,
+        *args: Any,
+        **kwargs: Any,
     ) -> PermissionDecision:
         """Check permissions for the tool."""
         return PermissionDecision(

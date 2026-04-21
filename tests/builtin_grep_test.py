@@ -38,6 +38,16 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         ) as f:
             f.write("This is a text file\nHello from text\n")
 
+        # Create subdirectory with files for glob pattern testing
+        subdir = os.path.join(self.temp_dir, "subdir")
+        os.makedirs(subdir)
+        with open(
+            os.path.join(subdir, "nested.py"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write("def nested():\n    print('Nested')\n")
+
     async def asyncTearDown(self) -> None:
         """Clean up temporary files."""
         import shutil
@@ -47,7 +57,7 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_tool_properties(self) -> None:
         """Test grep tool properties."""
-        self.assertEqual(self.grep_tool.name, "grep")
+        self.assertEqual(self.grep_tool.name, "Grep")
         self.assertIsInstance(self.grep_tool.description, str)
         self.assertIsInstance(self.grep_tool.input_schema, dict)
         self.assertFalse(self.grep_tool.is_mcp)
@@ -60,7 +70,8 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         tool_input = {"pattern": "hello"}
         decision = await self.grep_tool.check_permissions(tool_input, context)
 
-        self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
+        # Read/Glob/Grep are read-only, return PASSTHROUGH
+        self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
 
     async def test_simple_search(self) -> None:
         """Test simple grep search."""
@@ -141,4 +152,38 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
         # Should only find .py files
         self.assertIn("test1.py", content)
+        self.assertNotIn("test.txt", content)
+
+    async def test_invalid_regex(self) -> None:
+        """Test grep with invalid regex pattern."""
+        chunks = []
+        async for chunk in self.grep_tool(
+            pattern="[invalid(regex",
+            path=self.temp_dir,
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].state, "error")
+        self.assertIn("Invalid regex pattern", chunks[0].content[0].text)
+
+    async def test_glob_pattern_with_subdirs(self) -> None:
+        """Test glob pattern matching with subdirectories like **/*.py."""
+        chunks = []
+        async for chunk in self.grep_tool(
+            pattern="def",
+            path=self.temp_dir,
+            glob="**/*.py",
+            output_mode="files_with_matches",
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        content = chunks[0].content[0].text
+
+        # Should find all .py files including in subdirectories
+        self.assertIn("test1.py", content)
+        self.assertIn("test2.py", content)
+        self.assertIn("nested.py", content)
+        # Should not find .txt files
         self.assertNotIn("test.txt", content)

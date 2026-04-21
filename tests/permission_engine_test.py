@@ -10,53 +10,16 @@ from agentscope.tool import (
     PermissionRule,
     PermissionBehavior,
     AdditionalWorkingDirectory,
+    Bash,
+    Write,
+    Read,
+    Edit,
 )
 from agentscope.message import ToolCallBlock
 
 
-class PermissionEngineInitializationTest(IsolatedAsyncioTestCase):
-    """Test cases for PermissionEngine initialization."""
-
-    async def test_initialization_default(self) -> None:
-        """Test default initialization with built-in dangerous paths."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
-        engine = PermissionEngine(context)
-
-        # Check that built-in dangerous files are loaded
-        self.assertIn(".bashrc", engine.dangerous_files)
-        self.assertIn(".ssh/config", engine.dangerous_files)
-        self.assertIn(".gitconfig", engine.dangerous_files)
-
-        # Check that built-in dangerous directories are loaded
-        self.assertIn(".git", engine.dangerous_directories)
-        self.assertIn(".ssh", engine.dangerous_directories)
-
-    async def test_initialization_custom_dangerous_paths(self) -> None:
-        """Test initialization with custom dangerous paths."""
-        context = PermissionContext(mode=PermissionMode.DEFAULT)
-        engine = PermissionEngine(
-            context,
-            additional_dangerous_files=[".env", ".secrets"],
-            additional_dangerous_directories=["secrets/", "private/"],
-        )
-
-        # Check that custom dangerous files are added
-        self.assertIn(".env", engine.dangerous_files)
-        self.assertIn(".secrets", engine.dangerous_files)
-
-        # Check that built-in dangerous files are still present
-        self.assertIn(".bashrc", engine.dangerous_files)
-
-        # Check that custom dangerous directories are added
-        self.assertIn("secrets/", engine.dangerous_directories)
-        self.assertIn("private/", engine.dangerous_directories)
-
-        # Check that built-in dangerous directories are still present
-        self.assertIn(".git", engine.dangerous_directories)
-
-
 class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
-    """Test cases for rule priority and decision making."""
+    """Test cases for rule priority and decision-making."""
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
@@ -64,7 +27,7 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
         self.engine = PermissionEngine(self.context)
 
     async def test_deny_rule_priority(self) -> None:
-        """Test that deny rules have highest priority."""
+        """Test that deny rules have the highest priority."""
         # Add both allow and deny rules for the same tool
         self.engine.add_rule(
             PermissionRule(
@@ -88,7 +51,7 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git status"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Deny should take precedence over allow
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
@@ -118,7 +81,7 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Ask should take precedence over allow
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -156,7 +119,7 @@ class PermissionEngineRulePriorityTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "test command"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Deny should win
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
@@ -181,7 +144,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Bash())
 
         # BYPASS mode should allow by default
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
@@ -207,9 +170,9 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "rm -rf /tmp"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Bash())
 
-        # Deny rules have highest priority, even in BYPASS mode
+        # Deny rules have the highest priority, even in BYPASS mode
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
     async def test_bypass_mode_with_dangerous_path(self) -> None:
@@ -225,7 +188,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/.bashrc"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Write())
 
         # Safety checks are bypass-immune
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -241,7 +204,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Bash())
 
         # DONT_ASK mode should deny instead of ask
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
@@ -266,7 +229,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/tmp/project/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Write())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Read tool within working directory
@@ -275,7 +238,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Read",
             input=json.dumps({"file_path": "/tmp/project/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Read())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Edit tool within working directory
@@ -284,7 +247,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/tmp/project/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Edit())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
     async def test_accept_edits_mode_outside_working_directory(self) -> None:
@@ -307,7 +270,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/home/user/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Edit())
 
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
@@ -322,7 +285,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Read",
             input=json.dumps({"file_path": "/tmp/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Read())
 
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
@@ -337,7 +300,7 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/tmp/file.txt"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Write())
 
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
@@ -367,7 +330,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test command with arguments
@@ -376,7 +339,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git status"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test command with multiple arguments
@@ -385,7 +348,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git add ."}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test non-matching command
@@ -394,7 +357,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
     async def test_bash_substring_pattern_matching(self) -> None:
@@ -414,7 +377,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install package"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
         # Test command containing substring in different position
@@ -423,7 +386,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "pip install requests"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
     async def test_bash_multiple_rules(self) -> None:
@@ -451,7 +414,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "rm -rf /tmp"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
         # Test allow rule
@@ -460,7 +423,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git status"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test no matching rule
@@ -469,7 +432,7 @@ class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "npm install"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
     async def asyncTearDown(self) -> None:
@@ -503,7 +466,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
             name="Read",
             input=json.dumps({"file_path": "test.py"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Read())
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
 
         # Test non-matching file
@@ -512,7 +475,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
             name="Read",
             input=json.dumps({"file_path": "test.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Read())
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
     async def test_file_directory_pattern_matching(self) -> None:
@@ -532,7 +495,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/tmp/test.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Edit())
         # Note: The current implementation uses fnmatch/pathlib matching
         # /tmp/** may not match /tmp/test.txt depending on implementation
         # This test verifies the actual behavior
@@ -547,7 +510,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/tmp/subdir/test.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Edit())
         self.assertIn(
             decision.behavior,
             [PermissionBehavior.ALLOW, PermissionBehavior.ASK],
@@ -559,7 +522,7 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/home/user/test.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Edit())
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
 
     async def asyncTearDown(self) -> None:
@@ -586,11 +549,10 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/.bashrc"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Write())
 
         # Should ask for confirmation (safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        self.assertIn("safety", decision.decision_reason.lower())
 
     async def test_dangerous_file_blocks_edit(self) -> None:
         """Test that Edit operations on dangerous files require
@@ -601,7 +563,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Edit",
             input=json.dumps({"file_path": "/home/user/.gitconfig"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Edit())
 
         # Should ask for confirmation (safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -616,7 +578,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/.ssh/config"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Write())
 
         # Should ask for confirmation (safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -630,7 +592,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "rm /home/user/.bashrc"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask for confirmation (safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -648,7 +610,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/.bashrc"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Write())
 
         # Safety checks are bypass-immune
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -673,7 +635,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/.bashrc"}),
         )
-        decision = await engine.check_permission(tool_call)
+        decision = await engine.check_permission(tool_call, Write())
 
         # Should ask despite being in working directory
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -686,7 +648,7 @@ class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
             name="Write",
             input=json.dumps({"file_path": "/home/user/test.py"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Write())
 
         # Should ask (no allow rule, but not blocked by safety check)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -715,7 +677,7 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git commit -m 'test'"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask (not read-only)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -738,7 +700,7 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
             name="Read",
             input=json.dumps({"file_path": "/tmp/test.py"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Read())
 
         # Should have suggestions
         self.assertGreater(len(decision.suggested_rules), 0)
@@ -770,7 +732,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git status"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should be allowed (read-only command)
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
@@ -783,7 +745,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "ls -la"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should be allowed (read-only command)
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
@@ -795,7 +757,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "cat file.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should be allowed (read-only command)
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
@@ -807,7 +769,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "git commit -m 'test'"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask (not read-only)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -821,7 +783,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "ls -la && rm ~/.bashrc"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask because of dangerous path (safety check is bypass-immune)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -835,7 +797,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "ls -la && cat file.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should be allowed (all read-only)
         self.assertEqual(decision.behavior, PermissionBehavior.ALLOW)
@@ -848,7 +810,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "ls -la && git commit -m 'test'"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask (contains non-read-only command)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -861,7 +823,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "cat file.txt > ~/.bashrc"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask because of dangerous path in redirection
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -875,7 +837,7 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
             name="Bash",
             input=json.dumps({"command": "cat file.txt > /tmp/output.txt"}),
         )
-        decision = await self.engine.check_permission(tool_call)
+        decision = await self.engine.check_permission(tool_call, Bash())
 
         # Should ask (redirection is not considered read-only)
         self.assertEqual(decision.behavior, PermissionBehavior.ASK)
@@ -884,3 +846,125 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
         """Clean up test fixtures."""
         self.engine = None
         self.context = None
+
+
+class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
+    """Test that all safety checks are bypass-immune (cannot be overridden
+    by BYPASS mode or allow rules)."""
+
+    async def test_injection_check_bypass_immune(self) -> None:
+        """Test that injection detection is bypass-immune."""
+        context = PermissionContext(mode=PermissionMode.BYPASS)
+        engine = PermissionEngine(context)
+
+        # Command substitution should be blocked even in BYPASS mode
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "ls $(rm -rf /)"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("command_substitution", decision.message)
+
+    async def test_injection_check_not_bypassed_by_allow_rule(self) -> None:
+        """Test that allow rules cannot bypass injection detection."""
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+
+        # Add a broad allow rule
+        engine.add_rule(
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="ls:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        # ls $(rm -rf /) should still be blocked despite allow rule for ls:*
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "ls $(rm -rf /)"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("command_substitution", decision.message)
+
+    async def test_dangerous_removal_bypass_immune(self) -> None:
+        """Test that dangerous removal path check is bypass-immune."""
+        context = PermissionContext(mode=PermissionMode.BYPASS)
+        engine = PermissionEngine(context)
+
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "rm -rf /"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        # Can be blocked by either dangerous command pattern or dangerous
+        # removal path check
+        self.assertTrue(
+            "Dangerous removal operation" in decision.message
+            or "dangerous pattern" in decision.message,
+        )
+
+    async def test_dangerous_removal_not_bypassed_by_allow_rule(self) -> None:
+        """Test that allow rules cannot bypass dangerous removal check."""
+        context = PermissionContext(mode=PermissionMode.DEFAULT)
+        engine = PermissionEngine(context)
+
+        # Add a broad allow rule for rm
+        engine.add_rule(
+            PermissionRule(
+                tool_name="Bash",
+                rule_content="rm:*",
+                behavior=PermissionBehavior.ALLOW,
+                source="test",
+            ),
+        )
+
+        # rm -rf / should still be blocked despite allow rule for rm:*
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "rm -rf /"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        # Can be blocked by either dangerous command pattern or dangerous
+        # removal path check
+        self.assertTrue(
+            "Dangerous removal operation" in decision.message
+            or "dangerous pattern" in decision.message,
+        )
+
+    async def test_sed_constraint_bypass_immune(self) -> None:
+        """Test that sed constraint check is bypass-immune."""
+        context = PermissionContext(mode=PermissionMode.BYPASS)
+        engine = PermissionEngine(context)
+
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "sed 's/old/new/e' file.txt"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())
+
+    async def test_dangerous_config_path_bypass_immune(self) -> None:
+        """Test that dangerous config file path check is bypass-immune."""
+        context = PermissionContext(mode=PermissionMode.BYPASS)
+        engine = PermissionEngine(context)
+
+        tool_call = ToolCallBlock(
+            id="1",
+            name="Bash",
+            input=json.dumps({"command": "rm ~/.bashrc"}),
+        )
+        decision = await engine.check_permission(tool_call, Bash())
+        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
+        self.assertIn("safety", decision.decision_reason.lower())

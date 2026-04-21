@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
 import os
-from typing import Any
+from typing import AsyncGenerator, Any
 
 import aiofiles
 
@@ -11,14 +11,14 @@ from .._permission import (
     PermissionDecision,
     PermissionBehavior,
 )
-from .._response import ToolResponse
+from .._response import ToolChunk
 from ...message import TextBlock
 
 
 class Read(ToolBase):
     """The read tool."""
 
-    name: str = "read"
+    name: str = "Read"
     """The tool name presented to the agent."""
 
     # pylint: disable=line-too-long
@@ -72,10 +72,14 @@ Usage:
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permissions for file reading."""
-        # Read is read-only, always allow
+        """Check permissions for file reading.
+
+        Read is a read-only tool. In EXPLORE mode the engine already handles
+        the ALLOW via _check_explore_mode, so here we just return PASSTHROUGH
+        to let the engine continue with rule matching.
+        """
         return PermissionDecision(
-            behavior=PermissionBehavior.ALLOW,
+            behavior=PermissionBehavior.PASSTHROUGH,
             message="File reading is read-only.",
         )
 
@@ -84,12 +88,12 @@ Usage:
         file_path: str,
         offset: int = 1,
         limit: int = 2000,
-    ) -> ToolResponse:
+    ) -> AsyncGenerator[ToolChunk, None]:
         """Read the file and return the content with line numbers."""
 
         # Validate file_path is absolute
         if not os.path.isabs(file_path):
-            return ToolResponse(
+            yield ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: file_path must be an absolute path, "
@@ -97,20 +101,24 @@ Usage:
                     ),
                 ],
                 state="error",
+                is_last=True,
             )
+            return
 
         # Check file exists
         if not os.path.exists(file_path):
-            return ToolResponse(
+            yield ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
                 ],
                 state="error",
+                is_last=True,
             )
+            return
 
         # Check it's not a directory
         if os.path.isdir(file_path):
-            return ToolResponse(
+            yield ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: Path is a directory, not a file: "
@@ -118,7 +126,9 @@ Usage:
                     ),
                 ],
                 state="error",
+                is_last=True,
             )
+            return
 
         try:
             # Read file content with aiofiles
@@ -152,13 +162,15 @@ Usage:
             # Join all lines
             result = "\n".join(formatted_lines)
 
-            return ToolResponse(
+            yield ToolChunk(
                 content=[TextBlock(text=result)],
-                state="finished",
+                state="running",
+                is_last=True,
             )
 
         except Exception as e:
-            return ToolResponse(
+            yield ToolChunk(
                 content=[TextBlock(text=f"Error reading file: {str(e)}")],
                 state="error",
+                is_last=True,
             )

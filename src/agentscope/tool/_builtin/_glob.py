@@ -17,7 +17,7 @@ from ...message import TextBlock
 class Glob(ToolBase):
     """The glob tool for fast file pattern matching."""
 
-    name: str = "glob"
+    name: str = "Glob"
     """The tool name presented to the agent."""
 
     description: str = """Fast file pattern matching tool that works with
@@ -59,10 +59,13 @@ codebase."""  # ignore: E501
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permissions for glob pattern matching."""
-        # Glob is read-only, always allow
+        """Check permissions for glob pattern matching.
+
+        Glob is a read-only tool. Return PASSTHROUGH to let the engine
+        handle EXPLORE mode and rule matching.
+        """
         return PermissionDecision(
-            behavior=PermissionBehavior.ALLOW,
+            behavior=PermissionBehavior.PASSTHROUGH,
             message="Glob pattern matching is read-only.",
         )
 

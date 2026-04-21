@@ -117,7 +117,7 @@ class MCPTool(ToolBase):
         | None = None,
         session: Any | None = None,
         timeout: float | None = None,
-    ):
+    ) -> None:
         """Initialize the MCPTool.
 
         Args:

@@ -38,7 +38,7 @@ TYPE_EXTENSIONS: dict[str, list[str]] = {
 class Grep(ToolBase):
     """The grep tool for searching file contents using regular expressions."""
 
-    name: str = "grep"
+    name: str = "Grep"
     """The tool name presented to the agent."""
 
     description: str = """A powerful search tool built on ripgrep
@@ -120,10 +120,13 @@ Usage:
         tool_input: dict[str, Any],
         context: PermissionContext,
     ) -> PermissionDecision:
-        """Check permissions for grep search."""
-        # Grep is read-only, always allow
+        """Check permissions for grep search.
+
+        Grep is a read-only tool. Return PASSTHROUGH to let the engine
+        handle EXPLORE mode and rule matching.
+        """
         return PermissionDecision(
-            behavior=PermissionBehavior.ALLOW,
+            behavior=PermissionBehavior.PASSTHROUGH,
             message="Grep search is read-only.",
         )
 
@@ -138,14 +141,18 @@ Usage:
             True if the filename matches the pattern
         """
         # Convert glob pattern to regex
-        # ** matches any number of directories
+        # ** matches any number of directories (including zero)
         # * matches any characters except /
         # ? matches a single character
         pattern = glob_pattern.replace(".", r"\.")
+        pattern = pattern.replace("?", "<!QUESTION!>")
+        pattern = pattern.replace("**/", "<!DOUBLESTAR_SLASH!>")
         pattern = pattern.replace("**", "<!DOUBLESTAR!>")
         pattern = pattern.replace("*", "[^/]*")
+        # **/ should match zero or more directory levels
+        pattern = pattern.replace("<!DOUBLESTAR_SLASH!>", "(?:.*/)?")
         pattern = pattern.replace("<!DOUBLESTAR!>", ".*")
-        pattern = pattern.replace("?", ".")
+        pattern = pattern.replace("<!QUESTION!>", ".")
         pattern = f"^{pattern}$"
 
         return bool(re.match(pattern, filename))
@@ -191,7 +198,11 @@ Usage:
                         if ext in extensions:
                             results.append(full_path)
                     elif glob:
-                        if self._match_glob(glob, entry):
+                        # Match glob against relative path from base_dir
+                        rel_path = os.path.relpath(full_path, base_dir)
+                        # Normalize to use forward slashes for consistency
+                        rel_path = rel_path.replace(os.sep, "/")
+                        if self._match_glob(glob, rel_path):
                             results.append(full_path)
                     else:
                         results.append(full_path)
@@ -247,7 +258,11 @@ Usage:
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
-            yield ToolChunk(content=f"Invalid regex pattern: {e}")
+            yield ToolChunk(
+                content=[TextBlock(text=f"Invalid regex pattern: {e}")],
+                state="error",
+                is_last=True,
+            )
             return
 
         results: list[str] = []
