@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The edit tool in agentscope."""
 import os
-from typing import AsyncGenerator, Any
+from typing import Any, TYPE_CHECKING
 
 import aiofiles
 
@@ -10,9 +10,15 @@ from .._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionMode,
 )
 from .._response import ToolChunk
 from ...message import TextBlock
+
+if TYPE_CHECKING:
+    from ...agent import AgentState
+else:
+    AgentState = Any
 
 
 class Edit(ToolBase):
@@ -125,7 +131,6 @@ Usage:
                 ASK for dangerous paths, ALLOW for safe operations in
                 ACCEPT_EDITS mode, PASSTHROUGH otherwise
         """
-        from .._permission import PermissionMode
 
         file_path = tool_input.get("file_path")
         if not file_path:
@@ -211,12 +216,12 @@ Usage:
         old_string: str,
         new_string: str,
         replace_all: bool = False,
-    ) -> AsyncGenerator[ToolChunk, None]:
+        _agent_state: AgentState | None = None,
+    ) -> ToolChunk:
         """Execute the edit and return the result."""
-
         # Validate file_path is absolute
         if not os.path.isabs(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=(
@@ -228,22 +233,20 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
         # Check file exists
         if not os.path.exists(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File not found: {file_path}"),
                 ],
                 state="error",
                 is_last=True,
             )
-            return
 
         # Check old_string != new_string
         if old_string == new_string:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=(
@@ -255,30 +258,45 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
-        # Read file content
-        try:
-            async with aiofiles.open(
-                file_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                content = await f.read()
-        except Exception as e:
-            yield ToolChunk(
-                content=[TextBlock(text=f"Error reading file: {str(e)}")],
-                state="error",
-                is_last=True,
-            )
-            return
+        content = None
+        if _agent_state is not None:
+            cache = await _agent_state.tool_context.get_cache(file_path)
+            if cache is None:
+                # Haven't read this file before
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text="Error: To edit a file, you must first read "
+                            "it using the Read tool.",
+                        ),
+                    ],
+                    state="error",
+                    is_last=True,
+                )
+            content = "\n".join(cache.lines)
+        else:
+            # No state provided, read from disk
+            try:
+                async with aiofiles.open(
+                    file_path,
+                    "r",
+                    encoding="utf-8",
+                ) as f:
+                    content = await f.read()
+            except Exception as e:
+                return ToolChunk(
+                    content=[TextBlock(text=f"Error reading file: {str(e)}")],
+                    state="error",
+                    is_last=True,
+                )
 
         # Count occurrences
         occurrences = content.count(old_string)
 
         # If occurrences == 0, raise error
         if occurrences == 0:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: old_string not found in {file_path}",
@@ -287,11 +305,10 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
         # If occurrences > 1 and not replace_all, raise error
         if occurrences > 1 and not replace_all:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=(
@@ -305,7 +322,6 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
         # Perform replacement
         if replace_all:
@@ -326,18 +342,17 @@ Usage:
             ) as f:
                 await f.write(updated_content)
         except Exception as e:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[TextBlock(text=f"Error writing file: {str(e)}")],
                 state="error",
                 is_last=True,
             )
-            return
 
         # Return success message
         replacement_msg = (
             f"all {occurrences} occurrences" if replace_all else "1 occurrence"
         )
-        yield ToolChunk(
+        return ToolChunk(
             content=[
                 TextBlock(
                     text=f"Successfully replaced {replacement_msg} "

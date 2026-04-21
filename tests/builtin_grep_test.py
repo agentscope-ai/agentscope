@@ -75,35 +75,29 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_simple_search(self) -> None:
         """Test simple grep search."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="Hello",
             path=self.temp_dir,
             output_mode="files_with_matches",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunk.state, "running")
 
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
         # Should find files containing "Hello"
         self.assertIn("test1.py", content)
         self.assertIn("test.txt", content)
 
     async def test_content_mode(self) -> None:
         """Test grep with content output mode."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="def",
             path=self.temp_dir,
             output_mode="content",
             type="py",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
 
         # Should show matching lines
         self.assertIn("def hello", content)
@@ -111,44 +105,35 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_case_insensitive(self) -> None:
         """Test case-insensitive search."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="HELLO",
             path=self.temp_dir,
             case_insensitive=True,
             output_mode="files_with_matches",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
         self.assertIn("test1.py", content)
 
     async def test_no_matches(self) -> None:
         """Test search with no matches."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="NonExistentPattern",
             path=self.temp_dir,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertIn("No matches found", chunks[0].content[0].text)
+        self.assertIn("No matches found", chunk.content[0].text)
 
     async def test_type_filter(self) -> None:
         """Test filtering by file type."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="Hello",
             path=self.temp_dir,
             type="py",
             output_mode="files_with_matches",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
 
         # Should only find .py files
         self.assertIn("test1.py", content)
@@ -156,30 +141,24 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_invalid_regex(self) -> None:
         """Test grep with invalid regex pattern."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="[invalid(regex",
             path=self.temp_dir,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
-        self.assertIn("Invalid regex pattern", chunks[0].content[0].text)
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("Invalid regex pattern", chunk.content[0].text)
 
     async def test_glob_pattern_with_subdirs(self) -> None:
         """Test glob pattern matching with subdirectories like **/*.py."""
-        chunks = []
-        async for chunk in self.grep_tool(
+        chunk = await self.grep_tool(
             pattern="def",
             path=self.temp_dir,
             glob="**/*.py",
             output_mode="files_with_matches",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
 
         # Should find all .py files including in subdirectories
         self.assertIn("test1.py", content)

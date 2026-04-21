@@ -2,7 +2,7 @@
 """The glob tool in agentscope."""
 import os
 import re
-from typing import AsyncGenerator, Any
+from typing import Any
 
 from .._base import ToolBase
 from .._permission import (
@@ -190,25 +190,27 @@ codebase."""  # ignore: E501
         self,
         pattern: str,
         path: str | None = None,
-    ) -> AsyncGenerator[ToolChunk, None]:
+    ) -> ToolChunk:
         """Execute the glob pattern matching and return the results.
 
         Args:
             pattern: The glob pattern to match against
             path: Optional base directory to search from (defaults to cwd)
 
-        Yields:
-            ToolChunk containing the matched file paths or error message
+        Returns:
+            `ToolChunk`:
+                The content contains the matched file paths joined by
+                newlines, or an error message if the directory is not found or
+                no files match the pattern.
         """
         base_dir = path if path else os.getcwd()
 
         if not os.path.exists(base_dir):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[TextBlock(text=f"Directory not found: {base_dir}")],
                 state="error",
                 is_last=True,
             )
-            return
 
         matches = self.glob_match(pattern, base_dir)
 
@@ -220,7 +222,7 @@ codebase."""  # ignore: E501
             pass
 
         if len(matches) == 0:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=f"No files found matching pattern: {pattern}",
@@ -229,9 +231,9 @@ codebase."""  # ignore: E501
                 state="running",
                 is_last=True,
             )
-        else:
-            yield ToolChunk(
-                content=[TextBlock(text="\n".join(matches))],
-                state="running",
-                is_last=True,
-            )
+
+        return ToolChunk(
+            content=[TextBlock(text="\n".join(matches))],
+            state="running",
+            is_last=True,
+        )

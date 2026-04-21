@@ -8,6 +8,10 @@ from agentscope.tool import ToolChunk, PermissionContext, Bash
 from agentscope.message import TextBlock
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashToolTest(IsolatedAsyncioTestCase):
     """The bash tool test case."""
 
@@ -76,6 +80,10 @@ class BashToolTest(IsolatedAsyncioTestCase):
         self.assertIn("timed out", chunks[0].content[0].text.lower())
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
     """Test injection detection in Bash tool permission checks."""
 
@@ -179,6 +187,10 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
         self.context = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
     """Test dangerous removal path detection in Bash tool."""
 

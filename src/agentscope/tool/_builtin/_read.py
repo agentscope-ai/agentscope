@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
 import os
-from typing import AsyncGenerator, Any
+from typing import Any, TYPE_CHECKING
 
 import aiofiles
 
@@ -13,6 +13,11 @@ from .._permission import (
 )
 from .._response import ToolChunk
 from ...message import TextBlock
+
+if TYPE_CHECKING:
+    from ...agent import AgentState
+else:
+    AgentState = Any
 
 
 class Read(ToolBase):
@@ -64,8 +69,22 @@ Usage:
     is_read_only: bool = True
     is_concurrency_safe: bool = True
 
-    def __init__(self) -> None:
-        """Initialize the read tool."""
+    def __init__(
+        self,
+        max_line_characters: int = 2000,
+    ) -> None:
+        """Initialize the read tool.
+
+        Args:
+            max_line_characters (`int`, defaults to 2000):
+                The maximum number of characters to include for each line when
+                reading files. Lines longer than this will be truncated with
+                a "[truncated]" suffix. This prevents overwhelming the agent
+                with excessively long lines while still providing useful
+                content.
+        """
+
+        self._max_line_characters = max_line_characters
 
     async def check_permissions(
         self,
@@ -88,12 +107,13 @@ Usage:
         file_path: str,
         offset: int = 1,
         limit: int = 2000,
-    ) -> AsyncGenerator[ToolChunk, None]:
+        _agent_state: AgentState | None = None,
+    ) -> ToolChunk:
         """Read the file and return the content with line numbers."""
 
         # Validate file_path is absolute
         if not os.path.isabs(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: file_path must be an absolute path, "
@@ -103,22 +123,20 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
         # Check file exists
         if not os.path.exists(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
                 ],
                 state="error",
                 is_last=True,
             )
-            return
 
         # Check it's not a directory
         if os.path.isdir(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: Path is a directory, not a file: "
@@ -128,17 +146,30 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
 
         try:
             # Read file content with aiofiles
-            async with aiofiles.open(
-                file_path,
-                mode="r",
-                encoding="utf-8",
-                errors="replace",
-            ) as f:
-                lines = await f.readlines()
+            lines = None
+            if _agent_state is not None:
+                cache = await _agent_state.tool_context.get_cache(file_path)
+                if cache is not None:
+                    lines = cache.lines
+
+            if lines is None:
+                async with aiofiles.open(
+                    file_path,
+                    mode="r",
+                    encoding="utf-8",
+                    errors="replace",
+                ) as f:
+                    lines = await f.readlines()
+
+                # Cache file if state is provided
+                if _agent_state is not None:
+                    await _agent_state.tool_context.cache_file(
+                        file_path=file_path,
+                        lines=lines,
+                    )
 
             # Apply offset and limit (offset is 1-based)
             start_idx = offset - 1
@@ -152,8 +183,11 @@ Usage:
                 line_content = line.rstrip("\n\r")
 
                 # Truncate lines longer than 2000 chars
-                if len(line_content) > 2000:
-                    line_content = line_content[:2000] + "[truncated]"
+                if len(line_content) > self._max_line_characters:
+                    line_content = (
+                        line_content[: self._max_line_characters]
+                        + "[truncated]"
+                    )
 
                 # Format: 6-char padded line number + tab + content
                 formatted_line = f"{i:6d}\t{line_content}"
@@ -162,14 +196,14 @@ Usage:
             # Join all lines
             result = "\n".join(formatted_lines)
 
-            yield ToolChunk(
+            return ToolChunk(
                 content=[TextBlock(text=result)],
                 state="running",
                 is_last=True,
             )
 
         except Exception as e:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[TextBlock(text=f"Error reading file: {str(e)}")],
                 state="error",
                 is_last=True,

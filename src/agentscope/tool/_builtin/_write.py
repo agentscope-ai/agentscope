@@ -2,7 +2,7 @@
 """The write tool in agentscope."""
 import os
 from pathlib import Path
-from typing import AsyncGenerator, Any
+from typing import Any, TYPE_CHECKING
 
 import aiofiles
 
@@ -11,9 +11,15 @@ from .._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionMode,
 )
 from .._response import ToolChunk
 from ...message import TextBlock
+
+if TYPE_CHECKING:
+    from ...agent import AgentState
+else:
+    AgentState = Any
 
 
 class Write(ToolBase):
@@ -103,7 +109,6 @@ Usage:
                 ASK for dangerous paths, ALLOW for safe operations in
                 ACCEPT_EDITS mode, PASSTHROUGH otherwise
         """
-        from .._permission import PermissionMode
 
         file_path = tool_input.get("file_path")
         if not file_path:
@@ -187,11 +192,12 @@ Usage:
         self,
         file_path: str,
         content: str,
-    ) -> AsyncGenerator[ToolChunk, None]:
+        _agent_state: AgentState | None = None,
+    ) -> ToolChunk:
         """Write content to a file and return the result."""
         # Validate that file_path is absolute
         if not os.path.isabs(file_path):
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(
                         text=f"Error: file_path must be an absolute path, "
@@ -201,7 +207,22 @@ Usage:
                 state="error",
                 is_last=True,
             )
-            return
+
+        # Check if file exists, it must be read first if it exists
+        if os.path.exists(file_path) and _agent_state is not None:
+            cache = await _agent_state.tool_context.get_cache(file_path)
+            if cache is None:
+                return ToolChunk(
+                    content=[
+                        TextBlock(
+                            text=f"Error: File {file_path} exists but has not "
+                            f"been read yet. You must read the file first "
+                            f"before writing to it.",
+                        ),
+                    ],
+                    state="error",
+                    is_last=True,
+                )
 
         # Create parent directories if they don't exist
         parent_dir = Path(file_path).parent
@@ -215,7 +236,7 @@ Usage:
         line_count = len(content.split("\n"))
 
         # Return success message
-        yield ToolChunk(
+        return ToolChunk(
             content=[
                 TextBlock(
                     text=f"The file {file_path} has been written successfully "

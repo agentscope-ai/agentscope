@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
 """Test cases for BashCommandParser."""
+import sys
+import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool._builtin._bash_parser import BashCommandParser
 from agentscope.tool import Bash
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashCommandParserTest(IsolatedAsyncioTestCase):
     """Test cases for BashCommandParser."""
 
@@ -199,6 +205,10 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
     """Test is_read_only_command() method."""
 
@@ -387,6 +397,10 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     """Test extract_file_paths() method."""
 
@@ -610,6 +624,10 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
     """Test extract_redirections() method."""
 
@@ -779,6 +797,10 @@ class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
     """Test check_sed_constraints() with complex allowlist/denylist."""
 
@@ -930,6 +952,10 @@ class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
     """Test match_rule() with complex regex-based wildcard matching."""
 
@@ -1024,6 +1050,10 @@ class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
         self.bash_tool = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserInjectionRiskTest(IsolatedAsyncioTestCase):
     """Test check_injection_risk() method for detecting dynamic shell
     structures."""
@@ -1207,6 +1237,10 @@ class BashParserInjectionRiskTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
     """Test check_dangerous_command() method."""
 

@@ -2,7 +2,7 @@
 """The grep tool in agentscope."""
 import os
 import re
-from typing import AsyncGenerator, Any, Literal
+from typing import Any, Literal
 
 from .._base import ToolBase
 from .._permission import (
@@ -230,7 +230,7 @@ Usage:
         context: int | None = None,
         multiline: bool = False,
         head_limit: int | None = None,
-    ) -> AsyncGenerator[ToolChunk, None]:
+    ) -> ToolChunk:
         """Execute the grep search and return the results.
 
         Args:
@@ -258,12 +258,11 @@ Usage:
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[TextBlock(text=f"Invalid regex pattern: {e}")],
                 state="error",
                 is_last=True,
             )
-            return
 
         results: list[str] = []
 
@@ -316,19 +315,18 @@ Usage:
 
         # Generate output
         if not results:
-            yield ToolChunk(
+            return ToolChunk(
                 content=[
                     TextBlock(text=f"No matches found for pattern: {pattern}"),
                 ],
                 state="running",
                 is_last=True,
             )
-            return
 
         # Apply head_limit if specified
         output = results[:head_limit] if head_limit is not None else results
 
-        yield ToolChunk(
+        return ToolChunk(
             content=[TextBlock(text="\n".join(output))],
             state="running",
             is_last=True,

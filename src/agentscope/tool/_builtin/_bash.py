@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """The bash tool in agentscope."""
-from typing import AsyncGenerator, Any, List, TYPE_CHECKING
+import os
+from typing import AsyncGenerator, Any, List
+import re
+import asyncio
 
 from ._bash_parser import BashCommandParser
 from .._base import ToolBase
@@ -9,11 +12,10 @@ from .._permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionMode,
+    PermissionRule,
 )
+from ...message import TextBlock
 from .._response import ToolChunk
-
-if TYPE_CHECKING:
-    from .._permission import PermissionRule
 
 
 class Bash(ToolBase):
@@ -318,7 +320,6 @@ easier to review tool calls and give permission.
         Returns:
             True if pattern matches the command
         """
-        import re
 
         command = tool_input.get("command", "")
 
@@ -407,7 +408,6 @@ easier to review tool calls and give permission.
             `List[PermissionRule]`:
                 List of suggested permission rules based on command prefixes
         """
-        from .._permission import PermissionRule
 
         command = tool_input.get("command", "")
         if not command:
@@ -539,7 +539,6 @@ easier to review tool calls and give permission.
             `bool`:
                 True if removing this path would be catastrophic
         """
-        import os
 
         # Bare wildcard
         if path in ("*", "./*", "/"):
@@ -586,8 +585,6 @@ easier to review tool calls and give permission.
         Yields:
             ToolChunk: The tool execution result with stdout/stderr content.
         """
-        import asyncio
-        from ...message import TextBlock
 
         # Clamp timeout to max 600000ms and convert to seconds
         timeout_ms = min(timeout, 600000)

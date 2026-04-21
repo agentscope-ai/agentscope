@@ -45,16 +45,13 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         file_path = os.path.join(self.temp_dir, "test.txt")
         content = "Hello World\nThis is a test\n"
 
-        chunks = []
-        async for chunk in self.write_tool(
+        chunk = await self.write_tool(
             file_path=file_path,
             content=content,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
-        self.assertTrue(chunks[0].is_last)
+        self.assertEqual(chunk.state, "running")
+        self.assertTrue(chunk.is_last)
 
         # Verify file was created and content is correct
         self.assertTrue(os.path.exists(file_path))
@@ -67,15 +64,12 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         file_path = os.path.join(self.temp_dir, "subdir", "test.txt")
         content = "Test content"
 
-        chunks = []
-        async for chunk in self.write_tool(
+        chunk = await self.write_tool(
             file_path=file_path,
             content=content,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunk.state, "running")
 
         # Verify directory and file were created
         self.assertTrue(os.path.exists(file_path))
@@ -93,14 +87,12 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
         # Overwrite with new content
         new_content = "New content"
-        chunks = []
-        async for chunk in self.write_tool(
+        chunk = await self.write_tool(
             file_path=file_path,
             content=new_content,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len([chunk]), 1)
 
         # Verify content was overwritten
         with open(file_path, "r", encoding="utf-8") as f:
@@ -112,14 +104,12 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         """Test writing empty content."""
         file_path = os.path.join(self.temp_dir, "empty.txt")
 
-        chunks = []
-        async for chunk in self.write_tool(
+        chunk = await self.write_tool(
             file_path=file_path,
             content="",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len([chunk]), 1)
         self.assertTrue(os.path.exists(file_path))
 
         with open(file_path, "r", encoding="utf-8") as f:

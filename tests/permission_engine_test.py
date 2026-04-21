@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Test cases for PermissionEngine."""
 import json
+import sys
+import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from agentscope.tool import (
@@ -305,6 +307,10 @@ class PermissionEngineModeTest(IsolatedAsyncioTestCase):
         self.assertEqual(decision.behavior, PermissionBehavior.DENY)
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class PermissionEngineBashRuleTest(IsolatedAsyncioTestCase):
     """Test cases for Bash command rule matching."""
 
@@ -531,6 +537,10 @@ class PermissionEngineFileRuleTest(IsolatedAsyncioTestCase):
         self.context = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Unix-specific paths not supported on Windows",
+)
 class PermissionEngineDangerousPathTest(IsolatedAsyncioTestCase):
     """Test cases for dangerous path detection (bypass-immune safety
     checks)."""
@@ -717,6 +727,10 @@ class PermissionEngineSuggestionTest(IsolatedAsyncioTestCase):
         self.context = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
     """Test cases for read-only command auto-allow."""
 
@@ -848,6 +862,10 @@ class PermissionEngineReadOnlyTest(IsolatedAsyncioTestCase):
         self.context = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class PermissionEngineSafetyCheckBypassImmuneTest(IsolatedAsyncioTestCase):
     """Test that all safety checks are bypass-immune (cannot be overridden
     by BYPASS mode or allow rules)."""

@@ -55,33 +55,27 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_simple_read(self) -> None:
         """Test simple file reading."""
-        chunks = []
-        async for chunk in self.read_tool(file_path=self.temp_file.name):
-            chunks.append(chunk)
+        chunk = await self.read_tool(file_path=self.temp_file.name)
 
-        self.assertEqual(len(chunks), 1)
-        self.assertIsInstance(chunks[0], ToolChunk)
-        self.assertEqual(chunks[0].state, "running")
-        self.assertEqual(len(chunks[0].content), 1)
-        self.assertIsInstance(chunks[0].content[0], TextBlock)
+        self.assertIsInstance(chunk, ToolChunk)
+        self.assertEqual(chunk.state, "running")
+        self.assertEqual(len(chunk.content), 1)
+        self.assertIsInstance(chunk.content[0], TextBlock)
 
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
         # Should contain all lines with line numbers
         self.assertIn("Line 1", content)
         self.assertIn("Line 10", content)
 
     async def test_read_with_offset(self) -> None:
         """Test reading with offset."""
-        chunks = []
-        async for chunk in self.read_tool(
+        chunk = await self.read_tool(
             file_path=self.temp_file.name,
             offset=5,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
-        content = chunks[0].content[0].text
+        self.assertEqual(chunk.state, "running")
+        content = chunk.content[0].text
 
         # Should start from line 5
         self.assertIn("Line 5", content)
@@ -96,17 +90,14 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_read_with_limit(self) -> None:
         """Test reading with limit."""
-        chunks = []
-        async for chunk in self.read_tool(
+        chunk = await self.read_tool(
             file_path=self.temp_file.name,
             offset=1,
             limit=3,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
-        content = chunks[0].content[0].text
+        self.assertEqual(chunk.state, "running")
+        content = chunk.content[0].text
 
         # Should only read 3 lines
         self.assertIn("Line 1", content)
@@ -116,24 +107,18 @@ class ReadToolTest(IsolatedAsyncioTestCase):
 
     async def test_read_nonexistent_file(self) -> None:
         """Test reading a non-existent file."""
-        chunks = []
-        async for chunk in self.read_tool(file_path="/nonexistent/file.txt"):
-            chunks.append(chunk)
+        chunk = await self.read_tool(file_path="/nonexistent/file.txt")
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
-        self.assertIn("does not exist", chunks[0].content[0].text)
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("does not exist", chunk.content[0].text)
 
     async def test_read_directory(self) -> None:
         """Test reading a directory (should fail)."""
         temp_dir = tempfile.mkdtemp()
         try:
-            chunks = []
-            async for chunk in self.read_tool(file_path=temp_dir):
-                chunks.append(chunk)
+            chunk = await self.read_tool(file_path=temp_dir)
 
-            self.assertEqual(len(chunks), 1)
-            self.assertEqual(chunks[0].state, "error")
-            self.assertIn("directory", chunks[0].content[0].text.lower())
+            self.assertEqual(chunk.state, "error")
+            self.assertIn("directory", chunk.content[0].text.lower())
         finally:
             os.rmdir(temp_dir)

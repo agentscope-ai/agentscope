@@ -47,17 +47,14 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
     async def test_simple_edit(self) -> None:
         """Test simple file editing."""
-        chunks = []
-        async for chunk in self.edit_tool(
+        chunk = await self.edit_tool(
             file_path=self.temp_file.name,
             old_string="Hello World",
             new_string="Hello Python",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
-        self.assertTrue(chunks[0].is_last)
+        self.assertEqual(chunk.state, "running")
+        self.assertTrue(chunk.is_last)
 
         # Verify file content
         with open(self.temp_file.name, "r", encoding="utf-8") as f:
@@ -67,17 +64,14 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
     async def test_edit_not_found(self) -> None:
         """Test editing with string not found."""
-        chunks = []
-        async for chunk in self.edit_tool(
+        chunk = await self.edit_tool(
             file_path=self.temp_file.name,
             old_string="NonExistent",
             new_string="Something",
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
-        self.assertIn("not found", chunks[0].content[0].text)
+        self.assertEqual(chunk.state, "error")
+        self.assertIn("not found", chunk.content[0].text)
 
     async def test_edit_multiple_occurrences(self) -> None:
         """Test editing with multiple occurrences."""
@@ -85,17 +79,14 @@ class EditToolTest(IsolatedAsyncioTestCase):
         with open(self.temp_file.name, "w", encoding="utf-8") as f:
             f.write("test\ntest\ntest\n")
 
-        chunks = []
-        async for chunk in self.edit_tool(
+        chunk = await self.edit_tool(
             file_path=self.temp_file.name,
             old_string="test",
             new_string="replaced",
-        ):
-            chunks.append(chunk)
+        )
 
         # Should fail without replace_all
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "error")
+        self.assertEqual(chunk.state, "error")
 
     async def test_edit_replace_all(self) -> None:
         """Test editing with replace_all flag."""
@@ -103,17 +94,14 @@ class EditToolTest(IsolatedAsyncioTestCase):
         with open(self.temp_file.name, "w", encoding="utf-8") as f:
             f.write("test\ntest\ntest\n")
 
-        chunks = []
-        async for chunk in self.edit_tool(
+        chunk = await self.edit_tool(
             file_path=self.temp_file.name,
             old_string="test",
             new_string="replaced",
             replace_all=True,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunk.state, "running")
 
         # Verify all occurrences replaced
         with open(self.temp_file.name, "r", encoding="utf-8") as f:

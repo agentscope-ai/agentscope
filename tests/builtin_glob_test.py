@@ -69,33 +69,27 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
     async def test_simple_pattern(self) -> None:
         """Test simple glob pattern."""
-        chunks = []
-        async for chunk in self.glob_tool(
+        chunk = await self.glob_tool(
             pattern="*.py",
             path=self.temp_dir,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
+        self.assertEqual(chunk.state, "running")
 
         # Should find test1.py and test2.py
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
         self.assertIn("test1.py", content)
         self.assertIn("test2.py", content)
         self.assertNotIn("test.txt", content)
 
     async def test_recursive_pattern(self) -> None:
         """Test recursive glob pattern."""
-        chunks = []
-        async for chunk in self.glob_tool(
+        chunk = await self.glob_tool(
             pattern="**/*.py",
             path=self.temp_dir,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        content = chunks[0].content[0].text
+        content = chunk.content[0].text
 
         # Should find all .py files including in subdirectory
         self.assertIn("test1.py", content)
@@ -104,13 +98,10 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
     async def test_no_matches(self) -> None:
         """Test pattern with no matches."""
-        chunks = []
-        async for chunk in self.glob_tool(
+        chunk = await self.glob_tool(
             pattern="*.nonexistent",
             path=self.temp_dir,
-        ):
-            chunks.append(chunk)
+        )
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].state, "running")
-        self.assertIn("No files found", chunks[0].content[0].text)
+        self.assertEqual(chunk.state, "running")
+        self.assertIn("No files found", chunk.content[0].text)
