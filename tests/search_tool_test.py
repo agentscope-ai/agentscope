@@ -6,7 +6,7 @@ import tempfile
 import shutil
 import unittest
 
-from agentscope.tool._search import grep_search, glob_search
+from agentscope.tool import grep_search, glob_search
 
 
 class TestGrepSearch(unittest.TestCase):
@@ -58,7 +58,7 @@ class TestGrepSearch(unittest.TestCase):
 
     def _run(self, coro):
         """Helper to run an async function."""
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_basic_search(self) -> None:
         """Test searching for a simple pattern."""
@@ -230,7 +230,7 @@ class TestGlobSearch(unittest.TestCase):
 
     def _run(self, coro):
         """Helper to run an async function."""
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_basic_glob(self) -> None:
         """Test finding files with a simple pattern."""
