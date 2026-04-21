@@ -2,7 +2,7 @@
 """The toolkit class for tool calls in AgentScope."""
 import asyncio
 import inspect
-import os
+import warnings
 from collections import OrderedDict
 from copy import deepcopy
 from functools import wraps
@@ -17,6 +17,7 @@ from typing import (
 )
 
 import mcp
+from jinja2 import Template
 from pydantic import (
     BaseModel,
     Field,
@@ -27,7 +28,8 @@ from ._builtin import ResetTools
 from ._base import ToolBase
 from ._adapters import _FunctionTool
 from ._response import ToolResponse, ToolChunk
-from ._types import ToolGroup, AgentSkill, RegisteredTool
+from ._skill import SkillLoaderBase, LocalSkillLoader
+from ._types import ToolGroup, RegisteredTool
 from .._utils._common import _json_loads_with_repair
 from ..exception import DeveloperOrientedException
 from ..mcp import (
@@ -114,6 +116,21 @@ The tool instructions are a collection of suggestions, rules and notifications a
 </tool-instructions>{% endif %}{% endif %}"""  # noqa: E501
 
 
+DEFAULT_SKILL_INSTRUCTION = """<agent-skills>
+Skills are a collection of instructions, scripts, and resources to extend your capabilities.
+
+**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `skill` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
+
+# Available Skills:
+{% for skill in skills %}<skill>
+<name>{{ skill.name }}</name>
+<description>{{ skill.description }}</description>
+<dir>{{ skill.dir }}</dir>
+</skill>{% endfor %}
+</agent-skills>
+"""  # noqa: E501
+
+
 class Toolkit:
     """Toolkit is the core module to register, manage and delete tool
     functions, MCP clients, Agent skills in AgentScope.
@@ -136,19 +153,6 @@ class Toolkit:
     - Provide prompt for the registered skills to the agent.
     """
 
-    _DEFAULT_AGENT_SKILL_INSTRUCTION = (
-        "# Agent Skills\n"
-        "The agent skills are a collection of folds of instructions, scripts, "
-        "and resources that you can load dynamically to improve performance "
-        "on specialized tasks. Each agent skill has a `SKILL.md` file in its "
-        "folder that describes how to use the skill. If you want to use a "
-        "skill, you MUST read its `SKILL.md` file carefully."
-    )
-
-    _DEFAULT_AGENT_SKILL_TEMPLATE = """## {name}
-{description}
-Check "{dir}/SKILL.md" for how to use this skill"""
-
     def _get_meta_tool_schema(self) -> Type[BaseModel]:
         """Get the meta tool schema based on the current tool groups."""
         fields = {}
@@ -167,50 +171,65 @@ Check "{dir}/SKILL.md" for how to use this skill"""
     def __init__(
         self,
         tools: list[ToolBase] | None = None,
+        skills: list[str | SkillLoaderBase] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
         mcp_tool_name: str = "mcp__{server}__{tool}",
-        agent_skill_instruction: str | None = None,
-        agent_skill_template: str | None = None,
+        skill_viewer_enabled: bool = True,
+        skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
     ) -> None:
         """Initialize the toolkit.
 
         Args:
             tools (`list[ToolProtocol] | None`, optional):
                 The tool objects that implement the ToolProtocol interface.
+            skills (`list[str] | None`, optional):
+                The agent skill directories to be registered.
             meta_tool_response_template (`str`, optional):
                 The template for meta tool responses.
             mcp_tool_name (`str`, optional):
                 The naming pattern for MCP tools.
-            agent_skill_instruction (`str | None`, optional):
-                The instruction for agent skills in the system prompt. If not
-                provided, a default instruction will be used.
-            agent_skill_template (`str | None`, optional):
-                The template to present one agent skill in the system prompt,
-                which should contain `{name}`, `{description}`, and `{dir}`
-                placeholders. If not provided, a default template will be used.
+            skill_viewer_enabled (`bool`, defaults to `True`):
+                Whether enable the built-in skill viewer tool function.
+            skill_instruction_template (`str`):
+                A Jinja2 template for generating the agent skill instruction.
         """
         super().__init__()
 
         self.tools: dict[str, RegisteredTool] = OrderedDict()
+        self.groups: dict[str, ToolGroup] = {}
+        self.skills: list[SkillLoaderBase] = []
+
+        self._middlewares: list = []  # Store registered middlewares
+
+        # ================================================
+        # Handle the initial tools
+        # ================================================
         if tools:
             for tool in tools:
                 # TODO: handle the name conflict here
                 self.tools[tool.name] = RegisteredTool(tool=tool)
 
-        self.meta_tool_response_template = meta_tool_response_template
+        # ================================================
+        # Handle the initial skills
+        # ================================================
+        if skills:
+            for skill in skills:
+                if isinstance(skill, str):
+                    self.skills.append(LocalSkillLoader(skill))
+                elif isinstance(skill, SkillLoaderBase):
+                    self.skills.append(skill)
+                else:
+                    raise TypeError(
+                        f"Invalid skill type: {type(skill)}. Skills should "
+                        "be either a directory path string or an instance "
+                        "of SkillLoaderBase.",
+                    )
 
+        self.meta_tool_response_template = meta_tool_response_template
         self.mcp_tool_name = mcp_tool_name
 
-        self.groups: dict[str, ToolGroup] = {}
-        self.skills: dict[str, AgentSkill] = {}
-        self._middlewares: list = []  # Store registered middlewares
-
-        self._agent_skill_instruction = (
-            agent_skill_instruction or self._DEFAULT_AGENT_SKILL_INSTRUCTION
-        )
-        self._agent_skill_template = (
-            agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
-        )
+        self.skill_instruction_template = skill_instruction_template
+        self.skill_viewer_enabled = skill_viewer_enabled
 
         self.builtin_meta_tool = RegisteredTool(
             tool=ResetTools(
@@ -747,90 +766,7 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 "in the toolkit.",
             )
 
-    def register_agent_skill(
-        self,
-        skill_dir: str,
-    ) -> None:
-        """Register agent skills from a given directory. This function will
-        scan the directory, read metadata from the SKILL.md file, and add
-        it to the skill related prompt. Developers can obtain the
-        skills-related prompt by calling `toolkit.get_agent_skill_prompt()`.
-
-        .. note:: This directory
-         - Must include a SKILL.md file at the top level
-         - The SKILL.md must have a YAML Front Matter including `name` and
-            `description` fields
-         - All files must specify a common root directory in their paths
-
-        Args:
-            skill_dir (`str`):
-                The path to the skill directory.
-        """
-        import frontmatter
-
-        # Check the skill directory
-        if not os.path.isdir(skill_dir):
-            raise ValueError(
-                f"The skill directory '{skill_dir}' does not exist or is "
-                "not a directory.",
-            )
-
-        # Check SKILL.md file
-        path_skill_md = os.path.join(skill_dir, "SKILL.md")
-        if not os.path.isfile(path_skill_md):
-            raise ValueError(
-                f"The skill directory '{skill_dir}' must include a "
-                "SKILL.md file at the top level.",
-            )
-
-        # Check YAML Front Matter
-        with open(path_skill_md, "r", encoding="utf-8") as f:
-            post = frontmatter.load(f)
-
-        name = post.get("name", None)
-        description = post.get("description", None)
-
-        if not name or not description:
-            raise ValueError(
-                f"The SKILL.md file in '{skill_dir}' must have a YAML Front "
-                "Matter including `name` and `description` fields.",
-            )
-
-        name, description = str(name), str(description)
-        if name in self.skills:
-            raise ValueError(
-                f"An agent skill with name '{name}' is already registered "
-                "in the toolkit.",
-            )
-
-        self.skills[name] = AgentSkill(
-            name=name,
-            description=description,
-            dir=skill_dir,
-        )
-
-        logger.info(
-            "Registered agent skill '%s' from directory '%s'.",
-            name,
-            skill_dir,
-        )
-
-    def remove_agent_skill(self, name: str) -> None:
-        """Remove an agent skill by its name.
-
-        Args:
-            name (`str`):
-                The name of the agent skill to be removed.
-        """
-        if name in self.skills:
-            self.skills.pop(name)
-        else:
-            logger.warning(
-                "Agent skill '%s' not found in the toolkit, skipping removal.",
-                name,
-            )
-
-    def get_agent_skill_prompt(self) -> str | None:
+    async def get_skill_instructions(self) -> str | None:
         """Get the prompt for all registered agent skills, which can be
         attached to the system prompt for the agent.
 
@@ -848,17 +784,35 @@ Check "{dir}/SKILL.md" for how to use this skill"""
         if len(self.skills) == 0:
             return None
 
-        skill_descriptions = [
-            self._agent_skill_instruction,
-        ] + [
-            self._agent_skill_template.format(
-                name=_["name"],
-                description=_["description"],
-                dir=_["dir"],
-            )
-            for _ in self.skills.values()
-        ]
-        return "\n".join(skill_descriptions)
+        skills = OrderedDict()
+        for loader in self.skills:
+            new_skills = await loader.list_skills()
+            # Handle duplicated skill names
+            for skill in new_skills:
+                if skill.name not in skills:
+                    skills[skill.name] = skill
+                else:
+                    # Rename the skill with a suffix to avoid duplication
+                    suffix = 1
+                    while f"{skill.name}_{suffix}" in skills:
+                        suffix += 1
+                    new_name = f"{skill.name}_{suffix}"
+                    warnings.warn(
+                        f"Duplicate skill name '{skill.name}' found in "
+                        f"directory '{skill.dir}'. "
+                        f"Renaming it to '{new_name}'.",
+                    )
+                    skill.name = new_name
+                    skills[new_name] = skill
+
+        # If no skills were collected, return None
+        if len(skills) == 0:
+            return None
+
+        # Generate the skill instruction prompt with the template
+        template = Template(self.skill_instruction_template)
+
+        return template.render(skills=skills.values())
 
     def register_middleware(
         self,

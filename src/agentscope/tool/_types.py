@@ -6,7 +6,6 @@ from typing import (
     Literal,
     Type,
     Any,
-    TypedDict,
     TypeAlias,
     Coroutine,
     AsyncGenerator,
@@ -170,7 +169,8 @@ class ToolGroup:
     activated."""
 
 
-class AgentSkill(TypedDict):
+@dataclass
+class Skill:
     """The agent skill typed dict class"""
 
     name: str
@@ -179,6 +179,10 @@ class AgentSkill(TypedDict):
     """The description of the skill."""
     dir: str
     """The directory of the agent skill."""
+    markdown: str
+    """The markdown content of the agent skill."""
+    updated_at: float
+    """The last updated time of the skill."""
 
 
 # The function types that can be registered as tools in AgentScope.

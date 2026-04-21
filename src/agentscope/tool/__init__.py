@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The tool module in agentscope."""
 
-from ._types import ToolChoice, Function
+from ._types import ToolChoice, Function, Skill
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase
@@ -14,6 +14,10 @@ from ._permission import (
     PermissionRule,
     PermissionMode,
     PermissionBehavior,
+)
+from ._skill import (
+    SkillLoaderBase,
+    LocalSkillLoader,
 )
 
 
@@ -32,4 +36,7 @@ __all__ = [
     "MCPTool",
     "ToolChoice",
     "Function",
+    "Skill",
+    "SkillLoaderBase",
+    "LocalSkillLoader",
 ]
