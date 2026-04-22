@@ -20,21 +20,22 @@ class SkillViewer(ToolBase):
     """The name of the skill viewer tool to the agent."""
 
     description = (
-        "The skill viewer tool is used to view the details of the skills "
-        "that the agent has. It can be used to view the name, description, "
-        "and parameters of the skills."
+        "Retrieve a skill within the conversation. "
+        "When users asks you to perform tasks, check if any of the available "
+        "skills match. "
+        "Skills provide specialized capabilities and domain knowledge."
     )
     """The tool description of the skill viewer tool to the agent."""
 
     input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
-            "skill_name": {
+            "skill": {
                 "type": "string",
-                "description": "The name of the skill to be viewed.",
+                "description": "The exact name of the skill to view. ",
             },
         },
-        "required": ["skill_name"],
+        "required": ["skill"],
     }
     """The input schema of the skill viewer tool."""
 
@@ -73,11 +74,11 @@ class SkillViewer(ToolBase):
             message="The skill viewer is always allowed to be called.",
         )
 
-    async def __call__(self, skill_name: str) -> ToolChunk:
+    async def __call__(self, skill: str) -> ToolChunk:
         """View the details of the skill with the given name.
 
         Args:
-            skill_name (`str`):
+            skill (`str`):
                 The name of the skill to be viewed.
 
         Returns:
@@ -86,15 +87,16 @@ class SkillViewer(ToolBase):
         """
 
         skills = await self._get_skills_method()
-        skill = skills.get(skill_name)
-        if not skill:
+        target_skill = skills.get(skill)
+        if not target_skill:
             return ToolChunk(
                 content=[
                     TextBlock(
-                        text=f"SkillNotFoundError: Skill '{skill_name}' "
+                        text=f"SkillNotFoundError: Skill '{skill}' "
                         f"not found.",
                     ),
                 ],
+                state="error",
             )
 
-        return ToolChunk(content=[TextBlock(text=skill.markdown)])
+        return ToolChunk(content=[TextBlock(text=target_skill.markdown)])

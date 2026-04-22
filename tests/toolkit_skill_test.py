@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """Test cases for Toolkit skill-related functionality."""
+import json
 import warnings
 from unittest.async_case import IsolatedAsyncioTestCase
 
+from utils import AnyString
+
 from agentscope.tool import SkillLoaderBase, LocalSkillLoader
 from agentscope.tool import Toolkit
-from agentscope.tool import Skill
+from agentscope.tool import Skill, ToolChunk, ToolResponse
+from agentscope.message import ToolCallBlock
+from agentscope.agent import AgentState
 
 
 def _make_skill(
@@ -153,3 +158,165 @@ class ToolkitSkillTest(IsolatedAsyncioTestCase):
 
         result = await toolkit.get_skill_instructions()
         self.assertIsNone(result)
+
+
+class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
+    """Test cases for Toolkit SkillViewer functionality."""
+
+    async def test_register_skill_and_get_function_schemas(self) -> None:
+        """Test that registering skills makes SkillViewer available in
+        function schemas."""
+        skill = _make_skill("test_skill", description="A test skill")
+        loader = MockSkillLoader([skill])
+        toolkit = Toolkit(skills=[loader])
+
+        schemas = toolkit.get_function_schemas()
+
+        self.assertListEqual(
+            schemas,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Skill",
+                        "description": (
+                            "Retrieve a skill within the conversation. "
+                            "When users asks you to perform tasks, check if "
+                            "any of the available skills match. "
+                            "Skills provide specialized capabilities and "
+                            "domain knowledge."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "skill": {
+                                    "type": "string",
+                                    "description": "The exact name of the "
+                                    "skill to view. ",
+                                },
+                            },
+                            "required": ["skill"],
+                        },
+                    },
+                },
+            ],
+        )
+
+    async def test_call_skill_viewer_success(self) -> None:
+        """Test calling SkillViewer with an existing skill."""
+        skill = _make_skill(
+            "my_skill",
+            description="My test skill",
+            dir_="/test/dir",
+        )
+        skill.markdown = "# My Skill\nThis is the skill content."
+        loader = MockSkillLoader([skill])
+        toolkit = Toolkit(skills=[loader])
+
+        tool_call = ToolCallBlock(
+            id="test_call_1",
+            name="Skill",
+            input=json.dumps({"skill": "my_skill"}),
+        )
+        state = AgentState()
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 1)
+        self.assertDictEqual(
+            chunks[0].model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "# My Skill\nThis is the skill content.",
+                    },
+                ],
+                "state": "running",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
+        self.assertIsNotNone(response)
+        self.assertDictEqual(
+            response.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "# My Skill\nThis is the skill content.",
+                    },
+                ],
+                "state": "finished",
+                "metadata": {},
+                "id": "test_call_1",
+            },
+        )
+
+    async def test_call_skill_viewer_not_found(self) -> None:
+        """Test calling SkillViewer with a non-existent skill."""
+        skill = _make_skill("existing_skill")
+        loader = MockSkillLoader([skill])
+        toolkit = Toolkit(skills=[loader])
+
+        tool_call = ToolCallBlock(
+            id="test_call_2",
+            name="Skill",
+            input=json.dumps({"skill": "non_existent_skill"}),
+        )
+        state = AgentState()
+
+        chunks = []
+        response = None
+        async for result in toolkit.call_tool(tool_call, state):
+            if isinstance(result, ToolChunk):
+                chunks.append(result)
+            elif isinstance(result, ToolResponse):
+                response = result
+
+        self.assertEqual(len(chunks), 1)
+        self.assertDictEqual(
+            chunks[0].model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "SkillNotFoundError: "
+                        "Skill 'non_existent_skill' not found.",
+                    },
+                ],
+                "state": "error",
+                "is_last": True,
+                "metadata": {},
+                "id": AnyString(),
+            },
+        )
+
+        self.assertIsNotNone(response)
+        self.assertDictEqual(
+            response.model_dump(),
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": "SkillNotFoundError: "
+                        "Skill 'non_existent_skill' not found.",
+                    },
+                ],
+                "state": "error",
+                "metadata": {},
+                "id": "test_call_2",
+            },
+        )

@@ -119,7 +119,7 @@ The tool instructions are a collection of suggestions, rules and notifications a
 DEFAULT_SKILL_INSTRUCTION = """<agent-skills>
 Skills are a collection of instructions, scripts, and resources to extend your capabilities.
 
-**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `skill` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
+**IMPORTANT**: Skills are NOT tools, and you cannot call a skill directly. To use a skill, you MUST use the `{{ skill_viewer }}` tool to read the skill's full instructions, and then follow those instructions to use the tools and resources provided by the skill.
 
 # Available Skills:
 {% for skill in skills %}<skill>
@@ -789,8 +789,10 @@ class Toolkit:
                         f"directory '{skill.dir}'. "
                         f"Renaming it to '{new_name}'.",
                     )
-                    skill.name = new_name
-                    skills[new_name] = skill
+                    # Avoid affect the skill loader cache
+                    copied_skill = deepcopy(skill)
+                    copied_skill.name = new_name
+                    skills[new_name] = copied_skill
         return skills
 
     async def get_skill_instructions(self) -> str | None:
@@ -820,7 +822,10 @@ class Toolkit:
         # Generate the skill instruction prompt with the template
         template = Template(self.skill_instruction_template)
 
-        return template.render(skills=skills.values())
+        return template.render(
+            skills=skills.values(),
+            skill_viewer=self.builtin_skill_viewer.tool.name,
+        )
 
     def register_middleware(
         self,
@@ -941,11 +946,22 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
                 RegisteredTool objects.
         """
         available_tools = {}
+
+        # Builtin meta tool is only included when there is at least one tool
+        # group
         if len(self.groups) > 0:
             available_tools[
                 self.builtin_meta_tool.tool.name
             ] = self.builtin_meta_tool
 
+        # Builtin skill viewer is included when enabled and at least on skill
+        # is registered
+        if self.skill_viewer_enabled and len(self.skills) > 0:
+            available_tools[
+                self.builtin_skill_viewer.tool.name
+            ] = self.builtin_skill_viewer
+
+        # The tools in the activated groups and the "basic" group are included
         groups_filter = ["basic"] + (groups or [])
         for tool_name, tool in self.tools.items():
             if tool.group in groups_filter:
