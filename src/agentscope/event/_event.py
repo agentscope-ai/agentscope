@@ -314,12 +314,12 @@ class ToolResultEndEvent(EventBase):
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
-    state: Literal["success", "error", "interrupted", "running"]
+    state: Literal["finished", "error", "interrupted", "running"]
     """Final execution state of the tool call."""
 
 
 class ExceedMaxItersEvent(EventBase):
-    """Exceed max iterations event."""
+    """Exceed max iterations' event."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""

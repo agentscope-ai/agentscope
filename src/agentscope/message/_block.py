@@ -109,7 +109,7 @@ class ToolResultBlock(BaseModel):
     output: str | List[TextBlock | DataBlock]
     """The output of the tool, which can be a raw string of a list of
     text and multimodal blocks."""
-    state: Literal["success", "error", "interrupted", "running"]
+    state: Literal["finished", "error", "interrupted", "running"]
     """The execution state of the tool."""
 
 
