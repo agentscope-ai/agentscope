@@ -73,18 +73,20 @@ codebase."""  # ignore: E501
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         """Check if a permission rule matches the glob pattern or path.
 
         Matches rule_content as a glob pattern against the "pattern" or "path"
         parameters. This allows rules to match either the search pattern itself
-        or the directory being searched.
+        or the directory being searched. If rule_content is None, matches all
+        invocations (tool-name-level rule).
 
         Args:
-            rule_content (`str`):
-                Glob pattern to match (e.g., "src/**" to match searches in src)
+            rule_content (`str | None`):
+                Glob pattern to match (e.g., "src/**" to match searches in
+                src), or None to match all invocations
             tool_input (`dict[str, Any]`):
                 The tool input data containing "pattern" and optional "path"
 
@@ -92,6 +94,10 @@ codebase."""  # ignore: E501
             `bool`:
                 True if the rule matches the pattern or path, False otherwise
         """
+        # None = tool-name-level rule, matches everything
+        if rule_content is None:
+            return True
+
         # Try matching against the search path first
         path = tool_input.get("path", "")
         if path and fnmatch.fnmatch(path, rule_content):

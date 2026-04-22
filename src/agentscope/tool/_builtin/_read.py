@@ -37,7 +37,7 @@ Usage:
 - By default, it reads up to 2000 lines starting from the beginning of the file
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
 - Results are returned using cat -n format, with line numbers starting at 1
-- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
+- This tool allows you to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
 - This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific pages."""  # noqa: E501
     """The description presented to the agent."""
 
@@ -106,17 +106,19 @@ Usage:
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         """Check if a permission rule matches the file path.
 
         Matches rule_content as a glob pattern against the "file_path"
-        parameter using fnmatch.
+        parameter using fnmatch. If rule_content is None, matches all
+        invocations (tool-name-level rule).
 
         Args:
-            rule_content (`str`):
-                Glob pattern to match against the file path (e.g., "src/**")
+            rule_content (`str | None`):
+                Glob pattern to match against the file path (e.g., "src/**"),
+                or None to match all invocations
             tool_input (`dict[str, Any]`):
                 The tool input data containing "file_path" key
 
@@ -124,6 +126,10 @@ Usage:
             `bool`:
                 True if the glob pattern matches the file path, False otherwise
         """
+        # None = tool-name-level rule, matches everything
+        if rule_content is None:
+            return True
+
         file_path = tool_input.get("file_path", "")
         if not file_path:
             return False

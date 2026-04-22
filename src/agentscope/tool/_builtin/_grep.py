@@ -167,17 +167,20 @@ class Grep(ToolBase):
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         """Check if a permission rule matches the grep search path.
 
         Matches rule_content as a glob pattern against the "path" parameter.
         If no path is given, falls back to the current working directory.
+        If rule_content is None, matches all invocations (tool-name-level
+        rule).
 
         Args:
-            rule_content (`str`):
-                Glob pattern to match against the search path (e.g., "src/**")
+            rule_content (`str | None`):
+                Glob pattern to match against the search path (e.g., "src/**"),
+                or None to match all invocations
             tool_input (`dict[str, Any]`):
                 The tool input data containing optional "path" key
 
@@ -186,6 +189,10 @@ class Grep(ToolBase):
                 True if the glob pattern matches the search path, False
                 otherwise
         """
+        # None = tool-name-level rule, matches everything
+        if rule_content is None:
+            return True
+
         path = tool_input.get("path", "")
         if not path:
             path = os.getcwd()

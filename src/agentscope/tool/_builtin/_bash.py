@@ -301,25 +301,30 @@ easier to review tool calls and give permission.
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         r"""Match Bash command using regex-based wildcard matching.
 
-        Implements Claude Code's wildcard matching with escape sequences:
+        Implements wildcard matching with escape sequences:
         - Supports \* for literal asterisk and \\ for literal backslash
         - Special optimization: "git *" matches both "git" and "git add"
         - Prefix pattern (e.g., "git:*"): matches commands starting with "git "
         - Wildcard pattern: converts to regex with proper escape handling
         - Substring pattern: exact substring matching
+        - If rule_content is None, matches all invocations
+         (tool-name-level rule)
 
         Args:
-            rule_content: The command pattern to match
+            rule_content: The command pattern to match, or None to match all
             tool_input: Must contain a "command" key with the command string
 
         Returns:
             True if pattern matches the command
         """
+        # None = tool-name-level rule, matches everything
+        if rule_content is None:
+            return True
 
         command = tool_input.get("command", "")
 

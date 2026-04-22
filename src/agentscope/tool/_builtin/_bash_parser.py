@@ -635,7 +635,7 @@ class BashCommandParser:
     ) -> str | None:
         """Check if sed command violates safety constraints.
 
-        Implements allowlist/denylist system matching Claude Code's behavior:
+        Implements allowlist/denylist system:
         - Allowlist: Line printing (sed -n 'Np') and substitution (sed 's///')
         - Denylist: Dangerous operations (w/W/e/E), file writes, command
          execution

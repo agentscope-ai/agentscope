@@ -11,6 +11,7 @@ from ._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionRule,
+    PermissionBehavior,
 )
 from ._response import ToolChunk
 
@@ -52,28 +53,28 @@ class ToolBase(ABC):
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         """Check if a permission rule matches the tool input.
 
-        .. note:: This is an optional method. By default, it returns False
-        (no match), so the permission engine treats any rule as a miss and
-        falls through to asking the user. Tools should override this if they
-        want rule-based auto-allow/deny to work.
+        .. note:: This is an optional method. The default implementation
+        mirrors Claude Code's behavior: a rule with no content (``None``)
+        is a tool-name-level rule that matches every invocation; a rule
+        with content requires the tool to override this method with its
+        own matching logic, otherwise it returns ``False``.
 
-        Each tool should implement its own matching logic based on its
-        specific parameters. For example:
-        - File tools (Read/Write/Edit): match rule_content as a glob pattern
-          against the "file_path" parameter
-        - Bash: match rule_content against the "command" parameter using
-          regex/substring matching with support for prefix patterns (e.g.,
-          "git:*") and wildcards
-        - Grep/Glob: match rule_content against search patterns or paths
+        This means:
+        - ``_FunctionTool`` and ``MCPTool`` (which do not override this)
+          can still be controlled at the tool-name level via rules like
+          ``{"tool_name": "my_tool", "rule_content": None}``.
+        - Specific tools (Bash, Read, Write, Edit, Glob, Grep) override
+          this method to support fine-grained pattern matching.
 
         Args:
-            rule_content (`str`):
-                The rule pattern to match (format depends on tool type)
+            rule_content (`str | None`):
+                The rule pattern to match. ``None`` means "match all
+                invocations of this tool" (tool-name-level rule).
             tool_input (`dict[str, Any]`):
                 The tool input data
 
@@ -81,7 +82,8 @@ class ToolBase(ABC):
             `bool`:
                 True if the rule matches, False otherwise
         """
-        return False
+        # None rule_content = tool-name-level rule, matches everything
+        return rule_content is None
 
     def generate_suggestions(
         self,
@@ -89,18 +91,17 @@ class ToolBase(ABC):
     ) -> List[PermissionRule]:
         """Generate suggested permission rules for the tool input.
 
-        .. note:: this is an optional abstract method. By default, it returns
-        an empty list, and tools can override it if they want to provide
-        suggestions.
+        .. note:: The default implementation mirrors Claude Code's MCP tool
+        behavior: suggest a single tool-name-level rule (``rule_content=None``)
+        that allows all invocations of this tool. Tools can override this to
+        provide finer-grained suggestions.
 
-        Each tool must implement its own suggestion logic based on its
-        specific parameters. The goal is to generate broader permission rules
-        that can avoid future confirmation prompts. For example:
+        For example:
         - File tools (Read/Write/Edit): suggest a glob pattern covering the
           parent directory (e.g., "src/main.py" -> "src/**")
         - Bash: suggest command prefix patterns (e.g., "git commit -m 'xxx'"
           -> "git commit:*")
-        - Grep/Glob: suggest patterns based on search paths or patterns
+        - Grep/Glob: suggest patterns based on search paths
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -111,7 +112,14 @@ class ToolBase(ABC):
                 List of suggested permission rules (usually 1, max 5 for
                 compound operations)
         """
-        return []
+        return [
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=None,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+        ]
 
     def _is_dangerous_path(self, file_path: str) -> bool:
         """Check if a file path is dangerous (sensitive file or directory).

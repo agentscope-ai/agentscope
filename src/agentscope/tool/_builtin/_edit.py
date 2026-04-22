@@ -164,7 +164,7 @@ Usage:
         # 3. Default to asking for permission
         return PermissionDecision(
             behavior=PermissionBehavior.ASK,
-            message=f"Claude requested permissions to write to {file_path}, "
+            message=f"Request permissions to write to {file_path}, "
             f"but you haven't granted it yet.",
         )
 
@@ -214,17 +214,19 @@ Usage:
 
     def match_rule(
         self,
-        rule_content: str,
+        rule_content: str | None,
         tool_input: dict[str, Any],
     ) -> bool:
         """Check if a permission rule matches the file path.
 
         Matches rule_content as a glob pattern against the "file_path"
-        parameter using fnmatch.
+        parameter using fnmatch. If rule_content is None, matches all
+        invocations (tool-name-level rule).
 
         Args:
-            rule_content (`str`):
-                Glob pattern to match against the file path (e.g., "src/**")
+            rule_content (`str | None`):
+                Glob pattern to match against the file path (e.g., "src/**"),
+                or None to match all invocations
             tool_input (`dict[str, Any]`):
                 The tool input data containing "file_path" key
 
@@ -232,6 +234,9 @@ Usage:
             `bool`:
                 True if the glob pattern matches the file path, False otherwise
         """
+        if rule_content is None:
+            return True
+
         file_path = tool_input.get("file_path", "")
         if not file_path:
             return False
