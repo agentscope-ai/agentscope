@@ -37,13 +37,16 @@ class EditToolTest(IsolatedAsyncioTestCase):
         self.assertFalse(self.edit_tool.is_concurrency_safe)
 
     async def test_check_permissions(self) -> None:
-        """Test edit tool permission checking."""
+        """Test edit tool permission checking.
+
+        Edit tool should return PASSTHROUGH for non-dangerous paths,
+        allowing PermissionEngine to check allow rules.
+        """
         context = PermissionContext()
         tool_input = {"file_path": "/tmp/test.txt"}
         decision = await self.edit_tool.check_permissions(tool_input, context)
 
-        self.assertEqual(decision.behavior, PermissionBehavior.ASK)
-        self.assertIn("/tmp/test.txt", decision.message)
+        self.assertEqual(decision.behavior, PermissionBehavior.PASSTHROUGH)
 
     async def test_simple_edit(self) -> None:
         """Test simple file editing."""

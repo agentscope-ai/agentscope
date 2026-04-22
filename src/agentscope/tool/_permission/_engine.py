@@ -28,10 +28,12 @@ class PermissionEngine:
 
     The evaluation order is:
     1. Check deny rules (highest priority)
-    2. Check mode-specific logic (EXPLORE, ACCEPT_EDITS, dangerous paths)
-    3. Check ask rules
+    2. Check ask rules
+    3. Tool-specific checks (EXPLORE/ACCEPT_EDITS modes, dangerous paths,
+       read-only commands, etc.) - bypass-immune
     4. Check allow rules
-    5. Apply default behavior based on permission mode
+    5. BYPASS mode check
+    6. Default behavior (ask)
     """
 
     def __init__(
@@ -88,12 +90,15 @@ class PermissionEngine:
         The evaluation order:
         1. Tool-level deny rules (highest priority)
         2. Tool-level ask rules
-        3. Tool-specific checks (dangerous paths, content rules), bypass-immune
-        4. Allow rules (exact + content-specific)
-        5. Mode-specific logic (ACCEPT_EDITS auto-allow)
-        6. Read-only check (for Bash commands)
-        7. BYPASS mode check
-        8. Default behavior (passthrough → ask)
+        3. Tool-specific checks (bypass-immune):
+           - EXPLORE mode logic (read-only tools auto-allowed)
+           - ACCEPT_EDITS mode logic (file edits in working dir auto-allowed)
+           - Dangerous path checks (safety checks)
+           - Read-only command checks (for Bash)
+           - Other tool-specific permission logic
+        4. Allow rules
+        5. BYPASS mode check
+        6. Default behavior (ask)
 
         Args:
             tool_call (`ToolCallBlock`):

@@ -123,6 +123,11 @@ class Grep(ToolBase):
                 "description": "Case insensitive search.",
                 "default": False,
             },
+            "case_insensitive": {
+                "type": "boolean",
+                "description": "Case insensitive search (alias for i).",
+                "default": False,
+            },
             "multiline": {
                 "type": "boolean",
                 "description": "Enable multiline mode where . matches "

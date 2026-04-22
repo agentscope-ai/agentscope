@@ -139,11 +139,11 @@ Usage:
                     "a dangerous path",
                 )
 
-        # 3. Default to asking for permission
+        # 3. Return PASSTHROUGH to let PermissionEngine check allow rules
+        # This ensures allow rules can grant Write permissions
         return PermissionDecision(
-            behavior=PermissionBehavior.ASK,
-            message=f"Request permissions to write to {file_path}, "
-            f"but you haven't granted it yet.",
+            behavior=PermissionBehavior.PASSTHROUGH,
+            message="",
         )
 
     def _path_in_allowed_working_path(
