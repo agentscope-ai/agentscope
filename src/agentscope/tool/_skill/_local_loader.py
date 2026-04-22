@@ -3,6 +3,7 @@
 import asyncio
 import os
 
+import aiofiles
 import aiofiles.ospath
 import frontmatter
 
@@ -32,15 +33,15 @@ class LocalSkillLoader(SkillLoaderBase):
         """Load a single skill from a skill root directory.
 
         Args:
-            skill_root (`str`): The skill root directory containing Skill.md.
+            skill_root (`str`): The skill root directory containing SKILL.md.
 
         Returns:
             `Skill | None`: A Skill object or None if loading failed.
         """
-        skill_md_path = os.path.join(skill_root, "Skill.md")
+        skill_md_path = os.path.join(skill_root, "SKILL.md")
 
         try:
-            # Check if Skill.md exists
+            # Check if SKILL.md exists
             if not await aiofiles.ospath.isfile(skill_md_path):
                 return None
 
@@ -54,7 +55,7 @@ class LocalSkillLoader(SkillLoaderBase):
                 if cached_skill.updated_at == updated_at:
                     return cached_skill
 
-            # Read and parse Skill.md
+            # Read and parse SKILL.md
             async with aiofiles.open(
                 skill_md_path,
                 "r",
@@ -68,7 +69,7 @@ class LocalSkillLoader(SkillLoaderBase):
 
             if not name or not description:
                 logger.warning(
-                    "Skill.md in %s is missing required fields "
+                    "SKILL.md in %s is missing required fields "
                     "(name or description). Skipping.",
                     skill_root,
                 )
@@ -99,9 +100,9 @@ class LocalSkillLoader(SkillLoaderBase):
         """List all the available skills from the directory.
 
         This method will:
-        1. Search for Skill.md in the current directory
-        2. If scan_subdir is True, search for Skill.md in all subdirectories
-        3. Load all Skill.md files concurrently
+        1. Search for SKILL.md in the current directory
+        2. If scan_subdir is True, search for SKILL.md in all subdirectories
+        3. Load all SKILL.md files concurrently
 
         Returns:
             `list[Skill]`: A list of Skill objects.
@@ -115,19 +116,19 @@ class LocalSkillLoader(SkillLoaderBase):
                 )
                 return []
 
-            # Find all directories containing Skill.md
+            # Find all directories containing SKILL.md
             def _find_skill_dirs() -> list[str]:
-                """Find all directories containing Skill.md file."""
+                """Find all directories containing SKILL.md file."""
                 dirs = []
 
-                if os.path.isfile(os.path.join(self.directory, "Skill.md")):
+                if os.path.isfile(os.path.join(self.directory, "SKILL.md")):
                     dirs.append(self.directory)
 
                 if self.scan_subdir:
                     for root, _, filenames in os.walk(self.directory):
                         if root == self.directory:
                             continue
-                        if "Skill.md" in filenames:
+                        if "SKILL.md" in filenames:
                             dirs.append(root)
 
                 return dirs
@@ -136,7 +137,7 @@ class LocalSkillLoader(SkillLoaderBase):
 
             if not skill_dirs:
                 logger.info(
-                    "No Skill.md files found in %s",
+                    "No SKILL.md files found in %s",
                     self.directory,
                 )
                 return []

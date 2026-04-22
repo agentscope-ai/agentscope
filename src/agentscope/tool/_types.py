@@ -171,7 +171,7 @@ class ToolGroup:
 
 @dataclass
 class Skill:
-    """The agent skill typed dict class"""
+    """The agent skill class"""
 
     name: str
     """The name of the skill."""

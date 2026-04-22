@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """The skill loader base class."""
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 
 from .._types import Skill
 
 
-class SkillLoaderBase:
+class SkillLoaderBase(ABC):
     """The base class for skill loader."""
 
     @abstractmethod

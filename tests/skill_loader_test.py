@@ -18,7 +18,7 @@ class SkillLoaderTest(IsolatedAsyncioTestCase):
         # Create a temporary directory for testing
         self.test_dir = tempfile.mkdtemp()
 
-        # Create test Skill.md files
+        # Create test SKILL.md files
         # 1. Root level skill
         self.root_skill_content = """---
 name: root_skill
@@ -28,7 +28,7 @@ description: A skill in the root directory
 This is the root skill content.
 """
         with open(
-            os.path.join(self.test_dir, "Skill.md"),
+            os.path.join(self.test_dir, "SKILL.md"),
             "w",
             encoding="utf-8",
         ) as f:
@@ -45,7 +45,7 @@ description: A skill in subdirectory 1
 This is the subdir1 skill content.
 """
         with open(
-            os.path.join(self.subdir1, "Skill.md"),
+            os.path.join(self.subdir1, "SKILL.md"),
             "w",
             encoding="utf-8",
         ) as f:
@@ -62,7 +62,7 @@ description: A skill in nested subdirectory 2
 This is the subdir2 skill content.
 """
         with open(
-            os.path.join(self.subdir2, "Skill.md"),
+            os.path.join(self.subdir2, "SKILL.md"),
             "w",
             encoding="utf-8",
         ) as f:
@@ -75,8 +75,8 @@ This is the subdir2 skill content.
             shutil.rmtree(self.test_dir)
 
     async def test_nonexistent_skill(self) -> None:
-        """Test loading from a directory without Skill.md."""
-        # Create a directory without Skill.md
+        """Test loading from a directory without SKILL.md."""
+        # Create a directory without SKILL.md
         empty_dir = tempfile.mkdtemp()
         try:
             loader = LocalSkillLoader(empty_dir, scan_subdir=False)
@@ -91,8 +91,8 @@ This is the subdir2 skill content.
         """Test that scan_subdir only controls subdirectory scanning.
 
         The root directory is always scanned regardless of scan_subdir.
-        When scan_subdir=False, only root Skill.md is loaded.
-        When scan_subdir=True, root + all subdirectory Skill.md files
+        When scan_subdir=False, only root SKILL.md is loaded.
+        When scan_subdir=True, root + all subdirectory SKILL.md files
         are loaded.
         """
         loader_no_scan = LocalSkillLoader(self.test_dir, scan_subdir=False)
@@ -187,7 +187,7 @@ description: Modified skill description
 This is the modified content.
 """
         with open(
-            os.path.join(self.test_dir, "Skill.md"),
+            os.path.join(self.test_dir, "SKILL.md"),
             "w",
             encoding="utf-8",
         ) as f:

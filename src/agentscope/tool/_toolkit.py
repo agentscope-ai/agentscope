@@ -27,9 +27,10 @@ from pydantic import (
 from ._builtin import ResetTools
 from ._base import ToolBase
 from ._adapters import _FunctionTool
+from ._builtin._skill import SkillViewer
 from ._response import ToolResponse, ToolChunk
 from ._skill import SkillLoaderBase, LocalSkillLoader
-from ._types import ToolGroup, RegisteredTool
+from ._types import ToolGroup, RegisteredTool, Skill
 from .._utils._common import _json_loads_with_repair
 from ..exception import DeveloperOrientedException
 from ..mcp import (
@@ -237,6 +238,12 @@ class Toolkit:
                 # corresponding input schema.
                 groups=self.groups,
                 response_template=meta_tool_response_template,
+            ),
+        )
+
+        self.builtin_skill_viewer = RegisteredTool(
+            tool=SkillViewer(
+                get_skills_method=self._get_all_skills,
             ),
         )
 
@@ -754,36 +761,15 @@ class Toolkit:
 
     def clear(self) -> None:
         """Clear the toolkit, removing all tool functions and groups."""
+        self.skills.clear()
         self.tools.clear()
         self.groups.clear()
 
-    def _validate_tool_function(self, func_name: str) -> None:
-        """Check if the tool function already registered in the toolkit. If
-        so, raise a ValueError."""
-        if func_name in self.tools:
-            raise ValueError(
-                f"A function with name '{func_name}' is already registered "
-                "in the toolkit.",
-            )
-
-    async def get_skill_instructions(self) -> str | None:
-        """Get the prompt for all registered agent skills, which can be
-        attached to the system prompt for the agent.
-
-        The prompt is consisted of an overall instruction and the detailed
-        descriptions of each skill, including its name, description, and
-        directory.
-
-        .. note:: If no skill is registered, None will be returned.
-
-        Returns:
-            `str | None`:
-                The combined prompt for all registered agent skills, or None
-                if no skill is registered.
+    async def _get_all_skills(self) -> dict[str, Skill]:
+        """A unified method to collect all skills from the registered skill
+        loaders. Including the name conflict handling for skills with the
+        same name.
         """
-        if len(self.skills) == 0:
-            return None
-
         skills = OrderedDict()
         for loader in self.skills:
             new_skills = await loader.list_skills()
@@ -804,6 +790,27 @@ class Toolkit:
                     )
                     skill.name = new_name
                     skills[new_name] = skill
+        return skills
+
+    async def get_skill_instructions(self) -> str | None:
+        """Get the prompt for all registered agent skills, which can be
+        attached to the system prompt for the agent.
+
+        The prompt is consisted of an overall instruction and the detailed
+        descriptions of each skill, including its name, description, and
+        directory.
+
+        .. note:: If no skill is registered, None will be returned.
+
+        Returns:
+            `str | None`:
+                The combined prompt for all registered agent skills, or None
+                if no skill is registered.
+        """
+        if len(self.skills) == 0:
+            return None
+
+        skills = await self._get_all_skills()
 
         # If no skills were collected, return None
         if len(skills) == 0:
