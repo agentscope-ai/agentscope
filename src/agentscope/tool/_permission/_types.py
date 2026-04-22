@@ -59,8 +59,17 @@ class PermissionMode(Enum):
 
 
 class PermissionBehavior(Enum):
-    """The behavior of permission."""
+    """The behavior of permission.
+
+    Attributes:
+        ALLOW: Allow the operation
+        DENY: Deny the operation
+        ASK: Ask the user for permission
+        PASSTHROUGH: Let the permission engine continue with rule matching
+            (used by tools to defer decision to the engine)
+    """
 
     ALLOW = "allow"
     DENY = "deny"
     ASK = "ask"
+    PASSTHROUGH = "passthrough"

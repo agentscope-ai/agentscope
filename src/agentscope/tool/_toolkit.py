@@ -24,13 +24,12 @@ from pydantic import (
     create_model,
 )
 
-from ._builtin import ResetTools
+from ._builtin import ResetTools, Edit, Write, Read, SkillViewer
 from ._base import ToolBase
 from ._adapters import _FunctionTool
-from ._builtin._skill import SkillViewer
 from ._response import ToolResponse, ToolChunk
 from ._skill import SkillLoaderBase, LocalSkillLoader
-from ._types import ToolGroup, RegisteredTool, Skill
+from ._types import ToolGroup, Skill, RegisteredTool
 from .._utils._common import _json_loads_with_repair
 from ..exception import DeveloperOrientedException
 from ..mcp import (
@@ -542,7 +541,9 @@ class Toolkit:
         tool_response = ToolResponse(id=tool_call.id)
 
         # Check
-        available_tools = self._get_available_tools(state.activated_groups)
+        available_tools = self._get_available_tools(
+            state.tool_context.activated_groups,
+        )
 
         if tool_call.name not in available_tools:
             # Not activate
@@ -587,9 +588,9 @@ class Toolkit:
         kwargs = _json_loads_with_repair(tool_call.input)
 
         # TODO: we should be build a mechanism to support state injection in
-        # the future instead of hard coding here.
-        if tool_call.name == self.builtin_meta_tool.tool.name:
-            kwargs["state"] = state
+        #  the future instead of hard coding here.
+        if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
+            kwargs["_agent_state"] = state
 
         # Async function
         try:
