@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-argument
 """Toolkit test case."""
 import json
 from typing import Any, AsyncGenerator, Generator
 from unittest.async_case import IsolatedAsyncioTestCase
+from utils import AnyString
 
 from agentscope.agent import AgentState
 from agentscope.message import (
@@ -15,12 +17,10 @@ from agentscope.tool import (
     Toolkit,
     ToolBase,
     ToolChunk,
-    PermissionContext,
     PermissionDecision,
     PermissionBehavior,
     ToolResponse,
 )
-from tests.utils import AnyString
 
 
 class Tool1(ToolBase):
@@ -38,8 +38,8 @@ class Tool1(ToolBase):
 
     async def check_permissions(
         self,
-        tool_input: dict[str, Any],
-        context: PermissionContext,
+        *args: Any,
+        **kwargs: Any,
     ) -> PermissionDecision:
         """Check permissions for the tool."""
         return PermissionDecision(
@@ -69,8 +69,8 @@ class Tool2(ToolBase):
 
     async def check_permissions(
         self,
-        tool_input: dict[str, Any],
-        context: PermissionContext,
+        *args: Any,
+        **kwargs: Any,
     ) -> PermissionDecision:
         """Check permissions for the tool."""
         return PermissionDecision(
@@ -850,6 +850,7 @@ class ToolGroupTest(IsolatedAsyncioTestCase):
             group_name="group_1",
             description="Group 1",
         )
+        self.maxDiff = None
 
         # The group is created successfully
         self.assertEqual(len(toolkit.groups), 1)

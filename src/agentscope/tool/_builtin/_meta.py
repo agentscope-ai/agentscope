@@ -13,13 +13,14 @@ from .._permission import (
 from .._response import ToolChunk
 from .._base import ToolBase
 from .._types import ToolGroup
+from ...exception import DeveloperOrientedException
 from ...message import TextBlock
 
 
 if TYPE_CHECKING:
     from ...agent import AgentState
 else:
-    AgentState = "AgentState"
+    AgentState = Any
 
 
 class ResetTools(ToolBase):
@@ -87,11 +88,20 @@ class ResetTools(ToolBase):
             message="The meta tool is always allowed to be called.",
         )
 
-    async def __call__(self, state: AgentState, **kwargs: Any) -> ToolChunk:
+    async def __call__(
+        self,
+        _agent_state: AgentState,
+        **kwargs: Any,
+    ) -> ToolChunk:
         """Activate or deactivate tool groups based on the input arguments,
         and return their usage instructions."""
+        if _agent_state is None:
+            raise DeveloperOrientedException(
+                "Error: ResetTools requires state to be provided.",
+            )
+
         # Deactivate all tool groups first
-        state.activated_groups.clear()
+        _agent_state.tool_context.activated_groups.clear()
 
         to_activate = []
         for key, value in kwargs.items():
@@ -108,7 +118,7 @@ class ResetTools(ToolBase):
             if value:
                 to_activate.append(key)
 
-        state.activated_groups.extend(to_activate)
+        _agent_state.tool_context.activated_groups.extend(to_activate)
 
         template = Template(self.response_template)
         activated_groups = [

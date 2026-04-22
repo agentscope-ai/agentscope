@@ -3,6 +3,7 @@
 from contextlib import _AsyncGeneratorContextManager
 from typing import Any, Literal, List, TYPE_CHECKING
 
+import httpx
 import mcp.types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -37,7 +38,6 @@ class HttpStatelessClient(MCPClientBase):
         url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 30,
-        sse_read_timeout: float = 60 * 5,
         **client_kwargs: Any,
     ) -> None:
         """Initialize the streamable HTTP MCP server.
@@ -56,9 +56,6 @@ class HttpStatelessClient(MCPClientBase):
                 Additional headers to include in the HTTP request.
             timeout (`float`, optional):
                 The timeout for the HTTP request in seconds. Defaults to 30.
-            sse_read_timeout (`float`, optional):
-                The timeout for reading Server-Sent Events (SSE) in seconds.
-                Defaults to 300 (5 minutes).
             **client_kwargs (`Any`):
                 The additional keyword arguments to pass to the streamable
                 HTTP client.
@@ -71,9 +68,8 @@ class HttpStatelessClient(MCPClientBase):
 
         self.client_config = {
             "url": url,
-            "headers": headers or {},
+            "headers": headers or None,
             "timeout": timeout,
-            "sse_read_timeout": sse_read_timeout,
             **client_kwargs,
         }
 
@@ -85,7 +81,21 @@ class HttpStatelessClient(MCPClientBase):
             return sse_client(**self.client_config)
 
         if self.transport == "streamable_http":
-            return streamable_http_client(**self.client_config)
+            # For the newest version of mcp client, headers is not supported,
+            # we should create an async client here
+            if self.client_config.get("headers") or self.client_config.get(
+                "timeout",
+            ):
+                client = httpx.AsyncClient(
+                    headers=self.client_config.get("headers", None),
+                    timeout=self.client_config.get("timeout"),
+                )
+            else:
+                client = None
+            return streamable_http_client(
+                url=self.client_config["url"],
+                http_client=client,
+            )
 
         raise ValueError(
             f"Unsupported transport type: {self.transport}. "

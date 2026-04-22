@@ -12,8 +12,13 @@ information for permission rule generation, including:
 
 from typing import List, Optional, Set, Tuple
 
+import re
+import shlex
+
 import tree_sitter_bash as tsbash
 from tree_sitter import Language, Parser, Node
+
+from .._constants import DANGEROUS_NODE_TYPES, DANGEROUS_COMMANDS
 
 
 # Commands that are considered safe and don't require permission rules
@@ -165,7 +170,7 @@ class BashCommandParser:
             try:
                 tree = self.parser.parse(bytes(cmd, "utf8"))
                 root = tree.root_node
-                subcommands = self._split_compound_command(root, cmd)
+                subcommands = self.split_compound_command(root, cmd)
 
                 # All subcommands must be read-only
                 for subcmd in subcommands:
@@ -450,7 +455,7 @@ class BashCommandParser:
         root = tree.root_node
 
         # Split compound commands
-        subcommands = self._split_compound_command(root, command)
+        subcommands = self.split_compound_command(root, command)
 
         # Extract prefixes from each subcommand
         prefixes = []
@@ -467,7 +472,7 @@ class BashCommandParser:
 
         return prefixes
 
-    def _split_compound_command(self, root: Node, command: str) -> List[str]:
+    def split_compound_command(self, root: Node, command: str) -> List[str]:
         """Split compound commands using tree-sitter for precise parsing.
 
         Recognizes: &&, ||, ;, |
@@ -583,6 +588,284 @@ class BashCommandParser:
 
         for child in node.children:
             result = self._find_first_simple_command(child)
+            if result:
+                return result
+
+        return None
+
+    def check_dangerous_command(self, command: str) -> Optional[str]:
+        """Check if command contains dangerous patterns.
+
+        Uses word-boundary aware matching to avoid false positives like
+        'git add' matching 'dd' pattern.
+
+        Args:
+            command (`str`):
+                The bash command to check
+
+        Returns:
+            `Optional[str]`:
+                The matched dangerous pattern if found, None otherwise
+        """
+
+        # Normalize command for matching
+        normalized = " ".join(command.split())
+
+        # Check each dangerous pattern
+        for pattern in DANGEROUS_COMMANDS:
+            # For single-word patterns like "dd", use word boundary matching
+            # to avoid false positives (e.g., "git add" shouldn't match "dd")
+            if " " not in pattern and len(pattern) <= 4:
+                # Single word pattern - use word boundaries
+                regex = r"\b" + re.escape(pattern) + r"\b"
+                if re.search(regex, normalized):
+                    return pattern
+            else:
+                # Multi-word pattern or longer pattern - use substring match
+                if pattern in normalized:
+                    return pattern
+
+        return None
+
+    # pylint: disable=too-many-return-statements, too-many-branches
+    def check_sed_constraints(
+        self,
+        command: str,
+        dangerous_files: List[str],
+    ) -> str | None:
+        """Check if sed command violates safety constraints.
+
+        Implements allowlist/denylist system:
+        - Allowlist: Line printing (sed -n 'Np') and substitution (sed 's///')
+        - Denylist: Dangerous operations (w/W/e/E), file writes, command
+         execution
+
+        Args:
+            command: The bash command to check
+            dangerous_files: List of dangerous file patterns
+
+        Returns:
+            Error message if dangerous sed operation found, None otherwise
+        """
+
+        if "sed" not in command:
+            return None
+
+        # Parse command using shlex
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return "sed command has invalid shell syntax"
+
+        # Find sed command position
+        sed_idx = None
+        for i, token in enumerate(tokens):
+            if token == "sed" or token.endswith("/sed"):
+                sed_idx = i
+                break
+
+        if sed_idx is None:
+            return None
+
+        # Extract flags and expressions
+        args = tokens[sed_idx + 1 :]
+        flags = []
+        expressions = []
+        file_args = []
+        i = 0
+        found_first_expr = False
+
+        while i < len(args):
+            arg = args[i]
+
+            # Handle flags
+            if arg.startswith("-") and not arg.startswith("--"):
+                # Combined flags like -nE
+                flag_chars = arg[1:]
+                for char in flag_chars:
+                    flags.append(char)
+                # -i flag may have optional backup extension argument
+                # But only skip if next arg doesn't look like an expression
+                if "i" in flag_chars and i + 1 < len(args):
+                    next_arg = args[i + 1]
+                    # Skip backup extension only if it's not an expression
+                    # or file
+                    if (
+                        not next_arg.startswith("-")
+                        and not next_arg.startswith("s")
+                        and "." not in next_arg
+                    ):
+                        i += 1  # Skip backup extension
+            elif arg == "--in-place":
+                flags.append("i")
+                if i + 1 < len(args):
+                    next_arg = args[i + 1]
+                    if (
+                        not next_arg.startswith("-")
+                        and not next_arg.startswith("s")
+                        and "." not in next_arg
+                    ):
+                        i += 1
+            elif arg in ["-e", "--expression"]:
+                if i + 1 < len(args):
+                    expressions.append(args[i + 1])
+                    i += 1
+            elif not arg.startswith("-"):
+                # First non-flag, non-option arg is expression (if no -e used)
+                if not found_first_expr:
+                    expressions.append(arg)
+                    found_first_expr = True
+                else:
+                    file_args.append(arg)
+
+            i += 1
+
+        # If no expressions found, command is invalid
+        if not expressions:
+            return "sed command missing expression"
+
+        # Validate flags - only allow specific flags
+        allowed_flags = {"n", "E", "e", "i"}
+        for flag in flags:
+            if flag not in allowed_flags:
+                return f"sed flag -{flag} not allowed"
+
+        # Check allowlist patterns
+        has_n_flag = "n" in flags
+        has_i_flag = "i" in flags
+
+        for expr in expressions:
+            # Denylist checks first - dangerous operations
+            # Check for write operations (w, W) - must be at end or followed
+            # by space/filename
+            if (
+                re.search(r"/[wW]\s+\S+", expr)
+                or expr.endswith("/w")
+                or expr.endswith("/W")
+            ):
+                return "sed write operation (w/W) not allowed"
+
+            # Check for execute operations (e, E) - must be at end or
+            # followed by space
+            if (
+                re.search(r"/[eE](?:\s|$)", expr)
+                or expr.endswith("/e")
+                or expr.endswith("/E")
+            ):
+                return "sed execute operation (e/E) not allowed"
+
+            # Check for dangerous patterns
+            if "{" in expr or "}" in expr:
+                return "sed curly braces not allowed"
+            if expr.startswith("!"):
+                return "sed negation (!) not allowed"
+            if "#" in expr and not expr.startswith("s#"):
+                return "sed comments not allowed"
+
+            # Pattern 1: Line printing with -n flag (sed -n 'Np' or 'N,Mp')
+            if has_n_flag:
+                # Match: number followed by 'p', or range 'N,Mp'
+                if re.match(
+                    r"^\d+p$",
+                    expr,
+                ) or re.match(
+                    r"^\d+,\d+p$",
+                    expr,
+                ):
+                    continue
+
+            # Pattern 2: Substitution command
+            # (sed 's/pattern/replacement/flags')
+            if (
+                expr.startswith("s/")
+                or expr.startswith("s|")
+                or expr.startswith("s#")
+            ):
+                delimiter = expr[1]
+                parts = expr[2:].split(delimiter)
+                if len(parts) >= 2:
+                    # Valid substitution
+                    # Check substitution flags (g, p, number, etc.)
+                    if len(parts) > 2:
+                        sub_flags = parts[2]
+                        # Allow common substitution flags
+                        if all(c in "gp0123456789" for c in sub_flags):
+                            continue
+                    else:
+                        continue
+
+            # If we reach here, expression doesn't match allowlist
+            return f"sed expression '{expr}' not in allowlist"
+
+        # Check -i flag with dangerous files
+        if has_i_flag and file_args:
+            for file_path in file_args:
+                for dangerous_file in dangerous_files:
+                    if dangerous_file in file_path or file_path.endswith(
+                        dangerous_file,
+                    ):
+                        return f"sed -i modifying dangerous file: {file_path}"
+
+        return None
+
+    def check_injection_risk(self, command: str) -> Optional[str]:
+        """Check if command contains structures that cannot be statically
+        analyzed.
+
+        This detects command substitution, process substitution, complex
+        expansions, control flow, and other dynamic shell features that
+        make it impossible to determine the command's behavior without
+        execution.
+
+        Args:
+            command (`str`):
+                The bash command to check
+
+        Returns:
+            `Optional[str]`:
+                Reason string if command is too complex, None if it can be
+                statically analyzed
+
+        Examples:
+            >>> parser.check_injection_risk("ls -la")
+            None
+            >>> parser.check_injection_risk("rm $(find . -name '*.tmp')")
+            "Command contains command_substitution which cannot be statically
+            analyzed"
+            >>> parser.check_injection_risk("for f in *.txt; do cat $f; done")
+            "Command contains for_statement which cannot be statically
+            analyzed"
+        """
+
+        try:
+            tree = self.parser.parse(bytes(command, "utf8"))
+            return self._walk_for_dangerous_nodes(tree.root_node)
+        except Exception:
+            # If parsing fails, be conservative and require review
+            return "Command parsing failed, cannot verify safety"
+
+    def _walk_for_dangerous_nodes(self, node: Node) -> Optional[str]:
+        """Recursively walk AST to find dangerous node types.
+
+        Args:
+            node (`Node`):
+                The AST node to check
+
+        Returns:
+            `Optional[str]`:
+                Reason string if dangerous node found, None otherwise
+        """
+
+        # Check if this node is a dangerous type
+        if node.type in DANGEROUS_NODE_TYPES:
+            return (
+                f"Command contains {node.type} which cannot be "
+                f"statically analyzed"
+            )
+
+        # Recursively check children
+        for child in node.children:
+            result = self._walk_for_dangerous_nodes(child)
             if result:
                 return result
 
