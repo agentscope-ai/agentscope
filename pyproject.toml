@@ -42,6 +42,7 @@ dependencies = [
     "aiofiles",
     "tree_sitter",
     "tree_sitter_bash",
+    "ripgrep",
 ]
 
 [project.optional-dependencies]

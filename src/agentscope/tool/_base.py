@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=unused-argument
 """The tool protocol in agentscope."""
-import fnmatch
 import os
 from abc import abstractmethod, ABC
 from pathlib import Path
@@ -11,7 +11,6 @@ from ._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionRule,
-    PermissionBehavior,
 )
 from ._response import ToolChunk
 
@@ -58,13 +57,23 @@ class ToolBase(ABC):
     ) -> bool:
         """Check if a permission rule matches the tool input.
 
-        Default implementation: matches rule_content as a glob pattern
-        against the "file_path" key in tool_input. Tools that don't use
-        file_path (e.g., Bash, Glob, Grep) should override this method.
+        .. note:: This is an optional method. By default, it returns False
+        (no match), so the permission engine treats any rule as a miss and
+        falls through to asking the user. Tools should override this if they
+        want rule-based auto-allow/deny to work.
+
+        Each tool should implement its own matching logic based on its
+        specific parameters. For example:
+        - File tools (Read/Write/Edit): match rule_content as a glob pattern
+          against the "file_path" parameter
+        - Bash: match rule_content against the "command" parameter using
+          regex/substring matching with support for prefix patterns (e.g.,
+          "git:*") and wildcards
+        - Grep/Glob: match rule_content against search patterns or paths
 
         Args:
             rule_content (`str`):
-                Glob pattern to match against the file path
+                The rule pattern to match (format depends on tool type)
             tool_input (`dict[str, Any]`):
                 The tool input data
 
@@ -72,21 +81,26 @@ class ToolBase(ABC):
             `bool`:
                 True if the rule matches, False otherwise
         """
-
-        file_path = tool_input.get("file_path", "")
-        if not file_path:
-            return False
-        return fnmatch.fnmatch(file_path, rule_content)
+        return False
 
     def generate_suggestions(
         self,
         tool_input: dict[str, Any],
-    ) -> List["PermissionRule"]:
+    ) -> List[PermissionRule]:
         """Generate suggested permission rules for the tool input.
 
-        Default implementation: suggests a glob pattern covering the parent
-        directory of the "file_path" key. Tools that don't use file_path
-        (e.g., Bash, Glob, Grep) should override this method.
+        .. note:: this is an optional abstract method. By default, it returns
+        an empty list, and tools can override it if they want to provide
+        suggestions.
+
+        Each tool must implement its own suggestion logic based on its
+        specific parameters. The goal is to generate broader permission rules
+        that can avoid future confirmation prompts. For example:
+        - File tools (Read/Write/Edit): suggest a glob pattern covering the
+          parent directory (e.g., "src/main.py" -> "src/**")
+        - Bash: suggest command prefix patterns (e.g., "git commit -m 'xxx'"
+          -> "git commit:*")
+        - Grep/Glob: suggest patterns based on search paths or patterns
 
         Args:
             tool_input (`dict[str, Any]`):
@@ -94,23 +108,10 @@ class ToolBase(ABC):
 
         Returns:
             `List[PermissionRule]`:
-                List of suggested permission rules
+                List of suggested permission rules (usually 1, max 5 for
+                compound operations)
         """
-        file_path = tool_input.get("file_path", "")
-        if not file_path:
-            return []
-
-        parent = os.path.dirname(file_path)
-        pattern = (parent.rstrip("/") + "/**") if parent else "**"
-
-        return [
-            PermissionRule(
-                tool_name=self.name,
-                rule_content=pattern,
-                behavior=PermissionBehavior.ALLOW,
-                source="suggested",
-            ),
-        ]
+        return []
 
     def _is_dangerous_path(self, file_path: str) -> bool:
         """Check if a file path is dangerous (sensitive file or directory).

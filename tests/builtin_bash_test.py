@@ -191,6 +191,131 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
     sys.platform == "win32",
     "Bash tool is not supported on Windows",
 )
+class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
+    """Test cases for Bash tool match_rule and generate_suggestions."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.bash_tool = Bash()
+
+    async def test_match_rule_prefix_pattern(self) -> None:
+        """Test match_rule with prefix patterns (e.g., git:*)."""
+        # Test exact command match
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                "git:*",
+                {"command": "git"},
+            ),
+        )
+
+        # Test command with arguments
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                "git:*",
+                {"command": "git status"},
+            ),
+        )
+
+        # Test non-matching command
+        self.assertFalse(
+            self.bash_tool.match_rule(
+                "git:*",
+                {"command": "npm install"},
+            ),
+        )
+
+    async def test_match_rule_wildcard_pattern(self) -> None:
+        """Test match_rule with wildcard patterns."""
+        # Test wildcard matching
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                "git * -m *",
+                {"command": "git commit -m 'test'"},
+            ),
+        )
+
+        # Test non-matching wildcard
+        self.assertFalse(
+            self.bash_tool.match_rule(
+                "git * -m *",
+                {"command": "git status"},
+            ),
+        )
+
+    async def test_match_rule_substring_pattern(self) -> None:
+        """Test match_rule with substring patterns."""
+        # Test substring matching
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                "install",
+                {"command": "npm install package"},
+            ),
+        )
+
+        # Test non-matching substring
+        self.assertFalse(
+            self.bash_tool.match_rule(
+                "install",
+                {"command": "npm run build"},
+            ),
+        )
+
+    async def test_match_rule_escaped_characters(self) -> None:
+        """Test match_rule with escaped characters."""
+        # Test escaped asterisk
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                r"echo \*",
+                {"command": "echo *"},
+            ),
+        )
+
+        # Test escaped backslash
+        self.assertTrue(
+            self.bash_tool.match_rule(
+                r"echo \\",
+                {"command": "echo \\"},
+            ),
+        )
+
+    async def test_generate_suggestions(self) -> None:
+        """Test generate_suggestions for bash commands."""
+        from agentscope.tool import PermissionRule
+
+        # Test two-word command
+        suggestions = self.bash_tool.generate_suggestions(
+            {"command": "git commit -m 'test'"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+        self.assertIsInstance(suggestions[0], PermissionRule)
+
+        # Should suggest "git commit:*"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn("git commit:*", suggestion_contents)
+
+    async def test_generate_suggestions_single_word(self) -> None:
+        """Test generate_suggestions for single-word commands."""
+        suggestions = self.bash_tool.generate_suggestions(
+            {"command": "npm install"},
+        )
+
+        self.assertGreater(len(suggestions), 0)
+
+        # Should suggest "npm install:*"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn("npm install:*", suggestion_contents)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.bash_tool = None
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
     """Test dangerous removal path detection in Bash tool."""
 

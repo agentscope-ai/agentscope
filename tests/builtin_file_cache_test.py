@@ -285,3 +285,148 @@ class FileCacheTest(IsolatedAsyncioTestCase):
             _agent_state=self.state,
         )
         self.assertEqual(len(self.state.tool_context.read_file_cache), 1)
+
+    async def test_read_cache_lines_contain_newlines(self) -> None:
+        """Test that cached lines from Read retain trailing newlines.
+
+        readlines() includes the newline character in each line. The cache
+        must store them as-is so that "".join(lines) reconstructs the exact
+        original file content.
+        """
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("line1\nline2\nline3\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        cache = await self.state.tool_context.get_cache(self.test_file)
+        self.assertIsNotNone(cache)
+        # Each line from readlines() ends with \n
+        self.assertEqual(cache.lines, ["line1\n", "line2\n", "line3\n"])
+        # "".join reconstructs the exact original content
+        self.assertEqual("".join(cache.lines), "line1\nline2\nline3\n")
+
+    async def test_edit_multiline_match_from_cache(self) -> None:
+        """Test Edit correctly matches multi-line old_string from
+        cached content.
+
+        Regression test for the bug where "\n".join(cache.lines) doubled the
+        newlines (e.g. "line1\n\nline2\n" instead of "line1\nline2\n"),
+        making multi-line old_string matching fail.
+        """
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("line1\nline2\nline3\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # This multi-line old_string must match exactly in the reconstructed
+        # content; with the bug it would not be found.
+        chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="line1\nline2",
+            new_string="replaced",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "replaced\nline3\n")
+
+    async def test_edit_single_line_match_from_cache(self) -> None:
+        """Test Edit correctly matches single-line old_string from cache."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("Hello World\nThis is a test\n")
+
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="Hello World",
+            new_string="Hello Python",
+            _agent_state=self.state,
+        )
+
+        self.assertEqual(chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "Hello Python\nThis is a test\n")
+
+    async def test_write_invalidates_cache(self) -> None:
+        """Test that Write updates the cache so Edit can use it afterwards."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("original content\n")
+
+        # Read to populate cache
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Overwrite with Write (mtime changes, old cache becomes stale)
+        write_chunk = await self.write_tool(
+            file_path=self.test_file,
+            content="new content\n",
+            _agent_state=self.state,
+        )
+        self.assertEqual(write_chunk.state, "running")
+
+        # The old cache entry is now stale; Edit should require a new Read
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="new content",
+            new_string="updated content",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "error")
+        self.assertIn("must first read", edit_chunk.content[0].text)
+
+    async def test_write_cache_stale_then_reread(self) -> None:
+        """Test workflow: Read -> Write -> Read -> Edit works correctly."""
+        with open(self.test_file, "w", encoding="utf-8") as f:
+            f.write("original\n")
+
+        # First read
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Overwrite
+        import time
+
+        time.sleep(0.01)  # ensure mtime changes
+        await self.write_tool(
+            file_path=self.test_file,
+            content="rewritten\n",
+            _agent_state=self.state,
+        )
+
+        # Re-read to refresh cache
+        await self.read_tool(
+            file_path=self.test_file,
+            _agent_state=self.state,
+        )
+
+        # Now Edit should succeed against the new content
+        edit_chunk = await self.edit_tool(
+            file_path=self.test_file,
+            old_string="rewritten",
+            new_string="final",
+            _agent_state=self.state,
+        )
+        self.assertEqual(edit_chunk.state, "running")
+
+        with open(self.test_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "final\n")

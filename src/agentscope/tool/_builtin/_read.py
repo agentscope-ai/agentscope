@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """The read tool in agentscope."""
+import fnmatch
 import os
-from typing import Any, TYPE_CHECKING
+from typing import Any, List, TYPE_CHECKING
 
 import aiofiles
 
@@ -10,6 +11,7 @@ from .._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionRule,
 )
 from .._response import ToolChunk
 from ...message import TextBlock
@@ -101,6 +103,65 @@ Usage:
             behavior=PermissionBehavior.PASSTHROUGH,
             message="File reading is read-only.",
         )
+
+    def match_rule(
+        self,
+        rule_content: str,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Check if a permission rule matches the file path.
+
+        Matches rule_content as a glob pattern against the "file_path"
+        parameter using fnmatch.
+
+        Args:
+            rule_content (`str`):
+                Glob pattern to match against the file path (e.g., "src/**")
+            tool_input (`dict[str, Any]`):
+                The tool input data containing "file_path" key
+
+        Returns:
+            `bool`:
+                True if the glob pattern matches the file path, False otherwise
+        """
+        file_path = tool_input.get("file_path", "")
+        if not file_path:
+            return False
+        return fnmatch.fnmatch(file_path, rule_content)
+
+    def generate_suggestions(
+        self,
+        tool_input: dict[str, Any],
+    ) -> List[PermissionRule]:
+        """Generate suggested permission rules for the file path.
+
+        Suggests a glob pattern covering the parent directory of the file,
+        allowing the user to grant permission for the entire directory at once.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input data containing "file_path" key
+
+        Returns:
+            `List[PermissionRule]`:
+                A single suggested rule covering the parent directory
+                (e.g., file "/src/main.py" -> rule "src/**")
+        """
+        file_path = tool_input.get("file_path", "")
+        if not file_path:
+            return []
+
+        parent = os.path.dirname(file_path)
+        pattern = (parent.rstrip("/") + "/**") if parent else "**"
+
+        return [
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=pattern,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+        ]
 
     async def __call__(  # type: ignore[override]
         self,

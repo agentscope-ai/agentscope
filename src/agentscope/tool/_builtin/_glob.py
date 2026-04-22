@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """The glob tool in agentscope."""
+import fnmatch
 import os
 import re
-from typing import Any
+from typing import Any, List
 
 from .._base import ToolBase
 from .._permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
+    PermissionRule,
 )
 from .._response import ToolChunk
 from ...message import TextBlock
@@ -68,6 +70,73 @@ codebase."""  # ignore: E501
             behavior=PermissionBehavior.PASSTHROUGH,
             message="Glob pattern matching is read-only.",
         )
+
+    def match_rule(
+        self,
+        rule_content: str,
+        tool_input: dict[str, Any],
+    ) -> bool:
+        """Check if a permission rule matches the glob pattern or path.
+
+        Matches rule_content as a glob pattern against the "pattern" or "path"
+        parameters. This allows rules to match either the search pattern itself
+        or the directory being searched.
+
+        Args:
+            rule_content (`str`):
+                Glob pattern to match (e.g., "src/**" to match searches in src)
+            tool_input (`dict[str, Any]`):
+                The tool input data containing "pattern" and optional "path"
+
+        Returns:
+            `bool`:
+                True if the rule matches the pattern or path, False otherwise
+        """
+        # Try matching against the search path first
+        path = tool_input.get("path", "")
+        if path and fnmatch.fnmatch(path, rule_content):
+            return True
+
+        # Fall back to matching against the pattern itself
+        pattern = tool_input.get("pattern", "")
+        if pattern and fnmatch.fnmatch(pattern, rule_content):
+            return True
+
+        return False
+
+    def generate_suggestions(
+        self,
+        tool_input: dict[str, Any],
+    ) -> List[PermissionRule]:
+        """Generate suggested permission rules for the glob search.
+
+        Suggests a rule based on the search path. If no path is provided,
+        suggests a rule for the current directory.
+
+        Args:
+            tool_input (`dict[str, Any]`):
+                The tool input data containing optional "path" key
+
+        Returns:
+            `List[PermissionRule]`:
+                A single suggested rule covering the search directory
+        """
+        path = tool_input.get("path", "")
+        if not path:
+            path = os.getcwd()
+
+        # Normalize path and create pattern
+        abs_path = os.path.abspath(path)
+        pattern = abs_path.rstrip("/") + "/**"
+
+        return [
+            PermissionRule(
+                tool_name=self.name,
+                rule_content=pattern,
+                behavior=PermissionBehavior.ALLOW,
+                source="suggested",
+            ),
+        ]
 
     def glob_part_to_regex(self, part: str) -> re.Pattern:
         """Convert a glob pattern part to a regex pattern.

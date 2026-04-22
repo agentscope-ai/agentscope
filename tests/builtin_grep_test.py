@@ -147,7 +147,8 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(chunk.state, "error")
-        self.assertIn("Invalid regex pattern", chunk.content[0].text)
+        # ripgrep returns its own error message for regex parse errors
+        self.assertIn("regex parse error", chunk.content[0].text)
 
     async def test_glob_pattern_with_subdirs(self) -> None:
         """Test glob pattern matching with subdirectories like **/*.py."""
@@ -166,3 +167,83 @@ class GrepToolTest(IsolatedAsyncioTestCase):
         self.assertIn("nested.py", content)
         # Should not find .txt files
         self.assertNotIn("test.txt", content)
+
+    async def test_match_rule_path(self) -> None:
+        """Test match_rule with search path patterns."""
+        # Test matching explicit path
+        self.assertTrue(
+            self.grep_tool.match_rule(
+                self.temp_dir,
+                {"path": self.temp_dir},
+            ),
+        )
+
+        # Test wildcard pattern matching path
+        parent_dir = os.path.dirname(self.temp_dir)
+        self.assertTrue(
+            self.grep_tool.match_rule(
+                parent_dir + "/**",
+                {"path": self.temp_dir},
+            ),
+        )
+
+        # Test non-matching path
+        self.assertFalse(
+            self.grep_tool.match_rule(
+                "/some/other/path/**",
+                {"path": self.temp_dir},
+            ),
+        )
+
+    async def test_match_rule_defaults_to_cwd(self) -> None:
+        """Test match_rule defaults to cwd when no path is provided."""
+        cwd = os.getcwd()
+
+        # When no path provided, should match against cwd
+        self.assertTrue(
+            self.grep_tool.match_rule(
+                cwd,
+                {"pattern": "hello"},
+            ),
+        )
+
+        # Should not match a different path
+        self.assertFalse(
+            self.grep_tool.match_rule(
+                "/some/other/path",
+                {"pattern": "hello"},
+            ),
+        )
+
+    async def test_generate_suggestions_with_path(self) -> None:
+        """Test generate_suggestions for grep with explicit path."""
+        from agentscope.tool import PermissionRule
+
+        suggestions = self.grep_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "hello"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+        self.assertIsInstance(suggestions[0], PermissionRule)
+
+        # Should suggest directory pattern
+        abs_path = os.path.abspath(self.temp_dir)
+        expected_pattern = abs_path.rstrip("/") + "/**"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_generate_suggestions_defaults_to_cwd(self) -> None:
+        """Test generate_suggestions defaults to cwd when no path provided."""
+
+        suggestions = self.grep_tool.generate_suggestions(
+            {"pattern": "hello"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+
+        cwd = os.getcwd()
+        expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn(expected_pattern, suggestion_contents)

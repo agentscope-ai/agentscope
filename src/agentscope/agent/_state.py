@@ -22,9 +22,9 @@ class ReadCacheEntry(BaseModel):
 class ToolContext(BaseModel):
     """The tool context, e.g. tool cache"""
 
-    max_cache_files: int = 100
+    max_cache_files: int = Field(default=100, gt=1)
     """The maximum number of cached files."""
-    max_cache_bytes: float = 25000
+    max_cache_bytes: float = Field(default=25000, gt=10000)
     """The maximum size of the accumulated read file cache."""
     read_file_cache: list[ReadCacheEntry] = Field(default_factory=list)
     """The cache for Read/Write/Edit file tools."""

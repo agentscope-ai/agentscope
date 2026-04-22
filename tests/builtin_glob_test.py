@@ -105,3 +105,99 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(chunk.state, "running")
         self.assertIn("No files found", chunk.content[0].text)
+
+    async def test_match_rule_path(self) -> None:
+        """Test match_rule with path patterns."""
+        # Test matching explicit path
+        self.assertTrue(
+            self.glob_tool.match_rule(
+                self.temp_dir,
+                {"path": self.temp_dir, "pattern": "*.py"},
+            ),
+        )
+
+        # Test wildcard pattern matching path
+        parent_dir = os.path.dirname(self.temp_dir)
+        self.assertTrue(
+            self.glob_tool.match_rule(
+                parent_dir + "/**",
+                {"path": self.temp_dir, "pattern": "*.py"},
+            ),
+        )
+
+        # Test non-matching path
+        self.assertFalse(
+            self.glob_tool.match_rule(
+                "/some/other/path/**",
+                {"path": self.temp_dir, "pattern": "*.py"},
+            ),
+        )
+
+    async def test_match_rule_pattern(self) -> None:
+        """Test match_rule with pattern matching."""
+        # Test matching against the pattern itself
+        self.assertTrue(
+            self.glob_tool.match_rule(
+                "*.py",
+                {"pattern": "*.py"},
+            ),
+        )
+
+        # Test wildcard pattern matching
+        self.assertTrue(
+            self.glob_tool.match_rule(
+                "**/*.py",
+                {"pattern": "src/**/*.py"},
+            ),
+        )
+
+        # Test non-matching pattern
+        self.assertFalse(
+            self.glob_tool.match_rule(
+                "*.txt",
+                {"pattern": "*.py"},
+            ),
+        )
+
+    async def test_match_rule_path_priority(self) -> None:
+        """Test that path matching takes priority over pattern matching."""
+        # If path matches, should return True even if pattern doesn't
+        self.assertTrue(
+            self.glob_tool.match_rule(
+                self.temp_dir,
+                {"path": self.temp_dir, "pattern": "*.txt"},
+            ),
+        )
+
+    async def test_generate_suggestions_with_path(self) -> None:
+        """Test generate_suggestions for glob with explicit path."""
+        from agentscope.tool import PermissionRule
+
+        suggestions = self.glob_tool.generate_suggestions(
+            {"path": self.temp_dir, "pattern": "*.py"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+        self.assertIsInstance(suggestions[0], PermissionRule)
+
+        # Should suggest directory pattern
+        abs_path = os.path.abspath(self.temp_dir)
+        expected_pattern = abs_path.rstrip("/") + "/**"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn(expected_pattern, suggestion_contents)
+
+    async def test_generate_suggestions_defaults_to_cwd(self) -> None:
+        """Test generate_suggestions defaults to cwd when no path provided."""
+
+        suggestions = self.glob_tool.generate_suggestions(
+            {"pattern": "*.py"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+
+        cwd = os.getcwd()
+        expected_pattern = os.path.abspath(cwd).rstrip("/") + "/**"
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn(expected_pattern, suggestion_contents)

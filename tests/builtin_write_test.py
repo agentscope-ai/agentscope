@@ -115,3 +115,68 @@ class WriteToolTest(IsolatedAsyncioTestCase):
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "")
+
+    async def test_match_rule_glob_pattern(self) -> None:
+        """Test match_rule with glob patterns."""
+        # Test exact match
+        self.assertTrue(
+            self.write_tool.match_rule(
+                "test.py",
+                {"file_path": "test.py"},
+            ),
+        )
+
+        # Test wildcard pattern
+        self.assertTrue(
+            self.write_tool.match_rule(
+                "*.py",
+                {"file_path": "test.py"},
+            ),
+        )
+
+        # Test directory pattern
+        self.assertTrue(
+            self.write_tool.match_rule(
+                "/tmp/**",
+                {"file_path": "/tmp/test.py"},
+            ),
+        )
+
+        # Test non-matching pattern
+        self.assertFalse(
+            self.write_tool.match_rule(
+                "*.txt",
+                {"file_path": "test.py"},
+            ),
+        )
+
+        # Test empty file_path
+        self.assertFalse(
+            self.write_tool.match_rule(
+                "*.py",
+                {"file_path": ""},
+            ),
+        )
+
+    async def test_generate_suggestions(self) -> None:
+        """Test generate_suggestions for file operations."""
+        from agentscope.tool import PermissionRule
+
+        # Test suggestion for file in subdirectory
+        suggestions = self.write_tool.generate_suggestions(
+            {"file_path": "/tmp/project/src/main.py"},
+        )
+
+        self.assertIsInstance(suggestions, list)
+        self.assertGreater(len(suggestions), 0)
+        self.assertIsInstance(suggestions[0], PermissionRule)
+
+        # Should suggest parent directory pattern
+        suggestion_contents = [s.rule_content for s in suggestions]
+        self.assertIn("/tmp/project/src/**", suggestion_contents)
+
+        # Test suggestion for file in root
+        suggestions = self.write_tool.generate_suggestions(
+            {"file_path": "/test.py"},
+        )
+        self.assertGreater(len(suggestions), 0)
