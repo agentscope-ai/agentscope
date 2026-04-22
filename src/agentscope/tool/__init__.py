@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The tool module in agentscope."""
 
-from ._types import ToolChoice, Function
+from ._types import ToolChoice, Function, Skill
 from ._response import ToolResponse, ToolChunk
 from ._toolkit import Toolkit
 from ._base import ToolBase
@@ -14,6 +14,10 @@ from ._permission import (
     PermissionRule,
     PermissionMode,
     PermissionBehavior,
+)
+from ._skill import (
+    SkillLoaderBase,
+    LocalSkillLoader,
 )
 from ._builtin import (
     ResetTools,
@@ -47,4 +51,7 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    "Skill",
+    "SkillLoaderBase",
+    "LocalSkillLoader",
 ]
