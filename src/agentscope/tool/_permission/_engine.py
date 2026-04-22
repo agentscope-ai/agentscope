@@ -1,60 +1,18 @@
 # -*- coding: utf-8 -*-
 """The permission engine for checking and enforcing permission rules."""
-import fnmatch
-import os
 import json
-from pathlib import Path
-from typing import Any, List
+from typing import Any, List, TYPE_CHECKING
 
-from ._bash_parser import BashCommandParser
 from ._context import PermissionContext
 from ._rule import PermissionRule
 from ._decision import PermissionDecision, PermissionBehavior
 from ._types import PermissionMode
 from ...message import ToolCallBlock
 
-# ============================================================================
-# Built-in Dangerous Paths
-# ============================================================================
-
-DEFAULT_DANGEROUS_FILES = [
-    ".gitconfig",
-    ".gitmodules",
-    ".bashrc",
-    ".bash_profile",
-    ".zshrc",
-    ".zprofile",
-    ".profile",
-    ".ssh/config",
-    ".ssh/authorized_keys",
-    ".netrc",
-    ".npmrc",
-    ".pypirc",
-]
-# Built-in list of dangerous files that should be protected from auto-editing.
-#
-# These files can be used for code execution, credential storage, or data
-# exfiltration:
-# - Shell configuration files: .bashrc, .zshrc, .profile, etc.
-# - Git configuration: .gitconfig, .gitmodules
-# - SSH configuration: .ssh/config, .ssh/authorized_keys
-# - Credential files: .netrc, .npmrc, .pypirc
-
-
-DEFAULT_DANGEROUS_DIRECTORIES = [
-    ".git",
-    ".vscode",
-    ".idea",
-    ".ssh",
-]
-# Built-in list of dangerous directories that should be protected from
-# auto-editing.
-#
-# These directories contain sensitive configuration or executable files:
-# - .git: Git repository metadata
-# - .vscode: VS Code configuration
-# - .idea: JetBrains IDE configuration
-# - .ssh: SSH keys and configuration
+if TYPE_CHECKING:
+    from .._base import ToolBase
+else:
+    ToolBase = "ToolBase"
 
 
 class PermissionEngine:
@@ -70,53 +28,29 @@ class PermissionEngine:
 
     The evaluation order is:
     1. Check deny rules (highest priority)
-    2. Check mode-specific logic (EXPLORE, ACCEPT_EDITS, dangerous paths)
-    3. Check ask rules
+    2. Check ask rules
+    3. Tool-specific checks (EXPLORE/ACCEPT_EDITS modes, dangerous paths,
+       read-only commands, etc.) - bypass-immune
     4. Check allow rules
-    5. Apply default behavior based on permission mode
+    5. BYPASS mode check
+    6. Default behavior (ask)
     """
 
     def __init__(
         self,
         context: PermissionContext,
-        additional_dangerous_files: list[str] | None = None,
-        additional_dangerous_directories: list[str] | None = None,
-    ):
+    ) -> None:
         """Initialize the permission engine.
 
         Args:
             context (`PermissionContext`):
                 The permission context containing rules and mode
-            additional_dangerous_files (`list[str] | None`, optional):
-                Additional dangerous files to check
-                (added to built-in defaults). Use this to add project-specific
-                sensitive files like '.env' or '.secrets'.
-            additional_dangerous_directories (`list[str] | None`, optional):
-                Additional dangerous directories
-                to check (added to built-in defaults). Use this to add
-                project-specific sensitive directories.
 
         Example:
             >>> context = PermissionContext(mode=PermissionMode.ACCEPT_EDITS)
-            >>> engine = PermissionEngine(
-            ...     context,
-            ...     additional_dangerous_files=['.env', '.secrets'],
-            ...     additional_dangerous_directories=['secrets/']
-            ... )
+            >>> engine = PermissionEngine(context)
         """
         self.context = context
-
-        # Merge built-in and additional dangerous paths
-        self.dangerous_files = DEFAULT_DANGEROUS_FILES.copy()
-        if additional_dangerous_files:
-            self.dangerous_files.extend(additional_dangerous_files)
-
-        self.dangerous_directories = DEFAULT_DANGEROUS_DIRECTORIES.copy()
-        if additional_dangerous_directories:
-            self.dangerous_directories.extend(additional_dangerous_directories)
-
-        # Initialize bash parser
-        self._bash_parser = BashCommandParser()
 
     def add_rule(self, rule: PermissionRule) -> None:
         """Add a permission rule to the context.
@@ -149,22 +83,28 @@ class PermissionEngine:
     async def check_permission(
         self,
         tool_call: ToolCallBlock,
+        tool: ToolBase,
     ) -> PermissionDecision:
         """Check permission for a tool execution request.
 
         The evaluation order:
         1. Tool-level deny rules (highest priority)
         2. Tool-level ask rules
-        3. Tool-specific checks (dangerous paths, content rules), bypass-immune
-        4. Allow rules (exact + content-specific)
-        5. Mode-specific logic (ACCEPT_EDITS auto-allow)
-        6. Read-only check (for Bash commands)
-        7. BYPASS mode check
-        8. Default behavior (passthrough → ask)
+        3. Tool-specific checks (bypass-immune):
+           - EXPLORE mode logic (read-only tools auto-allowed)
+           - ACCEPT_EDITS mode logic (file edits in working dir auto-allowed)
+           - Dangerous path checks (safety checks)
+           - Read-only command checks (for Bash)
+           - Other tool-specific permission logic
+        4. Allow rules
+        5. BYPASS mode check
+        6. Default behavior (ask)
 
         Args:
             tool_call (`ToolCallBlock`):
                 The tool call block containing tool name and input
+            tool (`ToolBase`):
+                The tool instance being called (used for tool-specific checks)
 
         Returns:
             `PermissionDecision`:
@@ -175,22 +115,26 @@ class PermissionEngine:
         input_data = json.loads(tool_call.input)
 
         # 1. Check tool-level deny rules (highest priority)
-        deny_decision = self._check_deny_rules(tool_name, input_data)
+        deny_decision = self._check_deny_rules(tool, input_data)
         if deny_decision:
             return deny_decision
 
         # 2. Check tool-level ask rules
-        ask_decision = self._check_ask_rules(tool_name, input_data)
+        ask_decision = self._check_ask_rules(tool, input_data)
         if ask_decision:
             # Generate suggestions for ASK decisions
             ask_decision.suggested_rules = self._generate_suggestions(
                 tool_call,
+                tool,
             )
             return ask_decision
 
         # 3. Tool-specific permission checks (dangerous paths, etc.)
         # These are bypass-immune
-        tool_decision = self._tool_check_permissions(tool_name, input_data)
+        tool_decision = await self._tool_check_permissions(
+            input_data,
+            tool,
+        )
 
         # 3a. Tool denied permission (bypass-immune)
         if tool_decision and tool_decision.behavior == PermissionBehavior.DENY:
@@ -212,34 +156,16 @@ class PermissionEngine:
         ):
             tool_decision.suggested_rules = self._generate_suggestions(
                 tool_call,
+                tool,
             )
             return tool_decision
 
         # 4. Check allow rules
-        allow_decision = self._check_allow_rules(tool_name, input_data)
+        allow_decision = self._check_allow_rules(tool, input_data)
         if allow_decision:
             return allow_decision
 
-        # 5. Mode-specific auto-allow (ACCEPT_EDITS)
-        if self.context.mode == PermissionMode.ACCEPT_EDITS:
-            mode_decision = self._check_accept_edits_mode(
-                tool_name,
-                input_data,
-            )
-            if mode_decision:
-                return mode_decision
-
-        # 6. Read-only check (for Bash commands)
-        if tool_name == "Bash":
-            command = input_data.get("command", "")
-            if self._bash_parser.is_read_only_command(command):
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message="Permission granted for read-only command",
-                    decision_reason="Read-only command is allowed",
-                )
-
-        # 7. BYPASS mode check
+        # 5. BYPASS mode check
         if self.context.mode == PermissionMode.BYPASS:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
@@ -247,402 +173,124 @@ class PermissionEngine:
                 decision_reason="Bypass mode allows all operations",
             )
 
-        # 8. Default behavior (passthrough → ask)
+        # 7. Default behavior (passthrough → ask)
         default_decision = self._default_decision_ask(tool_name)
         default_decision.suggested_rules = self._generate_suggestions(
             tool_call,
+            tool,
         )
         return default_decision
 
-    def _tool_check_permissions(
+    async def _tool_check_permissions(
         self,
-        tool_name: str,
         input_data: dict[str, Any],
+        tool: ToolBase,
     ) -> PermissionDecision | None:
         """Tool-specific permission checks.
 
         This includes:
         - EXPLORE mode logic (read-only tools only)
-        - Dangerous path checks (safety checks) - bypass-immune
-
-        Note: ACCEPT_EDITS mode logic is handled separately after allow rules.
+        - Tool's own check_permissions() method
 
         Args:
-            tool_name (`str`):
-                The name of the tool
             input_data (`dict[str, Any]`):
                 The tool input data
+            tool (`ToolBase`):
+                The tool instance being called (used for tool-specific checks)
 
         Returns:
             `PermissionDecision | None`:
                 PermissionDecision if tool has specific logic, None for
                 passthrough
         """
-        # EXPLORE mode: read-only tools only
-        if self.context.mode == PermissionMode.EXPLORE:
-            explore_decision = self._check_explore_mode(tool_name)
-            if explore_decision:
-                return explore_decision
+        # EXPLORE and ACCEPT_EDITS modes: check read-only tool handling
+        if self.context.mode in (
+            PermissionMode.EXPLORE,
+            PermissionMode.ACCEPT_EDITS,
+        ):
+            mode_decision = self._check_explore_mode(tool)
+            if mode_decision:
+                return mode_decision
 
-        # Check dangerous paths for file operations and bash commands
-        # This is a safety check that is bypass-immune
-        dangerous_path_decision = self._check_dangerous_paths(
-            tool_name,
+        # Call tool's own check_permissions method if available
+        decision = await tool.check_permissions(
             input_data,
+            self.context,
         )
-        if dangerous_path_decision:
-            return dangerous_path_decision
+        # If tool returns PASSTHROUGH, continue with Engine's logic
+        if decision.behavior != PermissionBehavior.PASSTHROUGH:
+            return decision
 
         # No specific tool logic, passthrough
         return None
 
-    def _check_dangerous_paths(
+    def _check_explore_mode(
         self,
-        tool_name: str,
-        input_data: dict[str, Any],
+        tool: ToolBase,
     ) -> PermissionDecision | None:
-        """Check for dangerous paths in file operations and bash commands.
+        """Check permissions for read-only tools in EXPLORE and
+        ACCEPT_EDITS modes.
 
-        This is a safety check that is bypass-immune.
-        Uses tree-sitter to extract file paths from bash commands.
+        EXPLORE mode: only allows read-only tools, denies modifications
+        ACCEPT_EDITS mode: allows read-only tools (no restrictions)
 
         Args:
-            tool_name (`str`):
-                The name of the tool
-            input_data (`dict[str, Any]`):
-                The tool input data
+            tool (`ToolBase`):
+                The tool instance being called (used to check is_read_only)
 
         Returns:
             `PermissionDecision | None`:
-                ASK decision if dangerous path detected, None otherwise
-        """
-        # Check Write/Edit tools
-        if tool_name in ["Write", "Edit"]:
-            file_path = input_data.get("file_path")
-            if file_path and self._is_dangerous_path(file_path):
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ASK,
-                    message=f"Permission required: {tool_name} operation on "
-                    f"sensitive file {file_path}",
-                    decision_reason="Safety check: dangerous file or "
-                    "directory",
-                )
-
-        # Check Bash tool for dangerous paths in commands
-        if tool_name == "Bash":
-            command = input_data.get("command", "")
-            dangerous_paths = self._extract_dangerous_paths_from_bash(command)
-            if dangerous_paths:
-                paths_str = ", ".join(dangerous_paths)
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ASK,
-                    message=f"Permission required: Bash command operates on "
-                    f"sensitive paths: {paths_str}",
-                    decision_reason="Safety check: dangerous file or "
-                    "directory in bash command",
-                )
-
-        return None
-
-    def _extract_dangerous_paths_from_bash(
-        self,
-        command: str,
-    ) -> list[str]:
-        """Extract dangerous paths from a bash command using tree-sitter.
-
-        Checks for dangerous paths in:
-        - File-manipulating commands (rm, mv, cp, chmod, chown, sed, touch)
-        - Output redirections (>, >>)
-
-        Args:
-            command (`str`):
-                The bash command string
-
-        Returns:
-            `list[str]`:
-                List of dangerous paths found in the command
-        """
-        dangerous_paths = []
-
-        # Use tree-sitter to extract file paths
-        file_paths = self._bash_parser.extract_file_paths(command)
-
-        for _cmd_name, path in file_paths:
-            if self._is_dangerous_path(path):
-                dangerous_paths.append(path)
-
-        return dangerous_paths
-
-    def _check_explore_mode(self, tool_name: str) -> PermissionDecision | None:
-        """Check permissions in EXPLORE (read-only) mode.
-
-        Args:
-            tool_name (`str`):
-                The name of the tool
-
-        Returns:
-            `PermissionDecision | None`:
-                ALLOW for read-only tools, DENY for modification tools
-        """
-        # Read-only tools are allowed
-        read_only_tools = ["Read", "Grep", "Glob"]
-        if tool_name in read_only_tools:
-            return PermissionDecision(
-                behavior=PermissionBehavior.ALLOW,
-                message=(
-                    f"Permission granted for {tool_name} (explore mode - "
-                    f"read-only tool)"
-                ),
-                decision_reason="Explore mode allows read-only operations",
-            )
-
-        # Modification tools are denied
-        modification_tools = ["Write", "Edit", "Bash", "PowerShell"]
-        if tool_name in modification_tools:
-            return PermissionDecision(
-                behavior=PermissionBehavior.DENY,
-                message=(
-                    f"Permission denied for {tool_name} (explore mode is "
-                    f"read-only)"
-                ),
-                decision_reason="Explore mode does not allow modifications",
-            )
-
-        # Other tools: no special handling
-        return None
-
-    def _check_accept_edits_mode(
-        self,
-        tool_name: str,
-        input_data: dict[str, Any],
-    ) -> PermissionDecision | None:
-        """Check permissions in ACCEPT_EDITS mode.
-
-        In ACCEPT_EDITS mode:
-        - Dangerous paths are NOT auto-allowed
-         (handled by _check_dangerous_paths)
-        - File writes in working directories are auto-allowed
-        - File reads in working directories are auto-allowed
-        - Common filesystem commands (mkdir, rm, mv, cp) are auto-allowed
-
-        Args:
-            tool_name (`str`):
-                The name of the tool
-            input_data (`dict[str, Any]`):
-                The tool input data
-
-        Returns:
-            `PermissionDecision | None`:
-                ALLOW if operation is safe and in working directory,
+                ALLOW for read-only tools in EXPLORE/ACCEPT_EDITS modes,
+                DENY for modification tools in EXPLORE mode,
                 None otherwise
         """
-        # Handle Write tool
-        if tool_name == "Write":
-            file_path = input_data.get("file_path")
-            if not file_path:
-                return None
-
-            # Dangerous paths are already checked in _check_dangerous_paths
-            # Here we only check if in working directory
-            if self._path_in_allowed_working_path(file_path):
+        # EXPLORE mode: allow read-only, deny modifications
+        if self.context.mode == PermissionMode.EXPLORE:
+            if tool.is_read_only:
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for writing {file_path} "
-                    f"(accept edits mode - in working directory)",
-                    decision_reason="File is in working directory and not "
-                    "a dangerous path",
-                    updated_input=input_data,
+                    message=(
+                        f"Permission granted for {tool.name} "
+                        f"(explore mode - read-only tool)"
+                    ),
+                    decision_reason="Explore mode allows read-only operations",
+                )
+            else:
+                return PermissionDecision(
+                    behavior=PermissionBehavior.DENY,
+                    message=(
+                        f"Permission denied for {tool.name} "
+                        f"(explore mode is read-only)"
+                    ),
+                    decision_reason="Explore mode does not allow "
+                    "modifications",
                 )
 
-        # Handle Read tool
-        if tool_name == "Read":
-            file_path = input_data.get("file_path")
-            if file_path and self._path_in_allowed_working_path(file_path):
+        # ACCEPT_EDITS mode: allow read-only tools
+        if self.context.mode == PermissionMode.ACCEPT_EDITS:
+            if tool.is_read_only:
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for reading {file_path} "
-                    f"(accept edits mode - in working directory)",
-                    decision_reason="File is in working directory",
-                    updated_input=input_data,
-                )
-
-        # Handle Edit tool
-        if tool_name == "Edit":
-            file_path = input_data.get("file_path")
-            if not file_path:
-                return None
-
-            # Dangerous paths are already checked in _check_dangerous_paths
-            # Here we only check if in working directory
-            if self._path_in_allowed_working_path(file_path):
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for editing {file_path} "
-                    f"(accept edits mode - in working directory)",
-                    decision_reason="File is in working directory and not "
-                    "a dangerous path",
-                    updated_input=input_data,
-                )
-
-        # Handle Bash tool - auto-allow common filesystem commands
-        if tool_name == "Bash":
-            command = input_data.get("command", "")
-            filesystem_commands = [
-                "mkdir",
-                "touch",
-                "rm",
-                "rmdir",
-                "mv",
-                "cp",
-                "sed",
-            ]
-            base_command = (
-                command.strip().split()[0] if command.strip() else ""
-            )
-
-            if base_command in filesystem_commands:
-                return PermissionDecision(
-                    behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for '{base_command}' "
-                    f"command (accept edits mode - filesystem command)",
-                    decision_reason=f"Filesystem command '{base_command}' "
-                    f"is auto-allowed in accept edits mode",
-                    updated_input=input_data,
+                    message=(
+                        f"Permission granted for {tool.name} "
+                        f"(accept edits mode - read-only tool)"
+                    ),
+                    decision_reason="Accept edits mode allows read-only "
+                    "operations",
                 )
 
         return None
-
-    def _is_dangerous_path(self, file_path: str) -> bool:
-        """Check if a file path is dangerous (sensitive file or directory).
-
-        A path is considered dangerous if:
-        1. The filename matches a dangerous file (e.g., .bashrc, .gitconfig)
-        2. Any path segment matches a dangerous directory (e.g., .git, .ssh)
-
-        Case-insensitive matching is used to prevent bypasses on
-        case-insensitive filesystems (macOS, Windows).
-
-        Args:
-            file_path (`str`):
-                The file path to check
-
-        Returns:
-            `bool`:
-                True if the path is dangerous and should require explicit
-                permission
-
-        Example:
-            >>> self._is_dangerous_path("/home/user/.bashrc")
-            True
-            >>> self._is_dangerous_path("/home/user/.git/config")
-            True
-            >>> self._is_dangerous_path("/home/user/project/main.py")
-            False
-        """
-        # Normalize path
-        abs_path = os.path.abspath(os.path.expanduser(file_path))
-
-        # Split path into segments
-        path_parts = Path(abs_path).parts
-        path_parts_lower = [p.lower() for p in path_parts]
-
-        # Check if filename matches dangerous files (case-insensitive)
-        filename = os.path.basename(abs_path)
-        filename_lower = filename.lower()
-        for dangerous_file in self.dangerous_files:
-            if filename_lower == dangerous_file.lower():
-                return True
-
-        # Check if any path segment matches dangerous directories
-        # (case-insensitive)
-        for dangerous_dir in self.dangerous_directories:
-            dangerous_dir_lower = dangerous_dir.lower()
-            if dangerous_dir_lower in path_parts_lower:
-                return True
-
-        return False
-
-    def _path_in_allowed_working_path(self, file_path: str) -> bool:
-        """Check if a file path is within any allowed working directory.
-
-        Args:
-            file_path (`str`):
-                The file path to check
-
-        Returns:
-            `bool`:
-                True if the path is within any allowed working directory
-        """
-        # Get all working directories (current directory + additional)
-        all_working_dirs = self._get_all_working_directories()
-
-        # Check if file path is in any working directory
-        for working_dir in all_working_dirs:
-            if self._path_in_working_path(file_path, working_dir):
-                return True
-
-        return False
-
-    def _get_all_working_directories(self) -> list[str]:
-        """Get all allowed working directories.
-
-        Returns:
-            `list[str]`:
-                List of absolute directory paths
-        """
-        # Current working directory (always included)
-        current_dir = os.getcwd()
-
-        # Additional working directories
-        additional_dirs = list(self.context.working_directories.keys())
-
-        return [current_dir] + additional_dirs
-
-    def _path_in_working_path(self, file_path: str, working_dir: str) -> bool:
-        """Check if a file path is within a specific working directory.
-
-        Args:
-            file_path (`str`):
-                The file path to check
-            working_dir (`str`):
-                The working directory path
-
-        Returns:
-            `bool`:
-                True if file_path is inside working_dir
-        """
-
-        # Convert to absolute paths
-        abs_file_path = os.path.abspath(file_path)
-        abs_working_dir = os.path.abspath(working_dir)
-
-        # Calculate relative path
-        try:
-            rel_path = os.path.relpath(abs_file_path, abs_working_dir)
-        except ValueError:
-            # Different drives on Windows
-            return False
-
-        # Check if path traversal is present (..)
-        if rel_path.startswith(".."):
-            return False
-
-        # Check if it's an absolute path (means not in working directory)
-        if os.path.isabs(rel_path):
-            return False
-
-        return True
 
     def _check_deny_rules(
         self,
-        tool_name: str,
+        tool: ToolBase,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
         """Check if any deny rules match the request.
 
         Args:
-            tool_name (`str`):
-                The name of the tool
+            tool (`ToolBase`):
+                The tool instance being called
             input_data (`dict[str, Any]`):
                 The tool input data
 
@@ -650,26 +298,26 @@ class PermissionEngine:
             `PermissionDecision | None`:
                 DENY decision if a rule matches, None otherwise
         """
-        rules = self.context.deny_rules.get(tool_name, [])
+        rules = self.context.deny_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(rule, input_data):
+            if self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.DENY,
-                    message=f"Permission to use {tool_name} has been denied",
+                    message=f"Permission to use {tool.name} has been denied",
                     decision_reason=f"Rule: {rule.rule_content}",
                 )
         return None
 
     def _check_ask_rules(
         self,
-        tool_name: str,
+        tool: ToolBase,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
         """Check if any ask rules match the request.
 
         Args:
-            tool_name (`str`):
-                The name of the tool
+            tool (`ToolBase`):
+                The tool instance being called (used for tool-specific checks)
             input_data (`dict[str, Any]`):
                 The tool input data
 
@@ -677,26 +325,26 @@ class PermissionEngine:
             `PermissionDecision | None`:
                 ASK decision if a rule matches, None otherwise
         """
-        rules = self.context.ask_rules.get(tool_name, [])
+        rules = self.context.ask_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(rule, input_data):
+            if self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ASK,
-                    message=f"Permission required for {tool_name}",
+                    message=f"Permission required for {tool.name}",
                     decision_reason=f"Rule: {rule.rule_content}",
                 )
         return None
 
     def _check_allow_rules(
         self,
-        tool_name: str,
+        tool: ToolBase,
         input_data: dict[str, Any],
     ) -> PermissionDecision | None:
         """Check if any allow rules match the request.
 
         Args:
-            tool_name (`str`):
-                The name of the tool
+            tool (`ToolBase`):
+                The tool instance being called (used for tool-specific checks)
             input_data (`dict[str, Any]`):
                 The tool input data
 
@@ -704,18 +352,19 @@ class PermissionEngine:
             `PermissionDecision | None`:
                 ALLOW decision if a rule matches, None otherwise
         """
-        rules = self.context.allow_rules.get(tool_name, [])
+        rules = self.context.allow_rules.get(tool.name, [])
         for rule in rules:
-            if self._rule_matches(rule, input_data):
+            if self._rule_matches(tool, rule, input_data):
                 return PermissionDecision(
                     behavior=PermissionBehavior.ALLOW,
-                    message=f"Permission granted for {tool_name}",
+                    message=f"Permission granted for {tool.name}",
                     updated_input=input_data,
                 )
         return None
 
     def _rule_matches(
         self,
+        tool: ToolBase,
         rule: PermissionRule,
         input_data: dict[str, Any],
     ) -> bool:
@@ -740,119 +389,8 @@ class PermissionEngine:
         if not rule.rule_content:
             return True
 
-        # Route to appropriate matching logic based on tool type
-        if rule.tool_name == "Bash":
-            return self._match_bash_rule(rule.rule_content, input_data)
-
-        if rule.tool_name in ["Write", "Read"]:
-            return self._match_filesystem_rule(rule.rule_content, input_data)
-
-        return self._match_generic_rule(rule.rule_content, input_data)
-
-    def _match_bash_rule(
-        self,
-        pattern: str,
-        input_data: dict[str, Any],
-    ) -> bool:
-        """Match Bash command using substring or prefix matching.
-
-        Supports two matching modes:
-        1. Prefix pattern (e.g., "git:*"): matches commands starting
-         with "git "
-        2. Substring pattern (e.g., "npm install"): matches if pattern is
-         in command
-
-        Args:
-            pattern (`str`):
-                The command pattern to match
-            input_data (`dict[str, Any]`):
-                Must contain a "command" key with the command string
-
-        Returns:
-            `bool`:
-                True if pattern matches the command
-
-        Examples:
-            pattern="git:*" matches "git status", "git add .", etc.
-            pattern="npm install" matches "npm install express"
-        """
-        command = input_data.get("command", "")
-
-        # Check if pattern is a prefix pattern (ends with :*)
-        if pattern.endswith(":*"):
-            # Extract prefix (remove :*)
-            prefix = pattern[:-2].strip()
-            # Match if command starts with prefix followed by space or is
-            # exactly the prefix
-            return command.startswith(prefix + " ") or command == prefix
-
-        # Otherwise, use substring matching
-        return pattern in command
-
-    def _match_filesystem_rule(
-        self,
-        pattern: str,
-        input_data: dict[str, Any],
-    ) -> bool:
-        """Match file path using glob pattern matching.
-
-        Args:
-            pattern (`str`):
-                The glob pattern to match (e.g., "src/**", "*.py")
-            input_data (`dict[str, Any]`):
-                Must contain a "file_path" key with the file path
-
-        Returns:
-            `bool`:
-                True if the file path matches the glob pattern
-
-        Example:
-            pattern="src/**" matches file_path="src/main.py"
-            pattern="**/.bashrc" matches file_path="/home/user/.bashrc"
-        """
-        file_path = input_data.get("file_path", "")
-        if not file_path:
-            return False
-
-        # Try both fnmatch and pathlib matching for compatibility
-        try:
-            # fnmatch for simple patterns
-            if fnmatch.fnmatch(file_path, pattern):
-                return True
-
-            # pathlib for more complex glob patterns
-            path_obj = Path(file_path)
-            if path_obj.match(pattern):
-                return True
-        except (ValueError, Exception):
-            # If pattern is invalid, fall back to substring matching
-            return pattern in file_path
-
-        return False
-
-    def _match_generic_rule(
-        self,
-        pattern: str,
-        input_data: dict[str, Any],
-    ) -> bool:
-        """Generic pattern matching for other tools.
-
-        Performs substring matching against all string values in input_data.
-
-        Args:
-            pattern (`str`):
-                The pattern to match
-            input_data (`dict[str, Any]`):
-                The tool input data
-
-        Returns:
-            `bool`:
-                True if pattern is found in any string value
-        """
-        for value in input_data.values():
-            if isinstance(value, str) and pattern in value:
-                return True
-        return False
+        # Try to use tool's match_rule method if available
+        return tool.match_rule(rule.rule_content, input_data)
 
     def _default_decision_ask(self, tool_name: str) -> PermissionDecision:
         """Return default ASK decision.
@@ -885,6 +423,7 @@ class PermissionEngine:
     def _generate_suggestions(
         self,
         tool_call: ToolCallBlock,
+        tool: ToolBase,
     ) -> List[PermissionRule]:
         """Generate suggested permission rules from a tool call.
 
@@ -900,127 +439,16 @@ class PermissionEngine:
         Args:
             tool_call (`ToolCallBlock`):
                 The tool call block containing name and parameters
+            tool (`ToolBase`):
+                The tool instance being called (used for tool-specific
+                suggestions)
 
         Returns:
             `List[PermissionRule]`:
                 List of suggested permission rules (usually 1, max 5 for
                 compound commands)
         """
-        tool_name = tool_call.name
-
-        if tool_name == "Bash":
-            return self._generate_bash_suggestions(tool_call)
-
-        if tool_name in ["Read", "Write", "Edit"]:
-            return self._generate_file_suggestions(tool_call)
-
-        return self._generate_exact_suggestions(tool_call)
-
-    def _generate_bash_suggestions(
-        self,
-        tool_call: "ToolCallBlock",
-    ) -> List[PermissionRule]:
-        """Generate suggestions for Bash commands.
-
-        Generates prefix rules based on command + subcommand (two words).
-        For example, "git commit -m 'xxx'" generates "git commit:*".
-
-        Args:
-            tool_call (`ToolCallBlock`):
-                The tool call block containing name and input
-
-        Returns:
-            `List[PermissionRule]`:
-                List of suggested permission rules based on command prefixes
-        """
         input_data = json.loads(tool_call.input)
-        command = input_data.get("command", "")
-        if not command:
-            return []
 
-        # Use bash parser to extract command prefixes
-        prefixes = self._bash_parser.extract_command_prefixes(
-            command,
-            max_prefixes=5,
-        )
-
-        if not prefixes:
-            # Cannot extract any prefix, return empty
-            return []
-
-        # Generate rules for each prefix
-        rules = []
-        for prefix in prefixes:
-            rules.append(
-                PermissionRule(
-                    tool_name="Bash",
-                    rule_content=f"{prefix}:*",
-                    behavior=PermissionBehavior.ALLOW,
-                    source="suggested",
-                ),
-            )
-
-        return rules
-
-    def _generate_file_suggestions(
-        self,
-        tool_call: ToolCallBlock,
-    ) -> List[PermissionRule]:
-        """Generate suggestions for file operations.
-
-        Suggests allowing the entire directory containing the file.
-
-        Args:
-            tool_call (`ToolCallBlock`):
-                The tool call block containing name and input
-
-        Returns:
-            `List[PermissionRule]`:
-                List of suggested permission rules based on file directory
-        """
-        input_data = json.loads(tool_call.input)
-        file_path = input_data.get("file_path", "")
-        if not file_path:
-            return []
-
-        # Extract directory
-        directory = os.path.dirname(file_path)
-        if directory:
-            return [
-                PermissionRule(
-                    tool_name=tool_call.name,
-                    rule_content=f"{directory}/**",
-                    behavior=PermissionBehavior.ALLOW,
-                    source="suggested",
-                ),
-            ]
-
-        return []
-
-    def _generate_exact_suggestions(
-        self,
-        tool_call: ToolCallBlock,
-    ) -> List[PermissionRule]:
-        """Generate exact match rule (fallback strategy).
-
-        Used when no specific suggestion strategy is available.
-
-        Args:
-            tool_call (`ToolCallBlock`):
-                The tool call block containing name and input
-
-        Returns:
-            `List[PermissionRule]`:
-                List containing a single exact-match permission rule
-        """
-        input_data = json.loads(tool_call.input)
-        rule_content = json.dumps(input_data, sort_keys=True)
-
-        return [
-            PermissionRule(
-                tool_name=tool_call.name,
-                rule_content=rule_content,
-                behavior=PermissionBehavior.ALLOW,
-                source="suggested",
-            ),
-        ]
+        # Try to use tool's generate_suggestions method if available
+        return tool.generate_suggestions(input_data)

@@ -1,10 +1,17 @@
 # -*- coding: utf-8 -*-
 """Test cases for BashCommandParser."""
+import sys
+import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool._permission._bash_parser import BashCommandParser
+from agentscope.tool._builtin._bash_parser import BashCommandParser
+from agentscope.tool import Bash
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashCommandParserTest(IsolatedAsyncioTestCase):
     """Test cases for BashCommandParser."""
 
@@ -198,6 +205,10 @@ class BashCommandParserTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
     """Test is_read_only_command() method."""
 
@@ -386,6 +397,10 @@ class BashParserReadOnlyTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserFilePathsTest(IsolatedAsyncioTestCase):
     """Test extract_file_paths() method."""
 
@@ -609,6 +624,10 @@ class BashParserFilePathsTest(IsolatedAsyncioTestCase):
         self.parser = None
 
 
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
 class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
     """Test extract_redirections() method."""
 
@@ -772,6 +791,526 @@ class BashParserRedirectionsTest(IsolatedAsyncioTestCase):
         """Test empty command."""
         result = self.parser.extract_redirections("")
         self.assertEqual(result, [])
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.parser = None
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
+class BashParserSedConstraintsTest(IsolatedAsyncioTestCase):
+    """Test check_sed_constraints() with complex allowlist/denylist."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.parser = BashCommandParser()
+        self.dangerous_files = [".env", "config.json", "secrets.yaml"]
+
+    async def test_allowlist_line_printing(self) -> None:
+        """Test allowlist Pattern 1: Line printing with -n flag."""
+        test_cases = [
+            ("sed -n '5p' file.txt", None),
+            ("sed -n '10,20p' file.txt", None),
+            ("sed -n '1p' data.log", None),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertEqual(result, expected)
+
+    async def test_allowlist_substitution(self) -> None:
+        """Test allowlist Pattern 2: Substitution commands."""
+        test_cases = [
+            ("sed 's/old/new/' file.txt", None),
+            ("sed 's/old/new/g' file.txt", None),
+            ("sed 's|old|new|' file.txt", None),
+            ("sed 's#pattern#replacement#' file.txt", None),
+        ]
+        for cmd, expected in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertEqual(result, expected)
+
+    async def test_denylist_write_operations(self) -> None:
+        """Test denylist: write operations (w/W)."""
+        test_cases = [
+            ("sed 's/old/new/w output.txt' file.txt", "write operation"),
+            ("sed 's/old/new/W output.txt' file.txt", "write operation"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_denylist_execute_operations(self) -> None:
+        """Test denylist: execute operations (e/E)."""
+        test_cases = [
+            ("sed 's/old/new/e' file.txt", "execute operation"),
+            ("sed 's/old/new/E' file.txt", "execute operation"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_denylist_dangerous_patterns(self) -> None:
+        """Test denylist: dangerous patterns (curly braces, negation)."""
+        test_cases = [
+            ("sed '{s/old/new/}' file.txt", "curly braces"),
+            ("sed '!s/old/new/' file.txt", "negation"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_not_in_allowlist(self) -> None:
+        """Test commands not in allowlist."""
+        test_cases = [
+            ("sed 'd' file.txt", "not in allowlist"),
+            ("sed 'a\\text' file.txt", "not in allowlist"),
+            ("sed 'i\\text' file.txt", "not in allowlist"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_inplace_with_dangerous_files(self) -> None:
+        """Test -i flag with dangerous files."""
+        test_cases = [
+            ("sed -i 's/old/new/' .env", "dangerous file"),
+            ("sed -i 's/old/new/' config.json", "dangerous file"),
+            ("sed --in-place 's/old/new/' secrets.yaml", "dangerous file"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_invalid_flags(self) -> None:
+        """Test invalid flags."""
+        test_cases = [
+            ("sed -r 's/old/new/' file.txt", "flag -r not allowed"),
+            ("sed -u 's/old/new/' file.txt", "flag -u not allowed"),
+        ]
+        for cmd, expected_substring in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNotNone(result)
+                self.assertIn(expected_substring, result)
+
+    async def test_non_sed_commands(self) -> None:
+        """Test non-sed commands return None."""
+        test_cases = [
+            "ls -la",
+            "cat file.txt",
+            "grep pattern file.txt",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_sed_constraints(
+                    cmd,
+                    self.dangerous_files,
+                )
+                self.assertIsNone(result)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.parser = None
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
+class BashWildcardMatchingTest(IsolatedAsyncioTestCase):
+    """Test match_rule() with complex regex-based wildcard matching."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.bash_tool = Bash()
+
+    async def test_basic_wildcard_matching(self) -> None:
+        """Test basic wildcard matching with *."""
+        test_cases = [
+            ("git *", "git status", True),
+            ("git *", "git", True),  # Special optimization
+            ("git * push", "git origin push", True),
+            ("npm run *", "npm run build", True),
+            ("npm run *", "npm run test", True),
+            ("docker * up", "docker compose up", True),
+        ]
+        for pattern, command, expected in test_cases:
+            with self.subTest(pattern=pattern, command=command):
+                result = self.bash_tool.match_rule(
+                    pattern,
+                    {"command": command},
+                )
+                self.assertEqual(result, expected)
+
+    async def test_wildcard_no_match(self) -> None:
+        """Test wildcard patterns that don't match."""
+        test_cases = [
+            ("git *", "github", False),
+            ("npm run *", "yarn run build", False),
+            ("docker * up", "docker ps", False),
+        ]
+        for pattern, command, expected in test_cases:
+            with self.subTest(pattern=pattern, command=command):
+                result = self.bash_tool.match_rule(
+                    pattern,
+                    {"command": command},
+                )
+                self.assertEqual(result, expected)
+
+    async def test_escape_sequences(self) -> None:
+        """Test escape sequences \\* and \\\\."""
+        test_cases = [
+            ("file\\*.txt", "file*.txt", True),
+            ("file\\*.txt", "file123.txt", False),
+            ("path\\\\to\\\\file", "path\\to\\file", True),
+            ("path\\\\to\\\\file", "path/to/file", False),
+        ]
+        for pattern, command, expected in test_cases:
+            with self.subTest(pattern=pattern, command=command):
+                result = self.bash_tool.match_rule(
+                    pattern,
+                    {"command": command},
+                )
+                self.assertEqual(result, expected)
+
+    async def test_prefix_pattern(self) -> None:
+        """Test prefix pattern with :* suffix."""
+        test_cases = [
+            ("git:*", "git status", True),
+            ("git:*", "git", True),
+            ("git:*", "github", False),
+            ("npm:*", "npm install", True),
+            ("npm:*", "npm", True),
+        ]
+        for pattern, command, expected in test_cases:
+            with self.subTest(pattern=pattern, command=command):
+                result = self.bash_tool.match_rule(
+                    pattern,
+                    {"command": command},
+                )
+                self.assertEqual(result, expected)
+
+    async def test_substring_matching(self) -> None:
+        """Test substring matching (no wildcards)."""
+        test_cases = [
+            ("npm install", "npm install express", True),
+            ("npm install", "yarn install", False),
+            ("git commit", "git commit -m 'fix'", True),
+            ("git commit", "git push", False),
+        ]
+        for pattern, command, expected in test_cases:
+            with self.subTest(pattern=pattern, command=command):
+                result = self.bash_tool.match_rule(
+                    pattern,
+                    {"command": command},
+                )
+                self.assertEqual(result, expected)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.bash_tool = None
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
+class BashParserInjectionRiskTest(IsolatedAsyncioTestCase):
+    """Test check_injection_risk() method for detecting dynamic shell
+    structures."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.parser = BashCommandParser()
+
+    async def test_command_substitution_dollar_paren(self) -> None:
+        """Test detection of command substitution with $()."""
+        test_cases = [
+            "ls $(pwd)",
+            "rm $(find . -name '*.tmp')",
+            "echo $(date)",
+            "cat $(which python)",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("command_substitution", result)
+
+    async def test_command_substitution_backtick(self) -> None:
+        """Test detection of command substitution with backticks."""
+        test_cases = [
+            "ls `pwd`",
+            "rm `find . -name '*.tmp'`",
+            "echo `date`",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("command_substitution", result)
+
+    async def test_process_substitution(self) -> None:
+        """Test detection of process substitution <()."""
+        test_cases = [
+            "diff <(ls dir1) <(ls dir2)",
+            "cat <(echo hello)",
+            "grep pattern <(curl http://example.com)",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("process_substitution", result)
+
+    async def test_subshell(self) -> None:
+        """Test detection of subshells ()."""
+        test_cases = [
+            "(cd /tmp && ls)",
+            "(export VAR=value; echo $VAR)",
+            "echo before && (cd /tmp; pwd) && echo after",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("subshell", result)
+
+    async def test_for_loop(self) -> None:
+        """Test detection of for loops."""
+        test_cases = [
+            "for f in *.txt; do cat $f; done",
+            "for i in 1 2 3; do echo $i; done",
+            "for file in $(ls); do rm $file; done",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("for_statement", result)
+
+    async def test_while_loop(self) -> None:
+        """Test detection of while loops."""
+        test_cases = [
+            "while read line; do echo $line; done < file.txt",
+            "while true; do sleep 1; done",
+            "while [ $i -lt 10 ]; do echo $i; i=$((i+1)); done",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("while_statement", result)
+
+    async def test_if_statement(self) -> None:
+        """Test detection of if statements."""
+        test_cases = [
+            "if [ -f file.txt ]; then cat file.txt; fi",
+            "if test -d /tmp; then echo exists; fi",
+            "if [ $? -eq 0 ]; then echo success; else echo fail; fi",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("if_statement", result)
+
+    async def test_case_statement(self) -> None:
+        """Test detection of case statements."""
+        test_cases = [
+            "case $1 in start) echo starting;; stop) echo stopping;; esac",
+            "case $var in a) echo A;; b) echo B;; *) echo other;; esac",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("case_statement", result)
+
+    async def test_function_definition(self) -> None:
+        """Test detection of function definitions."""
+        test_cases = [
+            "function myfunc() { echo hello; }",
+            "myfunc() { ls -la; }",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("function_definition", result)
+
+    async def test_safe_commands(self) -> None:
+        """Test that safe commands pass injection check."""
+        safe_commands = [
+            "ls -la",
+            "cat file.txt",
+            "git status",
+            "npm install",
+            "echo 'hello world'",
+            "grep pattern file.txt",
+            "find . -name '*.py'",
+            "docker ps",
+            "python script.py",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_compound_commands_safe(self) -> None:
+        """Test that compound commands without dynamic structures are safe."""
+        safe_commands = [
+            "ls -la && cat file.txt",
+            "git add . && git commit -m 'fix'",
+            "npm install || echo failed",
+            "cd /tmp; ls; pwd",
+            "cat file.txt | grep pattern",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
+
+    async def test_mixed_safe_and_unsafe(self) -> None:
+        """Test compound commands with both safe and unsafe parts."""
+        test_cases = [
+            ("ls && rm $(find . -name '*.tmp')", "command_substitution"),
+            ("git status && (cd /tmp; ls)", "subshell"),
+            (
+                "echo start && for f in *.txt; do cat $f; done",
+                "for_statement",
+            ),
+        ]
+        for cmd, expected_type in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_injection_risk(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn(expected_type, result)
+
+    async def test_empty_command(self) -> None:
+        """Test empty command."""
+        result = self.parser.check_injection_risk("")
+        # Empty command should be safe (no dangerous nodes)
+        self.assertIsNone(result)
+
+    async def asyncTearDown(self) -> None:
+        """Clean up test fixtures."""
+        self.parser = None
+
+
+@unittest.skipIf(
+    sys.platform == "win32",
+    "Bash tool is not supported on Windows",
+)
+class BashParserDangerousCommandTest(IsolatedAsyncioTestCase):
+    """Test check_dangerous_command() method."""
+
+    async def asyncSetUp(self) -> None:
+        """Set up test fixtures."""
+        self.parser = BashCommandParser()
+
+    async def test_rm_rf_pattern(self) -> None:
+        """Test detection of rm -rf pattern."""
+        test_cases = [
+            "rm -rf /tmp/test",
+            "rm -rf .",
+            "sudo rm -rf /var/log",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("rm -rf", result)
+
+    async def test_sudo_rm_pattern(self) -> None:
+        """Test detection of sudo rm pattern."""
+        test_cases = [
+            "sudo rm file.txt",
+            "sudo rm -f /etc/config",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("sudo rm", result)
+
+    async def test_dd_command(self) -> None:
+        """Test detection of dd command."""
+        test_cases = [
+            "dd if=/dev/zero of=/dev/sda",
+            "dd if=file.iso of=/dev/sdb",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNotNone(result)
+                self.assertEqual(result, "dd")
+
+    async def test_chmod_777_pattern(self) -> None:
+        """Test detection of chmod 777 pattern."""
+        test_cases = [
+            "chmod 777 file.txt",
+            "chmod -R 777 /var/www",
+        ]
+        for cmd in test_cases:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNotNone(result)
+                self.assertIn("chmod", result)
+
+    async def test_safe_commands(self) -> None:
+        """Test that safe commands are not flagged."""
+        safe_commands = [
+            "rm file.txt",
+            "rm -f temp.log",
+            "chmod +x script.sh",
+            "chmod 644 file.txt",
+            "ls -la",
+            "git status",
+        ]
+        for cmd in safe_commands:
+            with self.subTest(cmd=cmd):
+                result = self.parser.check_dangerous_command(cmd)
+                self.assertIsNone(result, f"Expected '{cmd}' to be safe")
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
