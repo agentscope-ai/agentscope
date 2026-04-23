@@ -451,6 +451,19 @@ class ReActAgent(ReActAgentBase):
                 structured_outputs = [await _ for _ in futures]
 
             # -------------- Check for exit condition --------------
+            for output in structured_outputs:
+                if (
+                    output
+                    and isinstance(output, dict)
+                    and output.get("return_direct")
+                ):
+                    reply_msg = Msg(
+                        self.name,
+                        output.get("tool_result", []),
+                        "assistant",
+                    )
+                    return reply_msg
+
             # If structured output is still not satisfied
             if self._required_structured_model:
                 # Remove None results
@@ -668,6 +681,14 @@ class ReActAgent(ReActAgentBase):
                 function call, otherwise return None.
         """
 
+        return_direct = False
+        if tool_call["name"] in self.toolkit.tools:
+            return_direct = getattr(
+                self.toolkit.tools[tool_call["name"]],
+                "return_direct",
+                False,
+            )
+
         tool_res_msg = Msg(
             "system",
             [
@@ -707,11 +728,18 @@ class ReActAgent(ReActAgentBase):
                     # Only return the structured output
                     return chunk.metadata.get("structured_output")
 
+            if return_direct:
+                return {
+                    "return_direct": True,
+                    "tool_result": tool_res_msg.content[0]["output"],
+                }
+
             return None
 
         finally:
             # Record the tool result message in the memory
-            await self.memory.add(tool_res_msg)
+            if not return_direct:
+                await self.memory.add(tool_res_msg)
 
     async def observe(self, msg: Msg | list[Msg] | None) -> None:
         """Receive observing message(s) without generating a reply.

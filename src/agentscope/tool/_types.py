@@ -58,6 +58,9 @@ class RegisteredToolFunction:
     """If this tool function is executed in an async manner, a reminder with
     task id will be sent to the agent, allowing the agent to view, cancel or
     check the status of the async task."""
+    return_direct: bool = False
+    """If True, the tool result should be returned directly to the user
+    without further ReAct loop processing."""
 
     @property
     def extended_json_schema(self) -> dict:
