@@ -154,14 +154,11 @@ class AnthropicChatModel(ChatModelBase):
                 "budget_tokens": self.thinking_config.budget_tokens,
             }
 
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         # Extract the system message
         if messages[0]["role"] == "system":
@@ -389,68 +386,74 @@ class AnthropicChatModel(ChatModelBase):
             _final_kwargs["id"] = response_id
         yield ChatResponse(**_final_kwargs)
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the JSON schemas of the tool functions to the format that
-        Anthropic API expects."""
-        formatted_schemas = []
-        for schema in schemas:
-            assert (
-                "function" in schema
-            ), f"Invalid schema: {schema}, expect key 'function'."
-
-            assert "name" in schema["function"], (
-                f"Invalid schema: {schema}, "
-                "expect key 'name' in 'function' field."
-            )
-
-            formatted_schemas.append(
-                {
-                    "name": schema["function"]["name"],
-                    "description": schema["function"].get("description", ""),
-                    "input_schema": schema["function"].get("parameters", {}),
-                },
-            )
-
-        return formatted_schemas
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> dict | None:
-        """Format tool_choice parameter for Anthropic API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate, filter, and format tools and tool_choice for Anthropic.
 
-        When mode is "required" and only one tool is available (after
-        filtering by ``tool_choice.tools`` in ``__call__``), the tool
-        choice is formatted as a forced tool call.
+        Converts tool schemas to Anthropic's flat format and maps
+        tool_choice modes to Anthropic's type-based format. When
+        ``tool_choice.tools`` is specified, filters tools accordingly.
+        When mode is "required" and only one tool remains, it is formatted
+        as a forced tool call.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter with 'mode' and optional
-                'tools' fields.
             tools (`list[dict] | None`):
-                The (potentially filtered) list of available tools.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `dict | None`:
-                The formatted tool choice for the Anthropic API.
+            `tuple[list[dict] | None, dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = None
+        if tools:
+            fmt_tools = []
+            for schema in tools:
+                assert (
+                    "function" in schema
+                ), f"Invalid schema: {schema}, expect key 'function'."
+                assert "name" in schema["function"], (
+                    f"Invalid schema: {schema}, "
+                    "expect key 'name' in 'function' field."
+                )
+                fmt_tools.append(
+                    {
+                        "name": schema["function"]["name"],
+                        "description": schema["function"].get(
+                            "description",
+                            "",
+                        ),
+                        "input_schema": schema["function"].get(
+                            "parameters",
+                            {},
+                        ),
+                    },
+                )
+
+        if not tool_choice:
+            return fmt_tools, None
 
         mode = tool_choice["mode"]
 
         if mode == "required" and tools and len(tools) == 1:
-            return {"type": "tool", "name": tools[0]["function"]["name"]}
+            return fmt_tools, {
+                "type": "tool",
+                "name": tools[0]["function"]["name"],
+            }
 
         type_mapping = {
             "auto": {"type": "auto"},
             "none": {"type": "none"},
             "required": {"type": "any"},
         }
-        return type_mapping[mode]
+        return fmt_tools, type_mapping[mode]

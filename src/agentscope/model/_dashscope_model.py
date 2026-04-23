@@ -204,16 +204,11 @@ class DashScopeChatModel(ChatModelBase):
             **kwargs,
         }
 
-        # tools
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        # tool choice options
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         # thinking related options
         kwargs = {**kwargs, **self.thinking_config.model_dump()}
@@ -495,64 +490,57 @@ class DashScopeChatModel(ChatModelBase):
             usage=usage,
         )
 
-    @staticmethod
-    def _format_tools_json_schemas(
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the tools JSON schema into required format for DashScope API.
-
-        Args:
-            schemas (`dict[str, dict[str, Any]]`):
-                The tools JSON schemas.
-        """
-        # Check schemas format
-        for value in schemas:
-            if (
-                not isinstance(value, dict)
-                or "type" not in value
-                or value["type"] != "function"
-                or "function" not in value
-            ):
-                raise ValueError(
-                    f"Each schema must be a dict with 'type' as 'function' "
-                    f"and 'function' key, got {value}",
-                )
-
-        return schemas
-
-    def _format_tool_choice(
+    def _format_tools(
         self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> str | dict | None:
-        """Format tool_choice parameter for DashScope API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, str | dict | None]:
+        """Validate, filter, and format tools and tool_choice for DashScope.
 
-        When mode is "required" and only one tool is available (after
-        filtering by ``tool_choice.tools`` in ``__call__``), the tool
-        choice is formatted as a forced function call. Note that DashScope
-        only supports "auto" and "none" modes; "required" is converted
-        to "auto".
+        DashScope only supports "auto" and "none" modes; "required" is
+        converted to "auto" with a warning. When ``tool_choice.tools``
+        is specified, filters tools accordingly. When mode is "required"
+        and only one tool remains, it is formatted as a forced function
+        call.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter with 'mode' and optional
-                'tools' fields.
             tools (`list[dict] | None`):
-                The (potentially filtered) list of available tools.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `str | dict | None`:
-                The formatted tool choice for the DashScope API.
+            `tuple[list[dict] | None, str | dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = None
+        if tools:
+            for value in tools:
+                if (
+                    not isinstance(value, dict)
+                    or "type" not in value
+                    or value["type"] != "function"
+                    or "function" not in value
+                ):
+                    raise ValueError(
+                        f"Each schema must be a dict with 'type' as "
+                        f"'function' and 'function' key, got {value}",
+                    )
+            fmt_tools = tools
+
+        if not tool_choice:
+            return fmt_tools, None
 
         mode = tool_choice["mode"]
 
         if mode == "required" and tools and len(tools) == 1:
-            return {
+            return fmt_tools, {
                 "type": "function",
                 "function": {"name": tools[0]["function"]["name"]},
             }
@@ -563,6 +551,6 @@ class DashScopeChatModel(ChatModelBase):
                 "It will be converted to 'auto'.",
                 DeprecationWarning,
             )
-            return "auto"
+            return fmt_tools, "auto"
 
-        return mode
+        return fmt_tools, mode

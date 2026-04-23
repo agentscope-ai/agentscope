@@ -208,14 +208,11 @@ class OpenAIChatModel(ChatModelBase):
         ):
             kwargs["reasoning_effort"] = self.thinking_config.reasoning_effect
 
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         if self.stream:
             kwargs["stream_options"] = {"include_usage": True}
@@ -487,46 +484,47 @@ class OpenAIChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the tools JSON schemas to the OpenAI format."""
-        return schemas
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> str | dict | None:
-        """Format tool_choice parameter for OpenAI API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, str | dict | None]:
+        """Validate, filter, and format tools and tool_choice for OpenAI API.
 
-        When mode is "required" and only one tool is available (after
-        filtering by ``tool_choice.tools`` in ``__call__``), the tool
-        choice is formatted as a forced function call.
+        When ``tool_choice.tools`` is specified, the tools list is
+        filtered to only include those tools. When mode is "required"
+        and only one tool remains, it is formatted as a forced function
+        call.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter with 'mode' and optional
-                'tools' fields.
             tools (`list[dict] | None`):
-                The (potentially filtered) list of available tools.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `str | dict | None`:
-                The formatted tool choice for the OpenAI API.
+            `tuple[list[dict] | None, str | dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = tools if tools else None
+
+        if not tool_choice:
+            return fmt_tools, None
 
         mode = tool_choice["mode"]
 
         if mode == "required" and tools and len(tools) == 1:
-            return {
+            fmt_choice: str | dict = {
                 "type": "function",
                 "function": {"name": tools[0]["function"]["name"]},
             }
+        else:
+            fmt_choice = mode
 
-        return mode
+        return fmt_tools, fmt_choice
