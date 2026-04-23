@@ -284,6 +284,7 @@ class BrowserAgent(ReActAgent):
         self,
         tool_choice: Literal["auto", "none", "required"] | None = None,
     ) -> Msg:
+        from datetime import datetime
         """Initial reasoning without screenshot observation."""
         msg = Msg(
             "user",
@@ -297,6 +298,7 @@ class BrowserAgent(ReActAgent):
             msgs=[
                 Msg("system", self.sys_prompt, "system"),
                 *await self.memory.get_memory(),
+                Msg("user", f"The current time is {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "user"),
                 msg,
             ],
         )
