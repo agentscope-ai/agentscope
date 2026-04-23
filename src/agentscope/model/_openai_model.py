@@ -269,6 +269,8 @@ class OpenAIChatModel(ChatModelBase):
         start_datetime = datetime.now()
 
         if structured_model:
+            import openai
+
             if tools or tool_choice:
                 logger.warning(
                     "structured_model is provided. Both 'tools' and "
@@ -299,12 +301,13 @@ class OpenAIChatModel(ChatModelBase):
                         response = self.client.chat.completions.stream(
                             **kwargs,
                         )
-                        return self._parse_openai_stream_response(
+                        return self._structured_stream_with_fallback(
                             start_datetime,
                             response,
                             structured_model,
+                            kwargs,
                         )
-                except Exception as e:
+                except openai.BadRequestError as e:
                     logger.warning(
                         "response_format structured output failed (%s: %s), "
                         "falling back to tool-call based structured output. "
@@ -676,6 +679,53 @@ class OpenAIChatModel(ChatModelBase):
             resp_kwargs["id"] = response_id
 
         return ChatResponse(**resp_kwargs)
+
+    async def _structured_stream_with_fallback(
+        self,
+        start_datetime: datetime,
+        response: Any,
+        structured_model: Type[BaseModel],
+        kwargs: dict,
+    ) -> AsyncGenerator[ChatResponse, None]:
+        """Wrap the streaming response_format attempt with error handling.
+
+        The OpenAI `client.chat.completions.stream()` is lazy -- the HTTP
+        request is deferred until the stream is consumed. This means errors
+        from APIs that reject ``response_format`` (e.g. DeepSeek) are raised
+        *outside* the try/except in ``__call__``, so
+        ``_structured_output_fallback`` is never set.
+
+        This wrapper catches such errors during stream consumption and
+        transparently falls back to the tool-call approach.
+        """
+        import openai
+
+        try:
+            async for chunk in self._parse_openai_stream_response(
+                start_datetime,
+                response,
+                structured_model,
+            ):
+                yield chunk
+        except openai.BadRequestError as e:
+            logger.warning(
+                "response_format structured output failed during streaming "
+                "(%s: %s), falling back to tool-call based structured "
+                "output. Subsequent calls will use tool-call directly.",
+                type(e).__name__,
+                e,
+            )
+            self._structured_output_fallback = True
+            fallback = await self._structured_via_tool_call(
+                kwargs,
+                structured_model,
+                datetime.now(),
+            )
+            if isinstance(fallback, AsyncGenerator):
+                async for chunk in fallback:
+                    yield chunk
+            else:
+                yield fallback
 
     async def _structured_via_tool_call(
         self,
