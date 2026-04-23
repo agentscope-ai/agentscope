@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """The message class in agentscope."""
+import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self
 
@@ -73,16 +74,31 @@ class Msg(BaseModel):
 
     def has_content_blocks(
         self,
-        block_type: ContentBlockTypes | None = None,
+        block_type: ContentBlockTypes | list[ContentBlockTypes] | None = None,
     ) -> bool:
         """Check if the message has content blocks of the given type.
 
         Args:
-            block_type (ContentBlockTypes | None, defaults to None):
-                The type of the block to be checked. If `None`, it will
-                check if there are any content blocks.
+            block_type (`ContentBlockTypes | list[ContentBlockTypes] | None`, \
+            optional):
+                The type of the block to be checked. If `None`, all blocks will
+                be checked. If a list is provided, it checks if there are
+                blocks of any types in the list.
+
+        Returns:
+            `bool`:
+                `True` if there are content blocks of the given type, `False`
+                otherwise.
         """
-        return len(self.get_content_blocks(block_type)) > 0
+        blocks = self.get_content_blocks()
+        if block_type is None:
+            return len(blocks) > 0
+
+        typs = [block_type] if isinstance(block_type, str) else block_type
+        for _ in list(self.get_content_blocks()):
+            if _.type in typs:
+                return True
+        return False
 
     def get_text_content(self, separator: str = "\n") -> str | None:
         """Get the pure text blocks from the message content.
@@ -231,6 +247,7 @@ def AssistantMsg(
     content: str | list[ContentBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
+    id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create an assistant message with role "assistant".
 
@@ -244,6 +261,8 @@ def AssistantMsg(
             The metadata of the message. Defaults to `None`.
         created_at (`str | None`, optional):
             The creation time of the message in ISO format. Defaults to `None`.
+        id (`str | None`, optional):
+            The unique identifier of the message.
 
     Returns:
         `Msg`:
@@ -255,6 +274,7 @@ def AssistantMsg(
         role="assistant",
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
+        id=id or uuid.uuid4().hex,
     )
 
 

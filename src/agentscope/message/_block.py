@@ -93,8 +93,16 @@ class ToolCallBlock(BaseModel):
     """The name of the tool to be called."""
     input: str
     """The raw JSON string input of the tool, accumulated during streaming."""
-    await_user_confirmation: bool = False
-    """Whether to await user confirmation before executing the tool."""
+    state: Literal["pending", "allow", "deny", "ask", "submitted"] = "pending"
+    """The tool call state
+    - 'pending': the initial state when the tool call haven't been processed
+     by the permission system
+    - 'deny': denied by the permission system/user and finished
+    - 'ask': the too call is asking for user confirmation
+    - 'allow': allowed by the permission system/user and wait for execution
+    - 'submitted': the tool call has been submitted for (external) execution
+     and is waiting for results
+    """
 
 
 class ToolResultBlock(BaseModel):

@@ -8,6 +8,7 @@ from typing import Literal, List, TypeAlias
 from pydantic import BaseModel, Field
 
 from ..message import ToolCallBlock, ToolResultBlock
+from ..tool import PermissionRule
 
 
 class EventType(str, Enum):
@@ -325,8 +326,6 @@ class ExceedMaxItersEvent(EventBase):
     """Event type."""
     reply_id: str
     """ID of the reply message associated with this run."""
-    agent_id: str
-    """ID of the agent that exceeded the iteration limit."""
     name: str
     """Name of the agent."""
 
@@ -364,6 +363,11 @@ class ConfirmResult(BaseModel):
     """Whether the user confirmed the tool call."""
     tool_call: ToolCallBlock
     """The tool call that was confirmed or rejected."""
+    rules: list[PermissionRule] | None = None
+    """The allowed permission rules for this tool call, only applicable when
+    confirmed is True. Incase user modification is needed, here we use the
+    completed permission rules instead of references to the suggested rules in
+    the RequireUserConfirmEvent."""
 
 
 class UserConfirmResultEvent(EventBase):
