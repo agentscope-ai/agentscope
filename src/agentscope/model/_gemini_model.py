@@ -9,7 +9,6 @@ from typing import (
     Any,
     TYPE_CHECKING,
     AsyncIterator,
-    Literal,
     List,
 )
 
@@ -186,7 +185,7 @@ class GeminiChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **config_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
@@ -197,10 +196,8 @@ class GeminiChatModel(ChatModelBase):
                 required.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool name.
                  For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
             **config_kwargs (`Any`):
@@ -543,37 +540,45 @@ class GeminiChatModel(ChatModelBase):
         tool_choice: ToolChoice | None,
         tools: list[dict] | None,
     ) -> dict | None:
-        """Format tool_choice parameter for API compatibility.
+        """Format tool_choice parameter for Gemini API compatibility.
+
+        When 'tools' is specified, the mode field is ignored and the tool
+        names are used as ``allowed_function_names`` with mode "ANY".
+        Gemini natively supports multiple allowed tool names.
 
         Args:
             tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
+                The unified tool choice parameter with 'mode' and optional
+                'tools' fields.
             tools (`list[dict] | None`):
                 The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                tool_choice specifies tool names.
 
         Returns:
             `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                    tool_choice is None.
+                The formatted tool config for the Gemini API, or None if
+                tool_choice is None.
         """
         self._validate_tool_choice(tool_choice, tools)
 
         if tool_choice is None:
             return None
 
+        mode = tool_choice["mode"]
+        tool_names = tool_choice.get("tools")
+
         mode_mapping = {
             "auto": "AUTO",
             "none": "NONE",
             "required": "ANY",
         }
-        mode = mode_mapping.get(tool_choice)
-        if mode:
-            return {"function_calling_config": {"mode": mode}}
-        return {
-            "function_calling_config": {
-                "mode": "ANY",
-                "allowed_function_names": [tool_choice],
-            },
-        }
+
+        if tool_names:
+            return {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": tool_names,
+                },
+            }
+
+        return {"function_calling_config": {"mode": mode_mapping[mode]}}

@@ -156,7 +156,7 @@ class OpenAIChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from OpenAI chat completions API by the given
@@ -170,8 +170,7 @@ class OpenAIChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
             **kwargs (`Any`):
                 The keyword arguments for OpenAI chat completions API.
@@ -214,14 +213,14 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
-            # Handle deprecated "any" option with warning
-            if tool_choice == "any":
+            # Handle deprecated "any" mode with warning
+            if tool_choice.get("mode") == "any":
                 warnings.warn(
                     '"any" is deprecated and will be removed in a future '
                     "version.",
                     DeprecationWarning,
                 )
-                tool_choice = "required"
+                tool_choice = {**tool_choice, "mode": "required"}
             kwargs["tool_choice"] = self._format_tool_choice(
                 tool_choice,
                 tools,
@@ -509,27 +508,44 @@ class OpenAIChatModel(ChatModelBase):
         tool_choice: ToolChoice | None,
         tools: list[dict] | None,
     ) -> str | dict | None:
-        """Format tool_choice parameter for API compatibility.
+        """Format tool_choice parameter for OpenAI API compatibility.
+
+        When 'tools' is specified, the mode field is ignored and the first
+        tool name is used as a forced function call, since OpenAI Chat
+        Completions API only supports single tool choice.
 
         Args:
             tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
+                The unified tool choice parameter with 'mode' and optional
+                'tools' fields.
             tools (`list[dict] | None`):
                 The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                tool_choice specifies tool names.
 
         Returns:
-            `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                    tool_choice is None.
+            `str | dict | None`:
+                The formatted tool choice for the OpenAI API, or None if
+                tool_choice is None.
         """
-        super()._validate_tool_choice(tool_choice, tools)
+        self._validate_tool_choice(tool_choice, tools)
 
         if tool_choice is None:
             return None
 
-        if tool_choice in ["auto", "none", "required"]:
-            return tool_choice
+        mode = tool_choice["mode"]
+        tool_names = tool_choice.get("tools")
 
-        return {"type": "function", "function": {"name": tool_choice}}
+        if tool_names:
+            if len(tool_names) > 1:
+                warnings.warn(
+                    "OpenAI only supports single tool choice. "
+                    f"Using the first tool '{tool_names[0]}', "
+                    f"ignoring: {tool_names[1:]}.",
+                    UserWarning,
+                )
+            return {
+                "type": "function",
+                "function": {"name": tool_names[0]},
+            }
+
+        return mode

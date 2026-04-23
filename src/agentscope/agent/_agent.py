@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The unified agent class in AgentScope library."""
 import uuid
-from typing import AsyncGenerator, Literal
+from typing import AsyncGenerator
+
+from ..tool import ToolChoice
 
 from ..event import (
     AgentEvent,
@@ -274,7 +276,7 @@ class Agent:
             pending_tool_calls = self._get_pending_tool_calls()
             if len(pending_tool_calls) == 0:
                 await self._compress_memory_if_needed()
-                async for evt in self._reasoning(tool_choice="auto"):
+                async for evt in self._reasoning(tool_choice={"mode": "auto"}):
                     yield evt
 
             awaiting_info = self._get_awaiting_tool_calls()
@@ -325,7 +327,7 @@ class Agent:
             if isinstance(last_content, list) and last_content:
                 last_block = last_content[-1]
         if last_block is None or not isinstance(last_block, TextBlock):
-            async for evt in self._reasoning(tool_choice="none"):
+            async for evt in self._reasoning(tool_choice={"mode": "none"}):
                 yield evt
 
         yield RunFinishedEvent(
@@ -347,7 +349,7 @@ class Agent:
 
     async def _reasoning(
         self,
-        tool_choice: Literal["auto", "none", "required"] = "auto",
+        tool_choice: ToolChoice | None = None,
     ) -> AsyncGenerator:
         """Core reasoning logic. Yields chunks with is_last flag."""
         # TODO: Pass tool schemas from toolkit when toolkit is implemented

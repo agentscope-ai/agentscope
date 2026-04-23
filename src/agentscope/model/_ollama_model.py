@@ -8,7 +8,6 @@ from typing import (
     List,
     AsyncGenerator,
     AsyncIterator,
-    Literal,
 )
 
 from pydantic import BaseModel
@@ -19,6 +18,7 @@ from ._model_usage import ChatUsage
 from .._logging import logger
 from ..formatter import FormatterBase, OllamaChatFormatter
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
+from ..tool import ToolChoice
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
@@ -115,7 +115,7 @@ class OllamaChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Ollama chat completions API by the given
@@ -129,8 +129,7 @@ class OllamaChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-                | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Ollama doesn't support `tool_choice` argument yet.
             **kwargs (`Any`):
                 The keyword arguments for Ollama chat completions API,

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The Anthropic API model classes."""
+import warnings
 from datetime import datetime
 from typing import (
     Any,
     AsyncGenerator,
     TYPE_CHECKING,
     List,
-    Literal,
 )
 from collections import OrderedDict
 
@@ -117,7 +117,7 @@ class AnthropicChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
@@ -131,8 +131,7 @@ class AnthropicChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
             **generate_kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API.
@@ -423,32 +422,46 @@ class AnthropicChatModel(ChatModelBase):
         tool_choice: ToolChoice | None,
         tools: list[dict] | None,
     ) -> dict | None:
-        """Format tool_choice parameter for API compatibility.
+        """Format tool_choice parameter for Anthropic API compatibility.
+
+        When 'tools' is specified, the mode field is ignored and the first
+        tool name is used as a forced tool call, since Anthropic only
+        supports single tool choice.
 
         Args:
             tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
+                The unified tool choice parameter with 'mode' and optional
+                'tools' fields.
             tools (`list[dict] | None`):
                 The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                tool_choice specifies tool names.
 
         Returns:
             `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                tool_choice is None.
+                The formatted tool choice for the Anthropic API, or None
+                if tool_choice is None.
         """
         self._validate_tool_choice(tool_choice, tools)
 
         if tool_choice is None:
             return None
 
+        mode = tool_choice["mode"]
+        tool_names = tool_choice.get("tools")
+
+        if tool_names:
+            if len(tool_names) > 1:
+                warnings.warn(
+                    "Anthropic only supports single tool choice. "
+                    f"Using the first tool '{tool_names[0]}', "
+                    f"ignoring: {tool_names[1:]}.",
+                    UserWarning,
+                )
+            return {"type": "tool", "name": tool_names[0]}
+
         type_mapping = {
             "auto": {"type": "auto"},
             "none": {"type": "none"},
             "required": {"type": "any"},
         }
-        if tool_choice in type_mapping:
-            return type_mapping[tool_choice]
-
-        return {"type": "tool", "name": tool_choice}
+        return type_mapping[mode]

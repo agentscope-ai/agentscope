@@ -12,6 +12,8 @@ from typing import (
     Generator,
     Awaitable,
     Callable,
+    TypedDict,
+    NotRequired,
 )
 
 from pydantic import BaseModel
@@ -207,4 +209,13 @@ Function: TypeAlias = (
 )
 
 
-ToolChoice: TypeAlias = Literal["auto", "none", "required"] | str
+class ToolChoice(TypedDict):
+    """The tool choice configuration.
+
+    Attributes:
+        mode: The tool choice mode, supports "auto", "none", "required".
+        tools: The list of tool names to use. Optional.
+    """
+
+    mode: Literal["auto", "none", "required"]
+    tools: NotRequired[list[str]]
