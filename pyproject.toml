@@ -47,7 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 # ------------ A2A protocol ------------
 a2a = [
-    "a2a-sdk",
+    "a2a-sdk==0.3.26",
     "httpx",
     # TODO: split the card resolvers from the a2a dependency
     "nacos-sdk-python>=3.0.0",
