@@ -527,23 +527,22 @@ class DashScopeChatModel(ChatModelBase):
     ) -> str | dict | None:
         """Format tool_choice parameter for DashScope API compatibility.
 
-        When 'tools' is specified, the mode field is ignored and the first
-        tool name is used as a forced function call, since DashScope only
-        supports single tool choice. Also note that DashScope API only
-        supports "auto" and "none" modes; "required" is converted to "auto".
+        When mode is "required" and only one tool is available (after
+        filtering by ``tool_choice.tools`` in ``__call__``), the tool
+        choice is formatted as a forced function call. Note that DashScope
+        only supports "auto" and "none" modes; "required" is converted
+        to "auto".
 
         Args:
             tool_choice (`ToolChoice | None`):
                 The unified tool choice parameter with 'mode' and optional
                 'tools' fields.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice specifies tool names.
+                The (potentially filtered) list of available tools.
 
         Returns:
             `str | dict | None`:
-                The formatted tool choice for the DashScope API, or None
-                if tool_choice is None.
+                The formatted tool choice for the DashScope API.
         """
         self._validate_tool_choice(tool_choice, tools)
 
@@ -551,19 +550,11 @@ class DashScopeChatModel(ChatModelBase):
             return None
 
         mode = tool_choice["mode"]
-        tool_names = tool_choice.get("tools")
 
-        if tool_names:
-            if len(tool_names) > 1:
-                warnings.warn(
-                    "DashScope only supports single tool choice. "
-                    f"Using the first tool '{tool_names[0]}', "
-                    f"ignoring: {tool_names[1:]}.",
-                    UserWarning,
-                )
+        if mode == "required" and tools and len(tools) == 1:
             return {
                 "type": "function",
-                "function": {"name": tool_names[0]},
+                "function": {"name": tools[0]["function"]["name"]},
             }
 
         if mode == "required":

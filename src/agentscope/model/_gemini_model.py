@@ -542,22 +542,20 @@ class GeminiChatModel(ChatModelBase):
     ) -> dict | None:
         """Format tool_choice parameter for Gemini API compatibility.
 
-        When 'tools' is specified, the mode field is ignored and the tool
-        names are used as ``allowed_function_names`` with mode "ANY".
-        Gemini natively supports multiple allowed tool names.
+        When mode is "required" and tools have been filtered (via
+        ``tool_choice.tools`` in ``__call__``), the filtered tool names
+        are passed as ``allowed_function_names`` to Gemini.
 
         Args:
             tool_choice (`ToolChoice | None`):
                 The unified tool choice parameter with 'mode' and optional
                 'tools' fields.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice specifies tool names.
+                The (potentially filtered) list of available tools.
 
         Returns:
             `dict | None`:
-                The formatted tool config for the Gemini API, or None if
-                tool_choice is None.
+                The formatted tool config for the Gemini API.
         """
         self._validate_tool_choice(tool_choice, tools)
 
@@ -565,7 +563,6 @@ class GeminiChatModel(ChatModelBase):
             return None
 
         mode = tool_choice["mode"]
-        tool_names = tool_choice.get("tools")
 
         mode_mapping = {
             "auto": "AUTO",
@@ -573,12 +570,16 @@ class GeminiChatModel(ChatModelBase):
             "required": "ANY",
         }
 
-        if tool_names:
+        gemini_mode = mode_mapping[mode]
+
+        if gemini_mode == "ANY" and tool_choice.get("tools") and tools:
             return {
                 "function_calling_config": {
                     "mode": "ANY",
-                    "allowed_function_names": tool_names,
+                    "allowed_function_names": [
+                        t["function"]["name"] for t in tools
+                    ],
                 },
             }
 
-        return {"function_calling_config": {"mode": mode_mapping[mode]}}
+        return {"function_calling_config": {"mode": gemini_mode}}

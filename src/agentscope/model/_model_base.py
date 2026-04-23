@@ -90,6 +90,12 @@ class ChatModelBase:
         if self.formatter is not None:
             messages = await self.formatter.format(messages)
 
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
+
         last_error: Exception | None = None
 
         for model_name in self._models_to_try():
@@ -162,13 +168,13 @@ class ChatModelBase:
 
         Args:
             tool_choice (`ToolChoice | None`):
-                Tool choice dict with 'mode' and optional 'tool' fields.
+                Tool choice dict with 'mode' and optional 'tools' fields.
             tools (`list[dict] | None`):
                 Available tools list
 
         Raises:
             `ValueError`:
-                If tool_choice is not a valid dict, or mode/tool values
+                If tool_choice is not a valid dict, or mode/tools values
                 are invalid.
         """
         if tool_choice is None:

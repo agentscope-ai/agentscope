@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """The Anthropic API model classes."""
-import warnings
 from datetime import datetime
 from typing import (
     Any,
@@ -424,22 +423,20 @@ class AnthropicChatModel(ChatModelBase):
     ) -> dict | None:
         """Format tool_choice parameter for Anthropic API compatibility.
 
-        When 'tools' is specified, the mode field is ignored and the first
-        tool name is used as a forced tool call, since Anthropic only
-        supports single tool choice.
+        When mode is "required" and only one tool is available (after
+        filtering by ``tool_choice.tools`` in ``__call__``), the tool
+        choice is formatted as a forced tool call.
 
         Args:
             tool_choice (`ToolChoice | None`):
                 The unified tool choice parameter with 'mode' and optional
                 'tools' fields.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice specifies tool names.
+                The (potentially filtered) list of available tools.
 
         Returns:
             `dict | None`:
-                The formatted tool choice for the Anthropic API, or None
-                if tool_choice is None.
+                The formatted tool choice for the Anthropic API.
         """
         self._validate_tool_choice(tool_choice, tools)
 
@@ -447,17 +444,9 @@ class AnthropicChatModel(ChatModelBase):
             return None
 
         mode = tool_choice["mode"]
-        tool_names = tool_choice.get("tools")
 
-        if tool_names:
-            if len(tool_names) > 1:
-                warnings.warn(
-                    "Anthropic only supports single tool choice. "
-                    f"Using the first tool '{tool_names[0]}', "
-                    f"ignoring: {tool_names[1:]}.",
-                    UserWarning,
-                )
-            return {"type": "tool", "name": tool_names[0]}
+        if mode == "required" and tools and len(tools) == 1:
+            return {"type": "tool", "name": tools[0]["function"]["name"]}
 
         type_mapping = {
             "auto": {"type": "auto"},

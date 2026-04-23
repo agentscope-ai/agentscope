@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 """OpenAI Chat model class."""
-import warnings
 from datetime import datetime
 from typing import (
     Any,
@@ -213,14 +212,6 @@ class OpenAIChatModel(ChatModelBase):
             kwargs["tools"] = self._format_tools_json_schemas(tools)
 
         if tool_choice:
-            # Handle deprecated "any" mode with warning
-            if tool_choice.get("mode") == "any":
-                warnings.warn(
-                    '"any" is deprecated and will be removed in a future '
-                    "version.",
-                    DeprecationWarning,
-                )
-                tool_choice = {**tool_choice, "mode": "required"}
             kwargs["tool_choice"] = self._format_tool_choice(
                 tool_choice,
                 tools,
@@ -510,22 +501,20 @@ class OpenAIChatModel(ChatModelBase):
     ) -> str | dict | None:
         """Format tool_choice parameter for OpenAI API compatibility.
 
-        When 'tools' is specified, the mode field is ignored and the first
-        tool name is used as a forced function call, since OpenAI Chat
-        Completions API only supports single tool choice.
+        When mode is "required" and only one tool is available (after
+        filtering by ``tool_choice.tools`` in ``__call__``), the tool
+        choice is formatted as a forced function call.
 
         Args:
             tool_choice (`ToolChoice | None`):
                 The unified tool choice parameter with 'mode' and optional
                 'tools' fields.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice specifies tool names.
+                The (potentially filtered) list of available tools.
 
         Returns:
             `str | dict | None`:
-                The formatted tool choice for the OpenAI API, or None if
-                tool_choice is None.
+                The formatted tool choice for the OpenAI API.
         """
         self._validate_tool_choice(tool_choice, tools)
 
@@ -533,19 +522,11 @@ class OpenAIChatModel(ChatModelBase):
             return None
 
         mode = tool_choice["mode"]
-        tool_names = tool_choice.get("tools")
 
-        if tool_names:
-            if len(tool_names) > 1:
-                warnings.warn(
-                    "OpenAI only supports single tool choice. "
-                    f"Using the first tool '{tool_names[0]}', "
-                    f"ignoring: {tool_names[1:]}.",
-                    UserWarning,
-                )
+        if mode == "required" and tools and len(tools) == 1:
             return {
                 "type": "function",
-                "function": {"name": tool_names[0]},
+                "function": {"name": tools[0]["function"]["name"]},
             }
 
         return mode
