@@ -214,6 +214,7 @@ class ActingConfig(BaseModel):
 
 class Agent(BaseModel):
     """The agent class."""
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str = Field(description="The identifier of the agent.")
