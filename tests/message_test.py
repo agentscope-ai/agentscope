@@ -404,9 +404,7 @@ class MessageTest(IsolatedAsyncioTestCase):
                 ToolCallBlock(id="c1", name="calc", input="{}"),
             ],
         )
-        types = [
-            b["type"] for b in msg.model_dump()["content"]
-        ]
+        types = [b["type"] for b in msg.model_dump()["content"]]
         self.assertEqual(
             types,
             ["thinking", "text", "tool_call"],
