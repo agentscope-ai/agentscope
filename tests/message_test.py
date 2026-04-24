@@ -521,14 +521,10 @@ class MessageTest(IsolatedAsyncioTestCase):
                 HintBlock(hint="h"),
             ],
         )
-        block_types = ["text", "hint"]
-        blocks = list(
-            msg.get_content_blocks(
-                block_types,
-            ),  # type: ignore[arg-type]
-        )
-        self.assertEqual(len(blocks), 2)
-        types = {b.type for b in blocks}
+        text_blocks = msg.get_content_blocks("text")
+        hint_blocks = msg.get_content_blocks("hint")
+        self.assertEqual(len(text_blocks) + len(hint_blocks), 2)
+        types = {b.type for b in list(text_blocks) + list(hint_blocks)}
         self.assertSetEqual(types, {"text", "hint"})
 
         # Empty list when no block matches the type
