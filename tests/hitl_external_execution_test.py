@@ -111,6 +111,58 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             model=self.model,
             toolkit=Toolkit(),
         )
+        self.tool_call_id_1 = "tool_call_1"
+        self.tool_call_id_2 = "tool_call_2"
+        self.user_input_text = "Test"
+        self.tool_input_1 = '{"input": "test1"}'
+        self.tool_input_2 = '{"input": "test2"}'
+        self.sequential_tool_name = "mock_external_sequential_tool"
+        self.concurrent_tool_name = "mock_external_concurrent_tool"
+        self.sequential_result_1 = "External sequential result: test1"
+        self.sequential_result_2 = "External sequential result: test2"
+        self.concurrent_result_1 = "External concurrent result: test1"
+        self.concurrent_result_2 = "External concurrent result: test2"
+        self.final_response_text = "Final response after external execution"
+        self.final_text_events = [
+            {
+                "type": "MODEL_CALL_STARTED",
+                "model_name": "mock-model",
+            },
+            {
+                "type": "TEXT_BLOCK_START",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "TEXT_BLOCK_DELTA",
+                "block_id": AnyString(),
+                "delta": self.final_response_text,
+            },
+            {
+                "type": "TEXT_BLOCK_END",
+                "block_id": AnyString(),
+            },
+            {
+                "type": "MODEL_CALL_ENDED",
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+        ]
+        self.final_mock_responses = [
+            ChatResponse(
+                content=[
+                    TextBlock(text=self.final_response_text),
+                ],
+                is_last=False,
+                usage=None,
+            ),
+            ChatResponse(
+                content=[
+                    TextBlock(text=self.final_response_text),
+                ],
+                is_last=True,
+                usage=None,
+            ),
+        ]
 
     def _get_event_base(self, reply_id: str) -> dict:
         """Get the dict with the basic fields for event assertion."""
@@ -130,6 +182,79 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             "role": "assistant",
         }
 
+    def _get_tool_call_events(
+        self,
+        id: str,
+        name: str,
+        delta: str,
+    ) -> list[dict]:
+        """Helper method to get the expected tool call events."""
+        return [
+            {
+                "type": "TOOL_CALL_START",
+                "tool_call_id": id,
+                "tool_call_name": name,
+            },
+            {
+                "type": "TOOL_CALL_DELTA",
+                "tool_call_id": id,
+                "delta": delta,
+            },
+            {
+                "type": "TOOL_CALL_END",
+                "tool_call_id": id,
+            },
+        ]
+
+    def _get_tool_result_events(
+        self,
+        id: str,
+        result: str,
+        state: str = "success",
+    ) -> list[dict]:
+        """Helper method to get the expected tool result events."""
+        return [
+            {
+                "type": "TOOL_RESULT_TEXT_DELTA",
+                "tool_call_id": id,
+                "delta": result,
+            },
+            {
+                "type": "TOOL_RESULT_END",
+                "tool_call_id": id,
+                "state": state,
+            },
+        ]
+
+    def _get_require_external_execution_events(
+        self,
+        reply_id: str,
+        id: str,
+        name: str,
+        tool_input: str,
+    ) -> list[dict]:
+        """Helper method to get the expected external execution events."""
+        return [
+            {
+                "type": "TOOL_RESULT_START",
+                "tool_call_id": id,
+                "tool_call_name": name,
+            },
+            {
+                "type": "REQUIRE_EXTERNAL_EXECUTION",
+                "reply_id": reply_id,
+                "tool_calls": [
+                    {
+                        "type": "tool_call",
+                        "id": id,
+                        "name": name,
+                        "input": tool_input,
+                        "state": "submitted",
+                    },
+                ],
+            },
+        ]
+
     async def test_single_external_execution(self) -> None:
         """Test single external execution tool call.
 
@@ -146,9 +271,6 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             group="basic",
         )
 
-        # Create tool call ID
-        tool_call_id_1 = "tool_call_1"
-
         # Set up mock response with tool call (no final text response)
         self.model.set_responses(
             [
@@ -156,9 +278,9 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                         ],
                         is_last=False,
@@ -167,42 +289,23 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                         ],
                         is_last=True,
                         usage=None,
                     ),
                 ],
-                [
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=False,
-                        usage=None,
-                    ),
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=True,
-                        usage=None,
-                    ),
-                ],
+                self.final_mock_responses,
             ],
         )
 
         # First call: collect events until REQUIRE_EXTERNAL_EXECUTION
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
@@ -218,43 +321,22 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "role": "assistant",
             },
             {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
-            {
-                "type": "TOOL_CALL_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "TOOL_CALL_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": '{"input": "test1"}',
-            },
-            {
-                "type": "TOOL_CALL_END",
-                "tool_call_id": tool_call_id_1,
-            },
+            *self._get_tool_call_events(
+                self.tool_call_id_1,
+                self.sequential_tool_name,
+                self.tool_input_1,
+            ),
             {
                 "type": "MODEL_CALL_ENDED",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {
-                "type": "TOOL_RESULT_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "REQUIRE_EXTERNAL_EXECUTION",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
-                        "state": "submitted",
-                    },
-                ],
-            },
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_1,
+                self.sequential_tool_name,
+                self.tool_input_1,
+            ),
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -269,15 +351,15 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "submitted",
                     },
                 ],
@@ -292,10 +374,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
-                    id=tool_call_id_1,
-                    name="mock_external_sequential_tool",
+                    id=self.tool_call_id_1,
+                    name=self.sequential_tool_name,
                     output=[
-                        TextBlock(text="External sequential result: test1"),
+                        TextBlock(text=self.sequential_result_1),
                     ],
                     state=ToolResultState.SUCCESS,
                 ),
@@ -311,38 +393,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Verify events after resumption
         expected_events_resume = [
-            {
-                "type": "TOOL_RESULT_TEXT_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": "External sequential result: test1",
-            },
-            {
-                "type": "TOOL_RESULT_END",
-                "tool_call_id": tool_call_id_1,
-                "state": "success",
-            },
-            {
-                "type": "MODEL_CALL_STARTED",
-                "model_name": "mock-model",
-            },
-            {
-                "type": "TEXT_BLOCK_START",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "TEXT_BLOCK_DELTA",
-                "block_id": AnyString(),
-                "delta": "Final response after external execution",
-            },
-            {
-                "type": "TEXT_BLOCK_END",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "MODEL_CALL_ENDED",
-                "input_tokens": 0,
-                "output_tokens": 0,
-            },
+            *self._get_tool_result_events(
+                self.tool_call_id_1,
+                self.sequential_result_1,
+            ),
+            *self.final_text_events,
             {"type": "RUN_FINISHED", "session_id": session_id},
         ]
         self.assertListEqual(
@@ -355,26 +410,26 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_external_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "External sequential result: test1",
+                                "text": self.sequential_result_1,
                             },
                         ],
                         "state": "success",
@@ -382,7 +437,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Final response after external execution",
+                        "text": self.final_response_text,
                     },
                 ],
             },
@@ -410,10 +465,6 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             group="basic",
         )
 
-        # Create tool call IDs
-        tool_call_id_1 = "tool_call_1"
-        tool_call_id_2 = "tool_call_2"
-
         # Set up mock response with multiple tool calls
         self.model.set_responses(
             [
@@ -421,14 +472,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=False,
@@ -437,53 +488,44 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_external_sequential_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=True,
                         usage=None,
                     ),
                 ],
-                [
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=False,
-                        usage=None,
-                    ),
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=True,
-                        usage=None,
-                    ),
-                ],
+                self.final_mock_responses,
             ],
         )
 
         # First call: collect events until REQUIRE_EXTERNAL_EXECUTION
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
         # Verify events
         session_id = self.agent.state.session_id
         reply_id = self.agent.state.reply_id
+        tool_call_1_events = self._get_tool_call_events(
+            self.tool_call_id_1,
+            self.sequential_tool_name,
+            self.tool_input_1,
+        )
+        tool_call_2_events = self._get_tool_call_events(
+            self.tool_call_id_2,
+            self.sequential_tool_name,
+            self.tool_input_2,
+        )
 
         expected_events = [
             {
@@ -493,57 +535,21 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "role": "assistant",
             },
             {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
-            {
-                "type": "TOOL_CALL_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "TOOL_CALL_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": '{"input": "test1"}',
-            },
-            {
-                "type": "TOOL_CALL_START",
-                "tool_call_id": tool_call_id_2,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "TOOL_CALL_DELTA",
-                "tool_call_id": tool_call_id_2,
-                "delta": '{"input": "test2"}',
-            },
-            {
-                "type": "TOOL_CALL_END",
-                "tool_call_id": tool_call_id_1,
-            },
-            {
-                "type": "TOOL_CALL_END",
-                "tool_call_id": tool_call_id_2,
-            },
+            *tool_call_1_events[:2],
+            *tool_call_2_events[:2],
+            tool_call_1_events[2],
+            tool_call_2_events[2],
             {
                 "type": "MODEL_CALL_ENDED",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {
-                "type": "TOOL_RESULT_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "REQUIRE_EXTERNAL_EXECUTION",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
-                        "state": "submitted",
-                    },
-                ],
-            },
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_1,
+                self.sequential_tool_name,
+                self.tool_input_1,
+            ),
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -558,22 +564,22 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "submitted",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_2,
                         "state": "pending",
                     },
                 ],
@@ -588,10 +594,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
-                    id=tool_call_id_1,
-                    name="mock_external_sequential_tool",
+                    id=self.tool_call_id_1,
+                    name=self.sequential_tool_name,
                     output=[
-                        TextBlock(text="External sequential result: test1"),
+                        TextBlock(text=self.sequential_result_1),
                     ],
                     state=ToolResultState.SUCCESS,
                 ),
@@ -607,34 +613,16 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Verify events after resumption (sequential execution)
         expected_events_resume = [
-            {
-                "type": "TOOL_RESULT_TEXT_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": "External sequential result: test1",
-            },
-            {
-                "type": "TOOL_RESULT_END",
-                "tool_call_id": tool_call_id_1,
-                "state": "success",
-            },
-            {
-                "type": "TOOL_RESULT_START",
-                "tool_call_id": tool_call_id_2,
-                "tool_call_name": "mock_external_sequential_tool",
-            },
-            {
-                "type": "REQUIRE_EXTERNAL_EXECUTION",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test2"}',
-                        "state": "submitted",
-                    },
-                ],
-            },
+            *self._get_tool_result_events(
+                self.tool_call_id_1,
+                self.sequential_result_1,
+            ),
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_2,
+                self.sequential_tool_name,
+                self.tool_input_2,
+            ),
         ]
         self.assertListEqual(
             events,
@@ -646,10 +634,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
-                    id=tool_call_id_2,
-                    name="mock_external_sequential_tool",
+                    id=self.tool_call_id_2,
+                    name=self.sequential_tool_name,
                     output=[
-                        TextBlock(text="External sequential result: test2"),
+                        TextBlock(text=self.sequential_result_2),
                     ],
                     state=ToolResultState.ERROR,
                 ),
@@ -664,38 +652,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
 
         # Assert the events
         expected_events_after_second_result = [
-            {
-                "type": "TOOL_RESULT_TEXT_DELTA",
-                "tool_call_id": tool_call_id_2,
-                "delta": "External sequential result: test2",
-            },
-            {
-                "type": "TOOL_RESULT_END",
-                "tool_call_id": tool_call_id_2,
-                "state": "error",
-            },
-            {
-                "type": "MODEL_CALL_STARTED",
-                "model_name": "mock-model",
-            },
-            {
-                "type": "TEXT_BLOCK_START",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "TEXT_BLOCK_DELTA",
-                "block_id": AnyString(),
-                "delta": "Final response after external execution",
-            },
-            {
-                "type": "TEXT_BLOCK_END",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "MODEL_CALL_ENDED",
-                "input_tokens": 0,
-                "output_tokens": 0,
-            },
+            *self._get_tool_result_events(
+                self.tool_call_id_2,
+                self.sequential_result_2,
+                state="error",
+            ),
+            *self.final_text_events,
             {"type": "RUN_FINISHED", "session_id": session_id},
         ]
 
@@ -709,33 +671,33 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_sequential_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_2,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_external_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "External sequential result: test1",
+                                "text": self.sequential_result_1,
                             },
                         ],
                         "state": "success",
@@ -743,12 +705,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_external_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "External sequential result: test2",
+                                "text": self.sequential_result_2,
                             },
                         ],
                         "state": "error",
@@ -756,7 +718,7 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Final response after external execution",
+                        "text": self.final_response_text,
                     },
                 ],
             },
@@ -784,10 +746,6 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             group="basic",
         )
 
-        # Create tool call IDs
-        tool_call_id_1 = "tool_call_1"
-        tool_call_id_2 = "tool_call_2"
-
         # Set up mock response with multiple tool calls
         self.model.set_responses(
             [
@@ -795,14 +753,14 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_concurrent_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_external_concurrent_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=False,
@@ -811,53 +769,44 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_external_concurrent_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_external_concurrent_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=True,
                         usage=None,
                     ),
                 ],
-                [
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=False,
-                        usage=None,
-                    ),
-                    ChatResponse(
-                        content=[
-                            TextBlock(
-                                text="Final response after external execution",
-                            ),
-                        ],
-                        is_last=True,
-                        usage=None,
-                    ),
-                ],
+                self.final_mock_responses,
             ],
         )
 
         # First call: collect events until REQUIRE_EXTERNAL_EXECUTION
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
         # Verify events
         session_id = self.agent.state.session_id
         reply_id = self.agent.state.reply_id
+        tool_call_1_events = self._get_tool_call_events(
+            self.tool_call_id_1,
+            self.concurrent_tool_name,
+            self.tool_input_1,
+        )
+        tool_call_2_events = self._get_tool_call_events(
+            self.tool_call_id_2,
+            self.concurrent_tool_name,
+            self.tool_input_2,
+        )
 
         expected_events = [
             {
@@ -867,75 +816,27 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                 "role": "assistant",
             },
             {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
-            {
-                "type": "TOOL_CALL_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_concurrent_tool",
-            },
-            {
-                "type": "TOOL_CALL_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": '{"input": "test1"}',
-            },
-            {
-                "type": "TOOL_CALL_START",
-                "tool_call_id": tool_call_id_2,
-                "tool_call_name": "mock_external_concurrent_tool",
-            },
-            {
-                "type": "TOOL_CALL_DELTA",
-                "tool_call_id": tool_call_id_2,
-                "delta": '{"input": "test2"}',
-            },
-            {
-                "type": "TOOL_CALL_END",
-                "tool_call_id": tool_call_id_1,
-            },
-            {
-                "type": "TOOL_CALL_END",
-                "tool_call_id": tool_call_id_2,
-            },
+            *tool_call_1_events[:2],
+            *tool_call_2_events[:2],
+            tool_call_1_events[2],
+            tool_call_2_events[2],
             {
                 "type": "MODEL_CALL_ENDED",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {
-                "type": "TOOL_RESULT_START",
-                "tool_call_id": tool_call_id_1,
-                "tool_call_name": "mock_external_concurrent_tool",
-            },
-            {
-                "type": "REQUIRE_EXTERNAL_EXECUTION",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test1"}',
-                        "state": "submitted",
-                    },
-                ],
-            },
-            {
-                "type": "TOOL_RESULT_START",
-                "tool_call_id": tool_call_id_2,
-                "tool_call_name": "mock_external_concurrent_tool",
-            },
-            {
-                "type": "REQUIRE_EXTERNAL_EXECUTION",
-                "reply_id": reply_id,
-                "tool_calls": [
-                    {
-                        "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test2"}',
-                        "state": "submitted",
-                    },
-                ],
-            },
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_1,
+                self.concurrent_tool_name,
+                self.tool_input_1,
+            ),
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_2,
+                self.concurrent_tool_name,
+                self.tool_input_2,
+            ),
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -950,22 +851,22 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
                         "state": "submitted",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
                         "state": "submitted",
                     },
                 ],
@@ -980,10 +881,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
-                    id=tool_call_id_1,
-                    name="mock_external_concurrent_tool",
+                    id=self.tool_call_id_1,
+                    name=self.concurrent_tool_name,
                     output=[
-                        TextBlock(text="External concurrent result: test1"),
+                        TextBlock(text=self.concurrent_result_1),
                     ],
                     state=ToolResultState.SUCCESS,
                 ),
@@ -998,23 +899,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             events.append(event.model_dump())
 
         expected_concurrent = [
-            {
-                "type": "TOOL_RESULT_TEXT_DELTA",
-                "tool_call_id": tool_call_id_1,
-                "delta": "External concurrent result: test1",
-            },
-            {
-                "type": "TOOL_RESULT_END",
-                "tool_call_id": tool_call_id_1,
-                "state": "success",
-            },
-            {
-                "type": "RUN_FINISHED",
-                "session_id": session_id,
-            },
+            *self._get_tool_result_events(
+                self.tool_call_id_1,
+                self.concurrent_result_1,
+            ),
         ]
 
-        # Check length matches
         self.assertListEqual(
             events,
             [{**basic_dict, **_} for _ in expected_concurrent],
@@ -1025,10 +915,10 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             reply_id=reply_id,
             execution_results=[
                 ToolResultBlock(
-                    id=tool_call_id_2,
-                    name="mock_external_concurrent_tool",
+                    id=self.tool_call_id_2,
+                    name=self.concurrent_tool_name,
                     output=[
-                        TextBlock(text="External concurrent result: test2"),
+                        TextBlock(text=self.concurrent_result_2),
                     ],
                     state=ToolResultState.SUCCESS,
                 ),
@@ -1042,38 +932,11 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             events.append(event.model_dump())
 
         expected_concurrent = [
-            {
-                "type": "TOOL_RESULT_TEXT_DELTA",
-                "tool_call_id": tool_call_id_2,
-                "delta": "External concurrent result: test2",
-            },
-            {
-                "type": "TOOL_RESULT_END",
-                "tool_call_id": tool_call_id_2,
-                "state": "success",
-            },
-            {
-                "type": "MODEL_CALL_STARTED",
-                "model_name": "mock-model",
-            },
-            {
-                "type": "TEXT_BLOCK_START",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "TEXT_BLOCK_DELTA",
-                "block_id": AnyString(),
-                "delta": "Final response after external execution",
-            },
-            {
-                "type": "TEXT_BLOCK_END",
-                "block_id": AnyString(),
-            },
-            {
-                "type": "MODEL_CALL_ENDED",
-                "input_tokens": 0,
-                "output_tokens": 0,
-            },
+            *self._get_tool_result_events(
+                self.tool_call_id_2,
+                self.concurrent_result_2,
+            ),
+            *self.final_text_events,
             {
                 "type": "RUN_FINISHED",
                 "session_id": session_id,
@@ -1090,33 +953,33 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_external_concurrent_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_external_concurrent_tool",
+                        "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "External concurrent result: test1",
+                                "text": self.concurrent_result_1,
                             },
                         ],
                         "state": "success",
@@ -1124,12 +987,12 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_external_concurrent_tool",
+                        "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "External concurrent result: test2",
+                                "text": self.concurrent_result_2,
                             },
                         ],
                         "state": "success",
@@ -1137,7 +1000,258 @@ class AgentExternalExecutionTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Final response after external execution",
+                        "text": self.final_response_text,
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context_final = [
+            {**msg_base, **_} for _ in expected_context_final
+        ]
+        self.assertListEqual(context_dicts, expected_context_final)
+
+    async def test_concurrent_external_execution_in_single_event(self) -> None:
+        """Test concurrent external execution when two results arrive together.
+
+        The agent should:
+        1. Generate multiple external tool calls in concurrent mode
+        2. Emit one require event per tool call during the initial run
+        3. Resume when a single ExternalExecutionResultEvent carries both
+           results
+        4. Continue reasoning only after both results are applied
+        """
+        ext_tool = MockExternalConcurrentTool()
+        self.agent.toolkit.tools[ext_tool.name] = RegisteredTool(
+            tool=ext_tool,
+            group="basic",
+        )
+
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=False,
+                        usage=None,
+                    ),
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=True,
+                        usage=None,
+                    ),
+                ],
+                self.final_mock_responses,
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            events.append(event.model_dump())
+
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+        basic_dict = self._get_event_base(reply_id)
+        msg_base = self._get_msg_base()
+        tool_call_1_events = self._get_tool_call_events(
+            self.tool_call_id_1,
+            self.concurrent_tool_name,
+            self.tool_input_1,
+        )
+        tool_call_2_events = self._get_tool_call_events(
+            self.tool_call_id_2,
+            self.concurrent_tool_name,
+            self.tool_input_2,
+        )
+
+        expected_events = [
+            {
+                "type": "RUN_STARTED",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            *tool_call_1_events[:2],
+            *tool_call_2_events[:2],
+            tool_call_1_events[2],
+            tool_call_2_events[2],
+            {
+                "type": "MODEL_CALL_ENDED",
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_1,
+                self.concurrent_tool_name,
+                self.tool_input_1,
+            ),
+            *self._get_require_external_execution_events(
+                reply_id,
+                self.tool_call_id_2,
+                self.concurrent_tool_name,
+                self.tool_input_2,
+            ),
+        ]
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events],
+        )
+
+        expected_context = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": self.user_input_text,
+            },
+            {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
+                        "state": "submitted",
+                    },
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
+                        "state": "submitted",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+
+        external_result_event = ExternalExecutionResultEvent(
+            reply_id=reply_id,
+            execution_results=[
+                ToolResultBlock(
+                    id=self.tool_call_id_1,
+                    name=self.concurrent_tool_name,
+                    output=[
+                        TextBlock(text=self.concurrent_result_1),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+                ToolResultBlock(
+                    id=self.tool_call_id_2,
+                    name=self.concurrent_tool_name,
+                    output=[
+                        TextBlock(text=self.concurrent_result_2),
+                    ],
+                    state=ToolResultState.SUCCESS,
+                ),
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            event=external_result_event,
+        ):
+            events.append(event.model_dump())
+
+        expected_events_resume = [
+            *self._get_tool_result_events(
+                self.tool_call_id_1,
+                self.concurrent_result_1,
+            ),
+            *self._get_tool_result_events(
+                self.tool_call_id_2,
+                self.concurrent_result_2,
+            ),
+            *self.final_text_events,
+            {
+                "type": "RUN_FINISHED",
+                "session_id": session_id,
+            },
+        ]
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events_resume],
+        )
+
+        expected_context_final = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": self.user_input_text,
+            },
+            {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
+                        "state": "finished",
+                    },
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
+                        "state": "finished",
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": AnyString(),
+                        "name": self.concurrent_tool_name,
+                        "output": [
+                            {
+                                "type": "text",
+                                "id": AnyString(),
+                                "text": self.concurrent_result_1,
+                            },
+                        ],
+                        "state": "success",
+                    },
+                    {
+                        "type": "tool_result",
+                        "id": AnyString(),
+                        "name": self.concurrent_tool_name,
+                        "output": [
+                            {
+                                "type": "text",
+                                "id": AnyString(),
+                                "text": self.concurrent_result_2,
+                            },
+                        ],
+                        "state": "success",
+                    },
+                    {
+                        "type": "text",
+                        "id": AnyString(),
+                        "text": self.final_response_text,
                     },
                 ],
             },

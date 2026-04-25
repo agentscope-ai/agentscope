@@ -164,6 +164,16 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         )
         self.tool_call_id_1 = "tool_call_1"
         self.tool_call_id_2 = "tool_call_2"
+        self.user_input_text = "Test"
+        self.tool_input_1 = '{"input": "test1"}'
+        self.tool_input_2 = '{"input": "test2"}'
+        self.sequential_tool_name = "mock_user_confirm_sequential_tool"
+        self.concurrent_tool_name = "mock_user_confirm_concurrent_tool"
+        self.sequential_result_1 = "User confirm sequential result: test1"
+        self.sequential_result_2 = "User confirm sequential result: test2"
+        self.concurrent_result_1 = "User confirm concurrent result: test1"
+        self.concurrent_result_2 = "User confirm concurrent result: test2"
+        self.final_response_text = "Result 1"
         self.final_text_events = [
             {
                 "type": "MODEL_CALL_STARTED",
@@ -176,7 +186,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "type": "TEXT_BLOCK_DELTA",
                 "block_id": AnyString(),
-                "delta": "Result 1",
+                "delta": self.final_response_text,
             },
             {
                 "type": "TEXT_BLOCK_END",
@@ -192,13 +202,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         self.final_mock_responses = [
             ChatResponse(
                 content=[
-                    TextBlock(text="Result 1"),
+                    TextBlock(text=self.final_response_text),
                 ],
                 is_last=False,
             ),
             ChatResponse(
                 content=[
-                    TextBlock(text="Result 1"),
+                    TextBlock(text=self.final_response_text),
                 ],
                 is_last=True,
             ),
@@ -238,9 +248,6 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             group="basic",
         )
 
-        # Create tool call ID
-        tool_call_id_1 = "tool_call_1"
-
         # Set up mock response with tool call (no final text response)
         self.model.set_responses(
             [
@@ -248,9 +255,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                         ],
                         is_last=False,
@@ -258,9 +265,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                         ],
                         is_last=True,
@@ -273,7 +280,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         # First call: collect events until REQUIRE_USER_CONFIRM
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
@@ -291,8 +298,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
             *self._get_tool_call_events(
                 self.tool_call_id_1,
-                "mock_user_confirm_sequential_tool",
-                '{"input": "test1"}',
+                self.sequential_tool_name,
+                self.tool_input_1,
             ),
             {
                 "type": "MODEL_CALL_ENDED",
@@ -305,9 +312,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "tool_calls": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                 ],
@@ -326,15 +333,15 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                 ],
@@ -351,9 +358,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ConfirmResult(
                     confirmed=True,
                     tool_call=ToolCallBlock(
-                        id=tool_call_id_1,
-                        name="mock_user_confirm_sequential_tool",
-                        input='{"input": "test1"}',
+                        id=self.tool_call_id_1,
+                        name=self.sequential_tool_name,
+                        input=self.tool_input_1,
                     ),
                 ),
             ],
@@ -368,8 +375,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_events_resume = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,
-                "mock_user_confirm_sequential_tool",
-                "User confirm sequential result: test1",
+                self.sequential_tool_name,
+                self.sequential_result_1,
             ),
             *self.final_text_events,
             {"type": "RUN_FINISHED", "session_id": session_id},
@@ -385,27 +392,26 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_user_confirm_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "User confirm sequential result: "
-                                "test1",
+                                "text": self.sequential_result_1,
                             },
                         ],
                         "state": "success",
@@ -413,7 +419,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Result 1",
+                        "text": self.final_response_text,
                     },
                 ],
             },
@@ -441,10 +447,6 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             group="basic",
         )
 
-        # Create tool call IDs
-        tool_call_id_1 = "tool_call_1"
-        tool_call_id_2 = "tool_call_2"
-
         # Set up mock response with multiple tool calls
         self.model.set_responses(
             [
@@ -452,14 +454,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=False,
@@ -468,14 +470,14 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     ChatResponse(
                         content=[
                             ToolCallBlock(
-                                id=tool_call_id_1,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test1"}',
+                                id=self.tool_call_id_1,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
-                                id=tool_call_id_2,
-                                name="mock_user_confirm_sequential_tool",
-                                input='{"input": "test2"}',
+                                id=self.tool_call_id_2,
+                                name=self.sequential_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=True,
@@ -489,7 +491,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         # First call: collect events until REQUIRE_USER_CONFIRM
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
@@ -499,13 +501,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         tool_call_1_events = self._get_tool_call_events(
             self.tool_call_id_1,
-            "mock_user_confirm_sequential_tool",
-            '{"input": "test1"}',
+            self.sequential_tool_name,
+            self.tool_input_1,
         )
         tool_call_2_events = self._get_tool_call_events(
             self.tool_call_id_2,
-            "mock_user_confirm_sequential_tool",
-            '{"input": "test2"}',
+            self.sequential_tool_name,
+            self.tool_input_2,
         )
 
         expected_events = [
@@ -531,9 +533,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 "tool_calls": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                 ],
@@ -552,22 +554,22 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_2,
                         "state": "pending",
                     },
                 ],
@@ -584,9 +586,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ConfirmResult(
                     confirmed=True,
                     tool_call=ToolCallBlock(
-                        id=tool_call_id_1,
-                        name="mock_user_confirm_sequential_tool",
-                        input='{"input": "test1"}',
+                        id=self.tool_call_id_1,
+                        name=self.sequential_tool_name,
+                        input=self.tool_input_1,
                     ),
                 ),
             ],
@@ -601,17 +603,17 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_events_resume = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,
-                "mock_user_confirm_sequential_tool",
-                "User confirm sequential result: test1",
+                self.sequential_tool_name,
+                self.sequential_result_1,
             ),
             {
                 "type": "REQUIRE_USER_CONFIRM",
                 "tool_calls": [
                     {
                         "type": "tool_call",
-                        "id": "tool_call_2",
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_2,
                         "state": "asking",
                     },
                 ],
@@ -630,9 +632,9 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                 ConfirmResult(
                     confirmed=True,
                     tool_call=ToolCallBlock(
-                        id=tool_call_id_2,
-                        name="mock_user_confirm_sequential_tool",
-                        input='{"input": "test2"}',
+                        id=self.tool_call_id_2,
+                        name=self.sequential_tool_name,
+                        input=self.tool_input_2,
                     ),
                 ),
             ],
@@ -646,8 +648,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_events_resume_2 = [
             *self._get_tool_result_events(
                 self.tool_call_id_2,
-                "mock_user_confirm_sequential_tool",
-                "User confirm sequential result: test2",
+                self.sequential_tool_name,
+                self.sequential_result_2,
             ),
             *self.final_text_events,
             {"type": "RUN_FINISHED", "session_id": session_id},
@@ -662,34 +664,33 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_1,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test1"}',
+                        "id": self.tool_call_id_1,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_call",
-                        "id": tool_call_id_2,
-                        "name": "mock_user_confirm_sequential_tool",
-                        "input": '{"input": "test2"}',
+                        "id": self.tool_call_id_2,
+                        "name": self.sequential_tool_name,
+                        "input": self.tool_input_2,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_user_confirm_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "User confirm sequential result: "
-                                "test1",
+                                "text": self.sequential_result_1,
                             },
                         ],
                         "state": "success",
@@ -697,13 +698,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_user_confirm_sequential_tool",
+                        "name": self.sequential_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "User confirm sequential result: "
-                                "test2",
+                                "text": self.sequential_result_2,
                             },
                         ],
                         "state": "success",
@@ -711,7 +711,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Result 1",
+                        "text": self.final_response_text,
                     },
                 ],
             },
@@ -747,13 +747,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         content=[
                             ToolCallBlock(
                                 id=self.tool_call_id_1,
-                                name="mock_user_confirm_concurrent_tool",
-                                input='{"input": "test1"}',
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
                                 id=self.tool_call_id_2,
-                                name="mock_user_confirm_concurrent_tool",
-                                input='{"input": "test2"}',
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=False,
@@ -762,13 +762,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                         content=[
                             ToolCallBlock(
                                 id=self.tool_call_id_1,
-                                name="mock_user_confirm_concurrent_tool",
-                                input='{"input": "test1"}',
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
                             ),
                             ToolCallBlock(
                                 id=self.tool_call_id_2,
-                                name="mock_user_confirm_concurrent_tool",
-                                input='{"input": "test2"}',
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
                             ),
                         ],
                         is_last=True,
@@ -781,7 +781,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         # First call: collect events until REQUIRE_USER_CONFIRM
         events = []
         async for event in self.agent.reply_stream(
-            UserMsg(name="user", content="Test"),
+            UserMsg(name="user", content=self.user_input_text),
         ):
             events.append(event.model_dump())
 
@@ -791,13 +791,13 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
 
         tool_call_1_events = self._get_tool_call_events(
             self.tool_call_id_1,
-            "mock_user_confirm_concurrent_tool",
-            '{"input": "test1"}',
+            self.concurrent_tool_name,
+            self.tool_input_1,
         )
         tool_call_2_events = self._get_tool_call_events(
             self.tool_call_id_2,
-            "mock_user_confirm_concurrent_tool",
-            '{"input": "test2"}',
+            self.concurrent_tool_name,
+            self.tool_input_2,
         )
 
         expected_events = [
@@ -824,8 +824,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_1,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test1"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                 ],
@@ -837,8 +837,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test2"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
                         "state": "asking",
                     },
                 ],
@@ -857,22 +857,22 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_1,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test1"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
                         "state": "asking",
                     },
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test2"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
                         "state": "asking",
                     },
                 ],
@@ -890,8 +890,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     confirmed=True,
                     tool_call=ToolCallBlock(
                         id=self.tool_call_id_1,
-                        name="mock_user_confirm_concurrent_tool",
-                        input='{"input": "test1"}',
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_1,
                     ),
                 ),
             ],
@@ -906,8 +906,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_events = [
             *self._get_tool_result_events(
                 self.tool_call_id_1,
-                "mock_user_confirm_concurrent_tool",
-                "User confirm concurrent result: test1",
+                self.concurrent_tool_name,
+                self.concurrent_result_1,
             ),
         ]
         self.assertListEqual(
@@ -923,8 +923,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     confirmed=True,
                     tool_call=ToolCallBlock(
                         id=self.tool_call_id_2,
-                        name="mock_user_confirm_concurrent_tool",
-                        input='{"input": "test2"}',
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_2,
                     ),
                 ),
             ],
@@ -937,8 +937,8 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
         expected_events = [
             *self._get_tool_result_events(
                 self.tool_call_id_2,
-                "mock_user_confirm_concurrent_tool",
-                "User confirm concurrent result: test2",
+                self.concurrent_tool_name,
+                self.concurrent_result_2,
             ),
             *self.final_text_events,
             {"type": "RUN_FINISHED", "session_id": session_id},
@@ -953,34 +953,33 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {
                 "name": "user",
                 "role": "user",
-                "content": "Test",
+                "content": self.user_input_text,
             },
             {
                 "content": [
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_1,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test1"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
                         "state": "finished",
                     },
                     {
                         "type": "tool_call",
                         "id": self.tool_call_id_2,
-                        "name": "mock_user_confirm_concurrent_tool",
-                        "input": '{"input": "test2"}',
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
                         "state": "finished",
                     },
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_user_confirm_concurrent_tool",
+                        "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "User confirm concurrent result: "
-                                "test1",
+                                "text": self.concurrent_result_1,
                             },
                         ],
                         "state": "success",
@@ -988,13 +987,12 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "tool_result",
                         "id": AnyString(),
-                        "name": "mock_user_confirm_concurrent_tool",
+                        "name": self.concurrent_tool_name,
                         "output": [
                             {
                                 "type": "text",
                                 "id": AnyString(),
-                                "text": "User confirm concurrent result: "
-                                "test2",
+                                "text": self.concurrent_result_2,
                             },
                         ],
                         "state": "success",
@@ -1002,7 +1000,7 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
                     {
                         "type": "text",
                         "id": AnyString(),
-                        "text": "Result 1",
+                        "text": self.final_response_text,
                     },
                 ],
             },
@@ -1012,6 +1010,282 @@ class AgentUserConfirmationTest(IsolatedAsyncioTestCase):
             {**msg_base, **_} for _ in expected_context_final
         ]
         self.assertListEqual(context_dicts, expected_context_final)
+
+    async def test_concurrent_user_confirmation_in_single_event(self) -> None:
+        """Test concurrent user confirmation when two approvals arrive
+        together.
+
+        The agent should:
+        1. Generate multiple tool calls that require user confirmation
+        2. Pause in concurrent mode with two asking tool calls
+        3. Resume when one UserConfirmResultEvent carries both confirmations
+        4. Execute both tools and continue reasoning after both complete
+        """
+        confirm_tool = MockUserConfirmConcurrentTool()
+        self.agent.toolkit.tools[confirm_tool.name] = RegisteredTool(
+            tool=confirm_tool,
+            group="basic",
+        )
+
+        self.model.set_responses(
+            [
+                [
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=False,
+                    ),
+                    ChatResponse(
+                        content=[
+                            ToolCallBlock(
+                                id=self.tool_call_id_1,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_1,
+                            ),
+                            ToolCallBlock(
+                                id=self.tool_call_id_2,
+                                name=self.concurrent_tool_name,
+                                input=self.tool_input_2,
+                            ),
+                        ],
+                        is_last=True,
+                    ),
+                ],
+                self.final_mock_responses,
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(
+            UserMsg(name="user", content=self.user_input_text),
+        ):
+            events.append(event.model_dump())
+
+        session_id = self.agent.state.session_id
+        reply_id = self.agent.state.reply_id
+        basic_dict = self._get_event_base(reply_id)
+        msg_base = self._get_msg_base()
+
+        tool_call_1_events = self._get_tool_call_events(
+            self.tool_call_id_1,
+            self.concurrent_tool_name,
+            self.tool_input_1,
+        )
+        tool_call_2_events = self._get_tool_call_events(
+            self.tool_call_id_2,
+            self.concurrent_tool_name,
+            self.tool_input_2,
+        )
+
+        expected_events = [
+            {
+                "type": "RUN_STARTED",
+                "session_id": session_id,
+                "name": "Friday",
+                "role": "assistant",
+            },
+            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            *tool_call_1_events[:2],
+            *tool_call_2_events[:2],
+            tool_call_1_events[2],
+            tool_call_2_events[2],
+            {
+                "type": "MODEL_CALL_ENDED",
+                "input_tokens": 0,
+                "output_tokens": 0,
+            },
+            {
+                "type": "REQUIRE_USER_CONFIRM",
+                "reply_id": reply_id,
+                "tool_calls": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
+                        "state": "asking",
+                    },
+                ],
+            },
+            {
+                "type": "REQUIRE_USER_CONFIRM",
+                "reply_id": reply_id,
+                "tool_calls": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
+                        "state": "asking",
+                    },
+                ],
+            },
+        ]
+        self.assertListEqual(
+            events,
+            [{**basic_dict, **_} for _ in expected_events],
+        )
+
+        expected_context = [
+            {
+                "name": "user",
+                "role": "user",
+                "content": self.user_input_text,
+            },
+            {
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_1,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_1,
+                        "state": "asking",
+                    },
+                    {
+                        "type": "tool_call",
+                        "id": self.tool_call_id_2,
+                        "name": self.concurrent_tool_name,
+                        "input": self.tool_input_2,
+                        "state": "asking",
+                    },
+                ],
+            },
+        ]
+        context_dicts = [msg.model_dump() for msg in self.agent.state.context]
+        expected_context = [{**msg_base, **_} for _ in expected_context]
+        self.assertListEqual(context_dicts, expected_context)
+
+        user_confirm_event = UserConfirmResultEvent(
+            reply_id=reply_id,
+            confirm_results=[
+                ConfirmResult(
+                    confirmed=True,
+                    tool_call=ToolCallBlock(
+                        id=self.tool_call_id_1,
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_1,
+                    ),
+                ),
+                ConfirmResult(
+                    confirmed=True,
+                    tool_call=ToolCallBlock(
+                        id=self.tool_call_id_2,
+                        name=self.concurrent_tool_name,
+                        input=self.tool_input_2,
+                    ),
+                ),
+            ],
+        )
+
+        events = []
+        async for event in self.agent.reply_stream(event=user_confirm_event):
+            events.append(event.model_dump())
+
+        tool_events = events[:6]
+        final_events = events[6:]
+        self.assertEqual(len(tool_events), 6)
+
+        expected_tool_events = {
+            self.tool_call_id_1: [
+                {**basic_dict, **_}
+                for _ in self._get_tool_result_events(
+                    self.tool_call_id_1,
+                    self.concurrent_tool_name,
+                    self.concurrent_result_1,
+                )
+            ],
+            self.tool_call_id_2: [
+                {**basic_dict, **_}
+                for _ in self._get_tool_result_events(
+                    self.tool_call_id_2,
+                    self.concurrent_tool_name,
+                    self.concurrent_result_2,
+                )
+            ],
+        }
+        for tool_call_id, expected_tool_event in expected_tool_events.items():
+            self.assertListEqual(
+                [
+                    event
+                    for event in tool_events
+                    if event["tool_call_id"] == tool_call_id
+                ],
+                expected_tool_event,
+            )
+
+        expected_final_events = [
+            *self.final_text_events,
+            {"type": "RUN_FINISHED", "session_id": session_id},
+        ]
+        self.assertListEqual(
+            final_events,
+            [{**basic_dict, **_} for _ in expected_final_events],
+        )
+
+        self.assertEqual(len(self.agent.state.context), 2)
+        self.assertEqual(
+            self.agent.state.context[0].model_dump(),
+            {
+                "id": AnyString(),
+                "created_at": AnyString(),
+                "metadata": {},
+                "name": "user",
+                "role": "user",
+                "content": self.user_input_text,
+            },
+        )
+
+        assistant_msg = self.agent.state.context[-1]
+        self.assertEqual(
+            [
+                _.model_dump()["state"]
+                for _ in assistant_msg.get_content_blocks("tool_call")
+            ],
+            ["finished", "finished"],
+        )
+        self.assertEqual(
+            [
+                _.model_dump()["id"]
+                for _ in assistant_msg.get_content_blocks("tool_call")
+            ],
+            [self.tool_call_id_1, self.tool_call_id_2],
+        )
+        self.assertEqual(
+            {
+                (
+                    _.model_dump()["name"],
+                    _.model_dump()["state"],
+                    _.output[0].text,
+                )
+                for _ in assistant_msg.get_content_blocks("tool_result")
+            },
+            {
+                (
+                    self.concurrent_tool_name,
+                    "success",
+                    self.concurrent_result_1,
+                ),
+                (
+                    self.concurrent_tool_name,
+                    "success",
+                    self.concurrent_result_2,
+                ),
+            },
+        )
+        self.assertEqual(
+            [_.text for _ in assistant_msg.get_content_blocks("text")],
+            [self.final_response_text],
+        )
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
