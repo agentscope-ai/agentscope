@@ -3,7 +3,6 @@
 
 from abc import abstractmethod
 from typing import AsyncGenerator, Any, TYPE_CHECKING
-from pydantic import BaseModel
 
 from ._model_response import ChatResponse
 from .._logging import logger
@@ -18,7 +17,7 @@ else:
 _TOOL_CHOICE_MODES = ["auto", "none", "required"]
 
 
-class ChatModelBase(BaseModel):
+class ChatModelBase:
     """Base class for chat models."""
 
     model_name: str

@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """The content blocks of messages."""
 import uuid
+from enum import StrEnum
 from typing import Literal, List, TypeAlias
-from pydantic import BaseModel, Field, AnyUrl, field_serializer
+from pydantic import BaseModel, Field, AnyUrl, field_serializer, ConfigDict
 
 
 class TextBlock(BaseModel):
@@ -82,8 +83,20 @@ class DataBlock(BaseModel):
     """The name of the data block, which is optional."""
 
 
+class ToolCallState(StrEnum):
+    """The state of the tool call."""
+
+    PENDING = "pending"
+    ASKING = "asking"
+    ALLOWED = "allowed"
+    SUBMITTED = "submitted"
+    FINISHED = "finished"
+
+
 class ToolCallBlock(BaseModel):
     """The tool call block."""
+
+    model_config = ConfigDict(use_enum_values=True)
 
     type: Literal["tool_call"] = "tool_call"
     """The type of the tool call block, which is always 'tool_call'."""
@@ -93,20 +106,47 @@ class ToolCallBlock(BaseModel):
     """The name of the tool to be called."""
     input: str
     """The raw JSON string input of the tool, accumulated during streaming."""
-    state: Literal["pending", "allow", "deny", "ask", "submitted"] = "pending"
+    state: ToolCallState = ToolCallState.PENDING
     """The tool call state
-    - 'pending': the initial state when the tool call haven't been processed
+    - 'pending': the initial state when the tool call hasn't been processed
      by the permission system
-    - 'deny': denied by the permission system/user and finished
-    - 'ask': the too call is asking for user confirmation
-    - 'allow': allowed by the permission system/user and wait for execution
-    - 'submitted': the tool call has been submitted for (external) execution
-     and is waiting for results
+    - 'asking': the tool call is asking and waiting for user confirmation
+    - 'allowed': allowed by the permission system/user and waits for execution
+    - 'submitted': the tool call has been submitted for external execution
+     and is waiting for results event
+
+    Transitions
+    -----------
+    pending
+      ├── permission DENY / input validation failed ──► finished
+      ├── permission ASK ──────────────────────────── ► asking
+      │       ├── user denied ───────────────────────► finished
+      │       └── user approved ─────────────────────► allowed
+      └── permission ALLOW ────────────────────────── ► allowed
+
+    allowed
+      ├── local tool  ── (execute) ─────────────────► finished
+      └── external tool ──────────────────────────── ► submitted
+
+    submitted
+      └── ExternalExecutionResultEvent received ─────► finished
     """
+
+
+class ToolResultState(StrEnum):
+    """The tool result state."""
+
+    SUCCESS = "success"
+    ERROR = "error"
+    INTERRUPTED = "interrupted"
+    DENIED = "denied"
+    RUNNING = "running"
 
 
 class ToolResultBlock(BaseModel):
     """The tool result block."""
+
+    model_config = ConfigDict(use_enum_values=True)
 
     type: Literal["tool_result"] = "tool_result"
     """The type of the tool result block, which is always 'tool_result'."""
@@ -117,7 +157,7 @@ class ToolResultBlock(BaseModel):
     output: str | List[TextBlock | DataBlock]
     """The output of the tool, which can be a raw string of a list of
     text and multimodal blocks."""
-    state: Literal["finished", "error", "interrupted", "running"]
+    state: ToolResultState = ToolResultState.RUNNING
     """The execution state of the tool."""
 
 

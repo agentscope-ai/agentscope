@@ -58,6 +58,7 @@ class _FunctionTool(ToolBase):
         self.input_schema = _extract_input_schema(func)
         self.is_concurrency_safe = is_concurrency_safe
         self.is_read_only = is_read_only
+        self.is_external_tool = False
         self.is_mcp = False
         self._func = func
 
@@ -146,7 +147,8 @@ class MCPTool(ToolBase):
             "required": tool.inputSchema.get("required", []),
         }
 
-        self.is_concurrency_safe = True
+        self.is_concurrency_safe = False
+        self.is_external_tool = False
 
         # Extract is_read_only from MCP tool annotations
         self.is_read_only = False

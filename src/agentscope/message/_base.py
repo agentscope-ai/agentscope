@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime
 from typing import Literal, List, overload, Sequence, Self
 
-import shortuuid
 from pydantic import BaseModel, Field, model_validator
 
 from ._block import (
@@ -53,11 +52,11 @@ class Msg(BaseModel):
     """The message content, a string or a list of content blocks."""
     role: Literal["user", "assistant", "system"]
     """The role of the sender."""
-    id: str = Field(default_factory=shortuuid.uuid)
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """The message identifier."""
     metadata: dict = Field(default_factory=dict)
     """The metadata of the message"""
-    created_at: str = Field(default_factory=datetime.now().isoformat)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """The creation time of the message"""
 
     @model_validator(mode="after")

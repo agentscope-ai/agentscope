@@ -31,7 +31,11 @@ from ._response import ToolResponse, ToolChunk
 from ._skill import SkillLoaderBase, LocalSkillLoader
 from ._types import ToolGroup, Skill, RegisteredTool
 from .._utils._common import _json_loads_with_repair
-from ..exception import DeveloperOrientedException
+from ..exception import (
+    DeveloperOrientedException,
+    ToolNotFoundError,
+    ToolGroupInactiveError,
+)
 from ..mcp import (
     MCPClientBase,
     StatefulClientBase,
@@ -968,3 +972,40 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
                 available_tools[tool_name] = tool
 
         return available_tools
+
+    def check_tool_available(
+        self,
+        tool_name: str,
+        activated_groups: list[str],
+    ) -> ToolBase:
+        """Check if the tool is available now. If not, return the
+        agent-oriented error message. Otherwise, return None.
+
+        Args:
+            tool_name (`str`):
+                The name of the tool to be checked.
+            activated_groups (`list[str]`):
+                The currently activated tool groups.
+
+        Returns:
+            `ToolBase`:
+                If the tool is available, return the corresponding ToolBase
+                object. Otherwise, raise the agent-oriented exception with the
+                error message.
+        """
+        if tool_name not in self.tools:
+            raise ToolNotFoundError(
+                f"ToolNotFoundError: The tool named '{tool_name}' doesn't "
+                f"exist.",
+            )
+
+        group_name = self.tools[tool_name].group
+        if group_name != "basic" and group_name not in activated_groups:
+            raise ToolGroupInactiveError(
+                f"ToolGroupInactiveError: The tool '{tool_name}' in group "
+                f"'{group_name}' is currently inactive. "
+                f"You should first activate the group by calling the "
+                f"'{self.builtin_meta_tool.tool.name}' tool.",
+            )
+
+        return self.tools[tool_name].tool

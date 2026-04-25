@@ -5,7 +5,7 @@ from typing import List, Literal, Self
 
 from pydantic import BaseModel, Field
 
-from ..message import DataBlock, TextBlock, Base64Source
+from ..message import DataBlock, TextBlock, Base64Source, ToolResultState
 
 
 class ToolChunk(BaseModel):
@@ -16,7 +16,7 @@ class ToolChunk(BaseModel):
     instance should have the same block id, so that the agent can group them
     together."""
 
-    state: Literal["error", "interrupted", "running"] = "running"
+    state: ToolResultState = ToolResultState.RUNNING
     """The execution state of the tool chunk."""
 
     is_last: bool = True
@@ -37,7 +37,12 @@ class ToolResponse(BaseModel):
     content: List[TextBlock | DataBlock] = Field(default_factory=list)
     """The completed tool result data blocks."""
 
-    state: Literal["error", "interrupted", "finished"] = "finished"
+    state: Literal[
+        ToolResultState.ERROR,
+        ToolResultState.DENIED,
+        ToolResultState.INTERRUPTED,
+        ToolResultState.SUCCESS,
+    ] = ToolResultState.SUCCESS
     """The execution state of the tool response."""
 
     metadata: dict = Field(default_factory=dict)
@@ -106,13 +111,14 @@ class ToolResponse(BaseModel):
                 current_ids_to_index[chunk_block.id] = len(self.content) - 1
 
         # Update id, state and metadata
-        # TODO: what's the relationship between the chunk id and response id?
         # Only reserve the failure state and keep the previous state if not
         # worse.
-        if chunk.state == "error":
-            self.state = "error"
+        if chunk.state == ToolResultState.ERROR:
+            self.state = ToolResultState.ERROR
         elif chunk.state == "interrupted":
-            self.state = "interrupted"
+            self.state = ToolResultState.INTERRUPTED
+        elif chunk.state == ToolResultState.DENIED:
+            self.state = ToolResultState.DENIED
 
         self.metadata.update(chunk.metadata)
 

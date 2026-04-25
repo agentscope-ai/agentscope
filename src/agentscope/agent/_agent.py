@@ -4,8 +4,9 @@ import asyncio
 import uuid
 from asyncio import Queue
 from copy import deepcopy
-from typing import Any, AsyncGenerator, Sequence
+from typing import Any, AsyncGenerator, Sequence, Literal, List
 
+import jsonschema
 from pydantic import (
     BaseModel,
     Field,
@@ -19,6 +20,7 @@ from pydantic import (
 from ._state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..event import (
     AgentEvent,
     ModelCallEndedEvent,
@@ -47,6 +49,7 @@ from ..event import (
     BinaryBlockEndEvent,
     ExceedMaxItersEvent,
 )
+from ..exception import AgentOrientedException
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -65,6 +68,8 @@ from ..message import (
     DataBlock,
     Base64Source,
     URLSource,
+    ToolCallState,
+    ToolResultState,
 )
 from ..tool import (
     Toolkit,
@@ -270,24 +275,26 @@ class Agent(BaseModel):
     """The toolkit used by the agent."""
 
     _engine: PermissionEngine = PrivateAttr()
+    """The permission engine used to manage the tool usage permissions for the
+    agent."""
 
-    @field_validator("model", "fallback_model", mode="before")
-    @classmethod
-    def validate_model(cls, v: Any, info: ValidationInfo) -> Any:
-        """Deserialize model from dict using context-injected custom
-        classes."""
-        if not isinstance(v, dict):
-            return v
-        custom_classes = (
-            info.context.get("custom_model_classes", [])
-            if info.context
-            else []
-        )
-        return _deserialize_model(
-            v,
-            custom_classes=custom_classes,
-            context=info.context,
-        )
+    # @field_validator("model", "fallback_model", mode="before")
+    # @classmethod
+    # def validate_model(cls, v: Any, info: ValidationInfo) -> Any:
+    #     """Deserialize model from dict using context-injected custom
+    #     classes."""
+    #     if not isinstance(v, dict):
+    #         return v
+    #     custom_classes = (
+    #         info.context.get("custom_model_classes", [])
+    #         if info.context
+    #         else []
+    #     )
+    #     return _deserialize_model(
+    #         v,
+    #         custom_classes=custom_classes,
+    #         context=info.context,
+    #     )
 
     def model_post_init(self, __context: Any) -> None:
         """Initialize the permission engine after the model is initialized."""
@@ -299,10 +306,21 @@ class Agent(BaseModel):
 
     async def reply_stream(
         self,
-        msgs: Msg | list[Msg] | AgentEvent | None = None,
-        event: AgentEvent | None = None,
+        msgs: Msg | list[Msg] | None = None,
+        event: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Reply to the given message and stream agent events."""
+        """Reply to the given message and stream agent events.
+
+
+        **NOTE**:
+
+        - If requiring outside interaction for multiple tool calls and only
+         receive partial confirmation or execution results, the agent won't
+         re-send the requiring events for the unconfirmed or unexecuted tool
+         calls.
+        """
         try:
             async for chunk in self._reply(msgs=msgs, event=event):
                 if not isinstance(chunk, Msg):
@@ -313,9 +331,28 @@ class Agent(BaseModel):
     async def reply(
         self,
         msgs: Msg | list[Msg] | None = None,
-        event: AgentEvent | None = None,
+        event: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
     ) -> Msg:
-        """Reply to the given message, consuming all streamed events."""
+        """Reply to the given message, consuming all streamed events.
+
+        Args:
+            msgs (`Msg | list[Msg] | None`, optional):
+                The message(s) to reply to. Can be a single `Msg` object,
+                a list of `Msg` objects, or `None` if there are no new
+                messages.
+            event (`UserConfirmResultEvent | ExternalExecutionResultEvent | \
+            None`, optional):
+                The event to continue from, which should be the result of the
+                required outside interaction triggered by the previous reply.
+                If the previous reply does not trigger any outside
+                interaction, this should be `None`.
+
+        Returns:
+            `Msg`:
+                A final reply message.
+        """
         try:
             final_msg: Msg | None = None
             async for evt_or_msg in self._reply(msgs=msgs, event=event):
@@ -332,6 +369,11 @@ class Agent(BaseModel):
         context."""
         await self._handle_incoming_messages(msgs)
 
+    async def compress_memory(self) -> None:
+        """Compress the agent's memory if the token count exceeds the
+        threshold."""
+        # TODO: Implement when compression_config is available
+
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
     # ======================================================================
@@ -343,7 +385,7 @@ class Agent(BaseModel):
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
-        """Core reply logic. Yields chunks with is_last flag."""
+        """Core reply logic."""
         # ===================================================================
         # Step 1: Checking agent input:
         #  - if incoming event and agent is waiting for an event
@@ -377,19 +419,21 @@ class Agent(BaseModel):
         # ===================================================================
         while self.state.cur_iter < self.reasoning.max_iters:
             # ===============================================================
-            # Step 3.1: Checking if exists tool calls to be executed
+            # Step 3.1:
             # ===============================================================
-            tool_calls = self._get_pending_tool_calls()
+            action, data = self._check_next_action()
+            if action == "exit" and isinstance(data, Msg):
+                yield data
+                return
 
             # ===============================================================
             # Step 3.2: Execute reasoning if no more tools to be executed
             # ===============================================================
-            if len(tool_calls) == 0:
+            if action == "reasoning":
                 # Compressed the memory if needed before reasoning
                 await self.compress_memory()
                 # Perform reasoning
                 async for evt in self._reasoning():
-                    yield evt
                     # Exit the loop when no tool calls generated and the reply
                     # message is generated
                     if isinstance(evt, Msg):
@@ -397,7 +441,9 @@ class Agent(BaseModel):
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
                         )
+                        yield evt
                         return
+                    yield evt
 
             # ===============================================================
             # Step 3.3: Getting batches of tool calls to be executed
@@ -406,12 +452,12 @@ class Agent(BaseModel):
             # ===============================================================
             for batch in await self._batch_tool_calls():
                 if batch.type == "sequential":
-                    evt_generator = self._acting_tool_calls_sequential(
+                    evt_generator = self._execute_sequential_tool_calls(
                         batch.tool_calls,
                     )
 
                 elif batch.type == "concurrent":
-                    evt_generator = self._acting_tool_calls_concurrent(
+                    evt_generator = self._execute_concurrent_tool_calls(
                         batch.tool_calls,
                     )
 
@@ -505,7 +551,9 @@ class Agent(BaseModel):
         messages.extend(self.state.context)
 
         # Get the tools schemas
-        tools = self.toolkit.get_function_schemas(self.state.activated_groups)
+        tools = self.toolkit.get_function_schemas(
+            self.state.tool_context.activated_groups,
+        )
 
         res = await self._call_model(
             messages=messages,
@@ -608,23 +656,18 @@ class Agent(BaseModel):
         awaiting_confirmations = []
         awaiting_external_executions = []
 
-        if (
-            self.state.context
-            and self.state.context[-1].role == "assistant"
-            and self.state.context[-1].name == self.name
-        ):
-            last_msg = self.state.context[-1]
-
+        last_msg = self._get_last_msg()
+        if last_msg:
             # The completed tool call ids
             tool_result_ids = [
                 _.id for _ in last_msg.get_content_blocks("tool_result")
             ]
 
             for tool_call in last_msg.get_content_blocks("tool_call"):
-                if tool_call.state == "ask":
+                if tool_call.state == ToolCallState.ASKING:
                     awaiting_confirmations.append(tool_call.id)
                 elif (
-                    tool_call.state == "submitted"
+                    tool_call.state == ToolCallState.SUBMITTED
                     and tool_call.id not in tool_result_ids
                 ):
                     # submitted but no result yet, i.e. external execution
@@ -665,9 +708,7 @@ class Agent(BaseModel):
                     f"but received ExternalExecutionResultEvent: {event}",
                 )
 
-            extra_ids = set(
-                _.tool_call_id for _ in event.execution_results
-            ) - set(
+            extra_ids = set(_.id for _ in event.execution_results) - set(
                 awaiting_external_executions,
             )
             if extra_ids:
@@ -723,7 +764,10 @@ class Agent(BaseModel):
                     confirmation = confirmed_tool_calls[tool_call.id]
                     if confirmation.confirmed:
                         # Update state and wait for execution in the next step
-                        tool_call.state = "allow"
+                        self._update_tool_call_state(
+                            tool_call.id,
+                            ToolCallState.ALLOWED,
+                        )
 
                         # Update name and  input in case user modification is
                         # allowed
@@ -737,14 +781,14 @@ class Agent(BaseModel):
 
                     else:
                         # Update the state to deny and handling
-                        tool_call.state = "deny"
-                        async for evt in self._handle_denied_tool_call(
+                        async for evt in self._handle_error_tool_call(
                             tool_call,
                             message=(
                                 "<system-reminder>The execution of tool "
                                 f'"{tool_call.name}" is denied by user!'
                                 "</system-reminder>"
                             ),
+                            state=ToolResultState.DENIED,
                         ):
                             yield evt
 
@@ -753,7 +797,26 @@ class Agent(BaseModel):
 
         elif isinstance(event, ExternalExecutionResultEvent):
             # Directly append the execution results into context
-            self._save_to_context(event.execution_results)
+            for tool_result in event.execution_results:
+                async for evt in self._convert_tool_chunk_to_event(
+                    tool_result.id,
+                    tool_result.output,
+                ):
+                    yield evt
+
+                yield ToolResultEndEvent(
+                    reply_id=self.state.reply_id,
+                    tool_call_id=tool_result.id,
+                    state=tool_result.state,
+                )
+
+                self._save_to_context([tool_result])
+
+                # Update the state according to the execution result state
+                self._update_tool_call_state(
+                    tool_result.id,
+                    ToolCallState.FINISHED,
+                )
 
         else:
             raise ValueError(f"Invalid event type: {event}")
@@ -767,7 +830,7 @@ class Agent(BaseModel):
         if msgs:
             copied_msgs: list = deepcopy(msgs)
             if isinstance(copied_msgs, Msg):
-                copied_msgs = [msgs]
+                copied_msgs = [copied_msgs]
             for msg in copied_msgs:
                 if (
                     not isinstance(msg, Msg)
@@ -792,7 +855,7 @@ class Agent(BaseModel):
         properties `is_concurrency_safe` and `is_read_only`.
         """
         # All tool calls that haven't the corresponding results in the context
-        tool_calls = self._get_pending_tool_calls()
+        tool_calls = self._get_executable_tool_calls()
 
         # Batch the tool calls according to whether they can be executed
         # concurrently or not
@@ -842,6 +905,10 @@ class Agent(BaseModel):
     ]:
         """Execute the given tool calls sequentially and yield the events.
 
+        If "RequireUserConfirmEvent" or "RequireExternalExecutionEvent" is
+        yielded during the execution, the execution will be paused in the
+        sequential mode and wait for the outside trigger events.
+
         Args:
             tool_calls (`list[ToolCallBlock]`):
                 The tool calls to be executed sequentially.
@@ -855,10 +922,21 @@ class Agent(BaseModel):
             | ToolResultEndEvent`:
                 The events generated during the execution of the tool calls.
         """
-
+        break_execution = False
         for tool_call in tool_calls:
             async for evt in self._execute_tool_call(tool_call):
                 yield evt
+                if isinstance(
+                    evt,
+                    (
+                        RequireUserConfirmEvent,
+                        RequireExternalExecutionEvent,
+                    ),
+                ):
+                    break_execution = True
+                    break
+            if break_execution:
+                break
 
     async def _execute_concurrent_tool_calls(
         self,
@@ -874,6 +952,17 @@ class Agent(BaseModel):
     ]:
         """Execute the given tool calls concurrently and yield the events.
 
+        All tool calls are executed concurrently. If one or more tool calls
+        fail, the remaining ones are **not** cancelled and will run to
+        completion. After all tool calls finish, every exception is collected
+        and re-raised together as an :py:exc:`ExceptionGroup` so the caller
+        can inspect each failure individually.
+
+        The event stream is guaranteed to be complete: the loop exits only
+        after a sentinel value placed by the gather task is received, which
+        means every ``queue.put`` from every worker has already finished
+        before the generator returns.
+
         Args:
             tool_calls (`list[ToolCallBlock]`):
                 The tool calls to be executed concurrently.
@@ -886,38 +975,71 @@ class Agent(BaseModel):
             | ToolResultBinaryDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the execution of the tool calls.
+
+        Raises:
+            `ExceptionGroup`:
+                Raised after all tool calls finish when one or more of them
+                raised an exception. Each individual exception is included in
+                the group.
         """
-        # Create a queue to gather the events from concurrent execution
+        # A sentinel object that signals all worker tasks have finished and
+        # all events have already been put into the queue.
+        sentinel = object()
+
+        # Create a queue to collect events from all concurrent workers.
         queue: Queue = Queue()
 
-        # Start the concurrent execution tasks
-        tasks = []
-        for tool_call in tool_calls:
-            tasks.append(
-                asyncio.create_task(
-                    self._into_queue(tool_call, queue),
-                ),
+        async def _run_all() -> list[BaseException | None]:
+            """Run all tool calls concurrently and push the sentinel when done.
+
+            Returns:
+                `list[BaseException | None]`:
+                    One entry per tool call. Each entry is either ``None``
+                    (success) or the exception raised by that tool call.
+            """
+            # return_exceptions=True keeps all tasks running even when some
+            # fail, and returns exceptions as values instead of re-raising.
+            results = await asyncio.gather(
+                *[self._into_queue(tc, queue) for tc in tool_calls],
+                return_exceptions=True,
             )
+            # The sentinel is placed AFTER gather returns, which guarantees
+            # that every queue.put inside _into_queue has already completed.
+            await queue.put(sentinel)
+            return results  # type: ignore[return-value]
 
-        # Await for the events from the queue and yield
+        gather_task = asyncio.create_task(_run_all())
+
+        # Drain the queue until the sentinel is encountered.
         while True:
-            if len(tasks) == 0 and queue.empty():
-                break
-
             event = await queue.get()
+            if event is sentinel:
+                break
             yield event
 
-            # Check if any task is completed
-            done_tasks = [task for task in tasks if task.done()]
-            for done in done_tasks:
-                tasks.remove(done)
+        # All tasks are done at this point; collect and re-raise exceptions.
+        results = await gather_task
+        exceptions = [r for r in results if isinstance(r, Exception)]
+        if exceptions:
+            raise ExceptionGroup(
+                "One or more tool calls raised an exception",
+                exceptions,
+            )
 
     async def _into_queue(
         self,
         tool_call: ToolCallBlock,
         queue: Queue,
     ) -> None:
-        """Convert the yield events from tool call execution into queue put."""
+        """Execute a single tool call and forward every event into *queue*.
+
+        Args:
+            tool_call (`ToolBlockCall`):
+                The tool call to execute.
+            queue (`Queue`):
+                The shared async queue that collects events from all
+                concurrent workers.
+        """
         async for evt in self._execute_tool_call(tool_call):
             await queue.put(evt)
 
@@ -950,28 +1072,64 @@ class Agent(BaseModel):
                 The events generated during the tool call execution.
         """
         # ===================================================================
-        # Step 1: Check permission by toolkit and permission engine
-        #  - Treat unregistered tools as allowed and handle the permission
-        #   within the toolkit execution.
+        # Step 1: Check and parse the tool call input:
+        #  - if failed, directly return the error message to the agent
+        #  - if success, continue to permission checking and tool execution
         # ===================================================================
-        registered_tool = self.toolkit.tools.get(tool_call.name)
-        if registered_tool is None:
-            # For unexisting tool, treat it as allowed and handled it within
-            # the toolkit execution
+        try:
+            # Check if the tool is available
+            tool = self.toolkit.check_tool_available(
+                tool_call.name,
+                self.state.tool_context.activated_groups,
+            )
+
+            # Try to parse the input with the tool schema
+            parsed_input = _json_loads_with_repair(
+                tool_call.input,
+                tool.input_schema,
+            )
+
+            # Validate the parsed input with the tool schema
+            # TODO: Maybe some logic to mix the validation error in runtime
+            try:
+                jsonschema.validate(parsed_input, tool.input_schema)
+            except jsonschema.ValidationError as e:
+                raise AgentOrientedException(
+                    f"Input validation failed for tool '{tool_call.name}': "
+                    f"{e.message}",
+                ) from e
+
+        # The exceptions that
+        #  - cannot found tool
+        #  - tool not available
+        #  - input parsing failure
+        except AgentOrientedException as e:
+            async for evt in self._handle_error_tool_call(
+                tool_call,
+                e.message,
+                state=ToolResultState.ERROR,
+            ):
+                yield evt
+
+            return
+
+        # ===================================================================
+        # Step 2: Check permission by toolkit and permission engine
+        # ===================================================================
+        if tool_call.state == ToolCallState.ALLOWED:
+            # Already allowed by user confirmation, skip permission checking
             decision = PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
-                decision_reason="Unregistered tool, allow by default",
-                message="Unregistered tool, allow by default",
+                message="Already allowed by user confirmation.",
             )
-
         else:
             decision = await self._engine.check_permission(
-                tool_call,
-                registered_tool.tool,
+                tool,
+                parsed_input,
             )
 
         # ===================================================================
-        # Step 2: Handle the permission and execute the tool call if allowed
+        # Step 3: Handle the permission and execute the tool call if allowed
         # ===================================================================
 
         # Case 1: Ask for user confirmation if needed
@@ -979,6 +1137,13 @@ class Agent(BaseModel):
             PermissionBehavior.ASK,
             PermissionBehavior.PASSTHROUGH,
         ]:
+            # Set the state of the tool call to "ask"
+            # **Note** the update must be done before yielding the event
+            self._update_tool_call_state(
+                tool_call.id,
+                ToolCallState.ASKING,
+            )
+
             yield RequireUserConfirmEvent(
                 reply_id=self.state.reply_id,
                 tool_calls=[tool_call],
@@ -987,29 +1152,45 @@ class Agent(BaseModel):
 
         # Case 2: Denied by the permission system
         if decision.behavior == PermissionBehavior.DENY:
-            async for evt in self._handle_denied_tool_call(
+            async for evt in self._handle_error_tool_call(
                 tool_call,
                 decision.message,
+                state=ToolResultState.DENIED,
             ):
                 yield evt
+
             return
 
         # Case 3: Allowed by the permission system, execute the tool call and
         #  yield the events
         if decision.behavior == PermissionBehavior.ALLOW:
+            self._update_tool_call_state(
+                tool_call.id,
+                ToolCallState.ALLOWED,
+            )
             # Send start event
             yield ToolResultStartEvent(
                 reply_id=self.state.reply_id,
                 tool_call_id=tool_call.id,
                 tool_call_name=tool_call.name,
             )
-            # TODO: 检查外部执行，并且抛出对应的事件
-            if self.toolkit.require_external_execution(tool_call):
+            # Send requiring external execution event if it's an external tool
+            if tool.is_external_tool:
+                # Update the state to "submitted" BEFORE yielding
+                # because the outer loop will break immediately after
+                # receiving this event, preventing any code after yield
+                # from executing
+                self._update_tool_call_state(
+                    tool_call.id,
+                    ToolCallState.SUBMITTED,
+                )
                 yield RequireExternalExecutionEvent(
                     reply_id=self.state.reply_id,
                     tool_calls=[tool_call],
                 )
                 return
+
+            # Execute the tool call and yield the events.
 
             res = self.toolkit.call_tool(tool_call, self.state)
             async for chunk in res:
@@ -1024,16 +1205,22 @@ class Agent(BaseModel):
                             ),
                         ],
                     )
+                    # Ends the tool call lifecycle.
+                    self._update_tool_call_state(
+                        tool_call.id,
+                        ToolCallState.FINISHED,
+                    )
                     # The ended event for the tool result
                     yield ToolResultEndEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call.id,
                         state=chunk.state,
                     )
+
                 else:
                     async for evt in self._convert_tool_chunk_to_event(
-                        tool_call,
-                        chunk,
+                        tool_call.id,
+                        chunk.content,
                     ):
                         yield evt
 
@@ -1043,10 +1230,11 @@ class Agent(BaseModel):
             f"Invalid permission decision behavior: {decision.behavior}",
         )
 
-    async def _handle_denied_tool_call(
+    async def _handle_error_tool_call(
         self,
         tool_call: ToolCallBlock,
         message: str,
+        state: ToolResultState,
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
@@ -1054,14 +1242,23 @@ class Agent(BaseModel):
         | ToolResultEndEvent,
         None,
     ]:
-        """Handle the denied tool call and generate the corresponding events.
+        """A quick handling for the non-streaming tool results, and ends the
+        lifecycle of the tool call by updating its state to "finished".
+
+        Args:
+            tool_call (`ToolCallBlock`):
+                The tool call block that has errors.
+            message (`str`):
+                The error message to be returned for the tool call.
+            state (`ToolResultState`):
+                The state of the tool result, which can be "error", "denied",
 
         Yields:
             `ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
             | ToolResultBinaryDeltaEvent \
             | ToolResultEndEvent`:
-                The events generated for the denied tool call.
+                The events generated for the error tool call.
         """
 
         yield ToolResultStartEvent(
@@ -1072,7 +1269,7 @@ class Agent(BaseModel):
 
         result = ToolChunk(
             content=[TextBlock(text=message)],
-            state="error",
+            state=state,
         )
 
         # Return the result directly to the agent
@@ -1082,18 +1279,26 @@ class Agent(BaseModel):
                     id=tool_call.id,
                     name=tool_call.name,
                     output=message,
-                    state="error",
+                    state=state,
                 ),
             ],
         )
 
-        async for evt in self._convert_tool_chunk_to_event(tool_call, result):
+        async for evt in self._convert_tool_chunk_to_event(
+            tool_call.id,
+            result.content,
+        ):
             yield evt
 
         yield ToolResultEndEvent(
             reply_id=self.state.reply_id,
             tool_call_id=tool_call.id,
-            state="error",
+            state=state,
+        )
+
+        self._update_tool_call_state(
+            tool_call.id,
+            ToolCallState.FINISHED,
         )
 
     # =======================================================================
@@ -1105,11 +1310,6 @@ class Agent(BaseModel):
         # TODO: Implement full splitting logic when compression_config is
         #  available
         return [], list(self.state.context)
-
-    async def _compress_memory_if_needed(self) -> None:
-        """Compress the agent's memory if the token count exceeds the
-        threshold."""
-        # TODO: Implement when compression_config is available
 
     # ======================================================================
     # Agent internal utility methods
@@ -1159,7 +1359,7 @@ class Agent(BaseModel):
         for model in models:
             for _ in range(self.max_retries):
                 try:
-                    return await self.model(
+                    return await model(
                         messages=messages,
                         tools=tools,
                         tool_choice=tool_choice,
@@ -1181,6 +1381,31 @@ class Agent(BaseModel):
         raise RuntimeError(
             "Model call failed after retries, but no exception was raised.",
         )
+
+    def _update_tool_call_state(
+        self,
+        tool_call_id: str,
+        state: ToolCallState,
+    ) -> None:
+        """Update the tool call state. This function is to avoid the update
+        not reflected in the context due to the shallow copy of the content
+        blocks somewhere in the code.
+
+        Args:
+            tool_call_id (`str`):
+                The tool call id to be updated.
+            state (`ToolCallState`):
+                The new state of the tool call.
+        """
+        if len(self.state.context) == 0:
+            return
+        last_msg = self.state.context[-1]
+        if last_msg.role != "assistant" or last_msg.name != self.name:
+            return
+        for block in last_msg.get_content_blocks():
+            if isinstance(block, ToolCallBlock) and block.id == tool_call_id:
+                block.state = state
+                break
 
     def _save_to_context(
         self,
@@ -1213,23 +1438,143 @@ class Agent(BaseModel):
                     ),
                 )
 
-    def _get_pending_tool_calls(self) -> list[ToolCallBlock]:
-        """Get tool calls from the last assistant message that have no result
-        yet."""
+    def _get_last_msg(self) -> Msg | None:
+        """Get the last message in the context that belongs to this agent."""
         if len(self.state.context) == 0:
-            return []
+            return None
         last_msg = self.state.context[-1]
-        if last_msg.role != "assistant" and last_msg.name != self.name:
+        if last_msg.role == "assistant" and last_msg.name == self.name:
+            return last_msg
+        return None
+
+    def _check_next_action(
+        self,
+    ) -> (
+        tuple[Literal["exit"], Msg]
+        | tuple[Literal["reasoning"], None]
+        | tuple[Literal["acting"], None]
+    ):
+        """Check the next action for the agent
+
+        Awaiting tool calls:
+            The tool calls waiting for the outside events (confirmation or
+            external execution results, state = "asking" or "submitted")
+        Executable tool calls:
+            The tool calls allowed by the incoming confirmation events and
+            haven't been executed yet (state = "allowed")
+
+        The next action:
+
+        |                          | Awaiting tool calls          | No awaiting tool call        |
+        | ------------------------ | ---------------------------- | ---------------------------- |
+        | Executable tool calls    | Acting executable tool calls | Acting executable tool calls |
+        | No executable tool calls | Exit the _reply              | Reasoning                    |
+
+        Returns:
+            `tuple[Literal["exit"], Msg]`:
+                If there is no executable tool call and there are awaiting tool
+                calls, which means the agent is waiting for the outside events
+                and should not do anything before that, the next action is to
+                exit the _reply and wait for the outside events.
+            `tuple[Literal["reasoning"], None]`:
+                If there is no executable tool call and no awaiting tool call,
+                which means the agent has nothing to do in this iteration and
+                can continue reasoning for the next step.
+            `tuple[Literal["acting"], None]`:
+                If there are executable tool calls, which means the agent can
+                act by executing the tool calls.
+        """  # noqa: E501
+        last_msg = self._get_last_msg()
+        if last_msg is None:
+            return "reasoning", None
+
+        # In case wrong tool call state, first filter with the results
+        finished_ids = {
+            _.id for _ in last_msg.get_content_blocks("tool_result")
+        }
+        unfinished_tool_calls = [
+            _
+            for _ in last_msg.get_content_blocks("tool_call")
+            if _.id not in finished_ids
+        ]
+
+        # Find if there are executable or awaiting tool calls
+        awaiting_tool_calls: list[ToolCallBlock] = []
+        executable_tool_calls: list[ToolCallBlock] = []
+
+        confirming_names, asking_names = [], []
+        for _ in unfinished_tool_calls:
+            if _.state in [ToolCallState.PENDING, ToolCallState.ALLOWED]:
+                executable_tool_calls.append(_)
+
+            elif _.state == ToolCallState.ASKING:
+                asking_names.append(_.name)
+                awaiting_tool_calls.append(_)
+
+            elif _.state == ToolCallState.SUBMITTED:
+                confirming_names.append(_.name)
+                awaiting_tool_calls.append(_)
+
+        if executable_tool_calls:
+            return "acting", None
+
+        if awaiting_tool_calls:
+            # Prepare the message
+            evt = ["I'm waiting for "]
+            if asking_names:
+                evt += [
+                    f"user confirmation for {len(asking_names)} tool calls",
+                ]
+
+            if confirming_names:
+                if evt:
+                    evt += [", and "]
+                evt += [
+                    f"external execution results for {len(confirming_names)} "
+                    f"tool calls",
+                ]
+
+            text = "".join(evt) + "."
+
+            return "exit", AssistantMsg(
+                name=self.name,
+                content=[TextBlock(text=text)],
+            )
+
+        return "reasoning", None
+
+    def _get_executable_tool_calls(self) -> list[ToolCallBlock]:
+        """Get tool calls from the last message that to be executed, which
+        means we should reserve the tool calls that:
+
+        1. doesn't have results yet, **and**
+        2. haven't been submitted for external execution (state != "submitted")
+        """
+        last_msg = self._get_last_msg()
+        if last_msg is None:
             return []
 
         # The tool results
         result_ids = {_.id for _ in last_msg.get_content_blocks("tool_result")}
-        # Return the tool calls that doesn't have results yet
-        return [
+        # The tool calls that doesn't have results yet
+        tool_calls_wo_results = [
             _
             for _ in last_msg.get_content_blocks("tool_call")
             if _.id not in result_ids
         ]
+
+        # Filter the ones that are "submitted", which already report the
+        # external execution requirement
+        pending_tool_calls = [
+            _
+            for _ in tool_calls_wo_results
+            if _.state
+            in [
+                ToolCallState.PENDING,
+                ToolCallState.ALLOWED,
+            ]
+        ]
+        return pending_tool_calls
 
     async def _convert_chat_response_to_event(
         self,
@@ -1334,15 +1679,23 @@ class Agent(BaseModel):
 
     async def _convert_tool_chunk_to_event(
         self,
-        tool_call: ToolCallBlock,
-        chunk: ToolChunk,
+        tool_call_id: str,
+        output_blocks: str | List[TextBlock | DataBlock],
     ) -> AsyncGenerator:
         """Convert a ToolChunk into a sequence of agent events."""
-        for block in chunk.content:
+        if isinstance(output_blocks, str):
+            yield ToolResultTextDeltaEvent(
+                reply_id=self.state.reply_id,
+                tool_call_id=tool_call_id,
+                delta=output_blocks,
+            )
+            return
+
+        for block in output_blocks:
             if isinstance(block, TextBlock):
                 yield ToolResultTextDeltaEvent(
                     reply_id=self.state.reply_id,
-                    tool_call_id=tool_call.id,
+                    tool_call_id=tool_call_id,
                     delta=block.text,
                 )
 
@@ -1350,14 +1703,14 @@ class Agent(BaseModel):
                 if isinstance(block.source, Base64Source):
                     yield ToolResultBinaryDeltaEvent(
                         reply_id=self.state.reply_id,
-                        tool_call_id=tool_call.id,
+                        tool_call_id=tool_call_id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
                     yield ToolResultBinaryDeltaEvent(
                         reply_id=self.state.reply_id,
-                        tool_call_id=tool_call.id,
+                        tool_call_id=tool_call_id,
                         media_type=block.source.media_type,
                         url=str(block.source.url),
                     )

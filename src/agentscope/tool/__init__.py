@@ -30,8 +30,15 @@ from ._builtin import (
 )
 
 __all__ = [
+    # Basic tool related types and functions
+    "ToolChoice",
+    "Function",
+    "ToolBase",
+    "MCPTool",
     "Toolkit",
+    "ToolChunk",
     "ToolResponse",
+    # Permission related types and functions
     "PermissionContext",
     "AdditionalWorkingDirectory",
     "PermissionDecision",
@@ -39,11 +46,7 @@ __all__ = [
     "PermissionRule",
     "PermissionMode",
     "PermissionBehavior",
-    "ToolChunk",
-    "ToolBase",
-    "MCPTool",
-    "ToolChoice",
-    "Function",
+    # Builtin tools
     "ResetTools",
     "Bash",
     "Edit",
@@ -51,6 +54,7 @@ __all__ = [
     "Grep",
     "Read",
     "Write",
+    # Skill related types and functions
     "Skill",
     "SkillLoaderBase",
     "LocalSkillLoader",

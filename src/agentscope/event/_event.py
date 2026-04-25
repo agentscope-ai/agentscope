@@ -2,16 +2,16 @@
 """Event types for agent execution."""
 import uuid
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Literal, List, TypeAlias
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
-from ..message import ToolCallBlock, ToolResultBlock
+from ..message import ToolCallBlock, ToolResultBlock, ToolResultState
 from ..tool import PermissionRule
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     """Event type enumeration."""
 
     RUN_STARTED = "RUN_STARTED"
@@ -53,9 +53,11 @@ class EventType(str, Enum):
 class EventBase(BaseModel):
     """Base event class."""
 
+    model_config = ConfigDict(use_enum_values=True)
+
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     """Unique event identifier."""
-    created_at: str = Field(default_factory=datetime.now().isoformat)
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     """ISO 8601 timestamp of when the event was created."""
 
 
@@ -309,18 +311,20 @@ class ToolResultBinaryDeltaEvent(EventBase):
 class ToolResultEndEvent(EventBase):
     """Tool result end event."""
 
+    model_config = ConfigDict(use_enum_values=True)
+
     type: Literal[EventType.TOOL_RESULT_END] = EventType.TOOL_RESULT_END
     """Event type."""
     reply_id: str
     """ID of the reply message this tool result belongs to."""
     tool_call_id: str
     """ID of the corresponding tool call."""
-    state: Literal["finished", "error", "interrupted", "running"]
+    state: ToolResultState
     """Final execution state of the tool call."""
 
 
 class ExceedMaxItersEvent(EventBase):
-    """Exceed max iterations' event."""
+    """Exceeded max iterations event."""
 
     type: Literal[EventType.EXCEED_MAX_ITERS] = EventType.EXCEED_MAX_ITERS
     """Event type."""
@@ -364,10 +368,10 @@ class ConfirmResult(BaseModel):
     tool_call: ToolCallBlock
     """The tool call that was confirmed or rejected."""
     rules: list[PermissionRule] | None = None
-    """The allowed permission rules for this tool call, only applicable when
-    confirmed is True. Incase user modification is needed, here we use the
-    completed permission rules instead of references to the suggested rules in
-    the RequireUserConfirmEvent."""
+    """The allowed permission rules for this tool call. This field is only
+    applicable when ``confirmed`` is True. In case user modification is
+    needed, complete permission rules are used here instead of references to
+    the suggested rules in ``RequireUserConfirmEvent``."""
 
 
 class UserConfirmResultEvent(EventBase):
