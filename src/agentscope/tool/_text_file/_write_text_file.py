@@ -4,7 +4,7 @@
 """The text file tools in agentscope."""
 import os
 
-from ._utils import _calculate_view_ranges, _view_text_file
+from ._utils import _calculate_view_ranges, _validate_path, _view_text_file
 from .._response import ToolResponse
 from ...message import TextBlock
 
@@ -30,6 +30,8 @@ async def insert_text_file(
         `ToolResponse`:
             The tool response containing the result of the insertion operation.
     """
+    from ...exception import ToolInvalidArgumentsError
+
     if line_number <= 0:
         return ToolResponse(
             content=[
@@ -41,7 +43,18 @@ async def insert_text_file(
             ],
         )
 
-    file_path = os.path.expanduser(file_path)
+    try:
+        file_path = _validate_path(os.path.expanduser(file_path))
+    except ToolInvalidArgumentsError as e:
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=e.message,
+                ),
+            ],
+        )
+
     if not os.path.exists(file_path):
         return ToolResponse(
             content=[
@@ -125,13 +138,33 @@ async def write_text_file(
         `ToolResponse`:
             The tool response containing the result of the writing operation.
     """
-    file_path = os.path.expanduser(file_path)
+    from ...exception import ToolInvalidArgumentsError
+
+    try:
+        file_path = _validate_path(os.path.expanduser(file_path))
+    except ToolInvalidArgumentsError as e:
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=e.message,
+                ),
+            ],
+        )
+
     if not os.path.exists(file_path):
         with open(file_path, "w", encoding="utf-8") as file:
             file.write(content)
-
+        tool_response = ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=f"Create and write {file_path} successfully.",
+                ),
+            ],
+        )
         if ranges:
-            return ToolResponse(
+            tool_response = ToolResponse(
                 content=[
                     TextBlock(
                         type="text",
@@ -142,14 +175,7 @@ async def write_text_file(
                 ],
             )
 
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Create and write {file_path} successfully.",
-                ),
-            ],
-        )
+        return tool_response
 
     with open(file_path, "r", encoding="utf-8") as file:
         original_lines = file.readlines()
