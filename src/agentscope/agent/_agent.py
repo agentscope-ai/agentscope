@@ -23,10 +23,10 @@ from .._logging import logger
 from .._utils._common import _json_loads_with_repair
 from ..event import (
     AgentEvent,
-    ModelCallEndedEvent,
-    ModelCallStartedEvent,
-    RunFinishedEvent,
-    RunStartedEvent,
+    ModelCallEndEvent,
+    ModelCallStartEvent,
+    ReplyEndEvent,
+    ReplyStartEvent,
     TextBlockDeltaEvent,
     TextBlockEndEvent,
     TextBlockStartEvent,
@@ -36,7 +36,7 @@ from ..event import (
     ToolCallDeltaEvent,
     ToolCallEndEvent,
     ToolCallStartEvent,
-    ToolResultBinaryDeltaEvent,
+    ToolResultDataDeltaEvent,
     ToolResultEndEvent,
     ToolResultStartEvent,
     ToolResultTextDeltaEvent,
@@ -44,9 +44,9 @@ from ..event import (
     RequireExternalExecutionEvent,
     ExternalExecutionResultEvent,
     UserConfirmResultEvent,
-    BinaryBlockStartEvent,
-    BinaryBlockDeltaEvent,
-    BinaryBlockEndEvent,
+    DataBlockStartEvent,
+    DataBlockDeltaEvent,
+    DataBlockEndEvent,
     ExceedMaxItersEvent,
 )
 from ..exception import AgentOrientedException
@@ -407,7 +407,7 @@ class Agent(BaseModel):
             self.state.reply_id = uuid.uuid4().hex
             self.state.cur_iter = 0
 
-            yield RunStartedEvent(
+            yield ReplyStartEvent(
                 session_id=self.state.session_id,
                 reply_id=self.state.reply_id,
                 name=self.name,
@@ -437,7 +437,7 @@ class Agent(BaseModel):
                     # Exit the loop when no tool calls generated and the reply
                     # message is generated
                     if isinstance(evt, Msg):
-                        yield RunFinishedEvent(
+                        yield ReplyEndEvent(
                             session_id=self.state.session_id,
                             reply_id=self.state.reply_id,
                         )
@@ -513,7 +513,7 @@ class Agent(BaseModel):
         self,
         tool_choice: ToolChoice = "auto",
     ) -> AsyncGenerator[
-        ModelCallStartedEvent
+        ModelCallStartEvent
         | TextBlockStartEvent
         | TextBlockDeltaEvent
         | TextBlockEndEvent
@@ -523,17 +523,17 @@ class Agent(BaseModel):
         | ThinkingBlockStartEvent
         | ThinkingBlockDeltaEvent
         | ThinkingBlockEndEvent
-        | BinaryBlockStartEvent
-        | BinaryBlockDeltaEvent
-        | BinaryBlockEndEvent
-        | ModelCallEndedEvent
+        | DataBlockStartEvent
+        | DataBlockDeltaEvent
+        | DataBlockEndEvent
+        | ModelCallEndEvent
         | Msg,
         None,
     ]:
         """Core reasoning logic. Yields chunks with is_last flag."""
         # TODO: Pass tool schemas from toolkit when toolkit is implemented
 
-        yield ModelCallStartedEvent(
+        yield ModelCallStartEvent(
             reply_id=self.state.reply_id,
             model_name=self.model.model_name,
         )
@@ -604,7 +604,7 @@ class Agent(BaseModel):
             )
 
         # Send the model call ended event with usage if available
-        yield ModelCallEndedEvent(
+        yield ModelCallEndEvent(
             reply_id=self.state.reply_id,
             input_tokens=completed_response.usage.input_tokens
             if completed_response.usage
@@ -726,7 +726,7 @@ class Agent(BaseModel):
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
-        | ToolResultBinaryDeltaEvent
+        | ToolResultDataDeltaEvent
         | ToolResultEndEvent,
         None,
     ]:
@@ -899,7 +899,7 @@ class Agent(BaseModel):
         | RequireExternalExecutionEvent
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
-        | ToolResultBinaryDeltaEvent
+        | ToolResultDataDeltaEvent
         | ToolResultEndEvent,
         None,
     ]:
@@ -946,7 +946,7 @@ class Agent(BaseModel):
         | RequireExternalExecutionEvent
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
-        | ToolResultBinaryDeltaEvent
+        | ToolResultDataDeltaEvent
         | ToolResultEndEvent,
         None,
     ]:
@@ -1051,7 +1051,7 @@ class Agent(BaseModel):
         | RequireExternalExecutionEvent
         | ToolResultStartEvent
         | ToolResultTextDeltaEvent
-        | ToolResultBinaryDeltaEvent
+        | ToolResultDataDeltaEvent
         | ToolResultEndEvent,
         None,
     ]:
@@ -1238,7 +1238,7 @@ class Agent(BaseModel):
     ) -> AsyncGenerator[
         ToolResultStartEvent
         | ToolResultTextDeltaEvent
-        | ToolResultBinaryDeltaEvent
+        | ToolResultDataDeltaEvent
         | ToolResultEndEvent,
         None,
     ]:
@@ -1701,14 +1701,14 @@ class Agent(BaseModel):
 
             elif isinstance(block, DataBlock):
                 if isinstance(block.source, Base64Source):
-                    yield ToolResultBinaryDeltaEvent(
+                    yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
                         media_type=block.source.media_type,
                         data=block.source.data,
                     )
                 elif isinstance(block.source, URLSource):
-                    yield ToolResultBinaryDeltaEvent(
+                    yield ToolResultDataDeltaEvent(
                         reply_id=self.state.reply_id,
                         tool_call_id=tool_call_id,
                         media_type=block.source.media_type,

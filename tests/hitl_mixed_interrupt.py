@@ -129,7 +129,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
         self.final_response_text = "Final response after mixed execution"
         self.final_text_events = [
             {
-                "type": "MODEL_CALL_STARTED",
+                "type": "MODEL_CALL_START",
                 "model_name": "mock-model",
             },
             {
@@ -146,7 +146,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
             },
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -380,19 +380,19 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             *self._get_tool_call_events(
                 self.tool_call_id_1,
                 self.sequential_tool_name,
                 self.tool_input_1,
             ),
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -501,7 +501,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_1,
             ),
             *self.final_text_events,
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
         self.assertListEqual(
             events,
@@ -599,18 +599,18 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             *tool_call_1_events[:2],
             *tool_call_2_events[:2],
             tool_call_1_events[2],
             tool_call_2_events[2],
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -840,7 +840,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.sequential_result_2,
             ),
             *self.final_text_events,
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
         self.assertListEqual(
             events,
@@ -958,18 +958,18 @@ class AgentMixTest(IsolatedAsyncioTestCase):
 
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             *tool_call_1_events[:2],
             *tool_call_2_events[:2],
             tool_call_1_events[2],
             tool_call_2_events[2],
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -1136,7 +1136,7 @@ class AgentMixTest(IsolatedAsyncioTestCase):
                 self.concurrent_result_2,
             ),
             *self.final_text_events,
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
         self.assertListEqual(
             events,

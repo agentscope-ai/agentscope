@@ -163,13 +163,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
             {
-                "type": "MODEL_CALL_STARTED",
+                "type": "MODEL_CALL_START",
                 "model_name": "mock-model",
             },
             {
@@ -196,12 +196,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
             },
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
             {
-                "type": "RUN_FINISHED",
+                "type": "REPLY_END",
                 "session_id": session_id,
             },
         ]
@@ -332,13 +332,13 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
             {
-                "type": "MODEL_CALL_STARTED",
+                "type": "MODEL_CALL_START",
                 "model_name": "mock-model",
             },
             {
@@ -355,12 +355,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "block_id": AnyString(),
             },
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
             {
-                "type": "RUN_FINISHED",
+                "type": "REPLY_END",
                 "session_id": session_id,
             },
         ]
@@ -564,12 +564,12 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         # Expected events for sequential tool calls
         expected_events = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
             {
                 "type": "TEXT_BLOCK_DELTA",
@@ -605,7 +605,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             {"type": "TOOL_CALL_END", "tool_call_id": tool_call_id_1},
             {"type": "TOOL_CALL_END", "tool_call_id": tool_call_id_2},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -639,7 +639,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
                 "tool_call_id": tool_call_id_2,
                 "state": "success",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
             {
                 "type": "TEXT_BLOCK_DELTA",
@@ -648,11 +648,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
 
         basic_dict = self._get_event_base(reply_id)
@@ -805,14 +805,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         # Expected prefix events (before tool execution)
         expected_prefix = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -854,7 +854,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         # Expected suffix events (final model call with pure text)
         expected_suffix = [
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
             {
                 "type": "TEXT_BLOCK_DELTA",
@@ -863,11 +863,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
 
         # Assert prefix events (fixed order)
@@ -1048,14 +1048,14 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         # Expected prefix events (before tool execution)
         expected_prefix = [
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "session_id": session_id,
                 "name": "Friday",
                 "role": "assistant",
             },
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
@@ -1116,7 +1116,7 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
 
         # Expected suffix events (final model call with pure text)
         expected_suffix = [
-            {"type": "MODEL_CALL_STARTED", "model_name": "mock-model"},
+            {"type": "MODEL_CALL_START", "model_name": "mock-model"},
             {"type": "TEXT_BLOCK_START", "block_id": AnyString()},
             {
                 "type": "TEXT_BLOCK_DELTA",
@@ -1125,11 +1125,11 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
             },
             {"type": "TEXT_BLOCK_END", "block_id": AnyString()},
             {
-                "type": "MODEL_CALL_ENDED",
+                "type": "MODEL_CALL_END",
                 "input_tokens": 0,
                 "output_tokens": 0,
             },
-            {"type": "RUN_FINISHED", "session_id": session_id},
+            {"type": "REPLY_END", "session_id": session_id},
         ]
 
         # Assert prefix events (fixed order)

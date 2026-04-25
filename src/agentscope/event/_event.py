@@ -14,19 +14,19 @@ from ..tool import PermissionRule
 class EventType(StrEnum):
     """Event type enumeration."""
 
-    RUN_STARTED = "RUN_STARTED"
-    RUN_FINISHED = "RUN_FINISHED"
+    REPLY_START = "REPLY_START"
+    REPLY_END = "REPLY_END"
 
-    MODEL_CALL_STARTED = "MODEL_CALL_STARTED"
-    MODEL_CALL_ENDED = "MODEL_CALL_ENDED"
+    MODEL_CALL_START = "MODEL_CALL_START"
+    MODEL_CALL_END = "MODEL_CALL_END"
 
     TEXT_BLOCK_START = "TEXT_BLOCK_START"
     TEXT_BLOCK_DELTA = "TEXT_BLOCK_DELTA"
     TEXT_BLOCK_END = "TEXT_BLOCK_END"
 
-    BINARY_BLOCK_START = "BINARY_BLOCK_START"
-    BINARY_BLOCK_DELTA = "BINARY_BLOCK_DELTA"
-    BINARY_BLOCK_END = "BINARY_BLOCK_END"
+    DATA_BLOCK_START = "DATA_BLOCK_START"
+    DATA_BLOCK_DELTA = "DATA_BLOCK_DELTA"
+    DATA_BLOCK_END = "DATA_BLOCK_END"
 
     THINKING_BLOCK_START = "THINKING_BLOCK_START"
     THINKING_BLOCK_DELTA = "THINKING_BLOCK_DELTA"
@@ -38,7 +38,7 @@ class EventType(StrEnum):
 
     TOOL_RESULT_START = "TOOL_RESULT_START"
     TOOL_RESULT_TEXT_DELTA = "TOOL_RESULT_TEXT_DELTA"
-    TOOL_RESULT_BINARY_DELTA = "TOOL_RESULT_BINARY_DELTA"
+    TOOL_RESULT_DATA_DELTA = "TOOL_RESULT_DATA_DELTA"
     TOOL_RESULT_END = "TOOL_RESULT_END"
 
     EXCEED_MAX_ITERS = "EXCEED_MAX_ITERS"
@@ -61,36 +61,36 @@ class EventBase(BaseModel):
     """ISO 8601 timestamp of when the event was created."""
 
 
-class RunStartedEvent(EventBase):
-    """Run started event."""
+class ReplyStartEvent(EventBase):
+    """Reply start event."""
 
-    type: Literal[EventType.RUN_STARTED] = EventType.RUN_STARTED
+    type: Literal[EventType.REPLY_START] = EventType.REPLY_START
     """Event type."""
     session_id: str
-    """ID of the session this run belongs to."""
+    """ID of the session this reply belongs to."""
     reply_id: str
-    """ID of the reply message produced by this run."""
+    """ID of the reply message produced by this reply."""
     name: str
     """Name of the agent."""
     role: Literal["user", "assistant", "system"] = "assistant"
     """Role of the agent."""
 
 
-class RunFinishedEvent(EventBase):
-    """Run finished event."""
+class ReplyEndEvent(EventBase):
+    """Reply end event."""
 
-    type: Literal[EventType.RUN_FINISHED] = EventType.RUN_FINISHED
+    type: Literal[EventType.REPLY_END] = EventType.REPLY_END
     """Event type."""
     session_id: str
-    """ID of the session this run belongs to."""
+    """ID of the session this reply belongs to."""
     reply_id: str
-    """ID of the reply message produced by this run."""
+    """ID of the reply message produced by this reply."""
 
 
-class ModelCallStartedEvent(EventBase):
-    """Model call started event."""
+class ModelCallStartEvent(EventBase):
+    """Model call start event."""
 
-    type: Literal[EventType.MODEL_CALL_STARTED] = EventType.MODEL_CALL_STARTED
+    type: Literal[EventType.MODEL_CALL_START] = EventType.MODEL_CALL_START
     """Event type."""
     reply_id: str
     """ID of the reply message this model call belongs to."""
@@ -98,10 +98,10 @@ class ModelCallStartedEvent(EventBase):
     """Name of the model being called."""
 
 
-class ModelCallEndedEvent(EventBase):
-    """Model call ended event."""
+class ModelCallEndEvent(EventBase):
+    """Model call end event."""
 
-    type: Literal[EventType.MODEL_CALL_ENDED] = EventType.MODEL_CALL_ENDED
+    type: Literal[EventType.MODEL_CALL_END] = EventType.MODEL_CALL_END
     """Event type."""
     reply_id: str
     """ID of the reply message this model call belongs to."""
@@ -146,43 +146,43 @@ class TextBlockEndEvent(EventBase):
     """Unique identifier of the text block."""
 
 
-class BinaryBlockStartEvent(EventBase):
-    """Binary block start event."""
+class DataBlockStartEvent(EventBase):
+    """Data block start event."""
 
-    type: Literal[EventType.BINARY_BLOCK_START] = EventType.BINARY_BLOCK_START
+    type: Literal[EventType.DATA_BLOCK_START] = EventType.DATA_BLOCK_START
     """Event type."""
     reply_id: str
     """ID of the reply message this block belongs to."""
     block_id: str
-    """Unique identifier of the binary block."""
+    """Unique identifier of the data block."""
     media_type: str
-    """MIME type of the binary content (e.g. "image/png")."""
+    """MIME type of the data content (e.g. "image/png")."""
 
 
-class BinaryBlockDeltaEvent(EventBase):
-    """Binary block delta event."""
+class DataBlockDeltaEvent(EventBase):
+    """Data block delta event."""
 
-    type: Literal[EventType.BINARY_BLOCK_DELTA] = EventType.BINARY_BLOCK_DELTA
+    type: Literal[EventType.DATA_BLOCK_DELTA] = EventType.DATA_BLOCK_DELTA
     """Event type."""
     reply_id: str
     """ID of the reply message this block belongs to."""
     block_id: str
-    """Unique identifier of the binary block."""
+    """Unique identifier of the data block."""
     data: str
-    """Incremental base64-encoded binary data."""
+    """Incremental base64-encoded data."""
     media_type: str
-    """MIME type of the binary content."""
+    """MIME type of the data content."""
 
 
-class BinaryBlockEndEvent(EventBase):
-    """Binary block end event."""
+class DataBlockEndEvent(EventBase):
+    """Data block end event."""
 
-    type: Literal[EventType.BINARY_BLOCK_END] = EventType.BINARY_BLOCK_END
+    type: Literal[EventType.DATA_BLOCK_END] = EventType.DATA_BLOCK_END
     """Event type."""
     reply_id: str
     """ID of the reply message this block belongs to."""
     block_id: str
-    """Unique identifier of the binary block."""
+    """Unique identifier of the data block."""
 
 
 class ThinkingBlockStartEvent(EventBase):
@@ -289,12 +289,12 @@ class ToolResultTextDeltaEvent(EventBase):
     """Incremental text content of the tool result."""
 
 
-class ToolResultBinaryDeltaEvent(EventBase):
-    """Tool result binary delta event."""
+class ToolResultDataDeltaEvent(EventBase):
+    """Tool result data delta event."""
 
     type: Literal[
-        EventType.TOOL_RESULT_BINARY_DELTA
-    ] = EventType.TOOL_RESULT_BINARY_DELTA
+        EventType.TOOL_RESULT_DATA_DELTA
+    ] = EventType.TOOL_RESULT_DATA_DELTA
     """Event type."""
     reply_id: str
     """ID of the reply message this tool result belongs to."""
@@ -401,19 +401,19 @@ class ExternalExecutionResultEvent(EventBase):
 
 
 AgentEvent: TypeAlias = (
-    RunStartedEvent
-    | RunFinishedEvent
+    ReplyStartEvent
+    | ReplyEndEvent
     | ExceedMaxItersEvent
     | RequireUserConfirmEvent
     | RequireExternalExecutionEvent
-    | ModelCallStartedEvent
-    | ModelCallEndedEvent
+    | ModelCallStartEvent
+    | ModelCallEndEvent
     | TextBlockStartEvent
     | TextBlockDeltaEvent
     | TextBlockEndEvent
-    | BinaryBlockStartEvent
-    | BinaryBlockDeltaEvent
-    | BinaryBlockEndEvent
+    | DataBlockStartEvent
+    | DataBlockDeltaEvent
+    | DataBlockEndEvent
     | ThinkingBlockStartEvent
     | ThinkingBlockDeltaEvent
     | ThinkingBlockEndEvent
@@ -422,7 +422,7 @@ AgentEvent: TypeAlias = (
     | ToolCallEndEvent
     | ToolResultStartEvent
     | ToolResultTextDeltaEvent
-    | ToolResultBinaryDeltaEvent
+    | ToolResultDataDeltaEvent
     | ToolResultEndEvent
     | UserConfirmResultEvent
     | ExternalExecutionResultEvent

@@ -2,7 +2,7 @@
 """Event test"""
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
-from agentscope.event import RunStartedEvent
+from agentscope.event import ReplyStartEvent
 
 
 class EventTest(IsolatedAsyncioTestCase):
@@ -13,7 +13,7 @@ class EventTest(IsolatedAsyncioTestCase):
 
     async def test_model_dump(self) -> None:
         """Test model dump."""
-        event = RunStartedEvent(
+        event = ReplyStartEvent(
             session_id="test_session",
             reply_id="test_reply",
             name="Friday",
@@ -21,7 +21,7 @@ class EventTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(
             event,
             {
-                "type": "RUN_STARTED",
+                "type": "REPLY_START",
                 "id": AnyString(),
                 "created_at": AnyString(),
                 "session_id": "test_session",
@@ -35,7 +35,7 @@ class EventTest(IsolatedAsyncioTestCase):
     async def test_model_validate(self) -> None:
         """Test model validate."""
         data = {
-            "type": "RUN_STARTED",
+            "type": "REPLY_START",
             "id": "test_id",
             "created_at": "2024-01-01T00:00:00",
             "session_id": "test_session",
@@ -43,7 +43,7 @@ class EventTest(IsolatedAsyncioTestCase):
             "name": "Friday",
             "role": "assistant",
         }
-        RunStartedEvent.model_validate(data)
+        ReplyStartEvent.model_validate(data)
 
     async def asyncTearDown(self) -> None:
         """The async teardown method."""
