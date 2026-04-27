@@ -43,6 +43,7 @@ from ..mcp import (
 from ..message import (
     ToolCallBlock,
     TextBlock,
+    ToolResultState,
 )
 from .._logging import logger
 
@@ -588,16 +589,16 @@ class Toolkit:
         # Obtain the tool function
         tool_func = available_tools[tool_call.name].tool
 
-        # Prepare keyword arguments
-        kwargs = _json_loads_with_repair(tool_call.input)
-
-        # TODO: we should be build a mechanism to support state injection in
-        #  the future instead of hard coding here.
-        if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
-            kwargs["_agent_state"] = state
-
         # Async function
         try:
+            # Prepare keyword arguments
+            kwargs = _json_loads_with_repair(tool_call.input)
+
+            # TODO: we should be build a mechanism to support state injection
+            #  in the future instead of hard coding here.
+            if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
+                kwargs["_agent_state"] = state
+
             if inspect.iscoroutinefunction(tool_func.__call__):
                 res = await tool_func(**kwargs)
             else:
@@ -636,7 +637,7 @@ class Toolkit:
                         text=f"Error occurred when calling MCP tool: {e}",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
             )
             yield chunk
             tool_response.append_chunk(chunk)
@@ -651,10 +652,10 @@ class Toolkit:
                 content=[
                     TextBlock(
                         type="text",
-                        text=f"Error: {e}",
+                        text=str(e),
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
             )
             yield chunk
             tool_response.append_chunk(chunk)
@@ -670,7 +671,7 @@ class Toolkit:
                         "</system-reminder>",
                     ),
                 ],
-                state="interrupted",
+                state=ToolResultState.INTERRUPTED,
             )
             yield chunk
             tool_response.append_chunk(chunk)
@@ -978,8 +979,8 @@ AsyncGenerator[ToolResponse, None]] | AsyncGenerator[ToolResponse, None]]`):
         tool_name: str,
         activated_groups: list[str],
     ) -> ToolBase:
-        """Check if the tool is available now. If not, return the
-        agent-oriented error message. Otherwise, return None.
+        """Check if the tool is available now. If not, raise the
+        agent-oriented exception.
 
         Args:
             tool_name (`str`):

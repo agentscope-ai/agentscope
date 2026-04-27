@@ -13,7 +13,7 @@ class ToolInterruptedError(AgentOrientedException):
 
 
 class ToolJSONDecodeError(AgentOrientedException):
-    """Exception raised when the arguments passed to a tool are invalid."""
+    """Exception raised when tool arguments fail JSON decoding or repair."""
 
 
 class ToolGroupInactiveError(AgentOrientedException):

@@ -740,7 +740,7 @@ class Agent(BaseModel):
         Yields:
             `ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
-            | ToolResultBinaryDeltaEvent \
+            | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the handling of the incoming event.
         """
@@ -918,7 +918,7 @@ class Agent(BaseModel):
             | RequireExternalExecutionEvent \
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
-            | ToolResultBinaryDeltaEvent \
+            | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the execution of the tool calls.
         """
@@ -972,7 +972,7 @@ class Agent(BaseModel):
             | RequireExternalExecutionEvent \
             | ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
-            | ToolResultBinaryDeltaEvent \
+            | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the execution of the tool calls.
 
@@ -1067,7 +1067,7 @@ class Agent(BaseModel):
             | ToolResultStartEvent \
             | ToolResult \
             | TextDeltaEvent \
-            | ToolResultBinaryDeltaEvent \
+            | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated during the tool call execution.
         """
@@ -1256,7 +1256,7 @@ class Agent(BaseModel):
         Yields:
             `ToolResultStartEvent \
             | ToolResultTextDeltaEvent \
-            | ToolResultBinaryDeltaEvent \
+            | ToolResultDataDeltaEvent \
             | ToolResultEndEvent`:
                 The events generated for the error tool call.
         """

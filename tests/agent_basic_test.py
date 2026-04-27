@@ -888,8 +888,6 @@ class AgentBasicTest(IsolatedAsyncioTestCase):
         # Check each expected event is in the actual events
         for expected_event in expected_concurrent:
             expected_with_base = {**basic_dict, **expected_event}
-            print(expected_with_base)
-            print(concurrent_events)
             self.assertIn(expected_with_base, concurrent_events)
 
         # Assert suffix events (fixed order)
