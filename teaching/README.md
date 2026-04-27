@@ -4,21 +4,50 @@
 
 ## 学习路径
 
-| 章节 | 内容 | 预计时间 |
-|------|------|----------|
-| [01 - 项目概述](01_project_overview.md) | AgentScope 是什么，能做什么 | 10 分钟 |
-| [02 - 环境搭建](02_installation.md) | 安装 Python 环境、项目依赖 | 15 分钟 |
-| [03 - 快速入门](03_quickstart.md) | 5 分钟构建你的第一个智能体 | 20 分钟 |
-| [04 - 核心概念](04_core_concepts.md) | Agent、Model、Tool、Memory | 30 分钟 |
-| [05 - 架构设计](05_architecture.md) | 模块设计、代码组织 | 25 分钟 |
-| [06 - 开发指南](06_development_guide.md) | 代码规范、调试技巧 | 20 分钟 |
-| [07 - Java 开发者视角](07_java_comparison.md) | 与 Java/Spring 对比学习 | 15 分钟 |
+### 基础模块（入门必读）
+
+| 章节 | 内容 | 预计时间 | 文档 |
+|------|------|----------|------|
+| [01 - 项目概述](01_project_overview.md) | AgentScope 是什么，能做什么 | 10 分钟 | |
+| [02 - 环境搭建](02_installation.md) | 安装 Python 环境、项目依赖 | 15 分钟 | |
+| [03 - 快速入门](03_quickstart.md) | 5 分钟构建你的第一个智能体 | 20 分钟 | |
+| [04 - 核心概念](04_core_concepts.md) | Agent、Model、Tool、Memory | 30 分钟 | |
+| [05 - 架构设计](05_architecture.md) | 模块设计、代码组织 | 25 分钟 | |
+| [06 - 开发指南](06_development_guide.md) | 代码规范、调试技巧 | 20 分钟 | |
+| [07 - Java 开发者视角](07_java_comparison.md) | 与 Java/Spring 对比学习 | 15 分钟 | |
+
+### 深度模块（进阶深入）
+
+| 章节 | 内容 | 预计时间 | 文档 |
+|------|------|----------|------|
+| [A1 - Agent 模块深度分析](module_agent_deep.md) | Agent 基类、Hook 机制、设计模式 | 45 分钟 | ⭐ 核心 |
+| [A2 - Model 模块深度分析](module_model_deep.md) | 模型适配器、Token 计数、Embedding | 40 分钟 | ⭐ 核心 |
+| [A3 - Tool 与 MCP 模块深度分析](module_tool_mcp_deep.md) | 工具系统、MCP 协议、自定义工具 | 35 分钟 | |
+| [A4 - Memory 与 RAG 模块深度分析](module_memory_rag_deep.md) | 记忆系统、RAG 架构、向量存储 | 40 分钟 | |
+| [A5 - Pipeline 与基础设施深度分析](module_pipeline_infra_deep.md) | 工作流编排、实时交互、追踪系统 | 35 分钟 | |
+
+### 参考资料
+
+| 章节 | 内容 | 文档 |
+|------|------|------|
+| [R1 - 官方文档与参考资料](reference_official_docs.md) | 官方文档精华、竞品对比 | 📚 必读 |
+| [R2 - 最佳实践](reference_best_practices.md) | 设计模式、Prompt 工程、生产部署 | 📚 必读 |
+
+### 补充材料
+
+| 章节 | 内容 | 文档 |
+|------|------|------|
+| [最佳实践](best_practices.md) | 开发最佳实践汇总 | |
+| [案例研究](case_studies.md) | 实际项目案例分析 | |
+| [故障排除](troubleshooting.md) | 常见问题与解决方案 | |
+| [学习报告](research_report.md) | 调研报告 | |
 
 ## 前置知识
 
 - 了解 Java 面向对象编程
 - 熟悉设计模式（工厂、策略、模板方法）
 - 最好有 REST API 或微服务开发经验
+- Python 基础（若不熟悉，请先学习 Python 基础）
 
 ## 你能学到什么
 
@@ -28,6 +57,26 @@
 4. **记忆管理** - 实现短期/长期记忆
 5. **RAG 检索增强** - 知识库问答
 6. **实时语音交互** - 构建语音对话应用
+7. **生产级部署** - 从开发到生产的完整流程
+
+## 学习建议
+
+### 新手路线（2-3天）
+1. 快速入门 → 核心概念 → 架构设计
+2. 完成 quickstart 示例
+3. 阅读 Agent 模块深度分析
+
+### 进阶路线（1周）
+1. 完成新手路线
+2. 深入阅读所有深度模块
+3. 学习最佳实践资料
+4. 尝试自定义 Agent 开发
+
+### 专家路线（2周+）
+1. 完成进阶路线
+2. 阅读源码并尝试贡献
+3. 研究 RAG 和 Pipeline 模块
+4. 部署自己的多智能体应用
 
 ## 在线资源
 
