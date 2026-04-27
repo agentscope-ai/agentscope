@@ -566,14 +566,18 @@ def trace_format(
 
 
 def trace_llm(
-    func: (
-        "Callable[..., Coroutine[Any, Any,"
-        " ChatResponse | AsyncGenerator[ChatResponse, None]]]"
-    ),
-) -> (
-    "Callable[..., Coroutine[Any, Any,"
-    " ChatResponse | AsyncGenerator[ChatResponse, None]]]"
-):
+    func: Callable[
+        ...,
+        Coroutine[
+            Any,
+            Any,
+            ChatResponse | AsyncGenerator[ChatResponse, None],
+        ],
+    ],
+) -> Callable[
+    ...,
+    Coroutine[Any, Any, ChatResponse | AsyncGenerator[ChatResponse, None]],
+]:
     """Trace the LLM call with OpenTelemetry.
 
     Args:
@@ -593,7 +597,7 @@ def trace_llm(
         self: ChatModelBase,
         *args: Any,
         **kwargs: Any,
-    ) -> "ChatResponse | AsyncGenerator[ChatResponse, None]":
+    ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """The wrapper function for tracing the LLM call."""
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
