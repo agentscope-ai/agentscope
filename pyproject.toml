@@ -198,6 +198,9 @@ Homepage = "https://github.com/agentscope-ai/agentscope"
 Documentation = "https://doc.agentscope.io/"
 Repository = "https://github.com/agentscope-ai/agentscope"
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
 [tool.setuptools]
 packages = { find = { where = ["src"] } }
 include-package-data = true
