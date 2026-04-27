@@ -109,66 +109,150 @@ src/agentscope/
 
 ## 5.3 核心类设计
 
-### Agent 继承体系
+### Agent 继承体系 (源码级详解)
 
 ```
-                    ABC (Abstract Base Class)
-                         │
-                         ▼
-                   AgentBase
-                   (抽象基类)
-                    /    \
-                   /      \
-           UserAgent   ReActAgent
-                         │
-                         ├── RealtimeAgent
-                         └── A2AAgent
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Agent 完整继承体系                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│                          StateModule                                     │
+│                         (状态模块基类)                                     │
+│                              │                                           │
+│                              ▼                                           │
+│                        AgentBase                                        │
+│                     (异步Agent基类)                                       │
+│                    使用 _AgentMeta 元类                                   │
+│                    /            \           \                           │
+│                   /              \           \                          │
+│          ReActAgentBase      UserAgent    A2AAgent                      │
+│         (ReAct模式基类)                                                    │
+│     使用 _ReActAgentMeta 元类                                               │
+│              /                                                                  │
+│             /                                                                   │
+│    ReActAgent ◄─────────────────── RealtimeAgent                           │
+│   (主要推理Agent)                         (独立实现的实时Agent)                   │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+#### 元类与Hook机制
+
+AgentScope 使用元类(metaclass)实现AOP风格的Hook拦截：
 
 ```python
-# _agent_base.py (简化)
-class AgentBase(ABC):
-    """Agent 抽象基类"""
+# _agent_meta.py 核心元类设计
 
-    def __init__(
-        self,
-        name: str,
-        model: ModelWrapperBase,
-        sys_prompt: str | None = None,
-    ):
-        self.name = name
-        self.model = model
-        self.sys_prompt = sys_prompt
+class _AgentMeta(type):
+    """包装 Agent 的 reply/observe/print 方法为 Hook 形式"""
+    def __new__(mcs, name, bases, attrs):
+        # 遍历需要包装的方法
+        for func_name in ["reply", "print", "observe"]:
+            if func_name in attrs:
+                # 使用 _wrap_with_hooks 装饰
+                attrs[func_name] = _wrap_with_hooks(attrs[func_name])
+        return super().__new__(mcs, name, bases, attrs)
+
+class _ReActAgentMeta(_AgentMeta):
+    """ReAct Agent 专用元类，额外包装 _reasoning 和 _acting"""
+    def __new__(mcs, name, bases, attrs):
+        for func_name in ["_reasoning", "_acting"]:
+            if func_name in attrs:
+                attrs[func_name] = _wrap_with_hooks(attrs[func_name])
+        return super().__new__(mcs, name, bases, attrs)
+```
+
+#### AgentBase 核心架构 (`_agent_base.py`)
+
+```python
+class AgentBase(StateModule, metaclass=_AgentMeta):
+    """Agent 抽象基类，所有Agent的父类"""
+
+    # 支持的 Hook 类型
+    supported_hook_types = [
+        "pre_reply", "post_reply",       # reply() 前后
+        "pre_print", "post_print",       # print() 前后
+        "pre_observe", "post_observe",   # observe() 前后
+    ]
+
+    # 类级别 Hook (所有实例共享)
+    _class_pre_reply_hooks = OrderedDict()
+    _class_post_reply_hooks = OrderedDict()
+
+    # 实例级别 Hook (单个实例独享)
+    _instance_pre_reply_hooks = OrderedDict()
+    _instance_post_reply_hooks = OrderedDict()
+
+    def __init__(self):
+        super().__init__()
+        self.id = shortuuid.uuid()  # 唯一标识
+        self._reply_task = None      # 当前回复任务
+        self._subscribers = {}        # 订阅者列表
+        self._stream_prefix = {}      # 流式输出缓冲
+```
+
+#### ReActAgentBase 核心架构 (`_react_agent_base.py`)
+
+```python
+class ReActAgentBase(AgentBase, metaclass=_ReActAgentMeta):
+    """ReAct 推理模式基类"""
+
+    # 额外的 Hook 类型
+    supported_hook_types = [
+        # 继承自 AgentBase
+        "pre_reply", "post_reply",
+        "pre_print", "post_print",
+        "pre_observe", "post_observe",
+        # ReAct 专用
+        "pre_reasoning", "post_reasoning",  # 推理前后
+        "pre_acting", "post_acting",          # 行动前后
+    ]
 
     @abstractmethod
-    def reply(self, msg: str | Msg) -> str:
-        """处理消息并返回回复"""
-        pass
+    async def _reasoning(self, *args, **kwargs):
+        """推理过程，子类实现"""
+
+    @abstractmethod
+    async def _acting(self, *args, **kwargs):
+        """行动过程，子类实现"""
 ```
 
+#### ReActAgent 完整实现 (`_react_agent.py`)
+
 ```python
-# _react_agent.py
-class ReActAgent(AgentBase):
-    """ReAct 推理 Agent"""
+class ReActAgent(ReActAgentBase):
+    """ReAct 推理 Agent 的完整实现"""
 
     def __init__(
         self,
         name: str,
-        model: ModelWrapperBase,
-        tools: list[Tool] | None = None,
+        sys_prompt: str,
+        model: ChatModelBase,
+        formatter: FormatterBase,
+        toolkit: Toolkit | None = None,
         memory: MemoryBase | None = None,
-        max_retries: int = 3,
+        long_term_memory: LongTermMemoryBase | None = None,
+        parallel_tool_calls: bool = False,
+        max_iters: int = 10,
+        # ... 更多参数
     ):
-        super().__init__(name, model, ...)
-        self.tools = tools or []
-        self.memory = memory or InMemoryMemory()
+        super().__init__()
 
-    def reply(self, msg: str | Msg) -> str:
-        """ReAct 推理循环"""
-        # 1. think: 让 LLM 决定动作
-        # 2. act: 执行工具或回复
-        # 3. observe: 获取结果
-        # 4. loop until done
+        # 核心组件
+        self.model = model           # LLM
+        self.formatter = formatter   # 消息格式化
+        self.memory = memory        # 短期记忆
+        self.long_term_memory = long_term_memory  # 长期记忆
+        self.toolkit = toolkit      # 工具箱
+
+        # 配置
+        self.parallel_tool_calls = parallel_tool_calls
+        self.max_iters = max_iters
+
+    @property
+    def sys_prompt(self) -> str:
+        """动态系统提示词，可包含工具描述"""
+        return self._sys_prompt + "\n\n" + self.toolkit.get_agent_skill_prompt()
 ```
 
 ### Model 继承体系
@@ -285,7 +369,114 @@ public class MyApplication {
 //     banner-mode: off
 ```
 
-## 5.6 消息流
+## 5.6 ReActAgent 完整时序图
+
+### reply() 方法完整调用序列
+
+```
+┌─────────┐     ┌──────────┐     ┌────────┐     ┌──────────┐     ┌────────┐
+│  User   │     │ ReActAgent│    │ Memory │     │ Model    │     │ Toolkit │
+└────┬────┘     └─────┬────┘     └───┬────┘     └────┬─────┘     └────┬────┘
+     │                │              │               │                  │
+     │ reply(msg)     │              │               │                  │
+     │───────────────▶│              │               │                  │
+     │                │              │               │                  │
+     │                │ add(msg)     │               │                  │
+     │                │─────────────▶│               │                  │
+     │                │              │               │                  │
+     │                │ _retrieve_from_long_term_memory()              │
+     │                │───────────────│───────────────│                  │
+     │                │              │               │                  │
+     │                │ _retrieve_from_knowledge()                   │
+     │                │───────────────│───────────────────────────────│
+     │                │              │               │                  │
+     │                │ ┌─────────────────────────────────────────┐ │
+     │                │ │  for iteration in range(max_iters):      │ │
+     │                │ │                                          │ │
+     │                │ │  1. _compress_memory_if_needed()         │ │
+     │                │ │──────────────│                          │ │
+     │                │ │              │                          │ │
+     │                │ │  2. _reasoning()                       │ │
+     │                │ │─────────────▶│ format()                 │ │
+     │                │ │              │───────────▶│              │ │
+     │                │ │              │               │ invoke()  │ │
+     │                │ │              │               │──────────▶│ │
+     │                │ │              │               │◀──────────│ │
+     │                │ │              │◀──────────────│           │ │
+     │                │ │              │               │                  │
+     │                │ │  3. 检查 tool_use blocks                │ │
+     │                │ │              │               │                  │
+     │                │ │  4. _acting(tool_call)                  │ │
+     │                │ │─────────────▶│               │ call_tool  │
+     │                │ │              │               │───────────▶│ │
+     │                │ │              │               │◀──────────│ │
+     │                │ │              │               │                  │
+     │                │ │  5. 检查完成条件                         │ │
+     │                │ └─────────────────────────────────────────┘ │
+     │                │              │               │                  │
+     │                │ record()     │               │                  │
+     │                │◀─────────────│               │                  │
+     │                │              │               │                  │
+     │ reply_msg     │              │               │                  │
+     │◀──────────────│              │               │                  │
+     │                │              │               │                  │
+```
+
+### _reasoning() 详细流程
+
+```
+┌──────────────┐    ┌────────────┐    ┌───────────┐    ┌──────────┐
+│ ReActAgent  │    │  Memory    │    │ Formatter │    │  Model   │
+└──────┬──────┘    └─────┬──────┘    └─────┬─────┘    └────┬─────┘
+       │                 │                  │                 │
+       │ _reasoning()   │                  │                 │
+       │────────────────│                  │                 │
+       │                 │                  │                 │
+       │                 │ get_memory()    │                 │
+       │                 │◀──────────────│                 │
+       │                 │────────────────│                 │
+       │                 │                  │                 │
+       │                 │ format(msgs)    │                 │
+       │                 │─────────────────▶│                │
+       │                 │                  │                 │
+       │                 │                  │ model(prompt)  │
+       │                 │                  │────────────────▶
+       │                 │                  │                 │
+       │                 │                  │◀────────────────│
+       │                 │                  │                 │
+       │                 │ add(msg)         │                 │
+       │                 │◀─────────────────│                 │
+       │                 │                  │                 │
+       │ return msg     │                  │                 │
+       │◀──────────────│                  │                 │
+```
+
+### _acting() 详细流程
+
+```
+┌──────────────┐    ┌────────────┐    ┌───────────┐    ┌──────────┐
+│ ReActAgent  │    │   Memory   │    │  Toolkit  │    │   Tool   │
+└──────┬──────┘    └─────┬──────┘    └─────┬─────┘    └────┬─────┘
+       │                 │                  │                 │
+       │ _acting(tool_call)                │                 │
+       │────────────────│                  │                 │
+       │                 │                  │                 │
+       │                 │ call_tool_function(tool_call)     │
+       │                 │──────────────────▶│                │
+       │                 │                  │                 │
+       │                 │                  │ execute()      │
+       │                 │                  │───────────────▶│
+       │                 │                  │                 │
+       │                 │                  │◀───────────────│
+       │                 │                  │                 │
+       │                 │ add(tool_result) │                 │
+       │                 │◀─────────────────│                 │
+       │                 │                  │                 │
+       │ return output  │                  │                 │
+       │◀──────────────│                  │                 │
+```
+
+## 5.7 消息流 (简化版)
 
 ```
 User Input
@@ -313,7 +504,153 @@ User Input
 Response to User
 ```
 
-## 5.7 扩展机制
+## 5.8 各种 Agent 类型详解
+
+### UserAgent - 用户输入处理
+
+`UserAgent` 用于获取用户输入，是人机交互的桥梁：
+
+```python
+# _user_agent.py 核心实现
+class UserAgent(AgentBase):
+    """用户交互 Agent"""
+
+    _input_method: UserInputBase = TerminalUserInput()
+
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    async def reply(
+        self,
+        msg: Msg | list[Msg] | None = None,
+        structured_model: Type[BaseModel] | None = None,
+    ) -> Msg:
+        # 调用输入方法获取用户输入
+        input_data = await self._input_method(
+            agent_id=self.id,
+            agent_name=self.name,
+            structured_model=structured_model,
+        )
+        # 构建消息
+        msg = Msg(
+            self.name,
+            content=input_data.blocks_input,
+            role="user",
+            metadata=input_data.structured_input,
+        )
+        await self.print(msg)
+        return msg
+```
+
+**使用场景：**
+- 等待用户确认或输入
+- 结构化数据收集（如表单）
+- 对话式交互入口
+
+### A2AAgent - Agent间通信
+
+`A2AAgent` 实现 A2A (Agent-to-Agent) 协议，用于与外部 Agent 系统互操作：
+
+```python
+# _a2a_agent.py 核心实现
+class A2AAgent(AgentBase):
+    """A2A 协议 Agent"""
+
+    def __init__(
+        self,
+        agent_card: AgentCard,  # 远程 Agent 信息
+        client_config: ClientConfig | None = None,
+        consumers: list[Consumer] | None = None,
+    ):
+        super().__init__()
+        self.agent_card = agent_card
+        self._a2a_client_factory = ClientFactory(config=client_config)
+        self._observed_msgs: list[Msg] = []
+        self.formatter = A2AChatFormatter()
+
+    async def reply(self, msg: Msg | list[Msg] | None = None, **kwargs) -> Msg:
+        # 合并观察到的消息
+        msgs_list = self._observed_msgs
+        if msg:
+            msgs_list.extend(msg if isinstance(msg, list) else [msg])
+
+        # 创建客户端并发送
+        client = self._a2a_client_factory.create(card=self.agent_card)
+        a2a_message = await self.formatter.format(msgs_list)
+
+        # 处理响应
+        async for item in client.send_message(a2a_message):
+            # 转换 A2A 消息为 AgentScope 格式
+            response_msg = await self.formatter.format_a2a_message(...)
+
+        self._observed_msgs.clear()
+        return response_msg
+```
+
+**A2A 协议特点：**
+- 基于 HTTP 的请求-响应协议
+- 支持流式响应
+- 任务状态跟踪
+- 工件(Artifact)传递
+
+### RealtimeAgent - 实时语音交互
+
+`RealtimeAgent` 专为实时语音交互设计，使用事件驱动架构：
+
+```python
+# _realtime_agent.py 核心实现
+class RealtimeAgent(StateModule):
+    """实时语音 Agent"""
+
+    def __init__(
+        self,
+        name: str,
+        sys_prompt: str,
+        model: RealtimeModelBase,  # 实时模型，如 qwen-omni
+        toolkit: Toolkit | None = None,
+    ):
+        super().__init__()
+        self.model = model
+        self._incoming_queue = Queue()   # 输入队列
+        self._model_response_queue = Queue()  # 输出队列
+
+    async def start(self, outgoing_queue: Queue) -> None:
+        # 连接实时模型
+        await self.model.connect(
+            self._model_response_queue,
+            instructions=self.sys_prompt,
+            tools=self.toolkit.get_json_schemas() if self.toolkit else None,
+        )
+        # 启动事件循环
+        self._external_event_handling_task = asyncio.create_task(
+            self._forward_loop()  # 外部事件 -> 模型
+        )
+        self._model_response_handling_task = asyncio.create_task(
+            self._model_response_loop(outgoing_queue)  # 模型 -> 外部
+        )
+```
+
+**事件处理流程：**
+
+```
+外部输入                    RealtimeAgent                  实时模型
+   │                            │                            │
+   │ ClientAudioAppendEvent     │                            │
+   │──────────────────────────▶│                            │
+   │                            │                            │
+   │                            │ AudioBlock                 │
+   │                            │───────────────────────────▶│
+   │                            │                            │
+   │                            │◀──────────────────────────│
+   │                            │ ModelResponseAudioDelta   │
+   │                            │                            │
+   │ AgentResponseAudioDelta   │                            │
+   │◀──────────────────────────│                            │
+   │                            │                            │
+```
+
+## 5.9 扩展机制
 
 ### 注册自定义组件
 
@@ -350,73 +687,418 @@ public class MyConfig {
 ```
 
 
-## 5.8 多智能体协作模式
+## 5.10 多智能体协作模式
 
-AgentScope 提供多种多智能体协作模式，适用于不同场景：
+AgentScope 提供强大的多智能体协作机制，核心是 **MsgHub（消息中心）** 配合 **Pipeline（管道）**。以下是详细分析：
 
-### 5.8.1 Routing (路由模式)
+### 5.10.1 MsgHub 消息中心
 
-根据输入内容自动选择最合适的 Agent：
+MsgHub 是 AgentScope 多智能体协作的核心组件，负责管理 Agent 之间的消息订阅与广播。
 
-```python
-from agentscope import agent, pipeline
+#### 核心原理
 
-# 创建多个专家 Agent
-researcher = agent.ReActAgent(name="研究员", model=..., tools=[tavily_search])
-writer = agent.ReActAgent(name="作家", model=...)
-coder = agent.ReActAgent(name="程序员", model=..., tools=[execute_python_code])
-
-# 使用 Routing 自动选择
-with pipeline.Routing(agents=[researcher, writer, coder]) as router:
-    result = router("研究 AI Agent 的最新发展趋势")
-    # 自动路由到最合适的 Agent
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         MsgHub                                   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  participants: [Agent1, Agent2, Agent3, ...]            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│          ┌───────────────────┼───────────────────┐             │
+│          ▼                   ▼                   ▼             │
+│     ┌─────────┐         ┌─────────┐         ┌─────────┐        │
+│     │ Agent1  │         │ Agent2  │         │ Agent3  │        │
+│     └────┬────┘         └────┬────┘         └────┬────┘        │
+│          │                   │                   │             │
+│          └───────────────────┼───────────────────┘             │
+│                              ▼                                   │
+│                   ┌──────────────────┐                          │
+│                   │  广播消息给所有   │                          │
+│                   │  其他参与者      │                          │
+│                   └──────────────────┘                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.8.2 Handoffs (交接模式)
+#### 订阅者机制
 
-在多个 Agent 之间转移对话控制权：
-
-```python
-from agentscope import agent, pipeline
-
-specialist_1 = agent.ReActAgent(name="销售", model=...)
-specialist_2 = agent.ReActAgent(name="技术", model=...)
-
-with pipeline.Handoffs(agents=[specialist_1, specialist_2]) as handoff:
-    result = specialist_1("我想要了解企业版产品")
-    # 自动切换到 specialist_2 继续对话
-```
-
-### 5.8.3 Supervisor (监督者模式)
-
-监督者协调多个专家 Agent 完成任务：
+每个 Agent 维护一个 `_subscribers` 字典，key 是 MsgHub 的 name，value 是订阅该 Agent 消息的 Agent 列表。
 
 ```python
-from agentscope import agent, pipeline
+# AgentBase 中的订阅者管理 (_agent_base.py)
+self._subscribers: dict[str, list[AgentBase]] = {}
 
-researcher = agent.ReActAgent(name="研究员", model=..., tools=[tavily_search])
-writer = agent.ReActAgent(name="作家", model=...)
+def reset_subscribers(self, msghub_name: str, subscribers: list["AgentBase"]) -> None:
+    """重置订阅者列表，排除自身"""
+    self._subscribers[msghub_name] = [_ for _ in subscribers if _ != self]
 
-with pipeline.Supervisor(agents=[researcher, writer]) as supervisor:
-    article = supervisor("写一篇关于 AI 在医疗领域应用的研究报告")
-    # 监督者自动调度研究员和作家协作
+def remove_subscribers(self, msghub_name: str) -> None:
+    """移除特定 MsgHub 的订阅者"""
+    self._subscribers.pop(msghub_name, None)
 ```
 
-### 5.8.4 Debate (辩论模式)
-
-多个 Agent 从不同角度分析问题：
+#### 消息广播流程
 
 ```python
-from agentscope import agent, pipeline
-
-pro_agent = agent.ReActAgent(name="正方", model=...)
-con_agent = agent.ReActAgent(name="反方", model=...)
-
-with pipeline.Debate(agents=[pro_agent, con_agent]) as debate:
-    analysis = debate("分析远程办公的利弊")
+# AgentBase 中的广播逻辑
+async def _broadcast_to_subscribers(self, reply_msg: Msg) -> None:
+    """将回复消息广播给所有订阅者"""
+    for subscribers in self._subscribers.values():
+        for subscriber in subscribers:
+            await subscriber.observe(broadcast_msg)
 ```
 
-## 5.9 Voice Agent (语音代理)
+#### 基本用法
+
+```python
+from agentscope.pipeline import MsgHub
+from agentscope.message import Msg
+
+async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
+    # 进入时广播 announcement 消息（如果指定）
+    await hub.broadcast(Msg("system", "开始讨论", "system"))
+
+    # Agent1 的回复会自动广播给 agent2 和 agent3
+    result1 = await agent1(user_msg)
+
+    # 手动广播消息
+    await hub.broadcast(Msg("system", "讨论结束", "system"))
+
+# 退出时自动清理订阅者
+```
+
+#### 动态管理参与者
+
+```python
+hub = MsgHub(participants=[alice, bob, charlie])
+
+# 添加参与者
+hub.add(new_agent)
+
+# 删除参与者
+hub.delete(bob)
+
+# 动态开启/关闭自动广播
+hub.set_auto_broadcast(False)  # 关闭后只支持手动 broadcast()
+```
+
+#### 带初始公告的多参与者对话
+
+```python
+# examples/workflows/multiagent_conversation/main.py
+async with MsgHub(
+    participants=[alice, bob, charlie],
+    announcement=Msg("system", "现在进行自我介绍...", "system"),
+) as hub:
+    await sequential_pipeline([alice, bob, charlie])
+
+    # 模拟 Bob 离开
+    hub.delete(bob)
+    await hub.broadcast(Msg("bob", "我先走了，再见！", "assistant"))
+```
+
+---
+
+### 5.10.2 Pipeline 管道
+
+Pipeline 提供了两种核心模式：**顺序执行** 和 **并行分发**。
+
+#### SequentialPipeline 顺序管道
+
+```python
+# 顺序执行: Agent1 -> Agent2 -> Agent3
+from agentscope.pipeline import sequential_pipeline, SequentialPipeline
+
+# 函数式调用
+result = await sequential_pipeline([agent1, agent2, agent3], user_msg)
+
+# 类方式调用（可复用）
+pipeline = SequentialPipeline([agent1, agent2, agent3])
+result = await pipeline(user_msg)
+```
+
+#### FanoutPipeline 并行管道
+
+```python
+# 并行执行: 同一消息分发给所有 Agent
+from agentscope.pipeline import fanout_pipeline, FanoutPipeline
+
+# 并发执行（默认）
+results = await fanout_pipeline([agent1, agent2, agent3], user_msg)
+
+# 顺序执行
+results = await fanout_pipeline(
+    [agent1, agent2, agent3],
+    user_msg,
+    enable_gather=False
+)
+
+# 类方式调用
+pipeline = FanoutPipeline([alice, bob, charlie], enable_gather=True)
+results = await pipeline(user_msg)
+```
+
+#### 实际应用示例
+
+```python
+# examples/workflows/multiagent_concurrent/main.py
+class ExampleAgent(AgentBase):
+    async def reply(self, *args, **kwargs) -> Msg:
+        start_time = datetime.now()
+        await self.print(Msg(self.name, f"begins at {start_time}", "assistant"))
+        await asyncio.sleep(np.random.choice([2, 3, 4]))
+        end_time = datetime.now()
+        return Msg(self.name, f"finishes at {end_time}", "user")
+
+# 并发执行：总耗时约 4 秒（最慢的那个）
+collected_res = await fanout_pipeline([alice, bob, chalice], enable_gather=True)
+
+# 顺序执行：总耗时约 9 秒（求和）
+collected_res = await fanout_pipeline([alice, bob, chalice], enable_gather=False)
+```
+
+---
+
+### 5.10.3 Pipeline 组合与嵌套
+
+多种管道可以嵌套使用，实现复杂的工作流：
+
+#### 嵌套示例：辩论赛
+
+```python
+# examples/workflows/multiagent_debate/main.py
+async def run_multiagent_debate():
+    while True:
+        # 1. MsgHub 内进行辩论（Agent 互相听到对方观点）
+        async with MsgHub(participants=[alice, bob, moderator]):
+            await alice(Msg("user", "正方请发表观点", "user"))
+            await bob(Msg("user", "反方请发表观点", "user"))
+
+        # 2. 主持人（moderator）在 MsgHub 外独立评判
+        msg_judge = await moderator(
+            Msg("user", "辩论是否结束？正确答案是什么？", "user"),
+            structured_model=JudgeModel,
+        )
+
+        if msg_judge.metadata.get("finished"):
+            print(f"正确答案: {msg_judge.metadata.get('correct_answer')}")
+            break
+```
+
+#### 复杂嵌套：狼人杀游戏
+
+```python
+# examples/game/werewolves/game.py
+async def werewolves_game(agents: list[ReActAgent]):
+    players = Players()
+
+    # 第一阶段：广播游戏开始
+    async with MsgHub(participants=agents) as greeting_hub:
+        await greeting_hub.broadcast(
+            await moderator(Prompts.to_all_new_game.format(names_to_str(agents)))
+        )
+
+    # 分配角色...
+
+    # 夜晚阶段：狼人讨论（子集 MsgHub）
+    async with MsgHub(participants=werewolves) as night_hub:
+        await werewolves_pipeline ...
+
+    # 投票阶段：全体讨论
+    async with MsgHub(participants=alive_players) as vote_hub:
+        await fanout_pipeline(alive_players, vote_prompt)
+```
+
+#### 流式消息收集
+
+```python
+from agentscope.pipeline import stream_printing_messages, sequential_pipeline
+
+# 收集多个 Agent 的流式输出
+async for msg, is_last in stream_printing_messages(
+    agents=[agent1, agent2],
+    coroutine_task=sequential_pipeline([agent1, agent2], user_msg),
+):
+    print(f"收到消息: {msg.content}, is_last={is_last}")
+```
+
+---
+
+### 5.10.4 协作模式实践
+
+#### 模式一：广播讨论（MsgHub）
+
+适用场景：多人讨论、会议、头脑风暴
+
+```python
+# 所有参与者都能看到彼此的消息
+async with MsgHub(participants=[alice, bob, charlie, david]) as hub:
+    for _ in range(3):  # 3 轮讨论
+        for agent in [alice, bob, charlie, david]:
+            await agent(get_next_topic())
+```
+
+#### 模式二：流水线处理（SequentialPipeline）
+
+适用场景：多步骤处理、管道式工作流
+
+```python
+# 研究 -> 写作 -> 审核 的完整流程
+research_pipeline = SequentialPipeline([researcher, writer, reviewer])
+article = await research_pipeline("AI 在医疗领域的应用")
+```
+
+#### 模式三：并行分发 + 聚合（FanoutPipeline + 聚合）
+
+适用场景：征求意见、方案对比、投票
+
+```python
+# 并行收集意见
+opinions = await fanout_pipeline([expert1, expert2, expert3, expert4], topic)
+
+# 聚合意见
+aggregated = await aggregator("\n".join([o.content for o in opinions]))
+```
+
+#### 模式四：辩论模式（MsgHub + 评判 Agent）
+
+适用场景：决策分析、方案评审
+
+```python
+# 主持人的评判逻辑
+class JudgeModel(BaseModel):
+    finished: bool
+    decision: str | None
+    confidence: float
+
+# 辩论循环
+while True:
+    async with MsgHub(participants=[pro_agent, con_agent]):
+        await pro_agent(topic)
+        await con_agent(topic)  # 看到 pro 的观点
+
+    verdict = await moderator(
+        Msg("user", "判断辩论是否结束", "user"),
+        structured_model=JudgeModel
+    )
+
+    if verdict.metadata.get("finished"):
+        break
+```
+
+---
+
+### 5.10.5 分布式部署注意事项
+
+在分布式环境下部署多 Agent 协作系统时，需要注意以下问题：
+
+#### 1. 消息传递
+
+| 问题 | 本地模式 | 分布式模式 |
+|-----|---------|-----------|
+| 消息广播 | 内存传递 | 需要序列化/反序列化 |
+| 延迟 | 低（<1ms） | 高（取决于网络） |
+| 可靠性 | 进程内保证 | 需要确认机制 |
+
+#### 2. MsgHub 分布式改造
+
+```python
+# 本地 MsgHub（单进程）
+class MsgHub:
+    async def broadcast(self, msg: Msg) -> None:
+        for agent in self.participants:
+            await agent.observe(msg)
+
+# 分布式 MsgHub 需要考虑：
+# 1. 消息序列化（JSON/ pickle）
+# 2. 网络传输（HTTP/WebSocket/gRPC）
+# 3. 参与者发现（服务注册中心）
+# 4. 消息确认与重试
+```
+
+#### 3. Pipeline 分布式执行
+
+```python
+# 本地并行执行
+await fanout_pipeline([a1, a2, a3], msg)  # asyncio.gather
+
+# 分布式执行需要：
+# 1. 任务队列（Celery/Redis Queue）
+# 2. Agent 服务化（每个 Agent 作为独立服务）
+# 3. 结果收集与汇总
+```
+
+#### 4. 状态一致性
+
+```python
+# 问题：多个 Agent 实例可能运行在不同进程/机器上
+# 解决方案：
+
+# 方案 A：共享状态存储
+class DistributedMsgHub(MsgHub):
+    def __init__(self, participants, redis_client):
+        super().__init__(participants)
+        self.redis = redis_client
+
+    async def broadcast(self, msg: Msg):
+        # 广播到 Redis Pub/Sub
+        self.redis.publish("msghub", msg.json())
+
+# 方案 B：Agent 服务化
+# 每个 Agent 暴露 HTTP/gRPC 接口
+# Pipeline 通过 HTTP 调用执行远程 Agent
+```
+
+#### 5. 实际分布式部署架构
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        API Gateway                            │
+│                  （任务分发，结果聚合）                        │
+└─────────────────────────┬────────────────────────────────────┘
+                          │
+        ┌─────────────────┼─────────────────┐
+        ▼                 ▼                 ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  Agent S1    │  │  Agent S2    │  │  Agent S3    │
+│  (服务实例)   │  │  (服务实例)   │  │  (服务实例)   │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └─────────────────┼─────────────────┘
+                         ▼
+              ┌──────────────────────┐
+              │    Message Queue    │
+              │  (Redis/RabbitMQ)   │
+              └──────────────────────┘
+```
+
+#### 6. 开发建议
+
+1. **本地开发调试**：使用本地 MsgHub + Pipeline，确保逻辑正确
+2. **单元测试**：Mock 远程调用，本地验证协作逻辑
+3. **集成测试**：使用 Docker Compose 启动多个 Agent 实例
+4. **生产部署**：Kubernetes + Service Mesh（Istio）管理 Agent 服务
+
+---
+
+### 5.10.6 最佳实践
+
+1. **合理使用 MsgHub**：不需要互相通知时不要使用 MsgHub，增加复杂度
+2. **控制参与者和轮次**：过多 Agent 在一个 MsgHub 中会导致消息风暴
+3. **使用结构化输出**：在需要确定性结果的场景（如辩论评判），使用 `structured_model`
+4. **Pipeline 组合**：复杂流程拆分为多个简单 Pipeline 嵌套
+5. **异常处理**：Pipeline 执行中某个 Agent 失败时，需要考虑是否继续
+
+```python
+# 推荐：明确指定参与者
+async with MsgHub(participants=[alice, bob]) as hub:
+    await alice(topic)
+
+# 不推荐：全局广播（难以追踪）
+async with MsgHub(participants=get_all_agents()) as hub:
+    ...
+```
+
+## 5.11 Voice Agent (语音代理)
 
 AgentScope 支持语音交互，是 2.0 时代的核心方向：
 
@@ -463,7 +1145,7 @@ Phase 3: Real-time Multimodal Models
     └── 规划中：实时语音交互
 ```
 
-## 5.10 Agent 类型一览
+## 5.12 Agent 类型一览
 
 | Agent 类型 | 说明 | 引入版本 |
 |-----------|------|----------|
@@ -475,5 +1157,37 @@ Phase 3: Real-time Multimodal Models
 | `UserAgent` | 用户交互 Agent | v1.0 |
 | `A2AAgent` | Agent-to-Agent 通信 | v1.0 |
 
-## 5.11 下一步
+## 5.13 下一步
 
+### 推荐阅读
+
+- [AgentScope 官方文档](https://agentscope.readthedocs.io/)
+- [示例代码库](https://github.com/modelscope/agentscope/tree/main/examples)
+
+### 扩展学习
+
+1. **深入研究 Pipeline 源码**：阅读 `src/agentscope/pipeline/` 目录下的实现
+2. **实践多 Agent 协作**：参考 `examples/workflows/` 下的示例
+3. **了解分布式部署**：研究 Agent 服务化与消息队列集成
+
+### 架构设计要点总结
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      架构设计核心要点                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. 分层模块化                                              │
+│     应用层 → 服务层 → 基础设施层                             │
+│                                                              │
+│  2. 元类 Hook 机制                                          │
+│     pre_reply, post_reply, pre_observe, post_observe        │
+│                                                              │
+│  3. 多智能体协作                                            │
+│     MsgHub (订阅者广播) + Pipeline (顺序/并行)                │
+│                                                              │
+│  4. 扩展性设计                                              │
+│     注册表模式支持自定义 Model, Agent, Tool                  │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
