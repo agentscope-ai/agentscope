@@ -9,7 +9,7 @@ from mcp import ClientSession
 
 from ._client_base import MCPClientBase
 from .._utils._common import _extract_json_schema_from_mcp_tool
-from ..tool import ToolResponse
+from ..tool._response import ToolResponse
 
 
 class MCPToolFunction:
