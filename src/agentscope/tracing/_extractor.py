@@ -6,7 +6,6 @@ from typing import Any, Dict, Tuple, TYPE_CHECKING
 from .. import _config
 from ..embedding import EmbeddingModelBase
 from ..message import Msg, ToolUseBlock
-from ..model import ChatModelBase
 
 from ._attributes import (
     SpanAttributes,
@@ -19,12 +18,14 @@ from ._utils import _serialize_to_str
 if TYPE_CHECKING:
     from ..agent import AgentBase
     from ..formatter import FormatterBase
+    from ..model import ChatModelBase
     from ..tool import (
         Toolkit,
     )
 else:
     AgentBase = "AgentBase"
     FormatterBase = "FormatterBase"
+    ChatModelBase = "ChatModelBase"
     Toolkit = "Toolkit"
 
 _CLASS_NAME_MAP = {
