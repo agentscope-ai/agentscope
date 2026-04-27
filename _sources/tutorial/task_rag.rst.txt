@@ -331,9 +331,9 @@ They can be used as follows:
  .. code-block:: none
 
     Retrieved Documents:
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='b2FpA5c9kyGyLPLGviW3uQ', embedding=None, score=0.5657136536003619) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "My father is Michael Doe, a doctor. I'm very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=2, total_chunks=5), id='Pok9qBGyzc5xQL65hrx4Gy', embedding=None, score=0.5657136536003619) 
 
-    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='AuQgVfrFc2jUnnSwihN7Hj', embedding=None, score=0.5062624400117309) 
+    Document(metadata=DocMetadata(content={'type': 'text', 'text': "I'm John Doe, 28 years old."}, doc_id='84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168', chunk_id=0, total_chunks=5), id='benG4k2nN6ufy6ovZuHAwH', embedding=None, score=0.5062624400117309) 
 
 
 
@@ -455,16 +455,13 @@ and providing a proper description for the tool.
  .. code-block:: none
 
     The first response: 
-    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any activities you enjoy doing together? Or is there something in particular you need help with related to your friendship?
+    Friday: That's great to hear! It's wonderful to have a best friend. Is there anything specific you'd like to share about John or any special moments you've had together? Or is there something in particular you need help with related to your friendship?
 
 
     The second response: 
-    Friday: I don't have specific information about John Doe's father since "John Doe" is a placeholder name often used to refer to an unidentified or anonymous person. If you're referring to a real person, could you provide more details so I can attempt to find the relevant information? If it's a real John Doe, I can try to look up the information for you. Please note that I will only be able to retrieve and share information that is publicly available and was included in my knowledge base.
-
-    If you want me to search for this information, I can use a function to try and find out more. Would you like me to proceed with a search?
-    {
+    Friday: {
         "type": "tool_use",
-        "id": "call_e1483a3f7bef4ef58cf7e8",
+        "id": "call_964bb400b4a745d48416fb",
         "name": "retrieve_knowledge",
         "input": {
             "query": "John Doe father",
@@ -473,10 +470,9 @@ and providing a proper description for the tool.
         },
         "raw_input": "{\"query\": \"John Doe father\", \"limit\": 5, \"score_threshold\": null}"
     }
-
     system: {
         "type": "tool_result",
-        "id": "call_e1483a3f7bef4ef58cf7e8",
+        "id": "call_964bb400b4a745d48416fb",
         "name": "retrieve_knowledge",
         "output": [
             {
@@ -501,7 +497,7 @@ and providing a proper description for the tool.
             }
         ]
     }
-    Friday: Based on the information retrieved, if we are talking about the same John Doe, his father's name is Michael Doe, and he is a doctor. Please keep in mind that "John Doe" is often used as a placeholder name, and this information might not pertain to the specific individual you're asking about. If you have more details or if this John Doe is a public figure, I can try to look up more accurate information. Is there anything else you'd like to know or clarify?
+    Friday: According to the information I found, John Doe's father is Michael Doe, who is a doctor. If you need more details or if there's anything else you'd like to know, feel free to ask!
 
 
 
@@ -717,7 +713,7 @@ The example is the same as before, just using the ``ImageReader`` and
     Friday: Based on the information provided, your name is Tony Stank.
 
     The image is attached in the agent's memory:
-    Msg(id='ZRJScD8kNBXHmhyDMPU3Zb', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata={}, timestamp='2026-04-20 12:53:12.926', invocation_id='None')
+    Msg(id='h38QHwnRvxaeDo2qLzzHjs', name='user', content=[{'type': 'text', 'text': "<retrieved_knowledge>Use the following content from the knowledge base(s) if it's helpful:\n"}, {'type': 'image', 'source': {'type': 'url', 'url': './example.jpg'}}, {'type': 'text', 'text': '</retrieved_knowledge>'}], role='user', metadata={}, timestamp='2026-04-27 04:00:49.736', invocation_id='None')
 
 
 
@@ -730,7 +726,7 @@ image.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 47.618 seconds)
+   **Total running time of the script:** (0 minutes 37.862 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_rag.py:

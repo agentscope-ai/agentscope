@@ -365,3 +365,42 @@ p.sphx-glr-signature a.reference.external {
 a.sphx-glr-backref-instance {
   text-decoration: none;
 }
+
+.sphx-glr-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding-bottom: 2em;
+}
+
+.sphx-glr-tag {
+    padding: 5px 10px;
+    background-color: var(--sg-tooltip-background);
+    border-color: transparent;
+    border-style: solid;
+    border-width: 2px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.sphx-glr-tag:hover {
+    border-style: solid;
+    border-color: var(--sg-thumb-hover-border);
+}
+
+.sphx-glr-tag.active {
+    border-style: solid;
+    border-color: var(--sg-thumb-hover-border);
+}
+
+.sphx-glr-tag-label {
+    padding: 5px 10px 5px 0px;
+    border-color: transparent;
+    border-style: solid;
+    border-width: 2px;
+    border-radius: 3px;
+}
+
+#sphx-glr-tag-clear {
+    cursor: pointer;
+}

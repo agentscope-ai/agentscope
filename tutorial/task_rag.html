@@ -10,7 +10,7 @@
         <title>RAG - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
-    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=fd6457a4" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
@@ -606,9 +606,9 @@ They can be used as follows:</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Retrieved Documents:
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;b2FpA5c9kyGyLPLGviW3uQ&#39;, embedding=None, score=0.5657136536003619)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;My father is Michael Doe, a doctor. I&#39;m very proud of him. My mother is Sarah Doe, a teacher. She is very kind and always helps me with my studies.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=2, total_chunks=5), id=&#39;Pok9qBGyzc5xQL65hrx4Gy&#39;, embedding=None, score=0.5657136536003619)
 
-Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;AuQgVfrFc2jUnnSwihN7Hj&#39;, embedding=None, score=0.5062624400117309)
+Document(metadata=DocMetadata(content={&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;I&#39;m John Doe, 28 years old.&quot;}, doc_id=&#39;84d9740607155242357481c1cd8eb8001a986cda3665aaac33329ab235458168&#39;, chunk_id=0, total_chunks=5), id=&#39;benG4k2nN6ufy6ovZuHAwH&#39;, embedding=None, score=0.5062624400117309)
 </pre></div>
 </div>
 <p>The knowledge base class provides two main methods: <code class="docutils literal notranslate"><span class="pre">add_documents</span></code> and
@@ -721,16 +721,13 @@ and providing a proper description for the tool.</p>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>The first response:
-Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any activities you enjoy doing together? Or is there something in particular you need help with related to your friendship?
+Friday: That&#39;s great to hear! It&#39;s wonderful to have a best friend. Is there anything specific you&#39;d like to share about John or any special moments you&#39;ve had together? Or is there something in particular you need help with related to your friendship?
 
 
 The second response:
-Friday: I don&#39;t have specific information about John Doe&#39;s father since &quot;John Doe&quot; is a placeholder name often used to refer to an unidentified or anonymous person. If you&#39;re referring to a real person, could you provide more details so I can attempt to find the relevant information? If it&#39;s a real John Doe, I can try to look up the information for you. Please note that I will only be able to retrieve and share information that is publicly available and was included in my knowledge base.
-
-If you want me to search for this information, I can use a function to try and find out more. Would you like me to proceed with a search?
-{
+Friday: {
     &quot;type&quot;: &quot;tool_use&quot;,
-    &quot;id&quot;: &quot;call_e1483a3f7bef4ef58cf7e8&quot;,
+    &quot;id&quot;: &quot;call_964bb400b4a745d48416fb&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;input&quot;: {
         &quot;query&quot;: &quot;John Doe father&quot;,
@@ -739,10 +736,9 @@ If you want me to search for this information, I can use a function to try and f
     },
     &quot;raw_input&quot;: &quot;{\&quot;query\&quot;: \&quot;John Doe father\&quot;, \&quot;limit\&quot;: 5, \&quot;score_threshold\&quot;: null}&quot;
 }
-
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_e1483a3f7bef4ef58cf7e8&quot;,
+    &quot;id&quot;: &quot;call_964bb400b4a745d48416fb&quot;,
     &quot;name&quot;: &quot;retrieve_knowledge&quot;,
     &quot;output&quot;: [
         {
@@ -767,7 +763,7 @@ system: {
         }
     ]
 }
-Friday: Based on the information retrieved, if we are talking about the same John Doe, his father&#39;s name is Michael Doe, and he is a doctor. Please keep in mind that &quot;John Doe&quot; is often used as a placeholder name, and this information might not pertain to the specific individual you&#39;re asking about. If you have more details or if this John Doe is a public figure, I can try to look up more accurate information. Is there anything else you&#39;d like to know or clarify?
+Friday: According to the information I found, John Doe&#39;s father is Michael Doe, who is a doctor. If you need more details or if there&#39;s anything else you&#39;d like to know, feel free to ask!
 </pre></div>
 </div>
 <p>In the above example, our question is “Do you know who his father is?”.
@@ -929,12 +925,12 @@ The example is the same as before, just using the <code class="docutils literal 
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Friday: Based on the information provided, your name is Tony Stank.
 
 The image is attached in the agent&#39;s memory:
-Msg(id=&#39;ZRJScD8kNBXHmhyDMPU3Zb&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-20 12:53:12.926&#39;, invocation_id=&#39;None&#39;)
+Msg(id=&#39;h38QHwnRvxaeDo2qLzzHjs&#39;, name=&#39;user&#39;, content=[{&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &quot;&lt;retrieved_knowledge&gt;Use the following content from the knowledge base(s) if it&#39;s helpful:\n&quot;}, {&#39;type&#39;: &#39;image&#39;, &#39;source&#39;: {&#39;type&#39;: &#39;url&#39;, &#39;url&#39;: &#39;./example.jpg&#39;}}, {&#39;type&#39;: &#39;text&#39;, &#39;text&#39;: &#39;&lt;/retrieved_knowledge&gt;&#39;}], role=&#39;user&#39;, metadata={}, timestamp=&#39;2026-04-27 04:00:49.736&#39;, invocation_id=&#39;None&#39;)
 </pre></div>
 </div>
 <p>We can see that the agent can answer the question based on the retrieved
 image.</p>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 47.618 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 37.862 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-rag-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/dc35bacf6284d8bd4018ad68eeecf856/task_rag.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_rag.ipynb</span></code></a></p>
@@ -1046,6 +1042,7 @@ image.</p>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
     <script src="../_static/language_switch.js?v=92e4c85c"></script>
     </body>
 </html>
