@@ -257,7 +257,7 @@ class ToolkitSkillViewerTest(IsolatedAsyncioTestCase):
                         "text": "# My Skill\nThis is the skill content.",
                     },
                 ],
-                "state": "finished",
+                "state": "success",
                 "metadata": {},
                 "id": "test_call_1",
             },

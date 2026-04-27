@@ -30,6 +30,9 @@ class ToolBase(ABC):
     is_read_only: bool
     """If this tool is read-only, which will be used in the permission
     checking."""
+    is_external_tool: bool
+    """If this tool is an external tool, which doesn't need to implement the
+    __call__ method and the agent will yield the external tool call event."""
     is_mcp: bool
     """If this tool is an MCP tool, which will be used in the permission"""
     mcp_name: str | None = None
@@ -172,10 +175,18 @@ class ToolBase(ABC):
 
         return False
 
-    @abstractmethod
     async def __call__(
         self,
         *args: Any,
         **kwargs: Any,
     ) -> ToolChunk | AsyncGenerator[ToolChunk, None]:
         """Invoke the tool with the given arguments."""
+        if not self.is_external_tool:
+            raise NotImplementedError(
+                f"{self.__class__.__name__} does not implement __call__",
+            )
+
+        raise RuntimeError(
+            f"{self.__class__.__name__} is an external tool and should not "
+            f"be called directly",
+        )

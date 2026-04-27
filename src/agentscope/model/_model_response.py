@@ -31,7 +31,7 @@ class ChatResponse(DictMixin):
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     """The unique identifier formatter """
 
-    created_at: str = field(default_factory=datetime.now().isoformat)
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     """When the response was created"""
 
     type: Literal["chat"] = field(default_factory=lambda: "chat")

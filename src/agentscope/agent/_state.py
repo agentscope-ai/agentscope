@@ -113,6 +113,10 @@ class ToolContext(BaseModel):
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
+    session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    """The session id of the agent. Normally, each session will maintain one
+    independent agent state for each agent."""
+
     summary: str | list[TextBlock | DataBlock] = ""
     """The compressed summary of the context, which will be prepended to the
     context when feed into the LLM."""

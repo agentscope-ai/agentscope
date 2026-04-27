@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """The permission engine for checking and enforcing permission rules."""
-import json
 from typing import Any, List, TYPE_CHECKING
 
 from ._context import PermissionContext
 from ._rule import PermissionRule
 from ._decision import PermissionDecision, PermissionBehavior
 from ._types import PermissionMode
-from ...message import ToolCallBlock
 
 if TYPE_CHECKING:
     from .._base import ToolBase
@@ -82,8 +80,8 @@ class PermissionEngine:
 
     async def check_permission(
         self,
-        tool_call: ToolCallBlock,
         tool: ToolBase,
+        tool_input: dict[str, Any],
     ) -> PermissionDecision:
         """Check permission for a tool execution request.
 
@@ -101,38 +99,36 @@ class PermissionEngine:
         6. Default behavior (ask)
 
         Args:
-            tool_call (`ToolCallBlock`):
-                The tool call block containing tool name and input
             tool (`ToolBase`):
                 The tool instance being called (used for tool-specific checks)
+            tool_input (`dict`):
+                The tool input data (used for rule matching and tool-specific
+                checks)
 
         Returns:
             `PermissionDecision`:
                 Decision indicating whether to allow, deny, or ask
         """
 
-        tool_name = tool_call.name
-        input_data = json.loads(tool_call.input)
-
         # 1. Check tool-level deny rules (highest priority)
-        deny_decision = self._check_deny_rules(tool, input_data)
+        deny_decision = self._check_deny_rules(tool, tool_input)
         if deny_decision:
             return deny_decision
 
         # 2. Check tool-level ask rules
-        ask_decision = self._check_ask_rules(tool, input_data)
+        ask_decision = self._check_ask_rules(tool, tool_input)
         if ask_decision:
             # Generate suggestions for ASK decisions
             ask_decision.suggested_rules = self._generate_suggestions(
-                tool_call,
                 tool,
+                tool_input,
             )
             return ask_decision
 
         # 3. Tool-specific permission checks (dangerous paths, etc.)
         # These are bypass-immune
         tool_decision = await self._tool_check_permissions(
-            input_data,
+            tool_input,
             tool,
         )
 
@@ -155,13 +151,13 @@ class PermissionEngine:
             and "safety" in tool_decision.decision_reason.lower()
         ):
             tool_decision.suggested_rules = self._generate_suggestions(
-                tool_call,
                 tool,
+                tool_input,
             )
             return tool_decision
 
         # 4. Check allow rules
-        allow_decision = self._check_allow_rules(tool, input_data)
+        allow_decision = self._check_allow_rules(tool, tool_input)
         if allow_decision:
             return allow_decision
 
@@ -169,15 +165,15 @@ class PermissionEngine:
         if self.context.mode == PermissionMode.BYPASS:
             return PermissionDecision(
                 behavior=PermissionBehavior.ALLOW,
-                message=f"Permission granted for {tool_name} (bypass mode)",
+                message=f"Permission granted for {tool.name} (bypass mode)",
                 decision_reason="Bypass mode allows all operations",
             )
 
         # 7. Default behavior (passthrough → ask)
-        default_decision = self._default_decision_ask(tool_name)
+        default_decision = self._default_decision_ask(tool.name)
         default_decision.suggested_rules = self._generate_suggestions(
-            tool_call,
             tool,
+            tool_input,
         )
         return default_decision
 
@@ -422,8 +418,8 @@ class PermissionEngine:
 
     def _generate_suggestions(
         self,
-        tool_call: ToolCallBlock,
         tool: ToolBase,
+        tool_input: dict[str, Any],
     ) -> List[PermissionRule]:
         """Generate suggested permission rules from a tool call.
 
@@ -437,18 +433,17 @@ class PermissionEngine:
         - For other tools: Generate exact match rule
 
         Args:
-            tool_call (`ToolCallBlock`):
-                The tool call block containing name and parameters
             tool (`ToolBase`):
                 The tool instance being called (used for tool-specific
                 suggestions)
+            tool_input (`dict[str, Any]`):
+                The tool input data (used for generating suggestions)
 
         Returns:
             `List[PermissionRule]`:
                 List of suggested permission rules (usually 1, max 5 for
                 compound commands)
         """
-        input_data = json.loads(tool_call.input)
 
         # Try to use tool's generate_suggestions method if available
-        return tool.generate_suggestions(input_data)
+        return tool.generate_suggestions(tool_input)
