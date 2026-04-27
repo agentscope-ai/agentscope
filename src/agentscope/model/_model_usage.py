@@ -19,6 +19,9 @@ class ChatUsage(DictMixin):
     time: float
     """The time used in seconds."""
 
+    cached_tokens: int | None = field(default_factory=lambda: None)
+    """The number of cached input tokens, if the provider reports it."""
+
     type: Literal["chat"] = field(default_factory=lambda: "chat")
     """The type of the usage, must be `chat`."""
 

@@ -127,6 +127,9 @@ class SpanAttributes:
     AGENTSCOPE_FUNCTION_OUTPUT = "agentscope.function.output"
     """The agentscope function output."""
 
+    AGENTSCOPE_USAGE_CACHED_TOKENS = "agentscope.gen_ai.usage.cached_tokens"
+    """The cached input tokens reported by the provider, if available."""
+
 
 class OperationNameValues:
     """The operation name values."""
