@@ -10,7 +10,7 @@
         <title>Tuner - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
-    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=fd6457a4" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
@@ -441,6 +441,30 @@ to download the full example code.</p>
     <span class="p">)</span>
 </pre></div>
 </div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:12: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  goal: str = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:16: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  tools: list[str] = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:20: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  action_1: Action = dspy.OutputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:30: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  instruction: str = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:34: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  actions: list[str] = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:38: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  pos_input_with_metrics: list[EvalResult] = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:42: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  neg_input_with_metrics: list[EvalResult] = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:46: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  feedback: str = dspy.OutputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:61: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  previous_instruction: str = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:65: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  feedback: str = dspy.InputField(
+/opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:69: DeprecationWarning: The &#39;prefix&#39; argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+  new_instruction: str = dspy.OutputField(
+</pre></div>
+</div>
 <p>你可以直接用任务字典和日常调试使用的 <code class="docutils literal notranslate"><span class="pre">DashScopeChatModel</span></code> / <code class="docutils literal notranslate"><span class="pre">OpenAIChatModel</span></code> 运行此工作流函数，从而在正式训练前测试其流程的正确性。例如：</p>
 <div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
@@ -572,7 +596,7 @@ tensorboard 日志可在检查点目录下的 <code class="docutils literal notr
 <p class="admonition-title">小技巧</p>
 <p>更多调优样例请参考 AgentScope-Samples 库中的 <a class="reference external" href="https://github.com/agentscope-ai/agentscope-samples/tree/main/tuner">tuner 目录</a></p>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 4.470 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 5.854 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-task-tuner-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/243e482519a51e80a9f627d3dbd503d2/task_tuner.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">task_tuner.ipynb</span></code></a></p>
@@ -676,6 +700,7 @@ tensorboard 日志可在检查点目录下的 <code class="docutils literal notr
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
     <script src="../_static/translations.js?v=beaddf03"></script>
     <script src="../_static/language_switch.js?v=92e4c85c"></script>
     </body>

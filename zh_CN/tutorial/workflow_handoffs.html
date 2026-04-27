@@ -10,7 +10,7 @@
         <title>Handoffs - AgentScope</title>
       <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
-    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=fd6457a4" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
     <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
@@ -349,46 +349,46 @@ to download the full example code.</p>
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;input&quot;: {
-        &quot;task_description&quot;: &quot;在 Python 中打印 &#39;Hello, world!&#39; 并返回执行结果。&quot;
+        &quot;task_description&quot;: &quot;在 Python 中编写并执行一个打印 &#39;Hello, World!&#39; 的简单脚本。&quot;
     },
-    &quot;id&quot;: &quot;call_0f6e62752cf741199076ab&quot;
+    &quot;id&quot;: &quot;call_72be1da7a47847738e9f83&quot;
 }
 Worker: {
     &quot;type&quot;: &quot;tool_use&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;input&quot;: {
-        &quot;code&quot;: &quot;print(&#39;Hello, world!&#39;)&quot;,
+        &quot;code&quot;: &quot;print(&#39;Hello, World!&#39;)&quot;,
         &quot;timeout&quot;: 5
     },
-    &quot;id&quot;: &quot;call_068533784bdb4441a34488&quot;
+    &quot;id&quot;: &quot;call_cc7f402b92c84424bda4ea&quot;
 }
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_068533784bdb4441a34488&quot;,
+    &quot;id&quot;: &quot;call_cc7f402b92c84424bda4ea&quot;,
     &quot;name&quot;: &quot;execute_python_code&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, world!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
+            &quot;text&quot;: &quot;&lt;returncode&gt;0&lt;/returncode&gt;&lt;stdout&gt;Hello, World!\n&lt;/stdout&gt;&lt;stderr&gt;&lt;/stderr&gt;&quot;
         }
     ]
 }
-Worker: Python 代码已成功执行，并打印出了 &#39;Hello, world!&#39;。
+Worker: Python 脚本已成功执行，并打印出了 &#39;Hello, World!&#39;。
 system: {
     &quot;type&quot;: &quot;tool_result&quot;,
-    &quot;id&quot;: &quot;call_0f6e62752cf741199076ab&quot;,
+    &quot;id&quot;: &quot;call_72be1da7a47847738e9f83&quot;,
     &quot;name&quot;: &quot;create_worker&quot;,
     &quot;output&quot;: [
         {
             &quot;type&quot;: &quot;text&quot;,
-            &quot;text&quot;: &quot;Python 代码已成功执行，并打印出了 &#39;Hello, world!&#39;。&quot;
+            &quot;text&quot;: &quot;Python 脚本已成功执行，并打印出了 &#39;Hello, World!&#39;。&quot;
         }
     ]
 }
-Orchestrator: 子智能体已成功在 Python 中执行了 &quot;Hello, world!&quot; 的打印任务。下面是执行的结果：
+Orchestrator: 子智能体已经成功地在 Python 中执行了 &quot;Hello, World!&quot; 的打印任务。下面是执行结果：
 
 ```
-Hello, world!
+Hello, World!
 ```
 </pre></div>
 </div>
@@ -472,7 +472,7 @@ Hello, world!
 <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_handoffs</span><span class="p">())</span>
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 16.779 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 16.864 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-tutorial-workflow-handoffs-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../_downloads/91c90a0c5fa0aaee5502046f62e97d67/workflow_handoffs.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">workflow_handoffs.ipynb</span></code></a></p>
@@ -557,6 +557,7 @@ Hello, world!
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/sg-tags.js?v=d80f6fa4"></script>
     <script src="../_static/translations.js?v=beaddf03"></script>
     <script src="../_static/language_switch.js?v=92e4c85c"></script>
     </body>

@@ -145,6 +145,33 @@ AgentScope 提供了 ``tuner`` 模块，用于通过强化学习（RL）训练�
 
 
 
+.. rst-class:: sphx-glr-script-out
+
+ .. code-block:: none
+
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:12: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      goal: str = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:16: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      tools: list[str] = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/predict/avatar/signatures.py:20: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      action_1: Action = dspy.OutputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:30: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      instruction: str = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:34: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      actions: list[str] = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:38: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      pos_input_with_metrics: list[EvalResult] = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:42: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      neg_input_with_metrics: list[EvalResult] = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:46: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      feedback: str = dspy.OutputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:61: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      previous_instruction: str = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:65: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      feedback: str = dspy.InputField(
+    /opt/hostedtoolcache/Python/3.10.20/x64/lib/python3.10/site-packages/dspy/teleprompt/avatar_optimizer.py:69: DeprecationWarning: The 'prefix' argument in InputField/OutputField is deprecated and has no effect in DSPy. It will be removed in a future version.
+      new_instruction: str = dspy.OutputField(
+
 
 
 
@@ -320,7 +347,7 @@ tensorboard 日志可在检查点目录下的 ``monitor/tensorboard`` 中找到�
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.470 seconds)
+   **Total running time of the script:** (0 minutes 5.854 seconds)
 
 
 .. _sphx_glr_download_tutorial_task_tuner.py:
