@@ -10,6 +10,7 @@ import os
 from copy import deepcopy
 from functools import partial, wraps
 from typing import (
+    TYPE_CHECKING,
     AsyncGenerator,
     Literal,
     Any,
@@ -36,11 +37,7 @@ from ._async_wrapper import (
 from ._response import ToolResponse
 from ._types import ToolGroup, AgentSkill, RegisteredToolFunction
 from .._utils._common import _parse_tool_function
-from ..mcp import (
-    MCPToolFunction,
-    MCPClientBase,
-    StatefulClientBase,
-)
+
 from ..message import (
     ToolUseBlock,
     TextBlock,
@@ -52,6 +49,11 @@ from ..types import (
 )
 from ..tracing._trace import trace_toolkit
 from .._logging import logger
+
+if TYPE_CHECKING:
+    from ..mcp import MCPClientBase
+else:
+    MCPClientBase = "MCPClientBase"
 
 
 def _apply_middlewares(
@@ -381,6 +383,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
 
         # Handle MCP tool function and regular function respectively
         mcp_name = None
+        from ..mcp import MCPToolFunction
+
         if isinstance(tool_func, MCPToolFunction):
             input_func_name = tool_func.name
             original_func = tool_func.__call__
@@ -1097,6 +1101,8 @@ Check "{dir}/SKILL.md" for how to use this skill"""
                 The preset timeout in seconds for calling the tool function.
                 If `None`, no timeout will be applied.
         """
+        from ..mcp import StatefulClientBase
+
         if (
             isinstance(mcp_client, StatefulClientBase)
             and not mcp_client.is_connected

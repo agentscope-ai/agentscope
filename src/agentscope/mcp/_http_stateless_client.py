@@ -8,9 +8,9 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 
-from . import MCPToolFunction
+from ._mcp_function import MCPToolFunction
 from ._client_base import MCPClientBase
-from ..tool import ToolResponse
+from ..tool._response import ToolResponse
 
 
 class HttpStatelessClient(MCPClientBase):

@@ -3,11 +3,11 @@
 # pylint: disable=wrong-import-position
 """The agentscope serialization module"""
 import os
+import types
 import warnings
 from contextvars import ContextVar
 from datetime import datetime
 
-import requests
 import shortuuid
 
 from ._run_config import _ConfigCls
@@ -40,30 +40,45 @@ _config = _ConfigCls(
     ),
 )
 
-from . import exception
-from . import module
-from . import message
-from . import model
-from . import tool
-from . import formatter
-from . import memory
-from . import agent
-from . import session
-from . import embedding
-from . import token
-from . import evaluate
-from . import pipeline
-from . import tracing
-from . import rag
-from . import a2a
-from . import realtime
-
-from ._logging import (
-    logger,
-    setup_logger,
-)
-from .hooks import _equip_as_studio_hooks
+from ._logging import logger, setup_logger
 from ._version import __version__
+
+_SUBMODULES = {
+    "exception",
+    "module",
+    "message",
+    "model",
+    "tool",
+    "formatter",
+    "memory",
+    "agent",
+    "session",
+    "embedding",
+    "token",
+    "evaluate",
+    "pipeline",
+    "tracing",
+    "rag",
+    "a2a",
+    "realtime",
+}
+
+__all__ = [
+    *sorted(_SUBMODULES),
+    "init",
+    "logger",
+    "setup_logger",
+    "__version__",
+]
+
+
+def __getattr__(name: str) -> types.ModuleType:
+    if name in _SUBMODULES:
+        import importlib
+
+        return importlib.import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Raise each warning only once
 warnings.filterwarnings("once", category=DeprecationWarning)
@@ -115,6 +130,10 @@ def init(
     setup_logger(logging_level, logging_path)
 
     if studio_url:
+        import requests
+
+        from .hooks import _equip_as_studio_hooks
+
         # Register the run
         data = {
             "id": _config.run_id,
@@ -154,29 +173,3 @@ def init(
 
         setup_tracing(endpoint=endpoint)
         _config.trace_enabled = True
-
-
-__all__ = [
-    # modules
-    "exception",
-    "module",
-    "message",
-    "model",
-    "tool",
-    "formatter",
-    "memory",
-    "agent",
-    "session",
-    "logger",
-    "embedding",
-    "token",
-    "evaluate",
-    "pipeline",
-    "tracing",
-    "rag",
-    "a2a",
-    # functions
-    "init",
-    "setup_logger",
-    "__version__",
-]

@@ -19,8 +19,6 @@ from .. import _config
 from ..embedding import EmbeddingModelBase, EmbeddingResponse
 from .._logging import logger
 from ..message import Msg, ToolUseBlock
-from ..model import ChatModelBase, ChatResponse
-
 from ._attributes import SpanAttributes, OperationNameValues
 from ._extractor import (
     _get_common_attributes,
@@ -50,6 +48,7 @@ if TYPE_CHECKING:
 
     from ..agent import AgentBase
     from ..formatter import FormatterBase
+    from ..model import ChatModelBase, ChatResponse
     from ..tool import (
         Toolkit,
         ToolResponse,
@@ -58,6 +57,8 @@ if TYPE_CHECKING:
 else:
     AgentBase = "AgentBase"
     FormatterBase = "FormatterBase"
+    ChatModelBase = "ChatModelBase"
+    ChatResponse = "ChatResponse"
     Span = "Span"
     Toolkit = "Toolkit"
     ToolResponse = "ToolResponse"
@@ -600,6 +601,10 @@ def trace_llm(
         """The wrapper function for tracing the LLM call."""
         if not _check_tracing_enabled():
             return await func(self, *args, **kwargs)
+
+        from ..model import (
+            ChatModelBase,
+        )  # lazy import to avoid pulling heavy model deps at module level
 
         if not isinstance(self, ChatModelBase):
             logger.warning(
