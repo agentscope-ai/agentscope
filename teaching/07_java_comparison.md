@@ -23,8 +23,8 @@
 │   tools=[...]             │  @Autowired List<Tool>              │
 │   memory=...              │  @Cacheable / RedisTemplate          │
 │   speech={...}            │  WebFlux + TTS API                  │
-│   pipeline.Routing       │  Router / Handler Mapping            │
-│   pipeline.Supervisor    │  Orchestrator Service                │
+│   SequentialPipeline     │  Sequential Workflow                │
+│   FanoutPipeline         │  Parallel Fork/Join                 │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -137,8 +137,8 @@ agentscope.init(
 | **模板方法** | Abstract Class | AgentBase 抽象类 |
 | **装饰器模式** | Decorator | @function 装饰器 |
 | **观察者模式** | Observer / EventListener | callbacks 参数 |
-| **路由模式** | Router / Handler | pipeline.Routing |
-| **编排模式** | Orchestrator | pipeline.Supervisor |
+| **中介者模式** | Mediator / EventBus | MsgHub 消息中心 |
+| **管道模式** | Pipeline / Chain | Sequential/FanoutPipeline |
 
 ### 工厂模式示例
 
@@ -159,15 +159,15 @@ public class ModelFactory {
 
 ```python
 # Python: 注册表模式
-from agentscope.model import model_register
+from agentscope.model import model_register, ChatModelBase
 
 @model_register("openai")
-class OpenAIChatGPTModel(ModelWrapperBase):
+class OpenAIChatModel(ChatModelBase):
     def __init__(self, config):
         ...
 
 @model_register("anthropic")
-class AnthropicClaudeModel(ModelWrapperBase):
+class AnthropicChatModel(ChatModelBase):
     def __init__(self, config):
         ...
 
@@ -175,7 +175,7 @@ class AnthropicClaudeModel(ModelWrapperBase):
 model = get_model("openai", config={...})
 
 # 模型类名统一使用 *ChatModel 后缀
-# OpenAIChatGPTModel, AnthropicClaudeModel, DashScopeModel
+# OpenAIChatModel, AnthropicChatModel, DashScopeChatModel
 ```
 
 ## 7.4 生命周期对比

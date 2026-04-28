@@ -134,13 +134,12 @@ Action Input: the input for the action"""
 MsgHub 是 AgentScope 的消息中枢，实现智能体间通信路由：
 
 ```python
-from agentscope import MsgHub, SequentialMsgSending
+from agentscope.pipeline import MsgHub, SequentialPipeline
 
 # 创建消息中心
-with MsgHub(agents=[agent1, agent2, agent3], announcer=announcer):
-    # 顺序消息发送
-    async for _ in SequentialMsgSending():
-        pass
+async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
+    # 使用 SequentialPipeline 顺序执行
+    await SequentialPipeline(agents=[agent1, agent2, agent3])
 ```
 
 #### 1.3.3 多智能体辩论

@@ -1,9 +1,9 @@
-# Tool 模块与 MCP 协议深度剖析
+# 工具模块与 MCP 协议深度剖析
 
 ## 目录
 
 1. [模块概述](#1-模块概述)
-2. [Tool 基类设计](#2-tool-基类设计)
+2. [工具基类设计](#2-工具基类设计)
 3. [Toolkit 工具包核心](#3-toolkit-工具包核心)
 4. [内置工具分析](#4-内置工具分析)
 5. [MCP 协议实现](#5-mcp-协议实现)
@@ -14,97 +14,236 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举 AgentScope 内置工具的类型和注册方式 | 列举、识别 |
+| 理解 | 解释 Toolkit 的工具注册流程、JSON Schema 自动生成机制和中间件洋葱模型 | 解释、描述 |
+| 应用 | 使用 `@function` 装饰器开发自定义工具并集成到智能体的工具链中 | 实现、开发 |
+| 分析 | 分析 MCP 三种客户端类型（StdIO/HttpStateless/HttpStateful）的适用场景与状态管理差异 | 分析、对比 |
+| 评价 | 评价中间件机制与后处理函数 (`postprocess_func`) 在工具调用链路中的执行顺序与适用边界 | 评价、判断 |
+| 创造 | 设计一个支持超时控制、错误降级和日志追踪的自定义工具中间件 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python 函数装饰器的工作原理
+- [ ] JSON Schema 的基本结构和用途
+- [ ] 异步生成器 (`async def` + `yield`) 的基本概念
+- [ ] 了解什么是进程间通信 (IPC) 和 HTTP API 调用
+
+**预计学习时间**: 35 分钟
+
+---
+
 ## 1. 模块概述
 
 ### 1.1 目录结构
 
 ```
-src/agentscope/tool/
-├── __init__.py                   # 模块导出
-├── _toolkit.py                  # Toolkit 核心类
-├── _response.py                 # ToolResponse 响应类
-├── _types.py                    # 类型定义
-├── _async_wrapper.py            # 异步包装器
-├── _coding/                    # 编码相关工具
+src/agentscope/tool/                    # 工具模块根目录
+├── __init__.py                         # 模块导出
+├── _toolkit.py                         # Toolkit 核心类
+├── _response.py                        # ToolResponse 响应类
+├── _types.py                           # 类型定义 (RegisteredToolFunction, ToolGroup)
+├── _async_wrapper.py                   # 异步包装器
+├── _coding/                            # 编码相关工具
 │   ├── __init__.py
-│   ├── _shell.py               # Shell 命令执行
-│   └── _python.py              # Python 代码执行
-├── _text_file/                 # 文本文件操作
+│   ├── _python.py                      # Python 代码执行
+│   └── _shell.py                       # Shell 命令执行
+├── _text_file/                         # 文本文件操作
 │   ├── __init__.py
-│   ├── _view_text_file.py      # 查看文件
-│   ├── _write_text_file.py     # 写入文件
-│   └── _utils.py               # 工具函数
-└── _multi_modality/            # 多模态工具
+│   ├── _view_text_file.py             # 查看文件
+│   ├── _write_text_file.py            # 写入文件
+│   └── _utils.py                      # 工具函数
+└── _multi_modality/                   # 多模态工具
     ├── __init__.py
-    ├── _openai_tools.py         # OpenAI 多模态
-    └── _dashscope_tools.py     # DashScope 多模态
+    ├── _openai_tools.py               # OpenAI 多模态
+    └── _dashscope_tools.py            # DashScope 多模态
 
-src/agentscope/mcp/
-├── __init__.py                 # 模块导出
-├── _client_base.py             # MCP 客户端基类
-├── _mcp_function.py            # MCP 工具函数
-├── _stateful_client_base.py    # 有状态客户端基类
-├── _stdio_stateful_client.py   # StdIO 有状态客户端
-├── _http_stateless_client.py   # HTTP 无状态客户端
-└── _http_stateful_client.py    # HTTP 有状态客户端
+src/agentscope/mcp/                    # MCP 模块根目录
+├── __init__.py                         # 模块导出
+├── _client_base.py                    # MCP 客户端基类
+├── _mcp_function.py                   # MCP 工具函数包装
+├── _stateful_client_base.py           # 有状态客户端基类
+├── _stdio_stateful_client.py          # StdIO 有状态客户端
+├── _http_stateless_client.py         # HTTP 无状态客户端
+└── _http_stateful_client.py          # HTTP 有状态客户端
 ```
 
 ### 1.2 核心组件
 
-| 组件 | 说明 |
-|------|------|
-| `Toolkit` | 工具注册、管理和调用的核心类 |
-| `ToolResponse` | 工具响应数据结构 |
-| `ToolUseBlock` | 工具调用请求块 |
-| `MCPClientBase` | MCP 客户端基类 |
-| `MCPToolFunction` | MCP 工具函数包装 |
+| 组件 | 文件位置 | 说明 |
+|------|----------|------|
+| `Toolkit` | `_toolkit.py:54` | 工具注册、管理和调用的核心类 |
+| `ToolResponse` | `_response.py:17` | 工具响应数据结构 |
+| `RegisteredToolFunction` | `_types.py:17` | 已注册工具的内部表示 |
+| `ToolGroup` | `_types.py:108` | 工具组定义 |
+| `MCPToolFunction` | `_mcp_function.py:18` | MCP 工具函数包装类 |
+| `MCPClientBase` | `_client_base.py:17` | MCP 客户端基类 |
+| `StatefulClientBase` | `_stateful_client_base.py:18` | 有状态 MCP 客户端基类 |
 
 ---
 
-## 2. Tool 基类设计
+## 2. 工具基类设计
 
 ### 2.1 ToolResponse 响应类
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_response.py`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_response.py:17-32`
 
 ```python
+@dataclass
 class ToolResponse:
-    """Tool response class that represents the result of a tool call."""
+    """The result chunk of a tool call."""
 
-    def __init__(
-        self,
-        content: list[TextBlock | ImageBlock | AudioBlock | VideoBlock],
-        stream: bool = False,
-        is_last: bool = False,
-        is_interrupted: bool = False,
-        metadata: dict | None = None,
-    ) -> None:
-        """Initialize a ToolResponse.
+    content: List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+    """The execution output of the tool function."""
 
-        Args:
-            content: List of content blocks
-            stream: Whether this is a streaming response
-            is_last: Whether this is the last chunk
-            is_interrupted: Whether the execution was interrupted
-            metadata: Additional metadata
-        """
-        self.content = content
-        self.stream = stream
-        self.is_last = is_last
-        self.is_interrupted = is_interrupted
-        self.metadata = metadata
+    metadata: Optional[dict] = None
+    """The metadata to be accessed within the agent, so that we don't need to
+    parse the tool result block."""
+
+    stream: bool = False
+    """Whether the tool output is streamed."""
+
+    is_last: bool = True
+    """Whether this is the last response in a stream tool execution."""
+
+    is_interrupted: bool = False
+    """Whether the tool execution is interrupted."""
+
+    id: str = field(default_factory=lambda: _get_timestamp(True))
+    """The identity of the tool response."""
 ```
 
-### 2.2 工具函数类型
+**设计分析**:
+- `ToolResponse` 是工具执行结果的统一包装类，采用数据类（dataclass）设计
+- `content` 字段使用联合类型支持多种内容类型：文本、图像、音频、视频
+- `stream` + `is_last` 组合支持流式响应机制
+- `is_interrupted` 用于处理用户中断场景
+- `metadata` 字段允许工具返回结构化元数据，避免 Agent 解析文本
 
-**文件**: `src/agentscope/types.py` (工具函数定义)
+### 2.2 RegisteredToolFunction 注册工具函数类
 
-工具函数可以是以下几种形式:
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_types.py:17-98`
+
+```python
+@dataclass
+class RegisteredToolFunction:
+    """The registered tool function class."""
+
+    name: str
+    """The name of the tool function."""
+    group: str | Literal["basic"]
+    """The belonging group of the tool function"""
+    source: Literal["function", "mcp_server", "function_group"]
+    """The type of the tool function"""
+    original_func: ToolFunction
+    """The original function"""
+    json_schema: dict
+    """The JSON schema of the tool function"""
+    preset_kwargs: dict[str, JSONSerializableObject] = field(default_factory=dict)
+    """Preset keyword arguments, which won't be presented in the JSON schema."""
+    original_name: str | None = None
+    """The original name when renamed."""
+    extended_model: Type[BaseModel] | None = None
+    """The base model to extend the JSON schema dynamically."""
+    mcp_name: str | None = None
+    """The name of the MCP server if from MCP."""
+    postprocess_func: (
+        Callable[[ToolUseBlock, ToolResponse], ToolResponse | None]
+        | Callable[[ToolUseBlock, ToolResponse], Awaitable[ToolResponse | None]]
+    ) | None = None
+    """Post-processing function after tool execution."""
+    async_execution: bool = False
+    """Whether to execute asynchronously."""
+
+    @property
+    def extended_json_schema(self) -> dict:
+        """Get merged JSON schema with extended model."""
+        # ... 合并逻辑见下文
+```
+
+**extended_json_schema 属性** (第 52-98 行):
+- 当设置了 `extended_model` (Pydantic BaseModel) 时，动态合并 JSON Schema
+- 合并 `$defs` 支持嵌套模型定义
+- 检测字段冲突避免覆盖原有定义
+
+**设计模式**: 注册器模式 (Registry Pattern)
+- `RegisteredToolFunction` 作为注册表条目
+- `Toolkit.tools` 字典作为注册表存储
+- 支持同名冲突处理策略（override/skip/raise/rename）
+
+### 2.3 工具函数类型
+
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/types.py`
+
+工具函数四种形式:
 
 1. **普通函数**: `def my_tool(**kwargs) -> ToolResponse`
 2. **异步函数**: `async def my_tool(**kwargs) -> ToolResponse`
 3. **生成器函数**: `def my_tool(**kwargs) -> Generator[ToolResponse, None, None]`
 4. **异步生成器函数**: `async def my_tool(**kwargs) -> AsyncGenerator[ToolResponse, None]`
+
+### 2.4 异步包装器
+
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_async_wrapper.py`
+
+异步包装器将不同返回类型的工具函数统一转换为 `AsyncGenerator[ToolResponse, None]`:
+
+```python
+# _async_wrapper.py:46-54
+async def _object_wrapper(
+    obj: ToolResponse,
+    postprocess_func: Callable[[ToolResponse], ToolResponse | None] | None,
+) -> AsyncGenerator[ToolResponse, None]:
+    """Wrap a ToolResponse object to an async generator."""
+    yield await _postprocess_tool_response(obj, postprocess_func)
+
+# _async_wrapper.py:57-66
+async def _sync_generator_wrapper(
+    sync_generator: Generator[ToolResponse, None, None],
+    postprocess_func: Callable[[ToolResponse], ToolResponse | None] | None,
+) -> AsyncGenerator[ToolResponse, None]:
+    """Wrap a sync generator to an async generator."""
+    for chunk in sync_generator:
+        yield await _postprocess_tool_response(chunk, postprocess_func)
+
+# _async_wrapper.py:69-104
+async def _async_generator_wrapper(
+    async_func: AsyncGenerator[ToolResponse, None],
+    postprocess_func: Callable[[ToolResponse], ToolResponse | None] | None,
+) -> AsyncGenerator[ToolResponse, None]:
+    """Wrap async generator and handle CancelledError."""
+    last_chunk = None
+    try:
+        async for chunk in async_func:
+            processed_chunk = await _postprocess_tool_response(chunk, postprocess_func)
+            yield processed_chunk
+            last_chunk = processed_chunk
+    except asyncio.CancelledError:
+        # 添加中断信息到最后一个块
+        interrupted_info = TextBlock(...)
+        if last_chunk:
+            last_chunk.content.append(interrupted_info)
+            last_chunk.is_interrupted = True
+            last_chunk.is_last = True
+            yield await _postprocess_tool_response(last_chunk, postprocess_func)
+        else:
+            yield await _postprocess_tool_response(
+                ToolResponse(content=[interrupted_info], is_interrupted=True, is_last=True),
+                postprocess_func,
+            )
+```
+
+**设计分析**:
+- **适配器模式**: 三种包装器将不同返回类型统一为 `AsyncGenerator`
+- **责任链模式**: `postprocess_func` 通过管道传递给每个包装器
+- **中断处理**: `_async_generator_wrapper` 捕获 `asyncio.CancelledError`，确保用户中断时返回有效的响应
 
 ---
 
@@ -112,7 +251,7 @@ class ToolResponse:
 
 ### 3.1 类定义
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_toolkit.py:117`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_toolkit.py:54-131`
 
 ```python
 class Toolkit(StateModule):
@@ -123,7 +262,7 @@ class Toolkit(StateModule):
     - Register and parse JSON schemas from their docstrings automatically.
     - Group-wise tools management, and agentic tools activation/deactivation.
     - Extend the tool function JSON schema dynamically with Pydantic BaseModel.
-    - Tool function execution with unified streaming interface.
+    - 工具函数执行采用统一流式接口。
 
     About MCP clients:
     - Register tool functions from MCP clients directly.
@@ -135,9 +274,11 @@ class Toolkit(StateModule):
     """
 ```
 
+**继承关系**: `Toolkit` 继承自 `StateModule`，获得状态管理能力
+
 ### 3.2 初始化
 
-**__init__() 方法** (第 152-186 行):
+**文件**: `_toolkit.py:152-186`
 
 ```python
 def __init__(
@@ -148,7 +289,7 @@ def __init__(
     """Initialize the toolkit."""
     super().__init__()
 
-    self.tools: dict[str, RegisteredToolFunction] = {}      # 注册的工具函数
+    self.tools: dict[str, RegisteredToolFunction] = {}      # 已注册工具
     self.groups: dict[str, ToolGroup] = {}                  # 工具组
     self.skills: dict[str, AgentSkill] = {}                  # Agent 技能
     self._middlewares: list = []                             # 中间件列表
@@ -160,14 +301,14 @@ def __init__(
         agent_skill_template or self._DEFAULT_AGENT_SKILL_TEMPLATE
     )
 
-    # 异步任务管理
+    # 异步任务管理 (用于 async_execution 模式)
     self._async_tasks: dict[str, asyncio.Task] = {}
     self._async_results: dict[str, ToolResponse] = {}
 ```
 
 ### 3.3 工具注册
 
-**register_tool_function() 方法** (第 273-534 行):
+**文件**: `_toolkit.py:273-534` (`register_tool_function` 方法)
 
 ```python
 def register_tool_function(
@@ -187,21 +328,30 @@ def register_tool_function(
 ) -> None:
 ```
 
-**关键参数**:
+**关键参数详解**:
 
-| 参数 | 说明 |
-|------|------|
-| `tool_func` | 要注册的函数 |
-| `group_name` | 所属工具组（basic 组始终激活） |
-| `preset_kwargs` | 预设参数（不暴露给 Agent） |
-| `func_name` | 自定义函数名 |
-| `json_schema` | 手动提供的 JSON Schema |
-| `namesake_strategy` | 同名冲突处理策略 |
-| `async_execution` | 是否异步执行 |
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `tool_func` | 要注册的函数 | - |
+| `group_name` | 所属工具组（basic 组始终激活） | "basic" |
+| `preset_kwargs` | 预设参数（不暴露给 Agent，如 API 密钥） | None |
+| `func_name` | 自定义函数名（用于重命名） | None |
+| `json_schema` | 手动提供 JSON Schema（跳过自动解析） | None |
+| `namesake_strategy` | 同名冲突处理策略 | "raise" |
+| `async_execution` | 是否在后台异步执行 | False |
+| `postprocess_func` | 工具执行后的后处理函数 | None |
+
+**注册流程** (第 410-536 行):
+1. 参数检查和类型验证
+2. 解析工具函数类型（普通函数/partial/MCP工具）
+3. 生成或使用提供的 JSON Schema
+4. 从 Schema 中移除 preset_kwargs
+5. 创建 `RegisteredToolFunction` 对象
+6. 根据 `namesake_strategy` 处理同名冲突
 
 ### 3.4 工具组管理
 
-**create_tool_group() 方法** (第 187-220 行):
+**文件**: `_toolkit.py:187-220`
 
 ```python
 def create_tool_group(
@@ -225,9 +375,14 @@ def create_tool_group(
     )
 ```
 
+**工具组特性**:
+- `basic` 组是特殊组，始终激活，不可删除
+- 非 basic 组默认不激活（`active=False`）
+- 组激活状态可通过 `update_tool_groups()` 动态修改
+
 ### 3.5 获取 JSON Schema
 
-**get_json_schemas() 方法** (第 558-619 行):
+**文件**: `_toolkit.py:558-619`
 
 ```python
 def get_json_schemas(self) -> list[dict]:
@@ -242,16 +397,22 @@ def get_json_schemas(self) -> list[dict]:
 
 ### 3.6 中间件机制
 
-**_apply_middlewares 装饰器** (第 57-114 行):
+**文件**: `_toolkit.py:57-114`
 
 ```python
 def _apply_middlewares(
-    func: Callable[..., AsyncGenerator[ToolResponse, None]],
+    func: Callable[
+        ...,
+        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
+    ],
 ) -> Callable[..., AsyncGenerator[ToolResponse, None]]:
     """Decorator that applies registered middlewares at runtime."""
 
     @wraps(func)
-    async def wrapper(self: "Toolkit", tool_call: ToolUseBlock):
+    async def wrapper(
+        self: "Toolkit",
+        tool_call: ToolUseBlock,
+    ) -> AsyncGenerator[ToolResponse, None]:
         middlewares = getattr(self, "_middlewares", [])
 
         if not middlewares:
@@ -259,7 +420,7 @@ def _apply_middlewares(
                 yield chunk
             return
 
-        # Build middleware chain
+        # 从内到外构建中间件链
         async def base_handler(**kwargs):
             return await func(self, **kwargs)
 
@@ -277,15 +438,22 @@ def _apply_middlewares(
     return wrapper
 ```
 
+**中间件设计**:
+- **责任链模式**: 最后注册的中间件在最外层（反向构建）
+- 中间件签名: `async def middleware(kwargs: dict, next_handler: callable) -> AsyncGenerator[ToolResponse, None]`
+- 中间件必须是 async generator function
+
 ---
 
 ## 4. 内置工具分析
 
 ### 4.1 编码工具
 
-**文件**: `src/agentscope/tool/_coding/__init__.py`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_coding/__init__.py`
 
 #### execute_python_code
+
+**文件**: `_coding/_python.py`
 
 ```python
 def execute_python_code(
@@ -307,6 +475,8 @@ def execute_python_code(
 
 #### execute_shell_command
 
+**文件**: `_coding/_shell.py`
+
 ```python
 def execute_shell_command(
     command: str,
@@ -327,9 +497,11 @@ def execute_shell_command(
 
 ### 4.2 文本文件工具
 
-**文件**: `src/agentscope/tool/_text_file/__init__.py`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_text_file/__init__.py`
 
 #### view_text_file
+
+**文件**: `_text_file/_view_text_file.py`
 
 ```python
 def view_text_file(
@@ -353,6 +525,8 @@ def view_text_file(
 
 #### write_text_file
 
+**文件**: `_text_file/_write_text_file.py`
+
 ```python
 def write_text_file(
     file_path: str,
@@ -373,26 +547,26 @@ def write_text_file(
 
 ### 4.3 多模态工具
 
-**文件**: `src/agentscope/tool/_multi_modality/__init__.py`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_multi_modality/__init__.py`
 
 #### DashScope 多模态工具
 
-```python
-dashscope_text_to_image    # 文本生成图像
-dashscope_text_to_audio    # 文本生成语音
-dashscope_image_to_text    # 图像描述
-```
+| 工具函数 | 说明 |
+|----------|------|
+| `dashscope_text_to_image` | 文本生成图像（阿里云 DashScope） |
+| `dashscope_text_to_audio` | 文本生成语音 |
+| `dashscope_image_to_text` | 图像描述/OCR |
 
 #### OpenAI 多模态工具
 
-```python
-openai_text_to_image       # DALL-E 图像生成
-openai_text_to_audio       # TTS 语音合成
-openai_image_to_text       # Vision 图像描述
-openai_audio_to_text       # Whisper 语音转文字
-openai_edit_image          # 图像编辑
-openai_create_image_variation  # 图像变体
-```
+| 工具函数 | 说明 |
+|----------|------|
+| `openai_text_to_image` | DALL-E 图像生成 |
+| `openai_text_to_audio` | TTS 语音合成 |
+| `openai_image_to_text` | Vision 图像描述 |
+| `openai_audio_to_text` | Whisper 语音转文字 |
+| `openai_edit_image` | 图像编辑 |
+| `openai_create_image_variation` | 图像变体 |
 
 ---
 
@@ -413,18 +587,14 @@ from ._http_stateful_client import HttpStatefulClient
 
 ### 5.2 MCP 客户端基类
 
-**MCPClientBase** (`_client_base.py:18`):
+**MCPClientBase** (`_client_base.py:17-76`):
 
 ```python
 class MCPClientBase:
     """Base class for MCP clients."""
 
     def __init__(self, name: str) -> None:
-        """Initialize the MCP client with a name.
-
-        Args:
-            name: Unique identifier for the MCP server
-        """
+        """Initialize the MCP client with a name."""
         self.name = name
 
     @abstractmethod
@@ -434,86 +604,348 @@ class MCPClientBase:
         wrap_tool_result: bool = True,
     ) -> Callable:
         """Get a tool function by its name."""
+
+    @staticmethod
+    def _convert_mcp_content_to_as_blocks(
+        mcp_content_blocks: list,
+    ) -> List[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
+        """Convert MCP content to AgentScope blocks."""
+        as_content: list = []
+        for content in mcp_content_blocks:
+            if isinstance(content, mcp.types.TextContent):
+                as_content.append(TextBlock(type="text", text=content.text))
+            elif isinstance(content, mcp.types.ImageContent):
+                as_content.append(ImageBlock(type="image", source=Base64Source(...)))
+            elif isinstance(content, mcp.types.AudioContent):
+                as_content.append(AudioBlock(type="audio", source=Base64Source(...)))
+            elif isinstance(content, mcp.types.EmbeddedResource):
+                if isinstance(content.resource, mcp.types.TextResourceContents):
+                    as_content.append(TextBlock(...))
+        return as_content
 ```
 
-### 5.3 内容类型转换
+**设计分析**:
+- 抽象基类定义 MCP 客户端接口
+- `_convert_mcp_content_to_as_blocks` 是适配器方法，将 MCP 协议内容块转换为 AgentScope 内部格式
+- 支持 TextContent、ImageContent、AudioContent、EmbeddedResource 四种类型
 
-**_convert_mcp_content_to_as_blocks() 方法** (`_client_base.py:39-101`):
+### 5.3 MCPToolFunction MCP 工具函数包装类
+
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/mcp/_mcp_function.py:18-113`
 
 ```python
-@staticmethod
-def _convert_mcp_content_to_as_blocks(
-    mcp_content_blocks: list,
-) -> List[TextBlock | ImageBlock | AudioBlock | VideoBlock]:
-    """Convert MCP content to AgentScope blocks."""
+class MCPToolFunction:
+    """An MCP tool function class that can be called directly."""
 
-    as_content: list = []
-    for content in mcp_content_blocks:
-        if isinstance(content, mcp.types.TextContent):
-            as_content.append(TextBlock(type="text", text=content.text))
-        elif isinstance(content, mcp.types.ImageContent):
-            as_content.append(ImageBlock(...))
-        elif isinstance(content, mcp.types.AudioContent):
-            as_content.append(AudioBlock(...))
-        elif isinstance(content, mcp.types.EmbeddedResource):
-            # 处理嵌入资源
-    return as_content
+    name: str
+    description: str
+    json_schema: dict[str, Any]
+
+    def __init__(
+        self,
+        mcp_name: str,
+        tool: mcp.types.Tool,
+        wrap_tool_result: bool,
+        client_gen: Callable[..., _AsyncGeneratorContextManager[Any]] | None = None,
+        session: ClientSession | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        # ... 初始化逻辑
+        self.client_gen = client_gen  # 无状态客户端使用
+        self.session = session          # 有状态客户端使用
+
+    async def __call__(self, **kwargs: Any) -> mcp.types.CallToolResult | ToolResponse:
+        """Call the MCP tool function."""
+        if self.client_gen:
+            # 无状态模式：每次调用创建新会话
+            async with self.client_gen() as cli:
+                read_stream, write_stream = cli[0], cli[1]
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+                    res = await session.call_tool(self.name, arguments=kwargs, ...)
+        else:
+            # 有状态模式：使用已有会话
+            res = await self.session.call_tool(self.name, arguments=kwargs, ...)
+
+        if self.wrap_tool_result:
+            as_content = MCPClientBase._convert_mcp_content_to_as_blocks(res.content)
+            return ToolResponse(content=as_content, metadata=res.meta)
+        return res
 ```
 
-### 5.4 MCP 客户端类型
+**关键设计**:
+- `client_gen` 和 `session` 互斥，必须提供其中一个
+- `wrap_tool_result` 控制是否转换为 AgentScope 格式
+- 支持超时控制 (`timeout`)
 
-#### StdIOStatefulClient
+### 5.4 StatefulClientBase 有状态客户端基类
+
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/mcp/_stateful_client_base.py:18-155`
+
+```python
+class StatefulClientBase(MCPClientBase, ABC):
+    """The base class for stateful MCP clients, which maintains
+    the session state across multiple tool calls."""
+
+    is_connected: bool
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name=name)
+        self.client = None
+        self.stack = None
+        self.session = None
+        self.is_connected = False
+        self._cached_tools = None
+
+    async def connect(self) -> None:
+        """Connect to MCP server."""
+        self.stack = AsyncExitStack()
+        context = await self.stack.enter_async_context(self.client)
+        read_stream, write_stream = context[0], context[1]
+        self.session = ClientSession(read_stream, write_stream)
+        await self.stack.enter_async_context(self.session)
+        await self.session.initialize()
+        self.is_connected = True
+
+    async def close(self, ignore_errors: bool = True) -> None:
+        """Clean up the MCP client resources."""
+        await self.stack.aclose()
+        self.is_connected = False
+
+    async def list_tools(self) -> List[mcp.types.Tool]:
+        """Get all available tools from the server."""
+        self._validate_connection()
+        res = await self.session.list_tools()
+        self._cached_tools = res.tools
+        return res.tools
+```
+
+**生命周期管理**:
+- `connect()`: 建立连接，初始化会话
+- `close()`: 清理资源，关闭连接
+- 使用 `AsyncExitStack` 管理多个上下文管理器
+
+### 5.5 MCP 客户端类型
+
+#### StdIOStatefulClient (`_stdio_stateful_client.py:11-77`)
 
 通过标准输入输出与 MCP 服务器通信，适用于本地进程。
 
 ```python
 class StdIOStatefulClient(StatefulClientBase):
-    """MCP client using stdio for local processes."""
-```
-
-#### HttpStatelessClient
-
-通过 HTTP 与 MCP 服务器通信，适用于无状态的远程服务。
-
-```python
-class HttpStatelessClient:
-    """MCP client using HTTP for remote stateless servers."""
-```
-
-#### HttpStatefulClient
-
-通过 HTTP 与 MCP 服务器通信，支持有状态会话。
-
-```python
-class HttpStatefulClient(StatefulClientBase):
-    """MCP client using HTTP for remote stateful servers."""
-```
-
-### 5.5 MCP 工具函数注册
-
-**文件**: `src/agentscope/mcp/_mcp_function.py`
-
-```python
-class MCPToolFunction:
-    """Wrapper for MCP tool functions."""
+    """A client class for StdIO MCP server connections."""
 
     def __init__(
         self,
         name: str,
-        mcp_name: str,
-        json_schema: dict,
-        callable_func: Callable,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        encoding: str = "utf-8",
+        encoding_error_handler: Literal["strict", "ignore", "replace"] = "strict",
     ) -> None:
-        self.name = name
-        self.mcp_name = mcp_name
-        self.json_schema = json_schema
-        self._callable_func = callable_func
-
-    async def __call__(self, **kwargs) -> ToolResponse:
-        """Execute the MCP tool function."""
-        result = await self._callable_func(**kwargs)
-        return result
+        super().__init__(name=name)
+        self.client = stdio_client(
+            StdioServerParameters(
+                command=command,
+                args=args or [],
+                env=env,
+                cwd=cwd,
+                encoding=encoding,
+                encoding_error_handler=encoding_error_handler,
+            ),
+        )
 ```
+
+**适用场景**: 本地 MCP 服务器进程，如文件系统浏览器、代码执行环境
+
+#### HttpStatefulClient (`_http_stateful_client.py:11-84`)
+
+通过 HTTP 与 MCP 服务器通信，支持 SSE 或 streamable_http 传输。
+
+```python
+class HttpStatefulClient(StatefulClientBase):
+    """The stateful sse/streamable HTTP MCP client implementation."""
+
+    def __init__(
+        self,
+        name: str,
+        transport: Literal["streamable_http", "sse"],
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: float = 30,
+        sse_read_timeout: float = 60 * 5,
+        **client_kwargs: Any,
+    ) -> None:
+        if self.transport == "streamable_http":
+            self.client = streamablehttp_client(url=url, headers=headers, ...)
+        else:
+            self.client = sse_client(url=url, headers=headers, ...)
+```
+
+**适用场景**: 远程 MCP 服务器，需要保持会话状态
+
+#### HttpStatelessClient (`_http_stateless_client.py:16-152`)
+
+无状态 HTTP 客户端，每次调用创建新会话。
+
+```python
+class HttpStatelessClient(MCPClientBase):
+    """The stateless sse/streamable HTTP MCP client implementation."""
+
+    stateful: bool = False
+
+    async def get_callable_function(self, func_name: str, ...) -> Callable:
+        # 每次返回一个新的 MCPToolFunction
+        return MCPToolFunction(
+            mcp_name=self.name,
+            tool=target_tool,
+            wrap_tool_result=wrap_tool_result,
+            client_gen=self.get_client,  # 每次调用创建新会话
+            timeout=execution_timeout,
+        )
+```
+
+**适用场景**: 远程 MCP 服务器，无状态请求响应式服务
+
+### 5.6 MCP 工具函数注册
+
+**文件**: `_toolkit.py:1035-1098` (`register_mcp_client` 方法)
+
+```python
+async def register_mcp_client(
+    self,
+    mcp_client: MCPClientBase,
+    group_name: str = "basic",
+    enable_funcs: list[str] | None = None,
+    disable_funcs: list[str] | None = None,
+    preset_kwargs_mapping: dict[str, dict[str, Any]] | None = None,
+    postprocess_func: Callable[[ToolUseBlock, ToolResponse], ToolResponse | None] | None = None,
+    namesake_strategy: Literal["override", "skip", "raise", "rename"] = "raise",
+) -> None:
+    """Register tool functions from an MCP client."""
+    # 1. 建立连接（如需要）
+    if isinstance(mcp_client, StatefulClientBase) and not mcp_client.is_connected:
+        await mcp_client.connect()
+
+    # 2. 获取 MCP 服务器上的所有工具
+    if isinstance(mcp_client, StatefulClientBase):
+        mcp_tools = await mcp_client.list_tools()
+    else:
+        mcp_tools = await mcp_client.list_tools()
+
+    # 3. 过滤工具
+    for tool in mcp_tools:
+        if enable_funcs and tool.name not in enable_funcs:
+            continue
+        if disable_funcs and tool.name in disable_funcs:
+            continue
+
+        # 4. 获取可调用函数并注册
+        callable_func = await mcp_client.get_callable_function(tool.name, ...)
+        self.register_tool_function(
+            callable_func,
+            group_name=group_name,
+            func_name=tool.name,
+            preset_kwargs=preset_kwargs_mapping.get(tool.name),
+            postprocess_func=postprocess_func,
+            namesake_strategy=namesake_strategy,
+        )
+```
+
+---
+
+### 5.7 MCP 协议与 Java JDBC/ODBC 驱动对比
+
+> ★ Insight ─────────────────────────────────────
+> MCP (Model Context Protocol) 的设计理念与 Java JDBC/ODBC 类似：
+> - 都是**抽象工具/数据源访问协议**
+> - 都支持**多种传输方式**（JDBC-ODBC桥接、网络驱动）
+> - 都通过**统一接口**屏蔽底层差异
+> - 都有**驱动管理器**概念（MCPClientBase ≈ DriverManager）
+> ──────────────────────────────────────────────────
+
+**概念对应关系**:
+
+| MCP 概念 | Java JDBC/ODBC 概念 | 说明 |
+|----------|---------------------|------|
+| `MCPClientBase` | `DriverManager` / `DataSource` | 客户端管理器，统一入口 |
+| `StatefulClientBase` | `Connection` (有状态) | 保持会话的连接 |
+| `HttpStatelessClient` | `Connection` (无状态池化) | 每次请求新建连接 |
+| `MCPToolFunction` | `PreparedStatement` / `CallableStatement` | 可执行的工具/语句对象 |
+| `工具` (MCP Server) | `Table` / `Stored Procedure` | 被调用的目标 |
+| `list_tools()` | `DatabaseMetaData.getTables()` | 发现可用工具 |
+| `call_tool()` | `statement.execute()` | 执行工具/语句 |
+
+**MCP vs JDBC 设计差异**:
+
+| 维度 | MCP | JDBC/ODBC |
+|------|-----|-----------|
+| **协议目标** | AI 模型调用外部工具 | 应用访问数据库 |
+| **传输方式** | StdIO、HTTP（SSE/streamable） | TCP/IP、命名管道 |
+| **返回类型** | 多模态（文本/图像/音频/视频） | 表格型 ResultSet |
+| **会话状态** | 可选（stateful vs stateless） | 通常有状态 |
+| **工具发现** | 运行时 `list_tools()` | 编译时 SQL 或元数据查询 |
+| **Schema** | JSON Schema (function calling) | SQL DDL |
+| **上下文** | AI Agent 的 prompt context | SQL 执行上下文 |
+
+**代码对比**:
+
+```python
+# MCP 风格 - 注册并调用工具
+mcp_client = HttpStatefulClient(name="db", url="https://mcp.example.com")
+await mcp_client.connect()
+func = await mcp_client.get_callable_function("query_database")
+result = await func(sql="SELECT * FROM users WHERE id = ?", params=[123])
+
+# JDBC 风格 - 获取连接并执行
+ds = DataSource(url="jdbc:mysql://localhost:3306/mydb")
+conn = ds.getConnection()
+stmt = conn.prepareStatement("SELECT * FROM users WHERE id = ?")
+stmt.setInt(1, 123)
+rs = stmt.executeQuery()
+```
+
+**架构类比**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AgentScope                             │
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐  │
+│  │   Toolkit   │───>│ MCPToolFunc  │───>│ MCP Client  │  │
+│  │ (注册/调用)  │    │  (包装器)    │    │ (传输适配)  │  │
+│  └─────────────┘    └──────────────┘    └─────────────┘  │
+│                                                    │        │
+└────────────────────────────────────────────────────│────────┘
+                                                     │
+                    ┌─────────────────────────────────┼───────┐
+                    │              MCP               │       │
+                    │  ┌───────────┐  ┌───────────┐  │       │
+                    │  │  StdIO    │  │   HTTP    │  │       │
+                    │  │ (本地进程) │  │ (远程服务) │  │       │
+                    │  └───────────┘  └───────────┘  │       │
+                    └─────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                     Java Application                        │
+│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐  │
+│  │    ORM/     │───>│ PreparedStm │───>│   Driver    │  │
+│  │  JDBC API   │    │  (语句)     │    │ (ODBC/JDBC) │  │
+│  └─────────────┘    └──────────────┘    └─────────────┘  │
+│                                                    │        │
+└────────────────────────────────────────────────────│────────┘
+                                                     │
+                    ┌─────────────────────────────────┼───────┐
+                    │           Database               │       │
+                    │  ┌───────────┐  ┌───────────┐  │       │
+                    │  │    MySQL  │  │  Oracle   │  │       │
+                    │  │  (本地)   │  │ (远程服务) │  │       │
+                    │  └───────────┘  └───────────┘  │       │
+                    └─────────────────────────────────────────┘
+```
+
+**总结**: MCP 协议可以被理解为"AI 领域的 JDBC"——它标准化了 AI Agent 如何调用外部工具/服务，使得同一个 AgentScope 应用可以连接不同的 MCP 服务器（就像 JDBC 可以连接不同的数据库），而无需修改上层代码。
 
 ---
 
@@ -522,121 +954,129 @@ class MCPToolFunction:
 ### 6.1 完整调用流程
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Agent.rely()                             │
-│                                                             │
-│  1. 调用 model 生成响应                                       │
-│  2. 检查响应中是否包含 tool_use 块                             │
-│  3. 如果有，遍历每个工具调用                                   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  ReActAgent._acting()                      │
-│                                                             │
-│  4. 创建 ToolResultBlock                                    │
-│  5. 调用 toolkit.call_tool_function(tool_call)              │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Toolkit.call_tool_function()                   │
-│                                                             │
-│  6. 查找对应的 RegisteredToolFunction                        │
-│  7. 检查工具组是否激活                                        │
-│  8. 准备参数 (preset_kwargs + input)                         │
-│  9. 执行预处理函数（如有）                                     │
-│  10. 应用中间件链                                             │
-│  11. 调用原始工具函数                                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  工具函数执行                                │
-│                                                             │
-│  支持的返回类型:                                              │
-│  - ToolResponse (同步)                                      │
-│  - AsyncGenerator[ToolResponse] (异步流式)                    │
-│  - Generator[ToolResponse] (同步流式)                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  响应包装与后处理                            │
-│                                                             │
-│  12. 应用后处理函数（如有）                                    │
-│  13. 包装为统一格式                                          │
-│  14. 返回 AsyncGenerator[ToolResponse]                       │
-└─────────────────────────────────────────────────────────────┘
+Agent.rely()
+    │
+    ├─> 调用 model 生成响应
+    ├─> 检查响应中是否包含 tool_use 块
+    └─> 遍历每个工具调用
+            │
+            ▼
+    ReActAgent._acting()
+            │
+            ├─> 创建 ToolResultBlock
+            └─> 调用 toolkit.call_tool_function(tool_call)
+                    │
+                    ▼
+            Toolkit.call_tool_function()
+                    │
+                    ├─> 1. 查找 RegisteredToolFunction
+                    ├─> 2. 检查工具组是否激活
+                    ├─> 3. 合并 preset_kwargs 和 input
+                    ├─> 4. 应用后处理函数 (partial)
+                    ├─> 5. 应用中间件链
+                    ├─> 6. 调用原始工具函数
+                    └─> 7. 包装为 AsyncGenerator[ToolResponse]
+                            │
+                            ▼
+                    工具函数执行
+                    ├─> ToolResponse (同步)
+                    ├─> AsyncGenerator[ToolResponse] (异步流式)
+                    └─> Generator[ToolResponse] (同步流式)
+                            │
+                            ▼
+                    _async_wrapper 包装
+                    ├─> _object_wrapper: 单个响应
+                    ├─> _sync_generator_wrapper: 同步生成器
+                    └─> _async_generator_wrapper: 异步生成器
 ```
 
-### 6.2 call_tool_function 实现
+### 6.2 call_tool_function 实现详解
 
 **文件**: `_toolkit.py:851-1033`
 
 ```python
-@trace_toolkit
-@_apply_middlewares
+@trace_toolkit          # 追踪装饰器
+@_apply_middlewares     # 应用中间件链
 async def call_tool_function(
     self,
     tool_call: ToolUseBlock,
 ) -> AsyncGenerator[ToolResponse, None]:
     """Execute the tool function by the ToolUseBlock."""
 
-    # 1. 检查函数是否存在
+    # 步骤 1: 检查函数是否存在
     if tool_call["name"] not in self.tools:
         return _object_wrapper(
-            ToolResponse(
-                content=[TextBlock(type="text", text="FunctionNotFoundError...")],
-            ),
+            ToolResponse(content=[TextBlock(type="text", text="FunctionNotFoundError: ...")]),
             None,
         )
 
-    # 2. 获取工具函数
+    # 步骤 2: 获取工具函数
     tool_func = self.tools[tool_call["name"]]
 
-    # 3. 检查工具组是否激活
+    # 步骤 3: 检查工具组是否激活
     if tool_func.group != "basic" and not self.groups[tool_func.group].active:
         return _object_wrapper(
-            ToolResponse(
-                content=[TextBlock(type="text", text="FunctionInactiveError...")],
-            ),
+            ToolResponse(content=[TextBlock(type="text", text="FunctionInactiveError: ...")]),
             None,
         )
 
-    # 4. 准备参数
-    kwargs = {
-        **tool_func.preset_kwargs,
-        **(tool_call.get("input", {}) or {}),
-    }
+    # 步骤 4: 准备参数 (preset_kwargs + input)
+    kwargs = {**tool_func.preset_kwargs, **(tool_call.get("input", {}) or {})}
 
-    # 5. 准备后处理函数
+    # 步骤 5: 准备后处理函数（使用 partial 绑定 tool_call）
     if tool_func.postprocess_func:
-        partial_postprocess_func = partial(
-            tool_func.postprocess_func,
-            tool_call,
-        )
+        partial_postprocess_func = partial(tool_func.postprocess_func, tool_call)
     else:
         partial_postprocess_func = None
 
-    # 6. 执行工具函数
+    # 步骤 6: 检查是否启用异步执行
+    if tool_func.async_execution:
+        task_id = shortuuid.uuid()
+        task = asyncio.create_task(
+            self._execute_tool_in_background(task_id, tool_func, kwargs, partial_postprocess_func),
+        )
+        self._async_tasks[task_id] = task
+        return _object_wrapper(
+            ToolResponse(content=[TextBlock(type="text", text=f"<system-reminder>Tool executing async. Task ID: {task_id}</system-reminder>")]),
+            None,
+        )
+
+    # 步骤 7: 执行工具函数
     try:
         if inspect.iscoroutinefunction(tool_func.original_func):
             res = await tool_func.original_func(**kwargs)
         else:
             res = tool_func.original_func(**kwargs)
+    except mcp.shared.exceptions.McpError as e:
+        res = ToolResponse(content=[TextBlock(type="text", text=f"MCP Error: {e}")])
     except Exception as e:
         res = ToolResponse(content=[TextBlock(type="text", text=f"Error: {e}")])
 
-    # 7. 处理不同返回类型
+    # 步骤 8: 根据返回类型选择包装器
     if isinstance(res, AsyncGenerator):
         return _async_generator_wrapper(res, partial_postprocess_func)
-    elif isinstance(res, Generator):
+    if isinstance(res, Generator):
         return _sync_generator_wrapper(res, partial_postprocess_func)
-    elif isinstance(res, ToolResponse):
+    if isinstance(res, ToolResponse):
         return _object_wrapper(res, partial_postprocess_func)
 
-    raise TypeError("Invalid return type from tool function")
+    raise TypeError(f"Invalid return type: {type(res)}")
+```
+
+### 6.3 postprocess_func 机制详解
+
+**重要**: `postprocess_func` 在注册时签名为 `Callable[[ToolUseBlock, ToolResponse], ToolResponse | None]`，但在内部传递时会通过 `partial` 绑定 `tool_call`，因此实际执行的函数只有 `ToolResponse` 参数。
+
+```python
+# 注册时: 用户提供的函数签名
+def my_postprocess(tool_call: ToolUseBlock, response: ToolResponse) -> ToolResponse:
+    ...
+
+# 内部传递时: partial 绑定 tool_call
+partial_postprocess_func = partial(tool_func.postprocess_func, tool_call)
+
+# 实际执行时: 只传递 response
+yield await _postprocess_tool_response(chunk, partial_postprocess_func)
 ```
 
 ---
@@ -659,19 +1099,14 @@ def greet(name: str) -> ToolResponse:
         A greeting message
     """
     return ToolResponse(
-        content=[
-            TextBlock(
-                type="text",
-                text=f"Hello, {name}! How can I help you today?",
-            )
-        ],
+        content=[TextBlock(type="text", text=f"Hello, {name}!")],
     )
 
 # 注册到工具包
 toolkit.register_tool_function(greet)
 ```
 
-### 7.2 带参数验证的工具
+### 7.2 带参数验证的工具（使用 Pydantic）
 
 ```python
 from pydantic import BaseModel, Field
@@ -686,25 +1121,20 @@ class CalculatorInput(BaseModel):
 def calculator(input: CalculatorInput) -> ToolResponse:
     """Evaluate a mathematical expression.
 
-    Args:
-        expression: Mathematical expression (e.g., "2 + 2", "sqrt(16)")
-        precision: Number of decimal places
+    ⚠️ 安全警告: 此示例使用 eval() 演示仅供教学。
+    生产环境应使用 ast.literal_eval() 或专用数学库。
     """
-    try:
-        import math
-        result = eval(input.expression, {"sqrt": math.sqrt, **math.__dict__})
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Result: {round(result, input.precision)}",
-                )
-            ],
-        )
-    except Exception as e:
-        return ToolResponse(
-            content=[TextBlock(type="text", text=f"Error: {str(e)}")],
-        )
+    import math
+    result = eval(input.expression, {"sqrt": math.sqrt, **math.__dict__})
+    return ToolResponse(
+        content=[TextBlock(type="text", text=f"Result: {round(result, input.precision)}")],
+    )
+
+# 注册时指定 extended_model 动态扩展 Schema
+toolkit.register_tool_function(
+    calculator,
+    func_name="calculator",
+)
 ```
 
 ### 7.3 流式工具
@@ -738,16 +1168,16 @@ async def stream_words(text: str, delay: float = 0.1) -> AsyncGenerator[ToolResp
 ```python
 from agentscope.tool import ToolResponse
 from agentscope.message import TextBlock
+import re
 
-def sensitive_filter(
-    tool_call: ToolUseBlock,
-    response: ToolResponse,
-) -> ToolResponse | None:
-    """Filter sensitive information from tool responses."""
-    import re
+def sensitive_filter(tool_call: ToolUseBlock, response: ToolResponse) -> ToolResponse | None:
+    """Filter sensitive information from tool responses.
 
-    # 检查是否包含敏感词
-    sensitive_pattern = r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b'  # 信用卡号
+    注意: postprocess_func 签名是 (ToolUseBlock, ToolResponse) -> ToolResponse | None
+    tool_call 参数在内部通过 partial 绑定，实际执行时只需处理 response。
+    """
+    # 信用卡号正则
+    sensitive_pattern = r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b'
     filtered_content = []
 
     for block in response.content:
@@ -757,16 +1187,11 @@ def sensitive_filter(
         else:
             filtered_content.append(block)
 
-    return ToolResponse(
-        content=filtered_content,
-        metadata=response.metadata,
-    )
+    return ToolResponse(content=filtered_content, metadata=response.metadata)
 
 def get_credit_card_info() -> ToolResponse:
     """This tool might return sensitive data."""
-    return ToolResponse(
-        content=[TextBlock(type="text", text="Card: 1234-5678-9012-3456")],
-    )
+    return ToolResponse(content=[TextBlock(type="text", text="Card: 1234-5678-9012-3456")])
 
 # 注册时添加后处理
 toolkit.register_tool_function(
@@ -788,7 +1213,8 @@ async def register_mcp_tools():
     # 创建 MCP 客户端
     mcp_client = HttpStatefulClient(
         name="my-mcp-server",
-        server_url="https://mcp.example.com",
+        transport="streamable_http",
+        url="https://mcp.example.com/mcp",
     )
 
     # 连接并注册工具
@@ -826,7 +1252,6 @@ toolkit.create_tool_group(
     group_name="file_operations",
     description="File read and write operations",
     active=False,  # 默认不激活
-    notes="Use these tools when user asks to read or write files",
 )
 
 toolkit.create_tool_group(
@@ -835,23 +1260,12 @@ toolkit.create_tool_group(
     active=True,  # 默认激活
 )
 
-# 注册工具
-toolkit.register_tool_function(
-    view_text_file,
-    group_name="file_operations",
-)
+# 注册工具到不同组
+toolkit.register_tool_function(view_text_file, group_name="file_operations")
+toolkit.register_tool_function(write_text_file, group_name="file_operations")
+toolkit.register_tool_function(execute_python_code, group_name="code_execution")
 
-toolkit.register_tool_function(
-    write_text_file,
-    group_name="file_operations",
-)
-
-toolkit.register_tool_function(
-    execute_python_code,
-    group_name="code_execution",
-)
-
-# 获取可用的 JSON Schema
+# 获取可用的 JSON Schema（只有激活的组）
 schemas = toolkit.get_json_schemas()
 print(f"Active tools: {[s['function']['name'] for s in schemas]}")
 
@@ -861,38 +1275,7 @@ schemas = toolkit.get_json_schemas()
 print(f"After activation: {[s['function']['name'] for s in schemas]}")
 ```
 
-### 8.2 动态工具管理
-
-```python
-from agentscope.tool import Toolkit, ToolResponse
-from agentscope.message import TextBlock
-
-toolkit = Toolkit()
-
-# 动态添加工具
-def dynamic_tool(text: str) -> ToolResponse:
-    return ToolResponse(content=[TextBlock(type="text", text=text)])
-
-toolkit.register_tool_function(
-    dynamic_tool,
-    func_name="dynamic_tool",
-)
-
-# 运行时添加新工具
-def new_tool(x: int, y: int) -> ToolResponse:
-    return ToolResponse(content=[TextBlock(type="text", text=f"{x + y}")])
-
-toolkit.register_tool_function(new_tool)
-
-# 运行时移除工具
-toolkit.remove_tool_function("old_tool")
-
-# 查看状态
-print(f"Registered tools: {list(toolkit.tools.keys())}")
-print(f"Tool groups: {list(toolkit.groups.keys())}")
-```
-
-### 8.3 中间件使用
+### 8.2 中间件使用
 
 ```python
 from agentscope.tool import Toolkit, ToolResponse
@@ -934,40 +1317,140 @@ toolkit.register_middleware(caching_middleware)
 
 ---
 
+## 本章关联
+
+### 与其他模块的关系
+
+| 关联模块 | 关联内容 | 参考位置 |
+|----------|----------|----------|
+| [Agent 模块深度剖析](module_agent_deep.md) | ReActAgent 如何调用 Toolkit 的工具，`toolkit` 参数与 Agent 的集成方式 | 第 4.4 节 `_acting()` 方法 |
+| [Pipeline/基础设施模块深度剖析](module_pipeline_infra_deep.md) | MCP 协议与 A2A 协议在智能体间通信中的对比，工具调用与消息路由的关系 | 第 7 章 A2A 协议 |
+| [Memory/RAG 模块深度剖析](module_memory_rag_deep.md) | 工具执行结果如何被存储到记忆中，RAG 检索工具的设计模式 | 第 9.4 节在 Agent 中使用记忆和知识库 |
+| [Model 模块深度剖析](module_model_deep.md) | 模型的工具调用机制 (`tool_choice`、`structured_model`) 如何与 Toolkit 协作 | 第 7 章工具调用机制 |
+| [最佳实践参考](reference_best_practices.md) | 工具设计原则、安全性实践（输入验证、权限控制） | 安全性章节 |
+
+### 前置知识
+
+- **JSON Schema**: 如不熟悉 JSON Schema 的结构和用途，建议先了解基础知识
+- **异步生成器**: 需要理解 `async def` + `yield` 的工作原理
+- **装饰器**: 需要理解 Python 装饰器的执行顺序和参数传递
+
+### 后续学习建议
+
+1. 完成本模块练习题后，建议继续学习 [Pipeline 模块](module_pipeline_infra_deep.md)，理解 A2A 协议与 MCP 协议的协作关系
+2. 如需构建自定义工具链，建议参考 [Agent 模块](module_agent_deep.md) 的 Hook 机制，实现工具调用前后的自定义逻辑
+3. 如需优化工具性能，建议参考 [最佳实践](reference_best_practices.md) 中的工具调用优化策略
+
+---
+
 ## 9. 练习题
 
 ### 9.1 基础题
 
-1. **分析 Toolkit 类的设计，参考 `_toolkit.py:117-186`。**
+1. **分析 RegisteredToolFunction 类的设计，参考 `_types.py:17-98`。**
+   - 理解 `extended_json_schema` 属性的合并逻辑
+   - 理解 `preset_kwargs` 如何隐藏敏感参数
 
 2. **Toolkit 如何管理工具组？请说明 basic 组与其他组的区别。**
+   - basic 组始终激活，其他组需要手动激活
+   - 使用 `create_tool_group()` 创建新组
+   - 使用 `update_tool_groups()` 激活/停用组
 
-3. **解释 ToolResponse 的主要字段及其作用。**
+3. **解释 ToolResponse 的主要字段及其作用，参考 `_response.py:17-32`。**
+   - `content`: 支持多种内容类型（文本、图像、音频、视频）
+   - `stream` + `is_last`: 流式响应机制
+   - `is_interrupted`: 处理用户中断
+
+4. **分析 `_async_wrapper.py` 中的三种包装器函数的设计。**
+   - `_object_wrapper`: 处理单个 ToolResponse
+   - `_sync_generator_wrapper`: 同步生成器转异步
+   - `_async_generator_wrapper`: 异步生成器包装并处理 CancelledError
 
 ### 9.2 进阶题
 
-4. **分析中间件机制的实现，参考 `_apply_middlewares` 装饰器。**
+5. **分析中间件机制的实现，参考 `_toolkit.py:57-114`。**
+   - 中间件链的构建顺序（反向）
+   - 为什么中间件必须是 async generator function
+   - 设计一个日志中间件
 
-5. **设计一个自定义中间件，实现工具调用的限流。**
+6. **分析 `call_tool_function` 的完整执行流程，参考 `_toolkit.py:851-1033`。**
+   - 错误处理机制（FunctionNotFoundError、FunctionInactiveError、McpError）
+   - 不同返回类型的处理
+   - 异步执行模式 (async_execution)
 
-6. **分析 MCP 客户端的类型及其适用场景。**
+7. **分析 MCP 客户端的类型及其适用场景。**
+   - `StdIOStatefulClient`: 本地进程
+   - `HttpStatefulClient`: 远程有状态服务
+   - `HttpStatelessClient`: 远程无状态服务
+
+8. **设计一个自定义中间件，实现工具调用的限流。**
+   - 使用 `asyncio.Semaphore` 控制并发
+   - 记录调用历史实现时间窗口限流
 
 ### 9.3 挑战题
 
-7. **实现一个工具执行超时机制，当工具执行超过一定时间自动中断。**
+9. **实现一个工具执行超时机制，当工具执行超过一定时间自动中断。**
+   - 使用 `asyncio.wait_for()` 实现超时
+   - 在 `_async_generator_wrapper` 中处理 TimeoutError
 
-8. **设计一个工具版本管理机制，支持工具的热更新。**
+10. **设计一个工具版本管理机制，支持工具的热更新。**
+    - 在 `RegisteredToolFunction` 中添加版本号
+    - 实现 `update_tool_function()` 方法
 
-9. **分析 AgentScope 的工具调用与 LangChain 的 Tool Calling 机制的异同。**
+11. **分析 AgentScope 的工具调用与 LangChain 的工具调用机制的异同。**
+    - AgentScope 支持流式响应
+    - AgentScope 支持中间件机制
+    - AgentScope 内置 MCP 协议支持
+
+12. **实现一个自定义 postprocess_func，实现响应缓存。**
+    - postprocess_func 签名是 `(ToolUseBlock, ToolResponse) -> ToolResponse | None`
+    - 内部通过 partial 绑定 tool_call 后只传递 response
+    - 使用 `functools.lru_cache` 或自定义缓存
 
 ---
 
 ## 参考资料
 
-- 源码路径: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/`
-- MCP 源码路径: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/mcp/`
+### 工具模块源码文件
+
+| 文件 | 说明 | 关键行号 |
+|------|------|----------|
+| `_response.py` | ToolResponse 响应类定义 | 17-32 |
+| `_types.py` | RegisteredToolFunction 和 ToolGroup 数据类 | 17-98, 108-130 |
+| `_async_wrapper.py` | 异步包装器 | 46-104 |
+| `_toolkit.py` | Toolkit 核心类 | 54-131（类定义）, 152-186（初始化）, 273-534（注册）, 851-1033（调用） |
+| `_coding/` | 编码相关工具 | Shell/Python 执行 |
+| `_text_file/` | 文本文件操作工具 | view/write/insert |
+| `_multi_modality/` | 多模态工具 | DashScope/OpenAI |
+
+### MCP 模块源码文件
+
+| 文件 | 说明 | 关键行号 |
+|------|------|----------|
+| `_client_base.py` | MCP 客户端基类 | 17-76 |
+| `_mcp_function.py` | MCPToolFunction 包装类 | 18-113 |
+| `_stateful_client_base.py` | 有状态客户端基类 | 18-155 |
+| `_stdio_stateful_client.py` | StdIO 有状态客户端 | 11-77 |
+| `_http_stateful_client.py` | HTTP 有状态客户端 | 11-84 |
+| `_http_stateless_client.py` | HTTP 无状态客户端 | 16-152 |
+
+### 源码路径
+
+- 工具模块: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/`
+- MCP 模块: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/mcp/`
+- 类型定义: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/types.py`
 
 ---
 
-*文档版本: 1.0*
-*最后更新: 2026-04-27*
+## 文档更新记录
+
+| 版本 | 日期 | 更新内容 |
+|------|------|----------|
+| 1.0 | 2026-04-27 | 初始版本 |
+| 1.1 | 2026-04-28 | 修正目录结构，更新关键行号，修正 postprocess_func 机制说明 |
+| 1.2 | 2026-04-28 | 新增 MCP 协议与 Java JDBC/ODBC 对比说明（采纳初审建议） |
+| 1.3 | 2026-04-28 | 统一术语："Tool 模块"→"工具模块"，"Tool 基类设计"→"工具基类设计" |
+| 1.4 | 2026-04-28 | 进一步统一术语：docstring 和表格中的 "Tool" 改为"工具" |
+
+*文档版本: 1.4*
+*最后更新: 2026-04-28*

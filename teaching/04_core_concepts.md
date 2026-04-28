@@ -1585,7 +1585,7 @@ class IncrementalKnowledgeBase:
 MsgHub 用于多个 Agent 之间的消息传递和协调。
 
 ```python
-from agentscope import pipeline
+from agentscope.pipeline import MsgHub
 from agentscope.agent import ReActAgent
 
 # 创建多个 Agent
@@ -1593,14 +1593,14 @@ agent_a = ReActAgent(name="A", model=..., tools=...)
 agent_b = ReActAgent(name="B", model=..., tools=...)
 agent_c = ReActAgent(name="C", model=..., tools=...)
 
-# 方式一：广播消息
-with pipeline.MsgHub(agents=[agent_a, agent_b, agent_c], mode="broadcast"):
+# 广播消息模式 (默认)
+async with MsgHub(participants=[agent_a, agent_b, agent_c]):
     agent_a("大家好！")  # B 和 C 都能收到
     agent_b("收到！")
     agent_c("我也收到！")
 
-# 方式二：顺序执行
-with pipeline.MsgHub(agents=[agent_a, agent_b], mode="sequential"):
+# 关闭自动广播
+async with MsgHub(participants=[agent_a, agent_b], enable_auto_broadcast=False):
     result_a = agent_a("分析一下销售数据")
     result_b = agent_b(f"基于这个分析写报告: {result_a}")
 ```

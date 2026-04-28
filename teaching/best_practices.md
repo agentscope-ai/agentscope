@@ -1,6 +1,7 @@
 # AgentScope 最佳实践指南
 
 本文档汇总了 AgentScope 官方文档中的最佳实践，涵盖开发、部署、性能优化和安全等关键领域。
+**所有最佳实践均附有源码引用，便于深入理解框架设计原理。**
 
 ---
 
@@ -29,10 +30,48 @@ agent = ReActAgent(
 )
 ```
 
+**源码解析**：
+
+| 组件 | 源码位置 | 关键设计 |
+|------|----------|----------|
+| `ReActAgent` | `src/agentscope/agent/_react_agent.py:1-200` | 实现完整 ReAct 推理循环 |
+| `ReActAgentBase` | `src/agentscope/agent/_react_agent_base.py:12-117` | 抽象基类，定义 `_reasoning` 和 `_acting` 抽象方法 |
+| `AgentBase` | `src/agentscope/agent/_agent_base.py:30-775` | 异步智能体基类，实现 `__call__`、`reply`、`observe` 核心接口 |
+
+**为什么这样写是最佳实践**：
+
+1. **消息驱动架构**：`AgentBase.__call__`（第448-467行）将回复消息自动广播给订阅者，实现松耦合
+2. **Hook机制**：ReActAgentBase 在 `_reasoning` 和 `_acting` 前后注入钩子（第35-90行），便于监控和调试
+3. **状态管理**：通过 `StateModule` 混入实现序列化/反序列化，支持运行时恢复
+
 #### Agent 类层次结构
+```
+AgentBase (src/agentscope/agent/_agent_base.py:30)
+    └── ReActAgentBase (src/agentscope/agent/_react_agent_base.py:12)
+            └── ReActAgent (src/agentscope/agent/_react_agent.py)
+```
+
 - `agent_base`: 抽象基类，定义核心代理接口
 - `react_agent_base`: 实现 ReAct 范式，处理思考-行动循环
 - `react_agent`: 具体可用代理，扩展 react_agent_base 并集成工具
+
+**常见错误**：
+
+```python
+# 错误：直接继承 AgentBase 而非 ReActAgentBase
+class MyAgent(AgentBase):  # 需要实现 reply() 方法
+    async def reply(self, *args, **kwargs):
+        raise NotImplementedError
+
+# 正确：继承 ReActAgentBase 并实现 _reasoning 和 _acting
+class MyAgent(ReActAgentBase):
+    async def _reasoning(self, *args, **kwargs):
+        # 思考过程
+        pass
+    async def _acting(self, *args, **kwargs):
+        # 行动过程
+        pass
+```
 
 ### 1.2 模型配置最佳实践
 
@@ -53,6 +92,23 @@ model = DashScopeChatModel(
 )
 ```
 
+**源码解析**：
+
+| 文件 | 行号 | 作用 |
+|------|------|------|
+| `src/agentscope/model/_model_base.py` | 13-44 | `ChatModelBase` 定义模型调用接口 |
+| `src/agentscope/model/_dashscope_model.py` | 1-200 | DashScope 模型具体实现 |
+
+**关键设计**：
+- `ChatModelBase.__call__`（第38-44行）是抽象方法，子类实现具体 API 调用
+- `generate_kwargs` 通过关键字参数传递给底层模型 API
+- 支持流式输出：`stream=True` 时返回 `AsyncGenerator`
+
+**为什么 temperature=0.3**：
+- temperature 控制随机性：0 = 确定性强，1 = 高度随机
+- 工具调用场景推荐 0.3-0.5，减少幻觉
+- 创意生成场景可用 0.7-1.0
+
 #### OpenAI 兼容模型配置
 对于 vLLM、DeepSeek 等 OpenAI 兼容模型：
 
@@ -61,6 +117,8 @@ from agentscope.model import OpenAIChatModel
 
 OpenAIChatModel(client_kwargs={"base_url": "http://localhost:8000/v1"})
 ```
+
+**源码位置**：`src/agentscope/model/_openai_model.py`
 
 ### 1.3 消息处理
 
@@ -86,6 +144,22 @@ json_schemas = [
 ]
 ```
 
+**源码解析**：
+
+| 源码位置 | 组件 | 说明 |
+|----------|------|------|
+| `src/agentscope/message/__init__.py` | `ToolUseBlock`, `ToolResultBlock` | 统一工具调用消息块类型 |
+| `src/agentscope/formatter/` | 各 Provider Formatter | 将统一格式转换为 Provider 特定格式 |
+
+**Formatter 转换流程**：
+```
+ToolUseBlock (统一格式)
+    ↓
+OpenAIFormatter.to_provider_format() → OpenAI 特定格式
+    ↓
+DashScopeFormatter.to_provider_format() → DashScope 特定格式
+```
+
 #### 消息流式处理
 使用 `stream_printing_messages` 实现流式响应：
 
@@ -97,6 +171,31 @@ async for msg, last in stream_printing_messages(
     coroutine_task=agent(msgs),
 ):
     yield msg, last
+```
+
+**源码解析**：
+
+| 源码位置 | 函数 | 作用 |
+|----------|------|------|
+| `src/agentscope/pipeline/_functional.py:107-193` | `stream_printing_messages` | 异步收集并 yield 打印消息 |
+| `src/agentscope/agent/_agent_base.py:205-275` | `AgentBase.print` | 消息打印方法 |
+
+**关键实现**（第159-192行）：
+```python
+# 启用消息队列收集中间消息
+queue = queue or asyncio.Queue()
+for agent in agents:
+    agent.set_msg_queue_enabled(True, queue)
+
+# 执行协程任务
+task = asyncio.create_task(coroutine_task)
+
+# 从队列异步消费消息
+while True:
+    printing_msg = await queue.get()
+    if isinstance(printing_msg, str) and printing_msg == end_signal:
+        break
+    yield printing_msg
 ```
 
 ### 1.4 推理模型支持
@@ -114,6 +213,12 @@ model = DashScopeChatModel(
 )
 ```
 
+**源码解析**：`src/agentscope/model/_dashscope_model.py`
+
+**为什么需要 enable_thinking**：
+- 思考模式将推理过程外化，减少输出 token 消耗
+- 思考内容通过 `thinking` 类型块返回，不影响最终答案
+
 ### 1.5 结构化输出
 
 AgentScope 支持动态 Pydantic 模型进行结构化输出：
@@ -126,6 +231,11 @@ class ToyBenchAnswerFormat(BaseModel):
 
 res = await agent(msg_input, structured_model=ToyBenchAnswerFormat)
 ```
+
+**源码流程**：
+1. `AgentBase.__call__` 接收 `structured_model` 参数
+2. 模型返回 `ChatResponse`
+3. 内部使用 Pydantic 解析验证输出
 
 ---
 
@@ -219,6 +329,24 @@ async def lifespan(app: FastAPI):
 
 **重要**: 开发测试使用 `InMemoryMemory`，生产环境必须使用 Redis 或持久化存储。
 
+**源码解析**：
+
+| 源码位置 | 组件 | 说明 |
+|----------|------|------|
+| `src/agentscope/memory/_working_memory/_in_memory_memory.py:10-306` | `InMemoryMemory` | 基于 Python list 的内存存储 |
+| `src/agentscope/memory/_working_memory/_redis_memory.py` | `RedisMemory` | Redis 分布式存储实现 |
+
+**为什么 InMemoryMemory 不能用于生产**：
+
+```python
+# InMemoryMemory 核心存储结构 (_in_memory_memory.py:17)
+self.content: list[tuple[Msg, list[str]]] = []
+```
+
+- 数据存储在进程内存中
+- 进程崩溃或重启后数据丢失
+- 无法跨多个服务实例共享
+
 ---
 
 ## 3. 性能优化最佳实践
@@ -237,6 +365,13 @@ async for msg, last in stream_printing_messages(
     yield msg, last
 ```
 
+**源码解析**：`src/agentscope/pipeline/_functional.py:107-193`
+
+**为什么异步是最佳实践**：
+- AgentScope 基于 `asyncio` 构建（第448-467行使用 `asyncio.current_task()`）
+- 工具调用（网络 I/O）不会阻塞事件循环
+- `stream_printing_messages` 通过 `asyncio.create_task` 实现真正并发
+
 ### 3.2 流式响应
 
 启用流式模式减少感知延迟：
@@ -251,6 +386,8 @@ model = DashScopeChatModel(
     stream=True,
 )
 ```
+
+**源码实现**：模型返回 `AsyncGenerator[ChatResponse, None]`
 
 ### 3.3 资源管理
 
@@ -323,6 +460,8 @@ agentscope.init(studio_url="http://localhost:port")
 agentscope.init(tracing_url="https://your-backend:4318/v1/traces")
 ```
 
+**源码解析**：`src/agentscope/tracing/` 模块
+
 ### 5.2 支持的追踪后端
 
 | 后端 | 配置方式 |
@@ -360,6 +499,13 @@ res = await model(messages)
 print(f"Input tokens: {res.usage.input_tokens}")
 print(f"Output tokens: {res.usage.output_tokens}")
 ```
+
+**源码解析**：
+
+| 源码位置 | 组件 | 说明 |
+|----------|------|------|
+| `src/agentscope/model/_model_response.py` | `ChatResponse` | 包含 `usage` 字段 |
+| `src/agentscope/model/_model_usage.py` | `ModelUsage` | Token 使用统计 |
 
 ---
 
@@ -552,7 +698,44 @@ async with MsgHub(
     hub.add(agent4)
     hub.delete(agent3)
 
-    await hub.broadcast(Msg("Host", "Wrap up."), to=[])
+    # 广播结束消息给所有参与者
+    await hub.broadcast(Msg("Host", "Wrap up.", "assistant"))
+```
+
+**源码解析**：
+
+| 源码位置 | 组件 | 关键机制 |
+|----------|------|----------|
+| `src/agentscope/pipeline/_msghub.py:14-157` | `MsgHub` | 消息广播与订阅管理 |
+| `src/agentscope/agent/_agent_base.py:701-730` | `reset_subscribers` | 订阅者管理 |
+
+**MsgHub 核心设计**（第89-93行）：
+```python
+def _reset_subscriber(self) -> None:
+    """Reset the subscriber for agent in `self.participant`"""
+    if self.enable_auto_broadcast:
+        for agent in self.participants:
+            agent.reset_subscribers(self.name, self.participants)
+```
+
+**为什么 MsgHub 是最佳实践**：
+
+1. **透明的消息共享**：避免 N*(N-1) 次手动 `observe` 调用
+2. **动态成员管理**：通过 `add()`/`delete()` 动态调整参与者
+3. **上下文隔离**：通过 `__aenter__`/`__aexit__` 管理生命周期
+
+**常见错误**：
+
+```python
+# 错误：在 MsgHub 外调用 agent，导致消息无法广播
+agent1()
+agent2()  # agent1 的回复不会自动传递给 agent2
+
+# 正确：所有 agent 在 MsgHub 内执行
+async with MsgHub(participants=[agent1, agent2]) as hub:
+    x1 = await agent1()
+    # agent2 会自动收到 agent1 的回复
+    x2 = await agent2()
 ```
 
 #### 辩论系统实现
@@ -632,6 +815,25 @@ async def concurrent_analysis(topic: str):
     synthesis = await synthesizer(Msg("user", combined_text, "user"))
 ```
 
+**源码解析**：
+
+| 源码位置 | 函数 | 说明 |
+|----------|------|------|
+| `src/agentscope/pipeline/_functional.py:47-104` | `fanout_pipeline` | 并行分发任务给多个 Agent |
+| `src/agentscope/pipeline/_functional.py:10-44` | `sequential_pipeline` | 顺序执行多个 Agent |
+
+**fanout_pipeline 实现**（第96-104行）：
+```python
+if enable_gather:
+    tasks = [
+        asyncio.create_task(agent(deepcopy(msg), **kwargs))
+        for agent in agents
+    ]
+    return await asyncio.gather(*tasks)
+else:
+    return [await agent(deepcopy(msg), **kwargs) for agent in agents]
+```
+
 ---
 
 ## 11. RAG + Agent 结合模式
@@ -639,7 +841,7 @@ async def concurrent_analysis(topic: str):
 ### 11.1 Agentic RAG 架构
 
 | 组件 | 职责 |
-|-----|-----|
+|-----|------|
 | 查询代理 (Query Agent) | 理解用户意图，生成检索策略 |
 | 检索代理 (Retrieval Agent) | 执行向量检索、过滤、重排序 |
 | 生成代理 (Generative Agent) | 综合检索结果生成最终答案 |
@@ -726,7 +928,7 @@ agent = ReActAgent(
 # 错误：传递 4-8 个完整文档/查询
 # 正确：只传递相关片段
 retrieved_chunks = await kb.similarity_search(
-    query, 
+    query,
     top_k=3,  # 只取最相关的3个片段
     max_length=500  # 限制每个片段长度
 )
@@ -756,7 +958,7 @@ await cache.set(query, llm_response)
 ### 12.5 模型分级策略
 
 | 任务类型 | 推荐模型 | 理由 |
-|---------|---------|-----|
+|---------|---------|------|
 | 简单问答 | qwen-turbo / gpt-4o-mini | 成本低、延迟小 |
 | 常规任务 | qwen-max / gpt-4 | 平衡性能与成本 |
 | 复杂推理 | qwen-plus / claude-3-sonnet | 高质量输出 |
@@ -892,6 +1094,18 @@ result = await app.deploy(
 - Runtime 文档: https://runtime.agentscope.io/
 - GitHub: https://github.com/agentscope-ai/agentscope
 - 示例代码: https://agentscope.io/samples/
+
+### 源码结构速查
+
+| 模块 | 源码路径 | 核心类/函数 |
+|------|----------|-------------|
+| Agent 基类 | `src/agentscope/agent/_agent_base.py` | `AgentBase` |
+| ReAct Agent | `src/agentscope/agent/_react_agent.py` | `ReActAgent` |
+| 消息中枢 | `src/agentscope/pipeline/_msghub.py` | `MsgHub` |
+| 流水线 | `src/agentscope/pipeline/_functional.py` | `sequential_pipeline`, `fanout_pipeline` |
+| 模型基类 | `src/agentscope/model/_model_base.py` | `ChatModelBase` |
+| 内存基类 | `src/agentscope/memory/_working_memory/_base.py` | `MemoryBase` |
+| 消息类型 | `src/agentscope/message/__init__.py` | `Msg`, `ToolUseBlock`, `ToolResultBlock` |
 
 ### 深度文章
 - [Analytics Vidhya: AgentScope AI Complete Guide](https://www.analyticsvidhya.com/blog/2026/01/agentscope-ai/)

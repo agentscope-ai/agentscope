@@ -320,58 +320,61 @@ Studio 提供：
 | 推理死循环 | 检查 hook 是否重复执行，更新到 v1.0.19+ |
 | 工具找不到 | 检查 `from agentscope.tool import xxx` 导入方式是否正确 |
 
-## 6.6 新增多智能体模式
+## 6.6 多智能体模式
 
-### Routing（路由模式）
-
-根据输入内容自动路由到最合适的 Agent：
-
-```python
-from agentscope import agent, pipeline
-
-router = pipeline.Routing(
-    agents=[research_agent, writer_agent, coder_agent]
-)
-
-result = router("解释 Transformer 架构")  # 自动路由到 coder_agent
-```
-
-### Handoffs（交接模式）
-
-Agent 之间可以交接对话：
-
-```python
-with pipeline.Handoffs(agents=[specialist_1, specialist_2]) as handoffs:
-    result = specialist_1("复杂问题")
-    # 自动交接给 specialist_2
-```
-
-### Supervisor（监督者模式）
-
-监督者协调多个专家 Agent：
-
-```python
-with pipeline.Supervisor(agents=[researcher, writer]) as supervisor:
-    article = supervisor("写一篇关于 AI 的研究报告")
-```
-
-### Sequential（顺序执行）
+### SequentialPipeline（顺序执行）
 
 按顺序执行，前一个输出作为下一个输入：
 
 ```python
-with pipeline.Sequential(agents=[researcher, writer]) as seq:
+from agentscope.pipeline import SequentialPipeline
+
+with SequentialPipeline(agents=[researcher, writer]) as seq:
     research = researcher("研究 AI 趋势")
     article = writer(f"基于研究写文章: {research}")
 ```
 
-### Debate（辩论模式）
+### FanoutPipeline（广播模式）
 
-多个 Agent 从不同角度分析问题：
+将任务广播给多个 Agent 并收集响应：
 
 ```python
-with pipeline.Debate(agents=[pro_agent, con_agent]) as debate:
-    analysis = debate("这个商业决策是否明智？")
+from agentscope.pipeline import FanoutPipeline
+
+with FanoutPipeline(agents=[agent1, agent2, agent3]) as fanout:
+    results = fanout("并行执行这个任务")
+```
+
+### ChatRoom（聊天室模式）
+
+支持多 Agent 之间的自由消息传递：
+
+```python
+from agentscope.pipeline import ChatRoom
+import asyncio
+
+room = ChatRoom(agents=[agent1, agent2, agent3])
+
+# 需要通过队列发送消息
+async def send_messages():
+    outgoing_queue = Queue()
+    await room.start(outgoing_queue)
+    # 消息通过 agent 的 speak() 方法发送
+    # room 会在后台自动广播消息
+    await asyncio.sleep(10)  # 保持连接
+    await room.stop()
+```
+
+### MsgHub（消息中心）
+
+作为代理间的消息中介，支持订阅-发布模式：
+
+```python
+from agentscope.pipeline import MsgHub
+
+async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
+    # agent 的回复会自动广播给其他参与者
+    result = await agent1("开始协作")
 ```
 
 ## 6.7 Voice Agent 开发
@@ -381,7 +384,7 @@ with pipeline.Debate(agents=[pro_agent, con_agent]) as debate:
 ```python
 agent = agent.ReActAgent(
     name="语音助手",
-    model=DashScopeModel(model_name="qwen-audio"),
+    model=DashScopeChatModel(model_name="qwen-audio"),
     tools=[...],
     speech={
         "tts_api": "dashscope",  # 或 "openai", "german_tts"

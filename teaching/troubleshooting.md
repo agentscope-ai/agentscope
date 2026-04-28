@@ -157,8 +157,8 @@ model = DashScopeChatModel(
     stream=True,
 )
 
-generator = await model(messages)
-async for chunk in generator:
+# 流式输出直接返回 AsyncGenerator，不需要 await
+async for chunk in model(messages):
     print(chunk)
 ```
 

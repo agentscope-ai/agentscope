@@ -105,7 +105,7 @@ code agentscope --extensions ms-python.python
 import agentscope
 
 # 初始化 (类似 Spring Boot 启动)
-agentscope.init(project="test", project_dir="./workspace")
+agentscope.init(project="test", logging_path="./workspace")
 
 # 检查版本
 print(f"AgentScope version: {agentscope.__version__}")

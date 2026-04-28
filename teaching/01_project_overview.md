@@ -30,7 +30,7 @@ AgentScope 是一个**生产级的多智能体框架（Multi-Agent Framework）*
 
 | 特性 | 说明 |
 |------|------|
-| **多智能体编排** | 支持 Routing、Handoffs、Supervisor、Debate 等多种协同模式 |
+| **多智能体编排** | 支持 SequentialPipeline、FanoutPipeline、MsgHub 等协同模式 |
 | **多模型支持** | OpenAI、Anthropic、Gemini、DashScope、Ollama、DeepSeek |
 | **工具调用** | Python 执行、Shell 命令、MCP 协议、Function Calling |
 | **记忆系统** | 短期记忆（InMemory/Redis/SQL）、长期记忆（Mem0/ReMe） |
@@ -101,12 +101,12 @@ Agent 类型
 
 | 特性 | AgentScope | LangChain | AutoGen | crewai |
 |------|------------|-----------|---------|--------|
-| **多智能体模式** | Routing/Handoffs/Supervisor/Debate | Pipeline | GroupChat | Crew |
+| **多智能体模式** | Sequential/Fanout Pipeline | Pipeline | GroupChat | Crew |
 | **语音支持** | 原生 TTS 集成 | 第三方 | 第三方 | 第三方 |
 | **记忆系统** | HybridMemory (短+长期) | Memory | AgentChat | Memory |
 | **RAG** | 内置支持 | 第三方 | 第三方 | 第三方 |
 | **Studio 可视化** | 原生支持 | LangSmith | Playwright | 社区工具 |
-| **Java 开发者友好** | 专门的 Java 对比文档 | 英文为主 | 英文为主 | 英文为主 |
+| **Java 开发者友好** | 专门的中文对比文档 | 英文为主 | 英文为主 | 英文为主 |
 | **最新版本** | v1.0.19 | v0.3.x | v0.4.x | v0.28+ |
 
 ### AgentScope 优势
@@ -160,8 +160,8 @@ agentscope/
 | `MsgHub` | EventBus / Kafka | 消息分发中心 |
 | `Memory` | Cache (Redis/Caffeine) | 临时状态存储 |
 | `Pipeline` | Workflow Engine | 流程编排 |
-| `Routing` | Router / Dispatcher | 请求路由分发 |
-| `Supervisor` | Orchestrator | 专家调度协调 |
+| `SequentialPipeline` | Router / Dispatcher | 顺序执行流程 |
+| `FanoutPipeline` | Parallel Execution | 并行执行分发 |
 
 ## 1.6 快速概念验证
 
@@ -191,7 +191,8 @@ print(response)
 ### 多智能体协作示例
 
 ```python
-from agentscope import agent, pipeline
+from agentscope import agent
+from agentscope.pipeline import SequentialPipeline
 
 # 创建专家 Agent
 researcher = agent.ReActAgent(
@@ -205,9 +206,10 @@ writer = agent.ReActAgent(
     model=OpenAIChatModel(model_name="gpt-4o-mini")
 )
 
-# 使用 Routing 自动选择最合适的 Agent
-with pipeline.Routing(agents=[researcher, writer, coder]) as router:
-    result = router("解释一下 Transformer 架构")
+# 使用 SequentialPipeline 顺序执行
+with SequentialPipeline(agents=[researcher, writer]) as seq:
+    result = await researcher("研究 Transformer 架构")
+    result = await writer("基于研究写文章")
 ```
 
 ## 1.7 版本说明与路线图
@@ -215,7 +217,7 @@ with pipeline.Routing(agents=[researcher, writer, coder]) as router:
 ### 当前版本 v1.0.19
 - DeepResearchAgent 稳定性和 thinking blocks 支持
 - Formatter 本地文件 base64 编码
-- 多智能体模式完善（Routing/Handoffs/Supervisor/Debate）
+- 多智能体模式完善（SequentialPipeline/FanoutPipeline/MsgHub）
 
 ### 2.0 路线图（正在开发）
 

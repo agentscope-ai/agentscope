@@ -143,7 +143,7 @@ AgentScope 使用元类(metaclass)实现AOP风格的Hook拦截：
 ```python
 # _agent_meta.py 核心元类设计
 
-class _AgentMeta(type):
+class _AgentMeta(type):  # 第 159 行
     """包装 Agent 的 reply/observe/print 方法为 Hook 形式"""
     def __new__(mcs, name, bases, attrs):
         # 遍历需要包装的方法
@@ -153,7 +153,7 @@ class _AgentMeta(type):
                 attrs[func_name] = _wrap_with_hooks(attrs[func_name])
         return super().__new__(mcs, name, bases, attrs)
 
-class _ReActAgentMeta(_AgentMeta):
+class _ReActAgentMeta(_AgentMeta):  # 第 177 行
     """ReAct Agent 专用元类，额外包装 _reasoning 和 _acting"""
     def __new__(mcs, name, bases, attrs):
         for func_name in ["_reasoning", "_acting"]:
@@ -183,7 +183,7 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
     _instance_pre_reply_hooks = OrderedDict()
     _instance_post_reply_hooks = OrderedDict()
 
-    def __init__(self):
+    def __init__(self):  # 第 140 行
         super().__init__()
         self.id = shortuuid.uuid()  # 唯一标识
         self._reply_task = None      # 当前回复任务
@@ -686,6 +686,633 @@ public class MyConfig {
 }
 ```
 
+
+## 5.14 源码层级详解
+
+### 源码文件位置索引
+
+```
+src/agentscope/
+├── __init__.py                          # 入口文件 (init 函数)
+├── _version.py                          # 版本信息
+├── _logging.py                          # 日志配置
+├── _run_config.py                       # 运行时配置
+├── _utils/                              # 工具函数集
+│
+├── agent/                               # Agent 模块
+│   ├── _agent_base.py                   # AgentBase 基类 (774行)
+│   ├── _agent_meta.py                   # 元类实现 (Hook机制)
+│   ├── _react_agent.py                  # ReActAgent 实现 (主Agent)
+│   ├── _react_agent_base.py             # ReActAgentBase 基类
+│   ├── _user_agent.py                   # UserAgent 实现
+│   ├── _realtime_agent.py               # 实时语音Agent
+│   ├── _a2a_agent.py                    # A2A协议Agent
+│   ├── _user_input.py                   # 用户输入处理
+│   └── _chat_room.py                    # 聊天室实现
+│
+├── model/                               # 模型模块
+│   ├── _model_base.py                    # 模型基类
+│   ├── _model_response.py               # 模型响应结构
+│   ├── _openai_model.py                 # OpenAI 模型实现
+│   ├── _anthropic_model.py              # Claude 模型实现
+│   ├── _dashscope_model.py              # 通义模型实现
+│   ├── _gemini_model.py                 # Gemini 模型实现
+│   ├── _ollama_model.py                 # Ollama 本地模型
+│   └── _trinity_model.py                # Trinity 模型实现
+│
+├── pipeline/                            # 管道模块
+│   ├── _msghub.py                       # MsgHub 消息中心
+│   ├── _functional.py                   # 函数式管道 (sequential/fanout)
+│   └── _class.py                        # Pipeline 类封装
+│
+├── memory/                              # 记忆模块
+│   ├── _memory_base.py                  # 记忆基类
+│   ├── _working_memory/                 # 短期记忆
+│   └── _long_term_memory/               # 长期记忆
+│
+├── tool/                                # 工具模块
+│   ├── _tool_base.py                    # 工具基类
+│   ├── _coding.py                       # 代码执行工具
+│   ├── _text_file.py                    # 文件操作工具
+│   └── _mcp.py                          # MCP 协议工具
+│
+├── message/                             # 消息模块
+│   └── Msg.py                           # 消息结构定义
+│
+├── formatter/                           # 格式化器模块
+│
+├── rag/                                 # RAG 模块
+│
+├── session/                             # 会话管理
+│
+├── tracing/                             # 链路追踪
+│
+└── hooks/                               # Hook 系统
+    └── _hooks.py                        # Hook 实现
+```
+
+### 5.14.1 init() 函数源码分析
+
+`init()` 函数是 AgentScope 框架的入口点，类似 Spring Boot 的启动逻辑。以下是完整源码分析：
+
+```python
+# __init__.py 第 72-157 行
+def init(
+    project: str | None = None,
+    name: str | None = None,
+    run_id: str | None = None,
+    logging_path: str | None = None,
+    logging_level: str = "INFO",
+    studio_url: str | None = None,
+    tracing_url: str | None = None,
+) -> None:
+    """初始化 AgentScope 框架"""
+```
+
+**源码执行流程：**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     init() 函数执行流程                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. 配置更新 (第 106-113 行)                                  │
+│     ┌─────────────────────────────────────────────┐         │
+│     │  if project: _config.project = project      │         │
+│     │  if name:   _config.name = name              │         │
+│     │  if run_id: _config.run_id = run_id         │         │
+│     └─────────────────────────────────────────────┘         │
+│                          ↓                                   │
+│  2. 日志初始化 (第 115 行)                                    │
+│     ┌─────────────────────────────────────────────┐         │
+│     │  setup_logger(logging_level, logging_path)  │         │
+│     └─────────────────────────────────────────────┘         │
+│                          ↓                                   │
+│  3. Studio 连接 (第 117-145 行)                               │
+│     ┌─────────────────────────────────────────────┐         │
+│     │  requests.post(...)  注册运行实例            │         │
+│     │  UserAgent.override_input_method(...)      │         │
+│     │  _equip_as_studio_hooks(studio_url)        │         │
+│     └─────────────────────────────────────────────┘         │
+│                          ↓                                   │
+│  4. 链路追踪 (第 147-156 行)                                  │
+│     ┌─────────────────────────────────────────────┐         │
+│     │  setup_tracing(endpoint)                    │         │
+│     │  _config.trace_enabled = True               │         │
+│     └─────────────────────────────────────────────┘         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**全局配置实例 (第 22-41 行)：**
+
+```python
+# 线程和异步安全的全局配置实例
+_config = _ConfigCls(
+    run_id=ContextVar("run_id", default=shortuuid.uuid()),
+    project=ContextVar("project", default="UnnamedProject_At" + ...),
+    name=ContextVar("name", default=datetime.now().strftime("%H%M%S_") + ...),
+    created_at=ContextVar("created_at", default=datetime.now().strftime(...)),
+    trace_enabled=ContextVar("trace_enabled", default=False),
+)
+```
+
+**关键设计特点：**
+- 使用 `ContextVar` 实现线程/协程安全的上下文隔离
+- 每个异步任务可以独立设置自己的 project/name/run_id
+- 配置延迟初始化，默认值在模块加载时生成
+
+### 5.14.2 分层架构源码交互关系
+
+#### 应用层 → 服务层 → 基础设施层
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     用户代码 (examples/)                         │
+│   main.py  ──▶  agentscope.init()  ──▶  ReActAgent(...)        │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                     src/agentscope/__init__.py                   │
+│                         init() 函数                               │
+│    ┌──────────────────────────────────────────────────────────┐ │
+│    │  setup_logger() → _logging.py                            │ │
+│    │  setup_tracing() → tracing/                              │ │
+│    │  StudioUserInput → agent/_user_input.py                  │ │
+│    └──────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      Service Layer (服务层)                       │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐│
+│  │  Agent  │  │  Model  │  │  Tool   │  │ Memory  │  │Pipeline ││
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘│
+│       │            │            │            │            │       │
+│       ↓            ↓            ↓            ↓            ↓       │
+│  agent/         model/        tool/       memory/      pipeline/   │
+│  _agent_base   _model_base   _tool_base  _memory_base  _msghub    │
+│  _react_agent  _openai_model _coding     _working_mem  _functional│
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                  Infrastructure Layer (基础设施层)                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
+│  │requests  │  │ asyncio  │  │shortuuid │  │  redis   │        │
+│  │(HTTP)    │  │(异步IO)  │  │(ID生成)  │  │(可选)    │        │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 核心模块源码交互时序
+
+```
+用户代码                    AgentScope 框架                         外部服务
+    │                            │                                    │
+    │ agentscope.init(...)       │                                    │
+    │───────────────────────────▶│                                    │
+    │                            │                                    │
+    │ ReActAgent(...)           │                                    │
+    │───────────────────────────▶│                                    │
+    │                            │                                    │
+    │ agent.reply(msg)          │                                    │
+    │───────────────────────────▶│                                    │
+    │                            │                                    │
+    │                            │ _reasoning()                       │
+    │                            │──────────▶ Formatter.format()       │
+    │                            │◀───────────                        │
+    │                            │                                    │
+    │                            │ model.invoke(prompt)               │
+    │                            │───────────────────────────────────▶│ OpenAI API
+    │                            │◀──────────────────────────────────│
+    │                            │                                    │
+    │                            │ 检查 tool_use blocks               │
+    │                            │                                    │
+    │                            │ _acting(tool_call)                  │
+    │                            │──────────▶ Toolkit.call_tool()     │
+    │                            │◀───────────                        │
+    │                            │                                    │
+    │                            │ Memory.record()                   │
+    │                            │──────────▶ memory/                 │
+    │                            │                                    │
+    │ reply_msg                  │                                    │
+    │◀───────────────────────────│                                    │
+```
+
+### 5.14.3 AgentBase 核心架构源码分析
+
+```python
+# _agent_base.py 第 30-184 行
+class AgentBase(StateModule, metaclass=_AgentMeta):
+    """异步 Agent 基类"""
+
+    # 支持的 Hook 类型 (第 36-43 行)
+    supported_hook_types = [
+        "pre_reply", "post_reply",       # reply() 前后
+        "pre_print", "post_print",       # print() 前后
+        "pre_observe", "post_observe",   # observe() 前后
+    ]
+
+    # 类级别 Hook (所有实例共享) (第 46-79 行)
+    _class_pre_reply_hooks = OrderedDict()
+    _class_post_reply_hooks = OrderedDict()
+    _class_pre_print_hooks = OrderedDict()
+    _class_post_print_hooks = OrderedDict()
+    _class_pre_observe_hooks = OrderedDict()
+    _class_post_observe_hooks = OrderedDict()
+
+    # 实例级别 Hook (单个实例独享) (第 151-158 行)
+    def __init__(self) -> None:
+        self._instance_pre_reply_hooks = OrderedDict()
+        self._instance_post_reply_hooks = OrderedDict()
+        self._instance_pre_observe_hooks = OrderedDict()
+        self._instance_post_observe_hooks = OrderedDict()
+
+        # 订阅者列表 (第 168 行)
+        self._subscribers: dict[str, list[AgentBase]] = {}
+```
+
+#### __call__ 方法核心流程 (第 448-467 行)
+
+```python
+async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
+    """调用 reply 函数并处理广播"""
+    self._reply_id = shortuuid.uuid()
+
+    reply_msg: Msg | None = None
+    try:
+        self._reply_task = asyncio.current_task()
+        reply_msg = await self.reply(*args, **kwargs)
+
+    # 处理中断 (用户取消)
+    except asyncio.CancelledError:
+        reply_msg = await self.handle_interrupt(*args, **kwargs)
+
+    finally:
+        # 广播回复消息给所有订阅者
+        if reply_msg:
+            await self._broadcast_to_subscribers(reply_msg)
+        self._reply_task = None
+
+    return reply_msg
+```
+
+#### 消息广播机制 (第 469-485 行)
+
+```python
+async def _broadcast_to_subscribers(
+    self,
+    msg: Msg | list[Msg] | None,
+) -> None:
+    """将消息广播给所有订阅者"""
+    if msg is None:
+        return
+
+    # 发送前移除思考块 (内部推理不对外可见)
+    broadcast_msg = self._strip_thinking_blocks(msg)
+
+    for subscribers in self._subscribers.values():
+        for subscriber in subscribers:
+            await subscriber.observe(broadcast_msg)
+```
+
+### 5.14.4 ReActAgent 核心调用链分析
+
+```python
+# _react_agent.py 第 223-256 行
+class ReActAgent(ReActAgentBase):
+    """ReAct 推理 Agent 的完整实现"""
+
+    def __init__(
+        self,
+        name: str,
+        sys_prompt: str,
+        model: ChatModelBase,
+        formatter: FormatterBase,
+        toolkit: Toolkit | None = None,
+        memory: MemoryBase | None = None,
+        # ...
+    ):
+        self.model = model           # LLM
+        self.formatter = formatter   # 消息格式化
+        self.memory = memory        # 短期记忆
+        self.toolkit = toolkit      # 工具箱
+```
+
+#### reply() 方法完整调用序列
+
+```python
+# _react_agent.py 第 376-537 行
+async def reply(
+    self,
+    msg: Msg | list[Msg] | None = None,
+    # ...
+) -> Msg:
+    # 1. 添加用户消息到记忆 (第 305-318 行)
+    if msg:
+        msg = msg if isinstance(msg, list) else [msg]
+        for m in msg:
+            self.memory.add(m)
+
+    # 2. 检索长期记忆 (第 321-340 行)
+    context_from_ltm = await self._retrieve_from_long_term_memory()
+
+    # 3. ReAct 迭代循环 (第 343-432 行)
+    for iteration in range(self.max_iters):
+        # 3.1 压缩记忆 (第 350-365 行)
+        await self._compress_memory_if_needed()
+
+        # 3.2 推理阶段 (第 371-390 行)
+        reasoning_result = await self._reasoning(
+            inner_memory=inner_memory,
+            # ...
+        )
+
+        # 3.3 检查是否使用工具 (第 393-410 行)
+        if has_tool_calls:
+            # 3.4 执行工具 (第 415-430 行)
+            tool_result = await self._acting(
+                tool_calls=tool_calls,
+                # ...
+            )
+            inner_memory.add(tool_result)
+        else:
+            # 无工具，直接返回
+            return reasoning_result
+
+    # 4. 记录到记忆 (第 478 行)
+    await self.memory.add(reply_msg)
+    return reply_msg
+```
+
+#### _reasoning() 详细流程
+
+```python
+# _react_agent.py 第 540-655 行
+async def _reasoning(self, inner_memory: MemoryBase, ...) -> Msg:
+    # 1. 获取记忆上下文 (第 520-540 行)
+    memory_prompt = inner_memory.get_memory()
+
+    # 2. 格式化消息 (第 545-560 行)
+    formatted_messages = self.formatter.format(
+        inner_memory.get_memory()
+    )
+
+    # 3. 调用模型 (第 565-590 行)
+    # 注意: stream 是模型属性，不是参数
+    res = await self.model(
+        formatted_messages,
+        tools=self.toolkit.get_json_schemas(),
+        tool_choice=tool_choice,
+    )
+    # 如果 self.model.stream = True，则 res 是 AsyncGenerator
+    # 如果 self.model.stream = False，则 res 是 ChatResponse
+
+    # 4. 解析响应 (第 595-600 行)
+    return self._parse_model_response(response)
+```
+
+### 5.14.5 Pipeline 管道源码分析
+
+#### sequential_pipeline 顺序执行
+
+```python
+# pipeline/_functional.py 第 10-44 行
+async def sequential_pipeline(
+    agents: list[AgentBase],
+    msg: Msg | list[Msg] | None = None,
+) -> Msg | list[Msg] | None:
+    """顺序执行: Agent1 -> Agent2 -> Agent3"""
+    for agent in agents:
+        msg = await agent(msg)  # 上一个输出作为下一个输入
+    return msg
+```
+
+#### fanout_pipeline 并行分发
+
+```python
+# pipeline/_functional.py 第 47-104 行
+async def fanout_pipeline(
+    agents: list[AgentBase],
+    msg: Msg | list[Msg] | None = None,
+    enable_gather: bool = True,
+    **kwargs: Any,
+) -> list[Msg]:
+    """并行执行: 同一消息分发给所有 Agent"""
+    if enable_gather:
+        # 并发执行 (第 97-102 行)
+        tasks = [
+            asyncio.create_task(agent(deepcopy(msg), **kwargs))
+            for agent in agents
+        ]
+        return await asyncio.gather(*tasks)
+    else:
+        # 顺序执行 (第 104 行)
+        return [await agent(deepcopy(msg), **kwargs) for agent in agents]
+```
+
+#### MsgHub 消息中心
+
+```python
+# pipeline/_msghub.py 第 14-157 行
+class MsgHub:
+    """MsgHub 消息订阅与广播中心"""
+
+    def __init__(
+        self,
+        participants: Sequence[AgentBase],
+        announcement: list[Msg] | Msg | None = None,
+        enable_auto_broadcast: bool = True,
+        name: str | None = None,
+    ):
+        self.participants = list(participants)
+        self.enable_auto_broadcast = enable_auto_broadcast
+
+    async def __aenter__(self) -> "MsgHub":
+        """进入上下文管理器时重置订阅者"""
+        self._reset_subscriber()
+        if self.announcement is not None:
+            await self.broadcast(msg=self.announcement)
+        return self
+
+    async def __aexit__(self, *args: Any, **kwargs: Any) -> None:
+        """退出时清理订阅者"""
+        if self.enable_auto_broadcast:
+            for agent in self.participants:
+                agent.remove_subscribers(self.name)
+
+    async def broadcast(self, msg: list[Msg] | Msg) -> None:
+        """广播消息给所有参与者"""
+        for agent in self.participants:
+            await agent.observe(msg)
+```
+
+### 5.14.6 核心调用链完整视图
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         用户代码调用链                                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  agentscope.init(project="my_project")                                   │
+│       │                                                                 │
+│       ├──▶ _config.project = "my_project"  (全局配置)                    │
+│       ├──▶ setup_logger(logging_level, logging_path)  → _logging.py      │
+│       ├──▶ requests.post(...)  注册到 Studio (可选)                      │
+│       └──▶ setup_tracing(endpoint)  → tracing/                          │
+│                                                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  agent = ReActAgent(name="assistant", model=my_model, ...)               │
+│       │                                                                 │
+│       └──▶ __init__ 中初始化组件:                                        │
+│            ├── self.model = model                                        │
+│            ├── self.formatter = formatter                                │
+│            ├── self.memory = memory                                      │
+│            └── self.toolkit = toolkit                                    │
+│                                                                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  response = await agent("你好")                                          │
+│       │                                                                 │
+│       ├──▶ __call__(msg)  (_agent_base.py:448)                          │
+│       │       │                                                          │
+│       │       └──▶ self.reply(msg)  → ReActAgent.reply()                │
+│       │               │                                                  │
+│       │               ├──▶ memory.add(msg)                               │
+│       │               │                                                  │
+│       │               ├──▶ for i in range(max_iters):                    │
+│       │               │       │                                          │
+│       │               │       ├──▶ _reasoning()                          │
+│       │               │       │       │                                  │
+│       │               │       │       ├──▶ memory.get_memory()           │
+│       │               │       │       ├──▶ formatter.format()            │
+│       │               │       │       └──▶ model(response)               │
+│       │               │       │                                              │
+│       │               │       └──▶ 检查 tool_use blocks                   │
+│       │               │               │                                  │
+│       │               │               └──▶ _acting(tool_calls)            │
+│       │               │                       │                          │
+│       │               │                       └──▶ toolkit.call_tool()    │
+│       │               │                                                      │
+│       │               └──▶ memory.add(response)                            │
+│       │                                                                          │
+│       └──▶ _broadcast_to_subscribers(response)                             │
+│               │                                                              │
+│               └──▶ subscriber.observe(response)  → MsgHub 广播              │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.14.7 架构流程图
+
+#### AgentScope 初始化流程
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     agentscope.init()                             │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  1. 配置更新     │ │  2. 日志初始化   │ │  3. Studio连接  │
+│                 │ │                 │ │                 │
+│ _config.project │ │ setup_logger()  │ │ requests.post() │
+│ _config.name    │ │    ↓           │ │ UserAgent.      │
+│ _config.run_id  │ │ _logging.py    │ │ override_input()│
+└─────────────────┘ └─────────────────┘ └────────┬────────┘
+                                                 │
+                                                 ▼
+                                    ┌─────────────────────────┐
+                                    │  4. 链路追踪设置        │
+                                    │                        │
+                                    │ setup_tracing(endpoint)│
+                                    │ _config.trace_enabled  │
+                                    └─────────────────────────┘
+```
+
+#### ReActAgent 运行时交互图
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                           ReActAgent                                  │
+│                                                                      │
+│  ┌────────────┐     ┌────────────┐     ┌────────────┐              │
+│  │  Memory    │◀───▶│  Formatter │◀───▶│   Model    │              │
+│  │ (记忆)     │     │  (格式化)   │     │   (LLM)    │              │
+│  └─────┬──────┘     └────────────┘     └──────┬─────┘              │
+│        │                                        │                     │
+│        │              ┌────────────┐            │                     │
+│        └─────────────▶│   Toolkit  │◀───────────┘                     │
+│                       │  (工具箱)   │                                 │
+│                       └──────┬─────┘                                 │
+│                              │                                        │
+│                              ▼                                        │
+│                       ┌────────────┐                                 │
+│                       │   Tool     │                                 │
+│                       │  (具体工具) │                                 │
+│                       └────────────┘                                 │
+│                                                                      │
+│  用户输入 ──▶ reply() ──▶ 推理循环 ──▶ 返回结果                       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+#### 多 Agent 协作时序图
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐     ┌─────────┐
+│  User   │     │ Agent1  │     │ MsgHub  │     │ Agent2  │
+└────┬────┘     └────┬────┘     └────┬────┘     └────┬────┘
+     │               │               │               │
+     │ agent1(msg)   │               │               │
+     │──────────────▶│               │               │
+     │               │               │               │
+     │               │ reply()       │               │
+     │               │──────────┐    │               │
+     │               │           │    │               │
+     │               │◀──────────┘    │               │
+     │               │               │               │
+     │               │ broadcast()   │               │
+     │               │──────────────▶│               │
+     │               │               │               │
+     │               │               │ observe()    │
+     │               │               │─────────────▶│
+     │               │               │               │
+     │ response      │               │               │
+     │◀──────────────│               │               │
+     │               │               │               │
+```
+
+### 5.14.8 源码行号索引
+
+| 模块 | 文件 | 核心类和函数 | 行号 |
+|------|------|-------------|------|
+| **入口** | `__init__.py` | `init()` | 72-157 |
+| | | `_config` 全局配置 | 22-41 |
+| **Agent** | `agent/_agent_base.py` | `AgentBase` 类 | 30-184 |
+| | | `__call__()` | 448-467 |
+| | | `_broadcast_to_subscribers()` | 469-485 |
+| | `agent/_react_agent.py` | `ReActAgent` 类 | 223-256 |
+| | | `reply()` | 284-478 |
+| | | `_reasoning()` | 504-600 |
+| | `agent/_agent_meta.py` | `_AgentMeta` 元类 | - |
+| **Pipeline** | `pipeline/_msghub.py` | `MsgHub` 类 | 14-157 |
+| | | `broadcast()` | 130-138 |
+| | `pipeline/_functional.py` | `sequential_pipeline()` | 10-44 |
+| | | `fanout_pipeline()` | 47-104 |
+| **Model** | `model/_model_base.py` | `ChatModelBase` | - |
+| | `model/_openai_model.py` | `OpenAIChatModel` | - |
+| **Memory** | `memory/_memory_base.py` | `MemoryBase` | - |
+| **Tool** | `tool/_tool_base.py` | `ToolBase` | - |
+
+### 5.14.9 源码阅读建议
+
+1. **入口点**: 先读 `__init__.py` 的 `init()` 函数，理解框架初始化流程
+2. **Agent 核心**: 阅读 `_agent_base.py` 理解 Hook 机制和消息广播
+3. **业务逻辑**: 阅读 `_react_agent.py` 理解 ReAct 推理循环
+4. **协作模式**: 阅读 `_msghub.py` 和 `_functional.py` 理解多 Agent 协作
+5. **模型抽象**: 阅读 `model/_model_base.py` 理解模型调用抽象
 
 ## 5.10 多智能体协作模式
 

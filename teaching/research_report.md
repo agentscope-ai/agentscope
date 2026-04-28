@@ -32,7 +32,7 @@ v1.0.19 对 DeepResearchAgent 进行了多项修复，使其更稳定：
 # 修复了 thinking blocks 的处理逻辑
 agent = DeepResearchAgent(
     name="研究助手",
-    model=OpenAIChatGPTModel(model_name="gpt-4o"),
+    model=OpenAIChatModel(model_name="gpt-4o"),
     tools=[tavily_search, tavily_extract]  # Tavily 工具函数命名已修复
 )
 ```
@@ -99,20 +99,21 @@ Phase 3: Real-time Multimodal Models
 官方新增多种多智能体协作模式：
 
 ```python
-from agentscope import agent, pipeline
+from agentscope import agent
+from agentscope.pipeline import SequentialPipeline, FanoutPipeline, MsgHub
 
-# 1. Routing - 输入分类路由
-with pipeline.Routing(agents=[agent_a, agent_b, agent_c]):
-    result = router(input_text)
+# 1. SequentialPipeline - 顺序执行
+with SequentialPipeline(agents=[researcher, writer]) as seq:
+    result = seq("写一篇研究报告")
 
-# 2. Handoffs - 对话交接
-with pipeline.Handoffs(agents=[specialist_1, specialist_2]):
-    result = specialist_1(input)
-    # 自动切换到 specialist_2
+# 2. FanoutPipeline - 并行广播
+with FanoutPipeline(agents=[agent_a, agent_b, agent_c]) as fanout:
+    results = fanout("广播这个消息")
 
-# 3. Supervisor - 监督者模式
-with pipeline.Supervisor(agents=[researcher, writer]):
-    article = supervisor("写一篇关于AI的研究报告")
+# 3. MsgHub - 消息中心
+async with MsgHub(participants=[agent_a, agent_b, agent_c]) as hub:
+    # 消息会自动广播给所有参与者
+    pass
 ```
 
 ### 3.3 Agent 类型扩展
@@ -202,22 +203,19 @@ Features
 根据最新文档，推荐以下多智能体模式：
 
 ```python
-# 模式一：路由模式 (适用于输入分类明确)
-with pipeline.Routing(agents=[researcher, writer, coder]) as router:
-    result = router(user_input)  # 自动路由到最合适的 Agent
+# 模式一：FanoutPipeline - 并行广播 (适用于需要多角度分析)
+with FanoutPipeline(agents=[pro_agent, con_agent]) as fanout:
+    analysis = fanout("分析这个商业决策的利弊")
 
-# 模式二：顺序执行 (适用于需要前置任务结果)
-with pipeline.Sequential(agents=[researcher, writer]):
+# 模式二：SequentialPipeline - 顺序执行 (适用于需要前置任务结果)
+with SequentialPipeline(agents=[researcher, writer]) as seq:
     research = researcher("研究 AI 趋势")
     article = writer(f"基于研究写文章: {research}")
 
-# 模式三：监督者模式 (适用于需要调度专家)
-with pipeline.Supervisor(agents=[specialist_1, specialist_2]) as supervisor:
-    result = supervisor("复杂任务")
-
-# 模式四：辩论模式 (适用于需要多角度分析)
-with pipeline.Debate(agents=[pro_agent, con_agent]):
-    analysis = debate("分析这个商业决策的利弊")
+# 模式三：MsgHub - 消息中心 (适用于多 Agent 自由对话)
+async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
+    # 消息自动广播
+    pass
 ```
 
 ### 5.2 工具调用最佳实践
@@ -309,25 +307,25 @@ import agentscope
 from agentscope import agent
 from agentscope.model import OpenAIChatGPTModel
 
-agentscope.init(project_name="my-first-agent")
+agentscope.init(project="my-first-agent")
 
 my_agent = agent.ReActAgent(
     name="助手",
-    model=OpenAIChatGPTModel(model_name="gpt-4o"),
+    model=OpenAIChatModel(model_name="gpt-4o"),
     tools=[agentscope.tool.python_executor]  # 旧 API
 )
 
 # 新版
 import agentscope
 from agentscope import agent
-from agentscope.model import OpenAIChatGPTModel
+from agentscope.model import OpenAIChatModel
 from agentscope.tool import python_executor
 
-agentscope.init(project_name="my-first-agent")
+agentscope.init(project="my-first-agent")
 
 my_agent = agent.ReActAgent(
     name="助手",
-    model=OpenAIChatGPTModel(model_name="gpt-4o"),
+    model=OpenAIChatModel(model_name="gpt-4o"),
     tools=[python_executor]  # 新 API
 )
 ```
@@ -336,31 +334,29 @@ my_agent = agent.ReActAgent(
 
 ```python
 # 新增多智能体协作示例
-from agentscope import agent, pipeline
+from agentscope import agent
+from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 
 # 创建专家 Agent
 researcher = agent.ReActAgent(
     name="研究员",
-    model=OpenAIChatGPTModel(model_name="gpt-4o"),
+    model=OpenAIChatModel(model_name="gpt-4o"),
     tools=[tavily_search]
 )
 
 writer = agent.ReActAgent(
     name="作家",
-    model=OpenAIChatGPTModel(model_name="gpt-4o-mini")
+    model=OpenAIChatModel(model_name="gpt-4o-mini")
 )
 
-# 使用 MsgHub 进行消息分发
-with pipeline.MsgHub(agents=[researcher, writer]):
+# 方式一：SequentialPipeline 顺序执行
+with SequentialPipeline(agents=[researcher, writer]) as seq:
     research_result = researcher("研究 AI Agent 的最新发展趋势")
-
-    # 作家基于研究结果写作
     article = writer(f"根据以下研究写一篇文章: {research_result}")
 
-# 推荐：使用 Routing 自动选择
-with pipeline.Routing(agents=[researcher, writer, coder]) as router:
-    # 自动根据输入内容选择合适的 Agent
-    result = router("解释一下 Transformer 架构")
+# 方式二：FanoutPipeline 并行执行
+with FanoutPipeline(agents=[researcher, writer, coder]) as fanout:
+    results = fanout("并行处理这个任务")
 ```
 
 ### 6.3 DeepResearchAgent 使用
@@ -371,7 +367,7 @@ from agentscope.agent import DeepResearchAgent
 
 research_agent = DeepResearchAgent(
     name="深度研究助手",
-    model=OpenAIChatGPTModel(model_name="gpt-4o"),
+    model=OpenAIChatModel(model_name="gpt-4o"),
     tools=[
         tavily_search,   # Web 搜索
         tavily_extract,  # 内容提取
@@ -423,7 +419,7 @@ report = research_agent("研究 AI 在医疗领域的应用现状和未来趋势
 ## 9. 下一步建议
 
 1. **更新教程文档**: 根据本文档更新 quickstart 和核心概念章节
-2. **补充示例代码**: 添加 DeepResearchAgent、Routing、Handoffs 等新功能示例
+2. **补充示例代码**: 添加 DeepResearchAgent、SequentialPipeline、FanoutPipeline 等多智能体协作示例
 3. **更新 API 引用**: 修正模块导入方式的示例代码
 4. **添加 Voice Agent 章节**: 考虑在高级特性中添加语音交互内容
 5. **关注 2.0 动态**: 跟踪 AgentScope 2.0 开发进展，及时更新文档

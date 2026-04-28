@@ -52,8 +52,8 @@ agentscope.init(
 my_agent = agent.ReActAgent(
     name="助手",
     model=OpenAIChatModel(
-        model_name="gpt-4o",
-        api_key="sk-xxxxx"  # 也可以从环境变量读取
+        model_name="gpt-4o"
+        # api_key 通过环境变量 OPENAI_API_KEY 设置
     ),
     # 内置工具：Python 代码执行
     tools=[execute_python_code]
@@ -167,8 +167,13 @@ def get_weather(city: str) -> str:
 
 @function
 def calculate(expression: str) -> float:
-    """计算数学表达式"""
-    return eval(expression)  # 简化示例，生产环境请用 ast.literal_eval
+    """计算数学表达式
+
+    ⚠️ 安全警告: 此示例使用 eval() 仅供教学演示。
+    生产环境应使用 ast.literal_eval() 或专用数学库如 numexpr，
+    并对输入进行严格的格式验证，防止代码注入攻击。
+    """
+    return eval(expression)  # 教学演示，生产环境禁用
 
 # 创建带工具的 Agent
 weather_agent = agent.ReActAgent(
@@ -243,7 +248,8 @@ AgentScope 支持多种多 Agent 协作模式：
 
 ```python
 import agentscope
-from agentscope import agent, pipeline
+from agentscope import agent
+from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 from agentscope.model import OpenAIChatModel
 
 agentscope.init(project="multi-agent")
@@ -260,12 +266,12 @@ writer = agent.ReActAgent(
     model=OpenAIChatModel(model_name="gpt-4o-mini")
 )
 
-# 模式一：Routing - 自动路由到最合适的 Agent
-with pipeline.Routing(agents=[researcher, writer]) as router:
-    result = router("研究 AI Agent 的最新发展趋势")
+# 模式一：FanoutPipeline - 并行执行
+with FanoutPipeline(agents=[researcher, writer]) as fanout:
+    results = fanout("研究 AI Agent 的最新发展趋势")
 
-# 模式二：Sequential - 顺序执行
-with pipeline.Sequential(agents=[researcher, writer]) as sequential:
+# 模式二：SequentialPipeline - 顺序执行
+with SequentialPipeline(agents=[researcher, writer]) as seq:
     research_result = researcher("研究 AI 发展趋势")
     article = writer(f"基于研究写文章: {research_result}")
 ```

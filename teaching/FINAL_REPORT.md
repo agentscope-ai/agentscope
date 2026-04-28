@@ -82,15 +82,9 @@
    - 问题: 使用旧类名 `OpenAIChatGPTModel`/`AnthropicClaudeModel`
    - 建议: 改为 `OpenAIChatModel`/`AnthropicChatModel`
 
-4. **API 参数已移除**
-   - 文件: 03_quickstart.md 第55行
-   - 问题: `api_key="sk-xxxxx"` 参数在 v1.0.19 已移除
-   - 建议: 使用环境变量方式
+**注意**: 经中审核实，`api_key` 参数仍然有效（`_openai_model.py:77`），初审报告相关说法有误。
 
-5. **配置参数名称变更**
-   - 文件: 01_project_overview.md 第239行
-   - 问题: `project_name` 应改为 `project`
-   - 建议: 更新为当前版本参数名
+**待核实**: `project_name` vs `project` 参数问题 - 需确认当前版本的实际参数名。
 
 #### 🟡 中严重程度问题
 
@@ -155,7 +149,7 @@
 
 1. 修正 module_memory_rag_deep.md 中的 AsyncSQLAlchemyMemory 代码示例
 2. 更新 module_pipeline_infra_deep.md 中的 Pipeline 代码标注
-3. 修正旧类名引用
+3. 修正 07_java_comparison.md 中的旧类名引用
 
 ### P1（高优先级）
 
