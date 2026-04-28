@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The base MCP stateful client class in AgentScope, that provides basic
  functionality for stateful MCP clients."""
+import asyncio
 from abc import ABC
 from contextlib import AsyncExitStack
 from typing import List
@@ -19,6 +20,13 @@ class StatefulClientBase(MCPClientBase, ABC):
 
     The developers should use `connect()` and `close()` methods to manage
     the client lifecycle.
+
+    The context manager lifecycle (enter/exit of MCP transports) runs in a
+    single dedicated asyncio task to avoid cross-task CancelScope errors
+    from anyio, which is used internally by MCP transports (stdio_client,
+    sse_client, etc.). This prevents resource leaks when ``connect()`` and
+    ``close()`` are called from different asyncio tasks (e.g. in
+    uvicorn/FastAPI startup vs. shutdown events).
     """
 
     is_connected: bool
@@ -43,56 +51,149 @@ class StatefulClientBase(MCPClientBase, ABC):
         # Cache the tools to avoid fetching them multiple times
         self._cached_tools = None
 
+        self._lifecycle_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
+        self._ready_event = asyncio.Event()
+        self._connect_error: BaseException | None = None
+
+    async def _run_lifecycle(self) -> None:
+        """Run the MCP client lifecycle in a dedicated task.
+
+        Ensures ``AsyncExitStack.__aenter__`` and ``__aexit__`` happen in
+        the same asyncio task, avoiding cross-task ``CancelScope`` errors.
+        """
+        try:
+            async with AsyncExitStack() as stack:
+                self.stack = stack
+
+                client = self.client
+                if client is None:
+                    raise RuntimeError(
+                        "client is not set. Subclasses must assign "
+                        "self.client in __init__.",
+                    )
+                context = await stack.enter_async_context(client)
+                read_stream, write_stream = context[0], context[1]
+
+                session = ClientSession(read_stream, write_stream)
+                await stack.enter_async_context(session)
+                await session.initialize()
+                self.session = session
+
+                self.is_connected = True
+                self._ready_event.set()
+                logger.info("MCP client connected.")
+
+                await self._stop_event.wait()
+
+        except Exception as e:
+            if not self._ready_event.is_set():
+                self._connect_error = e
+                self._ready_event.set()
+            else:
+                logger.warning("Error in MCP client lifecycle: %s", e)
+        except BaseException:
+            # CancelledError (and other BaseException subclasses like
+            # SystemExit) are not caught by `except Exception`. Ensure
+            # _ready_event is always set so connect() can unblock instead
+            # of hanging forever.
+            if not self._ready_event.is_set():
+                self._ready_event.set()
+            raise
+        finally:
+            self.stack = None
+            self.session = None
+            self.is_connected = False
+            self._cached_tools = None
+
     async def connect(self) -> None:
-        """Connect to MCP server."""
-        if self.is_connected:
+        """Connect to MCP server.
+
+        Spawns a background task that owns the full context-manager
+        lifecycle so that ``close()`` can be called from any task.
+        """
+        if self.is_connected or (
+            self._lifecycle_task is not None
+            and not self._lifecycle_task.done()
+        ):
             raise RuntimeError(
                 "The MCP server is already connected. Call close() "
                 "before connecting again.",
             )
 
-        self.stack = AsyncExitStack()
+        self._stop_event.clear()
+        self._ready_event.clear()
+        self._connect_error = None
+        self._lifecycle_task = asyncio.create_task(self._run_lifecycle())
 
         try:
-            context = await self.stack.enter_async_context(
-                self.client,
-            )
-            read_stream, write_stream = context[0], context[1]
-            self.session = ClientSession(read_stream, write_stream)
-            await self.stack.enter_async_context(self.session)
-            await self.session.initialize()
-
-            self.is_connected = True
-            logger.info("MCP client connected.")
-        except Exception:
-            await self.stack.aclose()
-            self.stack = None
+            await self._ready_event.wait()
+        except BaseException:
+            self._stop_event.set()
+            if (
+                self._lifecycle_task is not None
+                and not self._lifecycle_task.done()
+            ):
+                self._lifecycle_task.cancel()
+                try:
+                    await self._lifecycle_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._lifecycle_task = None
             raise
+
+        if self._connect_error is not None:
+            error = self._connect_error
+            tb = error.__traceback__
+            self._connect_error = None
+            if self._lifecycle_task and not self._lifecycle_task.done():
+                await self._lifecycle_task
+            self._lifecycle_task = None
+            raise error.with_traceback(tb)
+
+        if not self.is_connected or self._stop_event.is_set():
+            if self._lifecycle_task and not self._lifecycle_task.done():
+                await self._lifecycle_task
+            self._lifecycle_task = None
+            raise RuntimeError(
+                "The MCP server was closed during connect().",
+            )
 
     async def close(self, ignore_errors: bool = True) -> None:
         """Clean up the MCP client resources. You must call this method when
         your application is done.
 
+        This method is safe to call from any asyncio task — it signals the
+        dedicated lifecycle task to exit, which performs the actual context
+        manager cleanup in the same task that entered it.
+
         Args:
             ignore_errors (`bool`):
                 Whether to ignore errors during cleanup. Defaults to `True`.
         """
-        if not self.is_connected:
-            raise RuntimeError(
-                "The MCP server is not connected. Call connect() before "
-                "closing.",
-            )
+        has_lifecycle = (
+            self._lifecycle_task is not None
+            and not self._lifecycle_task.done()
+        )
+
+        if not self.is_connected and not has_lifecycle:
+            if not ignore_errors:
+                raise RuntimeError(
+                    "The MCP server is not connected. Call connect() before "
+                    "closing.",
+                )
+            return
 
         try:
-            await self.stack.aclose()
+            self._stop_event.set()
+            if self._lifecycle_task:
+                await self._lifecycle_task
         except Exception as e:
             if not ignore_errors:
-                raise e
+                raise
             logger.warning("Error during MCP client cleanup: %s", e)
         finally:
-            self.stack = None
-            self.session = None
-            self.is_connected = False
+            self._lifecycle_task = None
 
     async def list_tools(self) -> List[mcp.types.Tool]:
         """Get all available tools from the server.
