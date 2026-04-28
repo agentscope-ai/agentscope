@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 else:
     ToolChoice = Any
 
-_TOOL_CHOICE_MODES = ["auto", "none", "required"]
+_TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 
 
 class ChatModelBase:
@@ -162,29 +162,66 @@ class ChatModelBase:
 
         Args:
             tool_choice (`ToolChoice | None`):
-                Tool choice mode or function name
+                Tool choice dict with 'mode' and optional 'tools' fields.
             tools (`list[dict] | None`):
                 Available tools list
 
         Raises:
             `ValueError`:
-                If tool_choice is not a valid mode or function name.
+                If tool_choice is not a valid dict, or mode/tools values
+                are invalid.
         """
         if tool_choice is None:
             return
 
-        if not isinstance(tool_choice, str):
+        if not isinstance(tool_choice, dict):
             raise ValueError(
-                f"tool_choice must be str, got {type(tool_choice)}",
+                f"tool_choice must be a dict, got {type(tool_choice)}",
             )
-        if tool_choice in _TOOL_CHOICE_MODES:
-            return
 
-        available_functions = [tool["function"]["name"] for tool in tools]
-
-        if tool_choice not in available_functions:
-            all_options = _TOOL_CHOICE_MODES + available_functions
+        mode = tool_choice.get("mode")
+        if mode is None:
             raise ValueError(
-                f"Invalid tool_choice '{tool_choice}'. "
-                f"Available options: {', '.join(sorted(all_options))}",
+                "tool_choice must contain a 'mode' field.",
             )
+        if not isinstance(mode, str):
+            raise ValueError(
+                f"tool_choice 'mode' must be a str, got {type(mode)}",
+            )
+
+        available_functions = [
+            tool["function"]["name"] for tool in (tools or [])
+        ]
+
+        tool_names = tool_choice.get("tools")
+        if tool_names is not None:
+            if not isinstance(tool_names, list):
+                raise ValueError(
+                    f"tool_choice 'tools' field must be a list, "
+                    f"got {type(tool_names)}",
+                )
+            for name in tool_names:
+                if name not in available_functions:
+                    raise ValueError(
+                        f"Invalid tool name '{name}' in tool_choice.tools. "
+                        f"Available tools: "
+                        f"{', '.join(sorted(available_functions))}",
+                    )
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — validate it exists
+            # Fall back to all available tools when tool_names is empty or None
+            validation_scope = (
+                tool_names if tool_names else available_functions
+            )
+            if mode not in validation_scope:
+                raise ValueError(
+                    f"Invalid tool name '{mode}' in tool_choice.mode. "
+                    + (
+                        f"Available tools in tool_choice.tools: "
+                        f"{', '.join(sorted(tool_names))}"
+                        if tool_names is not None
+                        else f"Available tools: "
+                        f"{', '.join(sorted(available_functions))}"
+                    ),
+                )

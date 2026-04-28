@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple, TYPE_CHECKING
 from ..embedding import EmbeddingModelBase
 from ..message import Msg, ToolCallBlock
 from ..model import ChatModelBase
+from ..tool import ToolChoice
 
 from ._attributes import (
     SpanAttributes,
@@ -135,7 +136,7 @@ def _get_provider_name(instance: ChatModelBase) -> str:
 
 def _get_tool_definitions(
     tools: list[dict[str, Any]] | None,
-    tool_choice: str | None,
+    tool_choice: ToolChoice | None,
 ) -> str | None:
     """Extract and serialize tool definitions for tracing.
 
@@ -146,9 +147,9 @@ def _get_tool_definitions(
         tools (`list[dict[str, Any]] | None`, optional):
             List of tool definitions in OpenAI format with nested
             structure: ``[{"type": "function", "function": {...}}]``
-        tool_choice (`str | None`, optional):
-            Tool choice mode. Can be "auto", "none", "any", "required",
-            or a specific tool name. If "none", returns None to indicate
+        tool_choice (`ToolChoice | None`, optional):
+            Tool choice configuration dict with 'mode' and optional
+            'tools' fields. If mode is "none", returns None to indicate
             tools should not be traced.
 
     Returns:
@@ -163,7 +164,7 @@ def _get_tool_definitions(
         return None
 
     # Tool choice is explicitly "none" (model should not use tools)
-    if tool_choice == "none":
+    if isinstance(tool_choice, dict) and tool_choice.get("mode") == "none":
         return None
 
     try:

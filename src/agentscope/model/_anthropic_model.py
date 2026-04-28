@@ -6,13 +6,12 @@ from typing import (
     AsyncGenerator,
     TYPE_CHECKING,
     List,
-    Literal,
 )
 from collections import OrderedDict
 
 from pydantic import BaseModel
 
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, AnthropicChatFormatter
@@ -117,7 +116,7 @@ class AnthropicChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
@@ -131,8 +130,7 @@ class AnthropicChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
             **generate_kwargs (`Any`):
                 The keyword arguments for Anthropic chat completions API.
@@ -156,14 +154,11 @@ class AnthropicChatModel(ChatModelBase):
                 "budget_tokens": self.thinking_config.budget_tokens,
             }
 
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         # Extract the system message
         if messages[0]["role"] == "system":
@@ -391,64 +386,73 @@ class AnthropicChatModel(ChatModelBase):
             _final_kwargs["id"] = response_id
         yield ChatResponse(**_final_kwargs)
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the JSON schemas of the tool functions to the format that
-        Anthropic API expects."""
-        formatted_schemas = []
-        for schema in schemas:
-            assert (
-                "function" in schema
-            ), f"Invalid schema: {schema}, expect key 'function'."
-
-            assert "name" in schema["function"], (
-                f"Invalid schema: {schema}, "
-                "expect key 'name' in 'function' field."
-            )
-
-            formatted_schemas.append(
-                {
-                    "name": schema["function"]["name"],
-                    "description": schema["function"].get("description", ""),
-                    "input_schema": schema["function"].get("parameters", {}),
-                },
-            )
-
-        return formatted_schemas
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> dict | None:
-        """Format tool_choice parameter for API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate and format tools and tool_choice for Anthropic.
+
+        Converts tool schemas to Anthropic's flat format and maps
+        tool_choice modes to Anthropic's type-based format. When
+        ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific tool
+        name (str) the model is forced to call exactly that tool without
+        needing to filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                tool_choice is None.
+            `tuple[list[dict] | None, dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = None
+        if tools:
+            fmt_tools = []
+            for schema in tools:
+                assert (
+                    "function" in schema
+                ), f"Invalid schema: {schema}, expect key 'function'."
+                assert "name" in schema["function"], (
+                    f"Invalid schema: {schema}, "
+                    "expect key 'name' in 'function' field."
+                )
+                fmt_tools.append(
+                    {
+                        "name": schema["function"]["name"],
+                        "description": schema["function"].get(
+                            "description",
+                            "",
+                        ),
+                        "input_schema": schema["function"].get(
+                            "parameters",
+                            {},
+                        ),
+                    },
+                )
+
+        if not tool_choice:
+            return fmt_tools, None
+
+        mode = tool_choice["mode"]
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — force call it
+            return fmt_tools, {"type": "tool", "name": mode}
 
         type_mapping = {
             "auto": {"type": "auto"},
             "none": {"type": "none"},
             "required": {"type": "any"},
         }
-        if tool_choice in type_mapping:
-            return type_mapping[tool_choice]
-
-        return {"type": "tool", "name": tool_choice}
+        return fmt_tools, type_mapping[mode]

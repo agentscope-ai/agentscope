@@ -9,7 +9,6 @@ from typing import (
     Any,
     TYPE_CHECKING,
     AsyncIterator,
-    Literal,
     List,
 )
 
@@ -19,7 +18,7 @@ from .._logging import logger
 from ..formatter import FormatterBase
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
 from ._model_usage import ChatUsage
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_response import ChatResponse
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
@@ -186,7 +185,7 @@ class GeminiChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **config_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Call the Gemini model with the provided arguments.
@@ -197,10 +196,8 @@ class GeminiChatModel(ChatModelBase):
                 required.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-            | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool name.
                  For more details, please refer to
                  https://ai.google.dev/gemini-api/docs/function-calling?hl=en&example=meeting#function_calling_modes
             **config_kwargs (`Any`):
@@ -217,14 +214,11 @@ class GeminiChatModel(ChatModelBase):
                 "thinking_budget": self.thinking_config.thinking_budget,
             }
 
-        if tools:
-            config["tools"] = self._format_tools_json_schemas(tools)
-
-        if tool_choice:
-            config["tool_config"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            config["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            config["tool_config"] = fmt_tool_choice
 
         # Prepare the arguments for the Gemini API call
         kwargs: dict = {
@@ -449,131 +443,73 @@ class GeminiChatModel(ChatModelBase):
             usage=usage,
         )
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the tools JSON schema into required format for Gemini API.
-
-        .. note:: Gemini API does not support `$defs` and `$ref` in JSON
-         schemas. This function resolves all `$ref` references by inlining the
-         referenced definitions, producing a self-contained schema without
-         any references.
-
-        Args:
-            schemas (`dict[str, Any]`):
-                The tools JSON schemas.
-
-        Returns:
-            List[Dict[str, Any]]:
-                A list containing a dictionary with the
-                "function_declarations" key, which maps to a list of
-                function definitions.
-
-        Example:
-            .. code-block:: python
-                :caption: Example tool schemas of Gemini API
-
-                # Input JSON schema
-                schemas = [
-                    {
-                        'type': 'function',
-                        'function': {
-                            'name': 'execute_shell_command',
-                            'description': 'xxx',
-                            'parameters': {
-                                'type': 'object',
-                                'properties': {
-                                    'command': {
-                                        'type': 'string',
-                                        'description': 'xxx.'
-                                    },
-                                    'timeout': {
-                                        'type': 'integer',
-                                        'default': 300
-                                    }
-                                },
-                                'required': ['command']
-                            }
-                        }
-                    }
-                ]
-
-                # Output format (Gemini API expected):
-                [
-                    {
-                        'function_declarations': [
-                            {
-                                'name': 'execute_shell_command',
-                                'description': 'xxx.',
-                                'parameters': {
-                                    'type': 'object',
-                                    'properties': {
-                                        'command': {
-                                            'type': 'string',
-                                            'description': 'xxx.'
-                                        },
-                                        'timeout': {
-                                            'type': 'integer',
-                                            'default': 300
-                                        }
-                                    },
-                                    'required': ['command']
-                                }
-                            }
-                        ]
-                    }
-                ]
-
-        """
-        function_declarations = []
-        for schema in schemas:
-            if "function" not in schema:
-                continue
-            func = schema["function"].copy()
-            # Flatten the parameters schema to resolve $ref references
-            if "parameters" in func:
-                func["parameters"] = _flatten_json_schema(func["parameters"])
-            function_declarations.append(func)
-
-        return [{"function_declarations": function_declarations}]
-
-    def _format_tool_choice(
-        self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> dict | None:
-        """Format tool_choice parameter for API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, dict | None]:
+        """Validate and format tools and tool_choice for Gemini.
+
+        Converts tool schemas to Gemini's ``function_declarations``
+        format (resolving ``$ref`` references) and maps tool_choice
+        modes to Gemini's ``function_calling_config``. When
+        ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific
+        tool name (str) the model is restricted via
+        ``allowed_function_names`` without needing to filter the list,
+        preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                    tool_choice is None.
+            `tuple[list[dict] | None, dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_config).
         """
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        if tool_choice is None:
-            return None
+        fmt_tools = None
+        if tools:
+            function_declarations = []
+            for schema in tools:
+                if "function" not in schema:
+                    continue
+                func = schema["function"].copy()
+                if "parameters" in func:
+                    func["parameters"] = _flatten_json_schema(
+                        func["parameters"],
+                    )
+                function_declarations.append(func)
+            fmt_tools = [{"function_declarations": function_declarations}]
+
+        if not tool_choice:
+            return fmt_tools, None
+
+        mode = tool_choice["mode"]
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — restrict to that single tool
+            fmt_choice: dict = {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [mode],
+                },
+            }
+            return fmt_tools, fmt_choice
 
         mode_mapping = {
             "auto": "AUTO",
             "none": "NONE",
             "required": "ANY",
         }
-        mode = mode_mapping.get(tool_choice)
-        if mode:
-            return {"function_calling_config": {"mode": mode}}
-        return {
-            "function_calling_config": {
-                "mode": "ANY",
-                "allowed_function_names": [tool_choice],
-            },
+        fmt_choice = {
+            "function_calling_config": {"mode": mode_mapping[mode]},
         }
+        return fmt_tools, fmt_choice

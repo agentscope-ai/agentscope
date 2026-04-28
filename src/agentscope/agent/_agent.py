@@ -2,6 +2,7 @@
 """The unified agent class in AgentScope library."""
 import asyncio
 import uuid
+
 from asyncio import Queue
 from copy import deepcopy
 from typing import Any, AsyncGenerator, Sequence, Literal, List
@@ -511,7 +512,7 @@ class Agent(BaseModel):
 
     async def _reasoning(
         self,
-        tool_choice: ToolChoice = "auto",
+        tool_choice: ToolChoice | None = None,
     ) -> AsyncGenerator[
         ModelCallStartEvent
         | TextBlockStartEvent
@@ -1330,7 +1331,7 @@ class Agent(BaseModel):
         self,
         messages: list[Msg],
         tools: list[dict],
-        tool_choice: ToolChoice,
+        tool_choice: ToolChoice | None = None,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Perform model inference and return the response.
 
@@ -1339,7 +1340,7 @@ class Agent(BaseModel):
                 The input messages to the model.
             tools (`list[dict]`):
                 The function schemas of the tools.
-            tool_choice (`ToolChoice`):
+            tool_choice (`ToolChoice | None`, optional):
                 The tool choice strategy for the model call.
 
         Returns:

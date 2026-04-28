@@ -16,7 +16,7 @@ from typing import (
 from pydantic import BaseModel
 from aioitertools import iter as giter
 
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, DashScopeChatFormatter
@@ -177,10 +177,8 @@ class DashScopeChatModel(ChatModelBase):
                 as the conversation messages.
             tools (`list[dict] | None`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-             |  None`,  default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Controls which (if any) tool is called by the model.
-                 Can be "auto", "none", "required", or specific tool name.
                  Note: DashScope API only supports "auto" and "none", so
                  "required" will be converted to "auto".
                  For more details, please refer to
@@ -194,12 +192,8 @@ class DashScopeChatModel(ChatModelBase):
         """
         import dashscope
 
-        # 1. Format the messages to the format required by DashScope API
-        formatted_msg = await self.formatter.format(messages)
-
-        # 2. Prepare the generation keyword arguments
         kwargs = {
-            "messages": formatted_msg,
+            "messages": messages,
             "model": model_name,
             "stream": self.stream,
             "result_format": "message",
@@ -210,16 +204,11 @@ class DashScopeChatModel(ChatModelBase):
             **kwargs,
         }
 
-        # tools
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        # tool choice options
-        if tool_choice:
-            kwargs["tool_choice"] = self._format_tool_choice(
-                tool_choice,
-                tools,
-            )
+        fmt_tools, fmt_tool_choice = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
+        if fmt_tool_choice is not None:
+            kwargs["tool_choice"] = fmt_tool_choice
 
         # thinking related options
         kwargs = {**kwargs, **self.thinking_config.model_dump()}
@@ -501,64 +490,69 @@ class DashScopeChatModel(ChatModelBase):
             usage=usage,
         )
 
-    @staticmethod
-    def _format_tools_json_schemas(
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the tools JSON schema into required format for DashScope API.
-
-        Args:
-            schemas (`dict[str, dict[str, Any]]`):
-                The tools JSON schemas.
-        """
-        # Check schemas format
-        for value in schemas:
-            if (
-                not isinstance(value, dict)
-                or "type" not in value
-                or value["type"] != "function"
-                or "function" not in value
-            ):
-                raise ValueError(
-                    f"Each schema must be a dict with 'type' as 'function' "
-                    f"and 'function' key, got {value}",
-                )
-
-        return schemas
-
-    def _format_tool_choice(
+    def _format_tools(
         self,
-        tool_choice: ToolChoice | None,
         tools: list[dict] | None,
-    ) -> str | dict | None:
-        """Format tool_choice parameter for API compatibility.
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, str | dict | None]:
+        """Validate and format tools and tool_choice for DashScope.
+
+        DashScope only supports "auto" and "none" modes; "required" is
+        converted to "auto" with a warning. When ``tool_choice.tools``
+        is specified the schemas list is filtered to only those tools.
+        When ``tool_choice.mode`` is a specific tool name (str) the
+        model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
-            tool_choice (`ToolChoice | None`):
-                The unified tool choice parameter which can be a mode ("auto",
-                "none", "required") or a specific function name.
             tools (`list[dict] | None`):
-                The list of available tools, used for validation if
-                tool_choice is a specific function name.
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration.
 
         Returns:
-            `dict | None`:
-                The formatted tool choice configuration dict, or None if
-                    tool_choice is None.
+            `tuple[list[dict] | None, str | dict | None]`:
+                A tuple of (formatted_tools, formatted_tool_choice).
         """
-        # Validate the tool_choice value
-        self._validate_tool_choice(tool_choice, tools)
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
 
-        # DashScope API specific validation and formatting
-        if tool_choice in ["auto", "none"]:
-            return tool_choice
+        fmt_tools = None
+        if tools:
+            for value in tools:
+                if (
+                    not isinstance(value, dict)
+                    or "type" not in value
+                    or value["type"] != "function"
+                    or "function" not in value
+                ):
+                    raise ValueError(
+                        f"Each schema must be a dict with 'type' as "
+                        f"'function' and 'function' key, got {value}",
+                    )
+            fmt_tools = tools
 
-        if tool_choice == "required":
+        if not tool_choice:
+            return fmt_tools, None
+
+        mode = tool_choice["mode"]
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — force call it
+            return fmt_tools, {
+                "type": "function",
+                "function": {"name": mode},
+            }
+
+        if mode == "required":
             warnings.warn(
-                f"'{tool_choice}' is not supported by DashScope API. "
+                f"'{mode}' is not supported by DashScope API. "
                 "It will be converted to 'auto'.",
                 DeprecationWarning,
             )
-            return "auto"
+            return fmt_tools, "auto"
 
-        return {"type": "function", "function": {"name": tool_choice}}
+        return fmt_tools, mode

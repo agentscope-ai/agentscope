@@ -8,7 +8,6 @@ from typing import (
     List,
     AsyncGenerator,
     AsyncIterator,
-    Literal,
 )
 
 from pydantic import BaseModel
@@ -19,6 +18,7 @@ from ._model_usage import ChatUsage
 from .._logging import logger
 from ..formatter import FormatterBase, OllamaChatFormatter
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
+from ..tool import ToolChoice
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
 
@@ -115,7 +115,7 @@ class OllamaChatModel(ChatModelBase):
         model_name: str,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
-        tool_choice: Literal["auto", "none", "required"] | str | None = None,
+        tool_choice: ToolChoice | None = None,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Ollama chat completions API by the given
@@ -129,8 +129,7 @@ class OllamaChatModel(ChatModelBase):
                 required, and `name` field is optional.
             tools (`list[dict]`, default `None`):
                 The tools JSON schemas that the model can use.
-            tool_choice (`Literal["auto", "none", "required"] | str \
-                | None`, default `None`):
+            tool_choice (`ToolChoice | None`, default `None`):
                 Ollama doesn't support `tool_choice` argument yet.
             **kwargs (`Any`):
                 The keyword arguments for Ollama chat completions API,
@@ -155,11 +154,9 @@ class OllamaChatModel(ChatModelBase):
         if self.thinking_config and "think" not in kwargs:
             kwargs["think"] = self.thinking_config.enable_thinking
 
-        if tools:
-            kwargs["tools"] = self._format_tools_json_schemas(tools)
-
-        if tool_choice:
-            logger.warning("Ollama does not support tool_choice yet, ignored.")
+        fmt_tools, _ = self._format_tools(tools, tool_choice)
+        if fmt_tools is not None:
+            kwargs["tools"] = fmt_tools
 
         start_datetime = datetime.now()
         response = await self.client.chat(**kwargs)
@@ -339,9 +336,35 @@ class OllamaChatModel(ChatModelBase):
 
         return ChatResponse(**resp_kwargs)
 
-    def _format_tools_json_schemas(
+    def _format_tools(
         self,
-        schemas: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Format the tools JSON schemas to the Ollama format."""
-        return schemas
+        tools: list[dict] | None,
+        tool_choice: ToolChoice | None,
+    ) -> tuple[list[dict] | None, None]:
+        """Validate and format tools for Ollama.
+
+        Ollama does not support tool_choice; a warning is logged and
+        tool_choice is ignored. When ``tool_choice.tools`` is specified
+        the schemas list is still filtered even though tool_choice itself
+        is not forwarded to the API.
+
+        Args:
+            tools (`list[dict] | None`):
+                The raw tool schemas.
+            tool_choice (`ToolChoice | None`):
+                The tool choice configuration (ignored by Ollama).
+
+        Returns:
+            `tuple[list[dict] | None, None]`:
+                A tuple of (formatted_tools, None).
+        """
+        if tool_choice and tools:
+            self._validate_tool_choice(tool_choice, tools)
+            if tool_choice.get("tools"):
+                allowed = set(tool_choice["tools"])
+                tools = [t for t in tools if t["function"]["name"] in allowed]
+
+        if tool_choice:
+            logger.warning("Ollama does not support tool_choice yet, ignored.")
+
+        return (tools if tools else None), None
