@@ -147,7 +147,7 @@ def _reformat_messages(
             if "type" in item and item["type"] != "text":
                 is_all_text = False
                 break
-            if item["text"]:
+            if item.get("text"):
                 texts.append(item["text"])
 
         if is_all_text and texts:

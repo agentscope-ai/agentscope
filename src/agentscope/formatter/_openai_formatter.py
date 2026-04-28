@@ -91,7 +91,12 @@ def _to_openai_image_url(url: str) -> str:
                     "utf-8",
                 )
             extension = raw_url.lower().split(".")[-1]
-            mime_type = f"image/{extension}"
+            # Note: image/jpeg is the correct MIME type, not image/jpg
+            mime_type = (
+                "image/jpeg"
+                if extension == "jpg"
+                else f"image/{extension}"
+            )
             return f"data:{mime_type};base64,{base64_image}"
 
         # No extension - detect file type using filetype
