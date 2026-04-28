@@ -213,9 +213,25 @@ class ToolChoice(TypedDict):
     """The tool choice configuration.
 
     Attributes:
-        mode: The tool choice mode, supports "auto", "none", "required".
-        tools: The list of tool names to use. Optional.
+        mode: The tool choice mode. Supports:
+
+            * ``"auto"`` – the model decides whether to call a tool.
+            * ``"none"`` – the model must not call any tool.
+            * ``"required"`` – the model must call at least one tool.
+            * ``str`` (a tool name) – the model **must** call exactly that
+              tool (forced single-tool call).  The name is validated against
+              ``tools`` (if provided) or against the full tools list passed to
+              the model.
+
+        tools: An optional list of tool names. When specified, the tool
+            schemas forwarded to the model are filtered to only those tools.
+            This also acts as a validation whitelist for ``mode`` when it
+            is a specific tool name (str): the name must appear in this
+            list.  Prefer using ``mode=<tool_name>`` (str) over
+            ``tools=["<tool_name>"]`` when the goal is a forced single-tool
+            call without changing the available tool set, as the former
+            avoids schema-list changes that would invalidate prompt caches.
     """
 
-    mode: Literal["auto", "none", "required"]
+    mode: Literal["auto", "none", "required"] | str
     tools: NotRequired[list[str]]

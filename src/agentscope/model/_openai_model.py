@@ -14,7 +14,7 @@ from openai.types import ReasoningEffort
 from pydantic import BaseModel
 
 from . import ChatResponse
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase
 from ..message import (
@@ -489,12 +489,14 @@ class OpenAIChatModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, str | dict | None]:
-        """Validate, filter, and format tools and tool_choice for OpenAI API.
+        """Validate and format tools and tool_choice for OpenAI API.
 
-        When ``tool_choice.tools`` is specified, the tools list is
-        filtered to only include those tools. When mode is "required"
-        and only one tool remains, it is formatted as a forced function
-        call.
+        When ``tool_choice.tools`` is specified the schemas list is
+        filtered to only those tools (the caller deliberately limits the
+        available tool set). When ``tool_choice.mode`` is a specific tool
+        name (str) the model is forced to call exactly that tool; this
+        avoids the need to filter down to a single tool just to trigger a
+        forced call, preserving prompt-cache efficiency.
 
         Args:
             tools (`list[dict] | None`):
@@ -519,10 +521,11 @@ class OpenAIChatModel(ChatModelBase):
 
         mode = tool_choice["mode"]
 
-        if mode == "required" and tools and len(tools) == 1:
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — force call it
             fmt_choice: str | dict = {
                 "type": "function",
-                "function": {"name": tools[0]["function"]["name"]},
+                "function": {"name": mode},
             }
         else:
             fmt_choice = mode

@@ -276,7 +276,9 @@ class Agent:
             pending_tool_calls = self._get_pending_tool_calls()
             if len(pending_tool_calls) == 0:
                 await self._compress_memory_if_needed()
-                async for evt in self._reasoning(tool_choice={"mode": "auto"}):
+                async for evt in self._reasoning(
+                    tool_choice=ToolChoice(mode="auto"),
+                ):
                     yield evt
 
             awaiting_info = self._get_awaiting_tool_calls()
@@ -327,7 +329,9 @@ class Agent:
             if isinstance(last_content, list) and last_content:
                 last_block = last_content[-1]
         if last_block is None or not isinstance(last_block, TextBlock):
-            async for evt in self._reasoning(tool_choice={"mode": "none"}):
+            async for evt in self._reasoning(
+                tool_choice=ToolChoice(mode="none"),
+            ):
                 yield evt
 
         yield RunFinishedEvent(

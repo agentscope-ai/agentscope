@@ -18,7 +18,7 @@ from .._logging import logger
 from ..formatter import FormatterBase
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
 from ._model_usage import ChatUsage
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_response import ChatResponse
 from ..tracing import trace_llm
 from ..types import JSONSerializableObject
@@ -448,13 +448,16 @@ class GeminiChatModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, dict | None]:
-        """Validate, filter, and format tools and tool_choice for Gemini.
+        """Validate and format tools and tool_choice for Gemini.
 
         Converts tool schemas to Gemini's ``function_declarations``
         format (resolving ``$ref`` references) and maps tool_choice
-        modes to Gemini's ``function_calling_config``. When mode is
-        "required" (``ANY``) and ``tool_choice.tools`` is specified,
-        ``allowed_function_names`` is included.
+        modes to Gemini's ``function_calling_config``. When
+        ``tool_choice.tools`` is specified the schemas list is filtered
+        to only those tools. When ``tool_choice.mode`` is a specific
+        tool name (str) the model is restricted via
+        ``allowed_function_names`` without needing to filter the list,
+        preserving prompt-cache efficiency.
 
         Args:
             tools (`list[dict] | None`):
@@ -490,23 +493,23 @@ class GeminiChatModel(ChatModelBase):
             return fmt_tools, None
 
         mode = tool_choice["mode"]
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — restrict to that single tool
+            fmt_choice: dict = {
+                "function_calling_config": {
+                    "mode": "ANY",
+                    "allowed_function_names": [mode],
+                },
+            }
+            return fmt_tools, fmt_choice
+
         mode_mapping = {
             "auto": "AUTO",
             "none": "NONE",
             "required": "ANY",
         }
-        gemini_mode = mode_mapping[mode]
-
-        if gemini_mode == "ANY" and tool_choice.get("tools") and tools:
-            fmt_choice: dict = {
-                "function_calling_config": {
-                    "mode": "ANY",
-                    "allowed_function_names": [
-                        t["function"]["name"] for t in tools
-                    ],
-                },
-            }
-        else:
-            fmt_choice = {"function_calling_config": {"mode": gemini_mode}}
-
+        fmt_choice = {
+            "function_calling_config": {"mode": mode_mapping[mode]},
+        }
         return fmt_tools, fmt_choice

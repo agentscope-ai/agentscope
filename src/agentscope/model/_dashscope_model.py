@@ -16,7 +16,7 @@ from typing import (
 from pydantic import BaseModel
 from aioitertools import iter as giter
 
-from ._model_base import ChatModelBase
+from ._model_base import ChatModelBase, _TOOL_CHOICE_LITERAL_MODES
 from ._model_response import ChatResponse
 from ._model_usage import ChatUsage
 from ..formatter import FormatterBase, DashScopeChatFormatter
@@ -495,13 +495,14 @@ class DashScopeChatModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, str | dict | None]:
-        """Validate, filter, and format tools and tool_choice for DashScope.
+        """Validate and format tools and tool_choice for DashScope.
 
         DashScope only supports "auto" and "none" modes; "required" is
         converted to "auto" with a warning. When ``tool_choice.tools``
-        is specified, filters tools accordingly. When mode is "required"
-        and only one tool remains, it is formatted as a forced function
-        call.
+        is specified the schemas list is filtered to only those tools.
+        When ``tool_choice.mode`` is a specific tool name (str) the
+        model is forced to call exactly that tool without needing to
+        filter the list, preserving prompt-cache efficiency.
 
         Args:
             tools (`list[dict] | None`):
@@ -539,10 +540,11 @@ class DashScopeChatModel(ChatModelBase):
 
         mode = tool_choice["mode"]
 
-        if mode == "required" and tools and len(tools) == 1:
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — force call it
             return fmt_tools, {
                 "type": "function",
-                "function": {"name": tools[0]["function"]["name"]},
+                "function": {"name": mode},
             }
 
         if mode == "required":

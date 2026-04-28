@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 else:
     ToolChoice = Any
 
-_TOOL_CHOICE_MODES = ["auto", "none", "required"]
+_TOOL_CHOICE_LITERAL_MODES = {"auto", "none", "required"}
 
 
 class ChatModelBase:
@@ -184,11 +184,14 @@ class ChatModelBase:
             raise ValueError(
                 "tool_choice must contain a 'mode' field.",
             )
-        if mode not in _TOOL_CHOICE_MODES:
+        if not isinstance(mode, str):
             raise ValueError(
-                f"Invalid tool_choice mode '{mode}'. "
-                f"Available modes: {', '.join(_TOOL_CHOICE_MODES)}",
+                f"tool_choice 'mode' must be a str, got {type(mode)}",
             )
+
+        available_functions = [
+            tool["function"]["name"] for tool in (tools or [])
+        ]
 
         tool_names = tool_choice.get("tools")
         if tool_names is not None:
@@ -197,13 +200,28 @@ class ChatModelBase:
                     f"tool_choice 'tools' field must be a list, "
                     f"got {type(tool_names)}",
                 )
-            available_functions = [
-                tool["function"]["name"] for tool in (tools or [])
-            ]
             for name in tool_names:
                 if name not in available_functions:
                     raise ValueError(
-                        f"Invalid tool name '{name}' in tool_choice. "
+                        f"Invalid tool name '{name}' in tool_choice.tools. "
                         f"Available tools: "
                         f"{', '.join(sorted(available_functions))}",
                     )
+
+        if mode not in _TOOL_CHOICE_LITERAL_MODES:
+            # mode is a specific tool name — validate it exists
+            # Fall back to all available tools when tool_names is empty or None
+            validation_scope = (
+                tool_names if tool_names else available_functions
+            )
+            if mode not in validation_scope:
+                raise ValueError(
+                    f"Invalid tool name '{mode}' in tool_choice.mode. "
+                    + (
+                        f"Available tools in tool_choice.tools: "
+                        f"{', '.join(sorted(tool_names))}"
+                        if tool_names is not None
+                        else f"Available tools: "
+                        f"{', '.join(sorted(available_functions))}"
+                    ),
+                )

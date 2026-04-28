@@ -341,10 +341,12 @@ class OllamaChatModel(ChatModelBase):
         tools: list[dict] | None,
         tool_choice: ToolChoice | None,
     ) -> tuple[list[dict] | None, None]:
-        """Validate, filter, and format tools for Ollama.
+        """Validate and format tools for Ollama.
 
         Ollama does not support tool_choice; a warning is logged and
-        tool_choice is ignored.
+        tool_choice is ignored. When ``tool_choice.tools`` is specified
+        the schemas list is still filtered even though tool_choice itself
+        is not forwarded to the API.
 
         Args:
             tools (`list[dict] | None`):
