@@ -92,6 +92,14 @@ class StatefulClientBase(MCPClientBase, ABC):
                 self._ready_event.set()
             else:
                 logger.warning("Error in MCP client lifecycle: %s", e)
+        except BaseException:
+            # CancelledError (and other BaseException subclasses like
+            # SystemExit) are not caught by `except Exception`. Ensure
+            # _ready_event is always set so connect() can unblock instead
+            # of hanging forever.
+            if not self._ready_event.is_set():
+                self._ready_event.set()
+            raise
         finally:
             self.stack = None
             self.session = None
@@ -122,14 +130,26 @@ class StatefulClientBase(MCPClientBase, ABC):
             await self._ready_event.wait()
         except BaseException:
             self._stop_event.set()
+            if (
+                self._lifecycle_task is not None
+                and not self._lifecycle_task.done()
+            ):
+                self._lifecycle_task.cancel()
+                try:
+                    await self._lifecycle_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._lifecycle_task = None
             raise
 
         if self._connect_error is not None:
             error = self._connect_error
+            tb = error.__traceback__
             self._connect_error = None
             if self._lifecycle_task and not self._lifecycle_task.done():
                 await self._lifecycle_task
-            raise error
+            self._lifecycle_task = None
+            raise error.with_traceback(tb)
 
         if not self.is_connected or self._stop_event.is_set():
             if self._lifecycle_task and not self._lifecycle_task.done():
@@ -170,7 +190,7 @@ class StatefulClientBase(MCPClientBase, ABC):
                 await self._lifecycle_task
         except Exception as e:
             if not ignore_errors:
-                raise e
+                raise
             logger.warning("Error during MCP client cleanup: %s", e)
         finally:
             self._lifecycle_task = None
