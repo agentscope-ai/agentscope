@@ -260,6 +260,57 @@ class Mem0LongTermMemory(LongTermMemoryBase):
 
         return mem0_config
 
+    @staticmethod
+    def _detect_mem0_v2() -> bool:
+        """Detect if mem0ai >= 2.0.0 is installed.
+
+        Returns:
+            `bool`:
+                True if mem0ai version is >= 2.0.0, False otherwise.
+        """
+        try:
+            from packaging import version
+
+            current_version = metadata.version("mem0ai")
+            return version.parse(current_version) >= version.parse("2.0.0")
+        except Exception:
+            return False
+
+    def _build_entity_filters(self) -> dict:
+        """Build entity filter kwargs for mem0 API calls.
+
+        For mem0ai >= 2.0.0, entity identifiers must be passed inside a
+        ``filters`` dict. For older versions, they are passed as top-level
+        keyword arguments.
+
+        Returns:
+            `dict`:
+                Keyword arguments to pass to mem0 ``search()`` and ``add()``.
+        """
+        if self._is_mem0_v2:
+            conditions = []
+            if self.user_id:
+                conditions.append({"user_id": self.user_id})
+            if self.agent_id:
+                conditions.append({"agent_id": self.agent_id})
+            if self.run_id:
+                conditions.append({"run_id": self.run_id})
+
+            if len(conditions) == 1:
+                filters = conditions[0]
+            elif len(conditions) > 1:
+                filters = {"AND": conditions}
+            else:
+                filters = None
+
+            return {"filters": filters} if filters is not None else {}
+        else:
+            return {
+                "agent_id": self.agent_id,
+                "user_id": self.user_id,
+                "run_id": self.run_id,
+            }
+
     def __init__(
         self,
         agent_name: str | None = None,
@@ -340,6 +391,9 @@ class Mem0LongTermMemory(LongTermMemoryBase):
                 `embedding_model` is None.
         """
         super().__init__()
+
+        # Detect mem0ai version for API compatibility
+        self._is_mem0_v2 = self._detect_mem0_v2()
 
         # Suppress mem0 logging if requested
         self._setup_mem0_logging(suppress_mem0_logging)
@@ -533,10 +587,8 @@ class Mem0LongTermMemory(LongTermMemoryBase):
             search_coroutines = [
                 self.long_term_working_memory.search(
                     query=keyword,
-                    agent_id=self.agent_id,
-                    user_id=self.user_id,
-                    run_id=self.run_id,
                     limit=limit,
+                    **self._build_entity_filters(),
                 )
                 for keyword in keywords
             ]
@@ -667,15 +719,13 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         """
         results = await self.long_term_working_memory.add(
             messages=messages,
-            agent_id=self.agent_id,
-            user_id=self.user_id,
-            run_id=self.run_id,
             memory_type=(
                 memory_type
                 if memory_type is not None
                 else self.default_memory_type
             ),
             infer=infer,
+            **self._build_entity_filters(),
             **kwargs,
         )
         return results
@@ -725,10 +775,8 @@ class Mem0LongTermMemory(LongTermMemoryBase):
         search_coroutines = [
             self.long_term_working_memory.search(
                 query=item,
-                agent_id=self.agent_id,
-                user_id=self.user_id,
-                run_id=self.run_id,
                 limit=limit,
+                **self._build_entity_filters(),
             )
             for item in msg_strs
         ]
