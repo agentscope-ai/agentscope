@@ -11,6 +11,32 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举工具模块的核心功能：日志、JSON修复、时间戳、媒体处理 | 列举、识别 |
+| 理解 | 解释流式 JSON 解析（`_parse_streaming_json_dict`）的修复策略 | 解释、描述 |
+| 应用 | 使用 `DictMixin` 实现字典式属性访问的混入类 | 实现、操作 |
+| 分析 | 分析 JSON 修复在 LLM 流式输出场景中的必要性与边界情况 | 分析、诊断 |
+| 评价 | 评价日志系统设计在多模块协作中的统一性 | 评价、推荐 |
+| 创造 | 设计一个自定义工具函数并提取其 Schema 注册到工具系统 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python `logging` 模块基础
+- [ ] JSON 解析与 `json.loads` / `json.dumps`
+- [ ] Python Mixin 模式与多继承
+- [ ] inspect 模块基础（函数签名提取）
+
+**预计学习时间**: 30 分钟
+
+---
+
 ## 1. 模块概述
 
 AgentScope 的工具模块包含两个核心部分：
@@ -700,3 +726,25 @@ if __name__ == "__main__":
 | 媒体处理 | `_utils/_common.py` | Base64 编解码、音频重采样 |
 
 工具模块体现了 AgentScope 对 LLM 应用常见需求的抽象：处理不完整 JSON、提取函数 schema、媒体数据处理等，都是构建 AI 应用时频繁遇到的问题。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [工具模块](module_tool_mcp_deep.md) | `_create_tool_from_base_model` 生成工具 Schema |
+| [模型模块](module_model_deep.md) | `_parse_streaming_json_dict` 解析 LLM 流式输出 |
+| [文件模块](module_file_deep.md) | 共享 `_common.py` 中的文件处理函数 |
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `_json_loads_with_repair` | Jackson 自定义 Deserializer | 容错 JSON 解析 |
+| `DictMixin` | `Map` + `AbstractMap` | 属性与 Map 双接口 |
+| `inspect.signature()` | Java Reflection API | 运行时函数签名提取 |
+| `logging` 模块 | SLF4J + Logback | 日志门面 + 实现 |
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*

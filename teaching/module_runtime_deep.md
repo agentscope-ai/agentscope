@@ -16,6 +16,42 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举 SequentialPipeline 和 FanoutPipeline 的核心方法 | 列举、识别 |
+| 理解 | 解释顺序执行与并发分发两种模式的设计意图与适用场景 | 解释、比较 |
+| 应用 | 使用 `sequential_pipeline()` 和 `fanout_pipeline()` 构建多代理执行流 | 实现、配置 |
+| 分析 | 分析 `stream_printing_messages` 的流式收集与打印机制 | 分析、追踪 |
+| 评价 | 评价类接口（Pipeline 类）与函数接口（_functional.py）的优劣 | 评价、推荐 |
+| 创造 | 设计一个支持条件分支的自定义 Pipeline 模式 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python `asyncio` 基础（`async def`、`await`、`asyncio.gather`）
+- [ ] 委托模式（Delegation Pattern）概念
+- [ ] `deepcopy` 的用途与性能影响
+- [ ] AgentBase 的基本接口（参见智能体模块）
+
+**预计学习时间**: 35 分钟
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `async def` / `await` | `CompletableFuture` / `thenCompose` | 异步组合 |
+| `asyncio.gather()` | `CompletableFuture.allOf()` | 并发等待所有任务 |
+| `deepcopy(msg)` | `msg.clone()` / 序列化深拷贝 | 确保消息独立 |
+| 委托模式 | Decorator 模式 | 组合优于继承 |
+| `async for ... in` | `Flux.fromStream()` | 异步迭代 |
+
+---
+
 ## 1. 模块概述
 
 Runtime 模块是 AgentScope 的执行运行时系统，负责管理和协调多代理的执行流程。该模块提供了两种核心的执行模式：
@@ -165,7 +201,7 @@ class FanoutPipeline:
 
 ### 4.3 sequential_pipeline 顺序执行函数
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 10-44 行)
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 10-46 行)
 
 ```python
 async def sequential_pipeline(
@@ -211,7 +247,7 @@ async def sequential_pipeline(
 
 ### 4.4 fanout_pipeline 并发分发函数
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 47-104 行)
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 47-106 行)
 
 ```python
 async def fanout_pipeline(
@@ -281,7 +317,7 @@ async def fanout_pipeline(
 
 ### 4.5 stream_printing_messages 流式消息处理
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 107-193 行)
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py` (第 107-192 行)
 
 ```python
 async def stream_printing_messages(
@@ -424,7 +460,13 @@ async def main():
 asyncio.run(main())
 ```
 
-### 6.2 并发分发示例
+**运行结果**:
+
+```
+Msg(name='assistant', content='Echo: Echo: Echo: Hello', role='assistant')
+```
+
+> 三次 echo 叠加：agent1 输出 "Echo: Hello" → agent2 输出 "Echo: Echo: Hello" → agent3 输出 "Echo: Echo: Echo: Hello"
 
 ```python
 import asyncio
@@ -833,3 +875,36 @@ class DAGPipeline:
 ---
 
 **提示**: 练习题的参考答案可在 AgentScope 官方文档中找到。
+
+---
+
+## 小结
+
+| 特性 | 实现方式 |
+|------|----------|
+| 顺序执行 | `sequential_pipeline()` 链式传递 |
+| 并发分发 | `fanout_pipeline()` + `asyncio.gather` |
+| 流式处理 | `stream_printing_messages()` 异步生成器 |
+| 类封装 | SequentialPipeline / FanoutPipeline 委托模式 |
+| 消息隔离 | `deepcopy` 保证每个代理独立副本 |
+
+Runtime 模块提供了灵活的代理执行编排能力，函数式接口适合简单场景，类接口适合需要复用和状态的场景。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | Pipeline 持有 AgentBase 实例进行编排 |
+| [调度器模块](module_dispatcher_deep.md) | MsgHub 管理代理间消息路由 |
+| [管道模块](module_pipeline_infra_deep.md) | 详细的管道基础设施分析 |
+| [消息模块](module_message_deep.md) | Msg 对象在管道中传递和拷贝 |
+
+## 参考资料
+
+- Pipeline 函数: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_functional.py`
+- Pipeline 类: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_class.py`
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*

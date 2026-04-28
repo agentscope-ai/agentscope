@@ -38,6 +38,17 @@
 
 **预计学习时间**: 45 分钟
 
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `@abstractmethod` + 继承 | `abstract class` + `@Override` | 模板方法模式 |
+| `register_state` | `@Transient` + 序列化 | 状态持久化 |
+| Hook 前置/后置 | AOP `@Before`/`@After` | 横切关注点 |
+| `async def reply()` | `CompletableFuture<Msg> reply()` | 异步方法 |
+
+---
+
 ---
 
 ## 1. 模块概述
@@ -2046,6 +2057,26 @@ AgentBase.register_post_reply_hook(auto_compress_hook)
 - **摘要质量**: 使用 LLM 生成摘要，确保关键信息不丢失
 - **标记管理**: 使用 `"compressed"` 标记区分摘要消息和原始消息
 - ** Hook 集成**: 在 `post_reply` Hook 中自动触发，无需手动调用
+
+---
+
+## 小结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| 模板方法 | `AgentBase.reply()` | 固定执行骨架，子类只实现 `_generate_reply()` |
+| 策略模式 | Hook 注册机制 | 运行时注入前置/后置处理逻辑 |
+| 观察者模式 | `_broadcast_to_subscribers` | 发布-订阅消息通知 |
+| 状态管理 | `register_state` | 自动持久化关键状态属性 |
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [工具模块](module_tool_mcp_deep.md) | Hook ↔ Toolkit 中间件协作 |
+| [记忆模块](module_memory_rag_deep.md) | Agent 记忆压缩 ↔ Token 计数 |
+| [管道模块](module_pipeline_infra_deep.md) | Pipeline 编排 Agent 执行顺序 |
+| [模型模块](module_model_deep.md) | Agent 通过 Model 进行推理 |
 
 ---
 

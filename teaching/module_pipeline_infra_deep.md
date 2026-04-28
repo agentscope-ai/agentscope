@@ -47,6 +47,15 @@
 
 **预计学习时间**: 35 分钟
 
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `async with MsgHub(...)` | try-with-resources (AutoCloseable) | 上下文管理 |
+| `asyncio.gather()` | `CompletableFuture.allOf()` | 并发聚合 |
+| Formatter 模式 | Spring `HttpMessageConverter` | 格式适配 |
+| OpenTelemetry Tracing | Micrometer + OpenTelemetry Java Agent | 可观测性 |
+
 ---
 
 ## 1. 模块概述
@@ -1433,6 +1442,114 @@ config.trace_enabled = True
 13. **为 FanoutPipeline 添加超时控制和错误处理机制。**
 
 14. **分析 OpenTelemetry 追踪数据的收集和导出流程。**
+
+---
+
+## 参考答案
+
+### 10.1 基础题
+
+**第1题：MsgHub 广播机制**
+
+MsgHub 的 `broadcast` 方法遍历所有订阅者，调用每个代理的 `observe()` 方法传递消息，同时排除消息发送者自身（`exclude` 参数）。核心流程：发送者 reply → broadcast → 订阅者 observe。
+
+**第2题：Sequential vs Fanout 差异**
+
+| 维度 | SequentialPipeline | FanoutPipeline |
+|------|-------------------|----------------|
+| 执行方式 | 链式（前一个输出作为后一个输入） | 并发（同一输入分发给所有代理） |
+| 并发度 | 1（串行） | N（代理数量） |
+| 返回值 | 最后一个代理的输出 | 所有代理输出的列表 |
+| 适用场景 | 流水线处理 | 投票/多角度分析 |
+
+**第3题：deepcopy 作用**
+
+`deepcopy(msg)` 确保每个代理收到独立的消息副本，避免代理 A 修改消息后影响代理 B 的输入，保证并发安全。
+
+**第4题：stream_printing_messages**
+
+通过拦截代理的 `print` 输出（重定向 `sys.stdout`），在代理执行期间捕获所有打印内容，生成完成后作为辅助信息返回。
+
+**第5题：ChatRoom 事件差异**
+
+ClientEvents 由客户端发送（如 `send_message`），ServerEvents 由服务器推送（如 `receive_message`）。客户端发起操作，服务器被动通知，形成请求-响应模式。
+
+### 10.2 进阶题
+
+**第6题：条件分支 Pipeline**
+
+```python
+class ConditionalPipeline:
+    def __init__(self, condition_fn, true_agent, false_agent):
+        self.condition_fn = condition_fn
+        self.true_agent = true_agent
+        self.false_agent = false_agent
+
+    async def __call__(self, msg):
+        target = self.true_agent if self.condition_fn(msg) else self.false_agent
+        return await target(msg)
+```
+
+**第7题：Formatter 格式差异**
+
+Formatter 根据模型类型（OpenAI/DashScope/Anthropic）将统一的 Msg 格式转换为各 API 所需的消息格式，主要差异在于：content 字段结构、tool_call 格式、system message 位置等。
+
+**第9题：消息过滤 MsgHub**
+
+```python
+class FilteredMsgHub(MsgHub):
+    def __init__(self, *agents, msg_filter=None):
+        super().__init__(*agents)
+        self.msg_filter = msg_filter
+
+    async def _broadcast_to_subscribers(self, msg, exclude):
+        if self.msg_filter and not self.msg_filter(msg):
+            return
+        await super()._broadcast_to_subscribers(msg, exclude)
+```
+
+### 10.3 挑战题
+
+**第13题：带超时的 FanoutPipeline**
+
+```python
+import asyncio
+
+class TimedFanoutPipeline(FanoutPipeline):
+    def __init__(self, agents, timeout=30.0):
+        super().__init__(agents)
+        self.timeout = timeout
+
+    async def __call__(self, msg):
+        tasks = [asyncio.wait_for(agent(msg), timeout=self.timeout)
+                 for agent in self.agents]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [r if not isinstance(r, Exception) else Msg("system", str(r), "error")
+                for r in results]
+```
+
+---
+
+## 小结
+
+| 组件 | 职责 | 关键特性 |
+|------|------|----------|
+| SequentialPipeline | 链式执行 | 前一个输出作为后一个输入 |
+| FanoutPipeline | 并发分发 | asyncio.gather 并行执行 |
+| MsgHub | 消息路由 | 发布-订阅 + 上下文管理 |
+| Formatter | 消息格式化 | 适配多模型 API |
+| Session | 状态持久化 | save/load 状态 |
+| Tracing | 可观测性 | OpenTelemetry 集成 |
+| A2A | 跨进程通信 | AgentCard + HTTP |
+| Realtime | 实时交互 | WebSocket 双向通信 |
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | Pipeline 编排 Agent 执行 |
+| [调度器模块](module_dispatcher_deep.md) | MsgHub 消息路由机制 |
+| [工具模块](module_tool_mcp_deep.md) | MCP ↔ A2A 协议对比 |
 
 ---
 

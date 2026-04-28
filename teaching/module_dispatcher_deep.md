@@ -16,6 +16,41 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举 MsgHub 的核心方法（__aenter__、__aexit__、broadcast 等） | 列举、识别 |
+| 理解 | 解释发布-订阅模式在 MsgHub 中的实现原理 | 解释、描述 |
+| 应用 | 使用 `async with MsgHub(...)` 构建多代理消息路由 | 实现、配置 |
+| 分析 | 分析消息广播流程中订阅者的注册与通知机制 | 分析、追踪 |
+| 评价 | 评价 MsgHub 与 ChatRoom 两种消息模式的适用场景 | 评价、推荐 |
+| 创造 | 设计一个自定义消息过滤器的 MsgHub 扩展方案 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python 异步上下文管理器（`async with`、`__aenter__`/`__aexit__`）
+- [ ] 发布-订阅设计模式基础
+- [ ] AgentBase 的 `reply()` 和 `observe()` 方法（参见智能体模块）
+- [ ] Msg 消息结构（参见消息模块）
+
+**预计学习时间**: 35 分钟
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `async with MsgHub(...)` | `try (MsgHub hub = ...)` (AutoCloseable) | 上下文管理器 ≈ 带资源的 try |
+| `await agent.observe(msg)` | `CompletableFuture.thenAccept()` | 异步回调链 |
+| 发布-订阅 | `java.util.Observable` / EventBus | 消息路由模式 |
+| `@abstractmethod` | `abstract` 方法 | 接口强制实现 |
+
+---
+
 ## 1. 模块概述
 
 Dispatcher 模块是 AgentScope 的消息调度中心，负责多代理之间的消息路由和广播。核心组件 MsgHub 实现了：
@@ -375,7 +410,13 @@ async def main():
 asyncio.run(main())
 ```
 
-### 6.2 手动广播模式
+**运行结果**:
+
+```
+# Alice 回复 → 自动广播给 Bob 和 Charlie
+# Bob 回复 → 自动广播给 Alice 和 Charlie
+# 每个代理通过 observe() 接收广播消息
+```
 
 ```python
 import asyncio
@@ -462,3 +503,83 @@ async def manual_implementation():
 ---
 
 **提示**: 练习题的参考答案可在 AgentScope 官方文档中找到。
+
+---
+
+## 参考答案
+
+### 7.1 基础题
+
+**第1题：订阅过滤**
+
+```python
+class FilteredMsgHub(MsgHub):
+    """支持按发送者过滤的 MsgHub"""
+
+    def __init__(self, *agents, subscribe_filter=None):
+        super().__init__(*agents)
+        self.subscribe_filter = subscribe_filter  # Callable[[Msg], bool]
+
+    async def _broadcast_to_subscribers(self, msg: Msg, exclude: AgentBase):
+        if self.subscribe_filter and not self.subscribe_filter(msg):
+            return
+        await super()._broadcast_to_subscribers(msg, exclude)
+
+# 使用示例：只订阅来自 agent1 的消息
+async with FilteredMsgHub(agent1, agent2, subscribe_filter=lambda m: m.name == "agent1"):
+    ...
+```
+
+**第2题：广播策略**
+
+```python
+from abc import ABC, abstractmethod
+
+class BroadcastStrategy(ABC):
+    @abstractmethod
+    async def broadcast(self, subscribers, msg, exclude):
+        ...
+
+class RoundRobinStrategy(BroadcastStrategy):
+    def __init__(self):
+        self._index = 0
+
+    async def broadcast(self, subscribers, msg, exclude):
+        target = subscribers[self._index % len(subscribers)]
+        self._index += 1
+        if target != exclude:
+            await target.observe(msg)
+```
+
+---
+
+## 小结
+
+| 特性 | 实现方式 |
+|------|----------|
+| 消息路由 | 发布-订阅模式（MsgHub） |
+| 异步生命周期 | `async with` 上下文管理器 |
+| 广播机制 | `_broadcast_to_subscribers` 自动通知 |
+| 动态参与者 | 运行时 `add_agent`/`remove_agent` |
+| 扩展模式 | ChatRoom 支持多轮对话 |
+
+Dispatcher 模块通过 MsgHub 实现了代理间的松耦合通信，是构建多代理协作系统的核心基础设施。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | AgentBase 的 `observe()` 方法接收广播消息 |
+| [消息模块](module_message_deep.md) | Msg 对象是消息传递的载体 |
+| [管道模块](module_pipeline_infra_deep.md) | Pipeline 使用 MsgHub 进行流程编排 |
+| [工具模块](module_tool_mcp_deep.md) | MCP 协议中的消息路由对比 |
+
+## 参考资料
+
+- MsgHub 源码: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_msghub.py`
+- ChatRoom 源码: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/pipeline/_chat_room.py`
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*

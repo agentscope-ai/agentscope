@@ -10,6 +10,42 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举 Msg 类的核心字段与 ContentBlock 的类型体系 | 列举、识别 |
+| 理解 | 解释消息内容块的类型分发机制（@overload）设计意图 | 解释、比较 |
+| 应用 | 使用 `get_content_blocks()`、`get_text_content()` 正确提取消息内容 | 实现、操作 |
+| 分析 | 分析 Msg 类与 OpenAI 消息格式的映射关系与差异 | 分析、对比 |
+| 评价 | 评价消息系统的类型安全设计，判断其在多模态场景下的扩展性 | 评价、推荐 |
+| 创造 | 设计一个自定义 ContentBlock 类型支持新的媒体格式 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python dataclass 与 `__post_init__` 生命周期
+- [ ] Python `typing` 模块（`@overload`、`Literal`、联合类型）
+- [ ] OpenAI Chat API 消息格式基础
+- [ ] 多态与类型分发概念
+
+**预计学习时间**: 30 分钟
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `@dataclass` | Lombok `@Data` / Record | 自动生成 equals/hashCode/toString |
+| `@overload` | 方法重载 | 类型安全的多种参数签名 |
+| `Union[A, B]` | `sealed interface` | 联合类型 ≈ 密封接口 |
+| `__post_init__` | 构造函数验证 | 初始化后逻辑 |
+| `to_dict()` / `from_dict()` | Jackson 序列化 | JSON 互转 |
+
+---
+
 ## 1. 模块概述
 
 Message 模块是 AgentScope 中的核心消息系统，负责在代理(Agent)之间传递信息。该模块实现了类似 OpenAI 的消息格式，支持多种内容类型，包括文本、图像、音频、视频以及工具调用。
@@ -343,6 +379,12 @@ assistant_msg = Msg(
 )
 ```
 
+**运行结果**:
+
+```
+Msg(name='user', content='你好，请帮我查询天气', role='user', id='msg_abc123')
+```
+
 ### 5.2 使用内容块创建消息
 
 ```python
@@ -457,3 +499,126 @@ result_msg = Msg(
 - 参考 `get_content_blocks()` 方法的实现
 - 使用 `isinstance()` 检查类型
 - 参考 `to_dict()` 方法了解序列化格式
+
+---
+
+## 参考答案
+
+### 6.1 基础题
+
+**第1题：创建消息并打印 ID**
+
+```python
+from agentscope.message import Msg
+
+msg = Msg(name="Alice", content="Hello", role="user")
+print(msg.id)  # 自动生成的唯一标识符
+```
+
+**第2题：序列化与反序列化**
+
+```python
+import json
+
+# 序列化
+msg_dict = msg.to_dict()
+json_str = json.dumps(msg_dict)
+
+# 反序列化
+restored = Msg.from_dict(json.loads(json_str))
+assert msg.name == restored.name
+assert msg.content == restored.content
+```
+
+**第3题：创建多内容块消息并提取文本**
+
+```python
+from agentscope.message import Msg, TextBlock, ImageBlock
+
+msg = Msg(
+    name="user",
+    role="user",
+    content=[
+        TextBlock(text="请看这张图片"),
+        ImageBlock(source={"url": "https://example.com/img.png"}),
+    ],
+)
+text = msg.get_text_content()  # "请看这张图片"
+```
+
+### 6.2 提高题
+
+**第4题：count_content_blocks**
+
+```python
+def count_content_blocks(msg: Msg, block_type: type) -> int:
+    blocks = msg.get_content_blocks()
+    return sum(1 for b in blocks if isinstance(b, block_type))
+```
+
+**第5题：merge_messages**
+
+```python
+def merge_messages(msgs: list[Msg]) -> Msg:
+    all_content = []
+    for m in msgs:
+        all_content.extend(m.get_content_blocks())
+    return Msg(name="merged", role="assistant", content=all_content)
+```
+
+**第6题：filter_messages_by_role**
+
+```python
+def filter_messages_by_role(msgs: list[Msg], role: str) -> list[Msg]:
+    return [m for m in msgs if m.role == role]
+```
+
+### 6.3 挑战题
+
+**第7题：convert_to_openai_format**
+
+```python
+def convert_to_openai_format(messages: list[Msg]) -> list[dict]:
+    return [msg.to_openai_dict() for msg in messages]
+```
+
+**第8题：detect_content_types**
+
+```python
+def detect_content_types(msg: Msg) -> set[str]:
+    blocks = msg.get_content_blocks()
+    return {type(b).__name__ for b in blocks}
+```
+
+---
+
+## 小结
+
+| 特性 | 实现方式 |
+|------|----------|
+| 消息结构 | dataclass + `__post_init__` 初始化 |
+| 类型体系 | ContentBlock 联合类型（Text/Image/Audio/Video/Tool） |
+| 类型分发 | `@overload` 实现 `get_content_blocks` 多态 |
+| 序列化 | `to_dict()` / `from_dict()` 支持 JSON 互转 |
+| OpenAI 兼容 | `to_openai_dict()` 转换为 OpenAI 消息格式 |
+
+Message 模块是 AgentScope 的通信基础，所有代理间交互都通过 Msg 对象进行，其设计参考了 OpenAI 的消息格式并扩展了多模态支持。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | AgentBase 的 `reply()` 返回 Msg 对象 |
+| [调度器模块](module_dispatcher_deep.md) | MsgHub 广播和路由 Msg 消息 |
+| [模型模块](module_model_deep.md) | Model 接收和返回 Msg 对象 |
+| [记忆模块](module_memory_rag_deep.md) | Memory 存储和检索 Msg 对象 |
+
+## 参考资料
+
+- Msg 源码: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/message/_message_base.py`
+- ContentBlock 源码: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/message/_message_block.py`
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*

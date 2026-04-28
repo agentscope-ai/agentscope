@@ -11,6 +11,41 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举 _ConfigCls 的核心配置字段（run_id、project、name 等） | 列举、识别 |
+| 理解 | 解释 ContextVar 实现线程/异步安全配置的原理 | 解释、比较 |
+| 应用 | 使用 `init()` 函数正确初始化 AgentScope 运行时配置 | 实现、配置 |
+| 分析 | 分析 ContextVar 与全局变量、ThreadLocal 在异步场景下的差异 | 分析、对比 |
+| 评价 | 评价当前配置系统设计的优缺点，提出改进建议 | 评价、推荐 |
+| 创造 | 设计一个支持多环境切换的配置管理扩展方案 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python `contextvars` 模块基础用法
+- [ ] 异步编程中上下文隔离的概念
+- [ ] Python dataclass 或类属性管理
+- [ ] `__init__.py` 模块初始化机制
+
+**预计学习时间**: 25 分钟
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `contextvars.ContextVar` | `ThreadLocal<T>` | 线程级隔离，但 ContextVar 支持异步协程 |
+| `@property` | Getter/Setter | Python 属性访问自动调用方法 |
+| `__post_init__` | 构造函数末尾逻辑 | dataclass 初始化后的钩子 |
+| 模块级单例 | Spring `@Bean` 单例 | 全局共享的配置实例 |
+
+---
+
 ## 1. 模块概述
 
 AgentScope 的配置系统采用 **ContextVar** 实现线程安全、异步安全的运行时配置管理。与传统的全局变量不同，ContextVar 允许每个异步任务拥有独立的配置副本，非常适合 Python 的异步编程场景。
@@ -223,6 +258,14 @@ print(f"Project: {_config.project}")
 print(f"Created at: {_config.created_at}")
 ```
 
+**运行结果**:
+
+```
+Run ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Project: my_agent_project
+Created at: 2026-04-28 10:30:00.000
+```
+
 ### 5.2 异步环境中的配置隔离
 
 ```python
@@ -268,7 +311,9 @@ print(f"Name: {agentscope._config.name}")       # run_2
 
 ---
 
-## 6. 练习题
+## 6. 练习题与参考答案
+
+> 以下练习均附带参考答案，建议先独立思考再查看。
 
 ### 练习 1：理解 ContextVar 隔离
 
@@ -353,3 +398,16 @@ def serialize_config(config: _ConfigCls) -> dict:
 | 默认值 | ContextVar default 参数 |
 
 配置系统虽然代码量不大，但是 AgentScope 架构中不可或缺的基础设施，为整个框架提供了统一的运行时上下文管理能力。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | Agent 初始化时读取 `_config` 获取 run_id |
+| [工具模块](module_tool_mcp_deep.md) | `trace_enabled` 控制 Tracing 开关 |
+| [管道模块](module_pipeline_infra_deep.md) | Tracing 系统依赖配置中的 run_id |
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*

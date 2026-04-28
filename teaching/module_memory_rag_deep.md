@@ -70,6 +70,16 @@
 
 **预计学习时间**: 40 分钟
 
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `InMemoryMemory` | `ConcurrentHashMap` | 内存级键值存储 |
+| `AsyncSQLAlchemyMemory` | JPA + Hibernate | ORM 异步持久化 |
+| Embedding 向量 | `float[]` / `Vector` | 高维向量表示 |
+| `retrieval.top_k` | Elasticsearch `size` | 限制返回数量 |
+| 分块(Chunking) | Lucene Analyzer | 文本预处理和切分 |
+
 ---
 
 ## 1. 模块概述
@@ -2090,6 +2100,128 @@ async with task_memory:
 
 12. **扩展文档读取器**
     - 实现一个新的文档格式读取器（如 MarkdownReader）
+
+---
+
+## 参考答案
+
+### 10.1 基础题
+
+**第1题：KnowledgeBase 基类设计**
+
+核心属性：`_embedding_model`（Embedding 模型实例）、`_chunk_size`（分块大小）、`_chunk_overlap`（重叠大小）。`retrieve_knowledge` 是面向用户的高级接口，支持 query + top_k 参数；`retrieve` 是内部检索接口，由子类实现具体向量匹配逻辑。
+
+**第2题：Document 数据结构**
+
+Document 包含 `content`（文本内容）和 `metadata`（DocMetadata 实例）。DocMetadata 存储 `doc_id`、`chunk_id`、`source`、`created_at` 等。检索时 `score`（相似度分数）和 `chunk_id` 会被填充返回。
+
+**第3题：TextReader 分词策略**
+
+- `split_by="sentence"`: 按句号等标点切分，粒度最细
+- `split_by="paragraph"`: 按空行切分，保持段落完整性
+- `split_by="character"`: 按固定字符数切分
+当段落超过 chunk_size 时，递归切分为更小的块直到满足大小限制。
+
+**第4题：MilvusLiteStore ID 生成**
+
+使用 `uuid4()` 或基于内容的哈希生成 ID。`id_type` 参数控制策略：`"uuid"` 随机生成，`"hash"` 基于内容确定性生成（相同内容相同 ID，支持去重）。
+
+### 10.2 进阶题
+
+**第5题：ChromaDB 向量存储**
+
+```python
+class ChromaDBStore(VDBStoreBase):
+    def __init__(self, collection_name, embedding_model, **kwargs):
+        super().__init__(embedding_model, **kwargs)
+        import chromadb
+        self.client = chromadb.Client()
+        self.collection = self.client.get_or_create_collection(collection_name)
+
+    async def _store_nodes(self, nodes):
+        embeddings = await self._embedding_model([n.content for n in nodes])
+        self.collection.add(
+            ids=[n.metadata.chunk_id for n in nodes],
+            embeddings=embeddings,
+            documents=[n.content for n in nodes],
+        )
+
+    async def _retrieve_nodes(self, query, top_k):
+        query_emb = await self._embedding_model([query])
+        results = self.collection.query(query_embeddings=query_emb, n_results=top_k)
+        return results
+```
+
+**第6题：InMemory vs AsyncSQLAlchemy**
+
+InMemoryMemory 优势：零配置、测试友好、无外部依赖。劣势：进程退出即丢失、无持久化、不支持并发写入。
+AsyncSQLAlchemy 优势：持久化存储、支持并发、支持大型记忆库。劣势：需要数据库、配置复杂、异步调试困难。
+
+**第8题：Mem0 三级降级**
+
+1. **精确匹配**: 直接从 mem0_gin 索引查找已有记忆
+2. **语义搜索**: 使用 Embedding + pgvector 向量相似度检索
+3. **LLM 提取**: 当以上两种都无结果时，用 LLM 从对话中提取新记忆
+降级策略确保在向量索引不完善时仍能获取有效记忆。
+
+### 10.3 挑战题
+
+**第9题：混合记忆系统**
+
+```python
+class HybridMemory:
+    def __init__(self, working_memory, long_term_memory, model, threshold=50):
+        self.working = working_memory      # InMemoryMemory
+        self.long_term = long_term_memory  # AsyncSQLAlchemyMemory
+        self.model = model
+        self.threshold = threshold
+
+    async def add(self, msg):
+        await self.working.add(msg)
+        if len(self.working.get_memory()) > self.threshold:
+            await self._archive_old_messages()
+
+    async def _archive_old_messages(self):
+        msgs = self.working.get_memory()
+        summary = await self.model(Msg("system", f"总结以下对话: {msgs}"))
+        await self.long_term.add(summary)
+        # 保留最近 10 条
+        for m in msgs[:-10]:
+            await self.working.delete(m.id)
+```
+
+**第12题：MarkdownReader**
+
+```python
+class MarkdownReader(DocumentReaderBase):
+    def read(self, file_path: str) -> list[Document]:
+        with open(file_path) as f:
+            content = f.read()
+        # 按标题切分
+        sections = re.split(r'(^#{1,6}\s+.+$)', content, flags=re.MULTILINE)
+        return [Document(content=s.strip(), metadata=DocMetadata(source=file_path))
+                for s in sections if s.strip()]
+```
+
+---
+
+## 小结
+
+| 组件 | 类型 | 核心功能 |
+|------|------|----------|
+| InMemoryMemory | 工作记忆 | 零配置内存存储，适合测试 |
+| AsyncSQLAlchemyMemory | 工作记忆 | 持久化数据库存储，支持并发 |
+| Mem0LongTermMemory | 长期记忆 | pgvector 语义检索 + 三级降级 |
+| ReMeLongTermMemory | 长期记忆 | 反思记忆 + 渐进式反思 |
+| SimpleKnowledge | RAG 知识库 | 向量存储 + 文档分块 + 检索 |
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | Agent 的 `observe()` 触发记忆存储，Hook 驱动压缩 |
+| [模型模块](module_model_deep.md) | Embedding 模型生成向量，Token 计数控制压缩阈值 |
+| [工具模块](module_tool_mcp_deep.md) | RAG 检索工具注册为 MCP 工具 |
 
 ---
 

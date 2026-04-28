@@ -40,6 +40,16 @@
 
 **预计学习时间**: 40 分钟
 
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `async def __call__` | `CompletableFuture<ChatResponse> call()` | 可调用对象 ≈ Function 接口 |
+| `@trace_llm` | AOP `@Around` 切面 | 装饰器 ≈ 拦截器 |
+| Pydantic `BaseModel` | Bean Validation (`@Valid`) | 数据验证框架 |
+| `yield` 生成器 | `Stream.Builder` / `Flux` | 流式数据处理 |
+| `tool_choice` | Strategy 模式 | 运行时选择行为 |
+
 ---
 
 ## 1. 模块概述
@@ -326,7 +336,7 @@ def _format_audio_data_for_qwen_omni(messages: list[dict]) -> None:
                         )
 ```
 
-#### 3.1.2 OpenAIChatModel 类初始化 (第 71-173 行)
+#### 3.1.2 OpenAIChatModel 类初始化 (第 71-175 行)
 
 ```python
 class OpenAIChatModel(ChatModelBase):
@@ -396,7 +406,7 @@ class OpenAIChatModel(ChatModelBase):
         self._structured_output_fallback = False
 ```
 
-#### 3.1.3 核心调用方法 __call__ (第 175-340 行)
+#### 3.1.3 核心调用方法 __call__ (第 176-342 行)
 
 ```python
 @trace_llm
@@ -852,7 +862,7 @@ async def _structured_via_tool_call(
 
 **文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/model/_dashscope_model.py`
 
-#### 4.1.1 DashScopeChatModel 类初始化 (第 51-161 行)
+#### 4.1.1 DashScopeChatModel 类初始化 (第 51-162 行)
 
 ```python
 class DashScopeChatModel(ChatModelBase):
@@ -924,7 +934,7 @@ class DashScopeChatModel(ChatModelBase):
                 )
 ```
 
-#### 4.1.2 核心调用方法 __call__ (第 162-298 行)
+#### 4.1.2 核心调用方法 __call__ (第 163-300 行)
 
 ```python
 @trace_llm
@@ -2395,6 +2405,17 @@ class ResilientModelProxy(ChatModelBase):
 
         raise RuntimeError("所有模型均调用失败")
 ```
+
+---
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | Agent 通过 `model` 参数调用 LLM |
+| [记忆模块](module_memory_rag_deep.md) | Embedding 模型驱动 RAG 检索，Token 计数控制压缩 |
+| [工具模块](module_tool_mcp_deep.md) | `tool_choice` 参数控制工具调用 |
+| [管道模块](module_pipeline_infra_deep.md) | Formatter 将 Msg 转换为各模型 API 格式 |
 
 ---
 

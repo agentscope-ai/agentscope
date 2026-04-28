@@ -1409,6 +1409,126 @@ toolkit.register_middleware(caching_middleware)
 
 ---
 
+## 参考答案
+
+### 9.1 基础题
+
+**第1题：RegisteredToolFunction 设计**
+
+`extended_json_schema` 将函数的原始 JSON Schema 与 `preset_kwargs` 合并：先从函数签名提取参数 Schema，然后移除 preset 已覆盖的参数（避免暴露给 LLM），最后合并 `required` 和 `properties`。`preset_kwargs` 将敏感参数（如 API Key）绑定到工具函数，LLM 调用时自动注入但 LLM 看不到。
+
+**第2题：Toolkit 工具组**
+
+`basic` 组是默认激活的核心工具集（如 `print`、`wait`），在 `__init__` 中自动注册。其他自定义组需通过 `update_tool_groups(group_name, activate=True)` 激活。这允许动态控制可用工具集——例如只在高权限模式下激活文件操作工具。
+
+**第3题：ToolResponse 字段**
+
+- `content`: 支持 `str | list[ContentBlock]`，可包含文本、图像、音频、视频
+- `stream`: 当工具返回生成器时，`stream=True` 表示流式输出
+- `is_last`: 流式场景中标记最后一块数据
+- `is_interrupted`: 用户中断时设为 True，允许工具优雅退出
+
+**第4题：三种包装器**
+
+- `_object_wrapper`: 将单个 ToolResponse 包装为异步生成器（yield 一次）
+- `_sync_generator_wrapper`: 将同步生成器转为异步（用 `asyncio.to_thread` 包装 next()）
+- `_async_generator_wrapper`: 包装异步生成器，捕获 CancelledError 实现优雅取消
+
+### 9.2 进阶题
+
+**第5题：中间件机制**
+
+中间件链采用洋葱模型：最后注册的中间件最先执行（反向构建）。必须是 async generator function 因为中间件需要在工具执行前后各执行一段逻辑（`yield` 前是前置处理，`yield` 后是后置处理）。
+
+```python
+async def logging_middleware(context, tool_call, response_stream):
+    print(f"[调用] {tool_call.function.name}")
+    async for resp in response_stream:
+        yield resp
+    print(f"[完成] {tool_call.function.name}")
+```
+
+**第7题：MCP 客户端类型**
+
+| 客户端 | 传输方式 | 状态 | 适用场景 |
+|--------|----------|------|----------|
+| StdIOStatefulClient | stdin/stdout | 有状态 | 本地进程工具 |
+| HttpStatefulClient | HTTP SSE | 有状态 | 远程服务、会话保持 |
+| HttpStatelessClient | HTTP 请求 | 无状态 | REST API、无会话 |
+
+**第8题：限流中间件**
+
+```python
+async def rate_limit_middleware(context, tool_call, response_stream):
+    semaphore = context.get("semaphore", asyncio.Semaphore(5))
+    async with semaphore:
+        async for resp in response_stream:
+            yield resp
+```
+
+### 9.3 挑战题
+
+**第9题：工具执行超时**
+
+```python
+async def timeout_middleware(context, tool_call, response_stream):
+    timeout = context.get("timeout", 30)
+    try:
+        async for resp in asyncio.timeout(timeout, response_stream).__aiter__():
+            yield resp
+    except TimeoutError:
+        yield ToolResponse(content=f"工具 {tool_call.function.name} 执行超时", is_last=True)
+```
+
+**第12题：postprocess_func 缓存**
+
+```python
+from functools import lru_cache
+import hashlib, json
+
+def cached_postprocess(tool_call, response):
+    cache_key = hashlib.md5(json.dumps({
+        "name": tool_call.function.name,
+        "args": tool_call.function.arguments,
+    }).encode()).hexdigest()
+
+    @lru_cache(maxsize=128)
+    def get_cached(key):
+        return response
+    return get_cached(cache_key)
+```
+
+---
+
+## 小结
+
+| 组件 | 职责 | 关键特性 |
+|------|------|----------|
+| RegisteredToolFunction | 工具注册 | JSON Schema + preset_kwargs |
+| Toolkit | 工具管理 | 分组、中间件、生命周期 |
+| ToolResponse | 响应封装 | 流式、多模态、中断 |
+| MCP Client | 协议适配 | StdIO/HTTP 有状态/无状态 |
+| postprocess_func | 后处理 | 缓存、验证、转换 |
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [智能体模块](module_agent_deep.md) | ReActAgent 通过 `_acting()` 调用工具 |
+| [管道模块](module_pipeline_infra_deep.md) | MCP ↔ A2A 协议对比 |
+| [模型模块](module_model_deep.md) | `tool_choice` 控制工具调用策略 |
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `Toolkit` 工具组 | `ServiceLoader` + 分组 | 动态服务注册 |
+| 中间件洋葱模型 | Servlet Filter 链 | 前置/后置拦截 |
+| `@overload` | 方法重载 | 类型签名 |
+| async generator | `Flux<ToolResponse>` | 响应式流 |
+
+---
+
 ## 参考资料
 
 ### 工具模块源码文件

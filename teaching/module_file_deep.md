@@ -10,6 +10,41 @@
 
 ---
 
+## 学习目标
+
+完成本模块学习后，您将能够：
+
+| 目标层级 | 学习目标 | Bloom 动词 |
+|----------|----------|-----------|
+| 记忆 | 列举文件操作模块提供的核心工具函数 | 列举、识别 |
+| 理解 | 解释文件检测、Base64 编解码、临时文件管理的实现原理 | 解释、描述 |
+| 应用 | 使用 `_text_file` 工具实现文本文件的查看与编辑操作 | 实现、操作 |
+| 分析 | 分析文件工具在 Agent 工具调用链中的角色与数据流 | 分析、追踪 |
+| 评价 | 评价函数式工具设计 vs 面向对象文件处理的优劣 | 评价、对比 |
+| 创造 | 设计一个支持多格式文件处理的工具扩展 | 设计、构建 |
+
+## 先修检查
+
+在开始学习本模块之前，请确认您已掌握以下知识：
+
+- [ ] Python 文件 I/O 基础（`open`、`pathlib`）
+- [ ] Base64 编解码原理
+- [ ] 临时文件管理（`tempfile` 模块）
+- [ ] MCP 工具协议基础（参见工具模块）
+
+**预计学习时间**: 25 分钟
+
+### Java 开发者对照
+
+| Python 概念 | Java 等价物 | 说明 |
+|-------------|------------|------|
+| `pathlib.Path` | `java.nio.file.Path` | 路径操作 |
+| `base64.b64encode/decode` | `java.util.Base64` | 编解码 |
+| `tempfile.mkstemp` | `Files.createTempFile` | 临时文件 |
+| `with open()` | try-with-resources | 资源管理 |
+
+---
+
 ## 1. 模块概述
 
 AgentScope 的文件操作功能主要分布在两个位置：
@@ -507,3 +542,139 @@ asyncio.run(main())
 - 参考 `_view_text_file()` 的实现
 - 使用 `with open()` 确保文件正确关闭
 - 使用列表推导式处理多行内容
+
+---
+
+## 参考答案
+
+### 6.1 基础题
+
+**第1题：文件检测**
+
+```python
+from agentscope._utils._common import _is_accessible_local_file
+
+exists = _is_accessible_local_file("/etc/hosts")
+print(f"文件存在: {exists}")
+```
+
+**第2题：查看文件前 20 行**
+
+```python
+from agentscope.tool._text_file import view_text_file
+
+content = view_text_file(file_path="/path/to/file.txt", start_line=1, end_line=20)
+print(content)
+```
+
+**第3题：创建文件并写入**
+
+```python
+from agentscope.tool._text_file import write_text_file
+
+result = write_text_file(
+    file_path="/tmp/test.txt",
+    content="Hello, AgentScope!",
+    mode="overwrite",
+)
+```
+
+### 6.2 提高题
+
+**第4题：read_file_safely**
+
+```python
+def read_file_safely(file_path: str) -> str:
+    try:
+        with open(file_path, "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return f"错误：文件 {file_path} 不存在"
+    except PermissionError:
+        return f"错误：无权限读取 {file_path}"
+```
+
+**第5题：copy_file_content**
+
+```python
+def copy_file_content(src: str, dst: str) -> None:
+    with open(src, "r") as f:
+        content = f.read()
+    with open(dst, "w") as f:
+        f.write(content)
+```
+
+**第6题：count_lines**
+
+```python
+def count_lines(file_path: str) -> int:
+    with open(file_path, "r") as f:
+        return sum(1 for _ in f)
+```
+
+### 6.3 挑战题
+
+**第7题：replace_in_file**
+
+```python
+def replace_in_file(file_path: str, old_text: str, new_text: str) -> int:
+    with open(file_path, "r") as f:
+        content = f.read()
+    new_content = content.replace(old_text, new_text)
+    count = content.count(old_text)
+    with open(file_path, "w") as f:
+        f.write(new_content)
+    return count
+```
+
+**第8题：create_file_with_line_numbers**
+
+```python
+def create_file_with_line_numbers(file_path: str, content: str) -> None:
+    lines = content.split("\n")
+    numbered = [f"{i+1}: {line}" for i, line in enumerate(lines)]
+    with open(file_path, "w") as f:
+        f.write("\n".join(numbered))
+```
+
+**第9题：batch_view_files**
+
+```python
+async def batch_view_files(file_paths: list[str], ranges: list[tuple[int,int]]) -> dict:
+    results = {}
+    for path, (start, end) in zip(file_paths, ranges):
+        results[path] = view_text_file(path, start_line=start, end_line=end)
+    return results
+```
+
+---
+
+## 小结
+
+| 特性 | 实现方式 |
+|------|----------|
+| 文件检测 | `_is_accessible_local_file()` 安全校验 |
+| Base64 编解码 | `_encode_file_to_base64()` / `_decode_base64_to_file()` |
+| 临时文件 | `_get_temp_file_name()` 自动命名 |
+| 文本查看 | `view_text_file()` 支持行范围 |
+| 文本编辑 | `write_text_file()` 支持插入/替换/删除 |
+
+文件操作模块采用函数式工具设计，为 Agent 的工具调用提供底层文件操作支持。
+
+## 章节关联
+
+| 关联模块 | 关联点 |
+|----------|--------|
+| [工具模块](module_tool_mcp_deep.md) | 文件工具通过 MCP 协议暴露给 Agent |
+| [Utils 模块](module_utils_deep.md) | Base64 编解码等共享工具函数 |
+| [智能体模块](module_agent_deep.md) | Agent 通过 Toolkit 调用文件操作 |
+
+## 参考资料
+
+- 工具函数: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/_utils/_common.py`
+- 文本文件工具: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_text_file/`
+
+---
+
+*文档版本: 1.0*
+*最后更新: 2026-04-28*
