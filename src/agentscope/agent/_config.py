@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 """The agent config classes."""
-from typing import Any
 
-from pydantic import BaseModel, Field, SerializeAsAny, field_validator
-from pydantic_core.core_schema import ValidationInfo
-
-from ..model import ChatModelBase, _deserialize_model
+from pydantic import BaseModel, Field
 
 
 class SummarySchema(BaseModel):
@@ -104,25 +100,3 @@ class CompressionConfig(BaseModel):
     )
     """The structured model used to guide the agent to generate the
     structured compressed summary."""
-
-    compression_model: SerializeAsAny[ChatModelBase] | None = None
-    """The compression model used to generate the compressed summary. If
-    not provided, the agent's model will be used."""
-
-    @field_validator("compression_model", mode="before")
-    @classmethod
-    def validate_compression_model(cls, v: Any, info: ValidationInfo) -> Any:
-        """Deserialize compression_model from dict using context-injected
-        custom classes."""
-        if not isinstance(v, dict):
-            return v
-        custom_classes = (
-            info.context.get("custom_model_classes", [])
-            if info.context
-            else []
-        )
-        return _deserialize_model(
-            v,
-            custom_classes=custom_classes,
-            context=info.context,
-        )

@@ -302,6 +302,26 @@ class Agent(BaseModel):
             tools,
         )
 
+        if len(msgs_to_compress) == 0:
+            # The reserve ratio is too large so that although it exceeds the
+            # trigger threshold, the context to be compressed is empty
+            # Fallback by lowering the reserve ratio to compress more context.
+            logger.warning(
+                "The reserve ratio %.2f is too large to compress any context."
+                "Lower the reserve ratio to 0 as a fallback.",
+            )
+            (
+                msgs_to_compress,
+                msgs_to_reserve,
+            ) = await self._split_context_for_compression(
+                0 * self.model.context_length,
+                tools,
+            )
+
+            # The msgs to be compressed cannot be empty here, unless the
+            # system prompt and summary (if any) already exceed the context
+            # length, which we have handled before.
+
         # Prepare the messages to compress
         msgs_system = [
             SystemMsg(
@@ -320,12 +340,80 @@ class Agent(BaseModel):
             ]
         )
 
-        # Compress the messages
-        model = cfg.compression_model or self.model
-        res = await model.generate_structured_output(
-            messages=messages,
-            structured_model=cfg.summary_schema,
+        # The compression prompt may exceed the context length, here we mark
+        # the overflow by a bool flag
+        compression_tool_schema = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_structured_output",
+                    "description": "Call this function to generate "
+                    "structured output required by "
+                    "the user.",
+                    "parameters": cfg.summary_schema,
+                },
+            },
+        ]
+        context_overflow = False
+        estimated_compression_tokens = await self.model.count_tokens(
+            messages,
+            compression_tool_schema,
         )
+        if estimated_compression_tokens > self.model.context_length:
+            logger.warning(
+                "The current context length exceeds the model's context "
+                "length (%d tokens), the compression maybe failed due to "
+                "insufficient reserved context for compression.",
+                self.model.context_length,
+            )
+            context_overflow = True
+
+        # Compress the messages
+        try:
+            res = await self.model.generate_structured_output(
+                messages=messages,
+                structured_model=cfg.summary_schema,
+            )
+
+        except Exception as e:
+            if context_overflow:
+                logger.warning(
+                    "Failed to compress context, which may be caused by "
+                    "insufficient reserved context for compression. "
+                    "Trying to compress by removing the oldest context.",
+                )
+                for i in range(1, len(msgs_to_compress) + 1):
+                    messages = (
+                        msgs_system
+                        + msgs_to_compress[i:]
+                        + [
+                            UserMsg(
+                                name="user",
+                                content=cfg.compression_prompt,
+                            ),
+                        ]
+                    )
+                    estimated_compression_tokens = (
+                        await self.model.count_tokens(
+                            messages,
+                            compression_tool_schema,
+                        )
+                    )
+                    # Considering trigger_ratio <= 0.9, at least reserve 10%
+                    # tokens for compression response
+                    if (
+                        estimated_compression_tokens
+                        < self.model.context_length * cfg.trigger_ratio
+                    ):
+                        break
+
+                res = await self.model.generate_structured_output(
+                    messages=messages,
+                    structured_model=cfg.summary_schema,
+                )
+
+            else:
+                raise e from None
 
         # Update the summary
         self.state.summary = cfg.summary_template.format(**res.content)
