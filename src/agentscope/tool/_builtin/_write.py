@@ -60,6 +60,7 @@ Usage:
     is_mcp: bool = False
     is_read_only: bool = False
     is_concurrency_safe: bool = False
+    is_external_tool: bool = False
 
     def __init__(
         self,

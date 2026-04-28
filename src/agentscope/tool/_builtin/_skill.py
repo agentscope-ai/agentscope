@@ -42,6 +42,9 @@ class SkillViewer(ToolBase):
     is_concurrency_safe: bool = True
     """The skill viewer is concurrency safe."""
 
+    is_external_tool: bool = False
+    """The skill viewer is not an external tool."""
+
     is_read_only: bool = True
     """The skill viewer is read-only."""
 

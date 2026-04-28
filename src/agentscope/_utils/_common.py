@@ -15,10 +15,12 @@ import requests
 from json_repair import repair_json
 
 from .._logging import logger
+from ..exception import ToolJSONDecodeError
 
 
 def _json_loads_with_repair(
     json_str: str,
+    schema: dict | None = None,
 ) -> dict:
     """The given json_str maybe incomplete, e.g. '{"key', so we need to
     repair and load it into a Python object.
@@ -31,6 +33,8 @@ def _json_loads_with_repair(
     Args:
         json_str (`str`):
             The JSON string to parse, which may be incomplete or malformed.
+        schema (`dict`, optional):
+            An optional JSON schema to guide the repair process.
 
     Returns:
         `dict`:
@@ -38,24 +42,59 @@ def _json_loads_with_repair(
             Returns an empty dict if all repair attempts fail.
     """
     try:
-        repaired = repair_json(json_str, stream_stable=True)
-        result = json.loads(repaired)
-        if isinstance(result, dict):
-            return result
+        # Loads directly
+        res = json.loads(json_str)
+        if isinstance(res, dict):
+            return res
 
-    except Exception:
-        if len(json_str) > 100:
-            log_str = json_str[:100] + "..."
-        else:
-            log_str = json_str
-
-        logger.warning(
-            "Failed to load JSON dict from string: %s. Returning empty dict "
-            "instead.",
-            log_str,
+        error_message = (
+            f"Error: Your argument string is decoded into a {type(res)} "
+            f"object, but a dict object is expected!"
+        )
+    except json.JSONDecodeError as e:
+        error_message = (
+            f"Error: When decoding your tool arguments from JSON format "
+            f"to a Python dictionary, a JSONDecodeError was raised with "
+            f"message: {str(e)}."
         )
 
-    return {}
+    try:
+        # Try to repair with json_repair
+        repaired = repair_json(json_str, stream_stable=True, schema=schema)
+        res = json.loads(repaired)
+        if isinstance(res, dict):
+            return res
+
+    except Exception:
+        # Whatever the error is, we throw the original error message to the
+        # agent, which is more helpful for debugging.
+        pass
+
+    # If still failed, we throw the original error message to the agent, rather
+    # than the error from json_repair, which is less helpful for debugging.
+    if len(json_str) > 200:
+        error_json_str = json_str[:100] + "[TRUNCATE]" + json_str[-100:]
+        ellipsis_hint = (
+            "(Because the JSON string is too long, a truncated label "
+            '"[TRUNCATE]" is used here to indicate the truncation)'
+        )
+    else:
+        error_json_str = json_str
+        ellipsis_hint = ""
+
+    raise ToolJSONDecodeError(
+        f"""<system-reminder>{error_message}
+
+Your argument string is decoded by the following code snippet{ellipsis_hint}:
+```python
+import json
+
+your_tool_arguments = {repr(error_json_str)}
+json.loads(your_tool_arguments)
+```
+
+**You should recorrect the arguments in JSON format.**</system-reminder>""",
+    )
 
 
 def _get_timestamp(add_random_suffix: bool = False) -> str:

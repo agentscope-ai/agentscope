@@ -2,7 +2,7 @@
 """The base exception class in agentscope."""
 
 
-class AgentOrientedExceptionBase(Exception):
+class AgentOrientedException(Exception):
     """The base class for all agent-oriented exceptions. These exceptions are
     expect to the captured and exposed to the agent during runtime, so that
     agents can handle the error appropriately during the runtime.
