@@ -194,7 +194,7 @@ class OpenJudgeMetric(MetricBase):
 
 # %%
 import os
-from typing import Generator
+from collections.abc import Generator
 from openjudge.graders.common.relevance import RelevanceGrader
 from openjudge.graders.common.correctness import CorrectnessGrader
 from agentscope.evaluate import (
@@ -284,7 +284,7 @@ class QABenchmark(BenchmarkBase):
 
 # %%
 
-from typing import Callable
+from collections.abc import Callable
 
 from agentscope.agent import ReActAgent
 from agentscope.evaluate import GeneralEvaluator

@@ -2,7 +2,7 @@
 """The server that holds agent service."""
 import json
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from quart import Quart, Response, request
 

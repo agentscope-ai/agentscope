@@ -3,7 +3,8 @@
 import os
 import json
 import re
-from typing import Union, Sequence, Any, Type
+from collections.abc import Sequence
+from typing import Any
 from pydantic import BaseModel
 
 from agentscope.tool import Toolkit, ToolResponse
@@ -12,7 +13,7 @@ from agentscope.tool import Toolkit, ToolResponse
 def get_prompt_from_file(
     file_path: str,
     return_json: bool,
-) -> Union[str, dict]:
+) -> str | dict:
     """Get prompt from file"""
     with open(os.path.join(file_path), "r", encoding="utf-8") as f:
         if return_json:
@@ -96,7 +97,7 @@ def generate_structure_output(**kwargs: Any) -> ToolResponse:
     return ToolResponse(content=[], metadata=kwargs)
 
 
-def get_dynamic_tool_call_json(data_model_type: Type[BaseModel]) -> list[dict]:
+def get_dynamic_tool_call_json(data_model_type: type[BaseModel]) -> list[dict]:
     """Generate JSON schema for dynamic tool calling with a given data model.
 
     Creates a temporary toolkit, registers the structure output function,

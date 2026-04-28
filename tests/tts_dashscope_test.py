@@ -2,7 +2,7 @@
 # pylint: disable=protected-access
 """The unittests for DashScope TTS models."""
 import base64
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 

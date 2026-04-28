@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """TunerModelConfig definition."""
 from __future__ import annotations
-from typing import Dict, Any
+from typing import Any
 from pydantic import BaseModel, Field
 
 
@@ -75,11 +75,11 @@ class TunerModelConfig(BaseModel):
         default=None,
     )
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get the model configuration.
 
         Returns:
-            `Dict[str, Any]`: The model configuration dictionary.
+            `dict[str, Any]`: The model configuration dictionary.
         """
         return {
             "model_path": self.model_path,
@@ -132,11 +132,11 @@ class TinkerConfig(BaseModel):
         default=None,
     )
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get the Tinker model configuration.
 
         Returns:
-            `Dict[str, Any]`: The Tinker model configuration dictionary.
+            `dict[str, Any]`: The Tinker model configuration dictionary.
         """
         return {
             "rank": self.rank,

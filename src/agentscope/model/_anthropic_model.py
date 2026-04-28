@@ -3,16 +3,10 @@
 """The Anthropic API model classes."""
 import copy
 import warnings
-from datetime import datetime
-from typing import (
-    Any,
-    AsyncGenerator,
-    TYPE_CHECKING,
-    List,
-    Literal,
-    Type,
-)
 from collections import OrderedDict
+from collections.abc import AsyncGenerator
+from datetime import datetime
+from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -139,7 +133,7 @@ class AnthropicChatModel(ChatModelBase):
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         tool_choice: Literal["auto", "none", "required"] | str | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
         **generate_kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
         """Get the response from Anthropic chat completions API by the given
@@ -182,7 +176,7 @@ class AnthropicChatModel(ChatModelBase):
                  Can be "auto", "none", "required", or specific tool
                  name. For more details, please refer to
                  https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/implement-tool-use
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output. When provided, the model will be forced
                 to return data that conforms to this schema by automatically
@@ -276,7 +270,7 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: Message,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Given an Anthropic Message object, extract the content blocks and
         usages from it.
@@ -286,7 +280,7 @@ class AnthropicChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`Message`):
                 Anthropic Message object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 
@@ -298,7 +292,7 @@ class AnthropicChatModel(ChatModelBase):
             If `structured_model` is not `None`, the expected structured output
             will be stored in the metadata of the `ChatResponse`.
         """
-        content_blocks: List[ThinkingBlock | TextBlock | ToolUseBlock] = []
+        content_blocks: list[ThinkingBlock | TextBlock | ToolUseBlock] = []
         metadata = None
 
         if hasattr(response, "content") and response.content:
@@ -363,7 +357,7 @@ class AnthropicChatModel(ChatModelBase):
         self,
         start_datetime: datetime,
         response: AsyncStream,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Given an Anthropic streaming response, extract the content blocks
         and usages from it and yield ChatResponse objects.
@@ -373,7 +367,7 @@ class AnthropicChatModel(ChatModelBase):
                 The start datetime of the response generation.
             response (`AsyncStream`):
                 Anthropic AsyncStream object to parse.
-            structured_model (`Type[BaseModel] | None`, default `None`):
+            structured_model (`type[BaseModel] | None`, default `None`):
                 A Pydantic BaseModel class that defines the expected structure
                 for the model's output.
 

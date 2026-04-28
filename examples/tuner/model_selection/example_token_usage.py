@@ -3,7 +3,7 @@
 
 import os
 import logging
-from typing import Dict, Any
+from typing import Any
 from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
@@ -39,13 +39,13 @@ models = [
 
 
 async def workflow(
-    task: Dict[str, Any],
+    task: dict[str, Any],
     model: Any,
 ) -> WorkflowOutput:
     """A workflow function using the ReAct agent to solve tasks.
 
     Args:
-        task (Dict[str, Any]): The task to be solved.
+        task (dict[str, Any]): The task to be solved.
         model: The model to use for the agent.
 
     Returns:

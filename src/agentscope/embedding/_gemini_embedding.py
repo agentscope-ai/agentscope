@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The gemini text embedding model class."""
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from ._embedding_response import EmbeddingResponse
 from ._embedding_usage import EmbeddingUsage
@@ -49,13 +49,13 @@ class GeminiTextEmbedding(EmbeddingModelBase):
 
     async def __call__(
         self,
-        text: List[str | TextBlock],
+        text: list[str | TextBlock],
         **kwargs: Any,
     ) -> EmbeddingResponse:
         """The Gemini embedding API call.
 
         Args:
-            text (`List[str | TextBlock]`):
+            text (`list[str | TextBlock]`):
                 The input text to be embedded. It can be a list of strings.
 
         # TODO: handle the batch size limit

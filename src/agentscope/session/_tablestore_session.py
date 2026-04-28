@@ -2,7 +2,7 @@
 """The Tablestore session class for agentscope."""
 import asyncio
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ._session_base import SessionBase
 from .._logging import logger
@@ -29,7 +29,7 @@ class TablestoreSession(SessionBase):
         instance_name: str,
         access_key_id: str,
         access_key_secret: str,
-        sts_token: Optional[str] = None,
+        sts_token: str | None = None,
         session_table_name: str = "agentscope_session",
         message_table_name: str = "agentscope_message",
         **kwargs: Any,
@@ -83,7 +83,7 @@ class TablestoreSession(SessionBase):
 
         self._session_table_name = session_table_name
         self._message_table_name = message_table_name
-        self._memory_store: Optional[AsyncMemoryStore] = None
+        self._memory_store: AsyncMemoryStore | None = None
         self._memory_store_kwargs = kwargs
         self._initialized = False
         self._init_lock = asyncio.Lock()

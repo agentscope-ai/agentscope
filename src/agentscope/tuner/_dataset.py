@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """DatasetConfig definition for tuner."""
 from itertools import islice
-from typing import List
 from pydantic import BaseModel, Field
 
 
@@ -35,7 +34,7 @@ class DatasetConfig(BaseModel):
         default=None,
     )
 
-    def preview(self, n: int = 5) -> List:
+    def preview(self, n: int = 5) -> list:
         """Preview the dataset information.
 
         Args:

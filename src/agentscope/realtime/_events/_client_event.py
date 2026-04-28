@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """The client events for web-to-backend communication."""
 from enum import Enum
-from typing import List
 
 from pydantic import BaseModel
 
@@ -151,7 +150,7 @@ class ClientEvents:
         name: str
         """The tool name."""
 
-        output: str | List[TextBlock | ImageBlock | AudioBlock | VideoBlock]
+        output: str | list[TextBlock | ImageBlock | AudioBlock | VideoBlock]
         """The tool result."""
 
     MAPPING = {

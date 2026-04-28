@@ -10,7 +10,7 @@ import os
 import json
 import inspect
 from functools import wraps
-from typing import Type, Optional, Any, Literal
+from typing import Any, Literal
 import asyncio
 import copy
 
@@ -104,7 +104,7 @@ class BrowserAgent(ReActAgent):
         toolkit: Toolkit,
         sys_prompt: str = _BROWSER_AGENT_DEFAULT_SYS_PROMPT,
         max_iters: int = 50,
-        start_url: Optional[str] = "https://www.google.com",
+        start_url: str | None = "https://www.google.com",
         pure_reasoning_prompt: str = _BROWSER_AGENT_DEFAULT_PURE_REASONING_PROMPT,
         observe_reasoning_prompt: str = _BROWSER_AGENT_DEFAULT_OBSERVE_REASONING_PROMPT,
         task_decomposition_prompt: str = _BROWSER_AGENT_DEFAULT_TASK_DECOMPOSITION_PROMPT,
@@ -130,7 +130,7 @@ class BrowserAgent(ReActAgent):
         self.iter_n = 0
         self.finish_function_name = "browser_generate_final_response"
         self.init_query = ""
-        self._required_structured_model: Type[BaseModel] | None = None
+        self._required_structured_model: type[BaseModel] | None = None
 
         super().__init__(
             name=name,
@@ -165,7 +165,7 @@ class BrowserAgent(ReActAgent):
     async def reply(  # pylint: disable=R0912,R0915
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """Process a message and return a response."""
         self.init_query = (
@@ -418,7 +418,7 @@ class BrowserAgent(ReActAgent):
 
     async def _build_observation(self) -> Msg:
         """Get a snapshot (and optional screenshot) before reasoning."""
-        image_data: Optional[str] = None
+        image_data: str | None = None
         if self._supports_multimodal():
             image_data = await self._get_screenshot()
         observe_msg = self.observe_by_chunk(image_data)
@@ -743,7 +743,7 @@ class BrowserAgent(ReActAgent):
         for m in summarized_memory:
             await self.memory.add(m)
 
-    async def _get_screenshot(self) -> Optional[str]:
+    async def _get_screenshot(self) -> str | None:
         """
         Optionally take a screenshot of the current web page for multimodal prompts.
         Returns base64-encoded PNG data if available, else None.

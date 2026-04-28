@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Convert ContentBlock to OpenTelemetry GenAI part format."""
 
-from typing import Any, Dict
+from typing import Any
 
 from ..message import ContentBlock
 
@@ -9,19 +9,19 @@ from ._utils import _serialize_to_str
 
 
 def _convert_media_block(
-    source: Dict[str, Any],
+    source: dict[str, Any],
     modality: str,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     """Convert media block (image/audio/video) to OpenTelemetry format.
 
     Args:
-        source (`Dict[str, Any]`):
+        source (`dict[str, Any]`):
             Source Dictionary with type, url/data, and media_type.
         modality (`str`):
             Media modality: "image", "audio", or "video".
 
     Returns:
-        `Dict[str, Any] | None`:
+        `dict[str, Any] | None`:
             Converted part Dictionary or None if source type is invalid.
     """
     source_type = source.get("type")
@@ -54,7 +54,7 @@ def _convert_media_block(
     return None
 
 
-def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
+def _convert_block_to_part(block: ContentBlock) -> dict[str, Any] | None:
     """Convert content block to OpenTelemetry GenAI part format.
 
     Converts text, thinking, tool_use, tool_result, image, audio, video
@@ -72,12 +72,12 @@ def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
             - video: Video block with source (url or base64)
 
     Returns:
-        `Dict[str, Any] | None`:
+        `dict[str, Any] | None`:
             Standardized part Dictionary in OpenTelemetry GenAI format,
             or None if the block type is invalid or cannot be converted.
     """
     block_type = block.get("type")
-    part: Dict[str, Any] | None = None
+    part: dict[str, Any] | None = None
 
     # Handle simple text-based blocks
     if block_type == "text":
@@ -100,7 +100,7 @@ def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
         }
     elif block_type == "tool_result":
         output = block.get("output", "")
-        if isinstance(output, (list, Dict)):
+        if isinstance(output, (list, dict)):
             result = _serialize_to_str(output)
         else:
             result = str(output)
@@ -115,7 +115,7 @@ def _convert_block_to_part(block: ContentBlock) -> Dict[str, Any] | None:
         source = block.get("source", {})
         # Type assertion for mypy
         if isinstance(source, dict):
-            source_dict: Dict[str, Any] = source
+            source_dict: dict[str, Any] = source
 
             part = _convert_media_block(
                 source_dict,

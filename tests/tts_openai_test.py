@@ -3,7 +3,7 @@
 """The unittests for OpenAI TTS model."""
 import base64
 import sys
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch, AsyncMock, MagicMock
 

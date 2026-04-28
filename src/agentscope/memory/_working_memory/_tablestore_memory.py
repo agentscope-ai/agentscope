@@ -3,7 +3,7 @@
 import asyncio
 import copy
 import json
-from typing import Any, Optional
+from typing import Any
 
 
 from ..._logging import logger
@@ -31,7 +31,7 @@ class TablestoreMemory(MemoryBase):
         access_key_secret: str,
         user_id: str = "default",
         session_id: str = "default",
-        sts_token: Optional[str] = None,
+        sts_token: str | None = None,
         table_name: str = "agentscope_memory",
         text_field: str = "text",
         embedding_field: str = "embedding",

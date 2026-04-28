@@ -3,7 +3,8 @@
 # pylint: disable=line-too-long, too-many-branches, too-many-statements
 
 import os
-from typing import Any, Optional, Union, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import dashscope
 from dashscope.api_entities.dashscope_response import GenerationResponse
@@ -36,8 +37,8 @@ class QwenDeepResearchAgent(AgentBase):
     def __init__(
         self,
         name: str,
-        api_key: Optional[str] = None,
-        memory: Optional[MemoryBase] = None,
+        api_key: str | None = None,
+        memory: MemoryBase | None = None,
         verbose: bool = False,
     ):
         """Initialize QwenDeepResearchAgent Agent"""
@@ -59,7 +60,7 @@ class QwenDeepResearchAgent(AgentBase):
 
     async def reply(
         self,
-        x: Optional[Union[Msg, Sequence[Msg]]] = None,
+        x: Msg | Sequence[Msg] | None = None,
     ) -> Msg:
         """
         Process input message and return reply (asynchronous version)

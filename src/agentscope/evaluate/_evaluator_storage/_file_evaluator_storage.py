@@ -2,8 +2,9 @@
 """A file system based evaluator storage."""
 import json
 import os
+from collections.abc import Callable
 from json import JSONDecodeError
-from typing import Any, Callable
+from typing import Any
 
 from ._evaluator_storage_base import EvaluatorStorageBase
 from .._solution import SolutionOutput

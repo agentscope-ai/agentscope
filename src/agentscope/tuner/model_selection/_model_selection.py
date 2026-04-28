@@ -3,8 +3,8 @@
 candidates based on evaluation metrics."""
 import asyncio
 import logging
-from typing import List, Dict, Tuple, Optional, Callable
-from typing import Sequence, Union, Any
+from collections.abc import Callable, Sequence
+from typing import Any
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -79,7 +79,7 @@ async def select_model(
     train_dataset: DatasetConfig,
     candidate_models: Sequence[ChatModelBase],
     max_threads: int = 2,
-) -> Tuple[ChatModelBase, Dict[str, float]]:
+) -> tuple[ChatModelBase, dict[str, float]]:
     """
     Select the best performing model from candidate models based on evaluation
     metrics on a dataset.
@@ -103,7 +103,7 @@ async def select_model(
             Maximum number of concurrent evaluations. Defaults to 2.
 
     Returns:
-        `Tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
+        `tuple[ChatModelBase, dict[str, float]]`: A tuple containing:
             - The model that achieved the best performance across the dataset
               (with the highest average reward)
             - Dictionary of aggregated metrics collected during evaluation
@@ -144,7 +144,7 @@ async def select_model(
 
         total_reward = 0.0
         num_samples = 0
-        model_metrics: Dict[str, float] = {}
+        model_metrics: dict[str, float] = {}
         # Store accumulated metrics for this model
 
         # Process dataset samples with async function calls
@@ -156,7 +156,7 @@ async def select_model(
             model: ChatModelBase = model,
             exporter: _InMemoryExporter = exporter,
             sem: asyncio.Semaphore = semaphore,
-        ) -> Optional[JudgeOutput]:
+        ) -> JudgeOutput | None:
             async with sem:
                 try:
                     # Process this sample using the new async function
@@ -241,11 +241,11 @@ async def select_model(
 
 
 def _process_evaluation_results(
-    results: List[Union[JudgeOutput, BaseException, None]],
-    model_metrics: Dict[str, float],
+    results: list[JudgeOutput | BaseException | None],
+    model_metrics: dict[str, float],
     total_reward_init: float,
     num_samples_init: int,
-) -> Tuple[float, int, Dict[str, float]]:
+) -> tuple[float, int, dict[str, float]]:
     """
     Process evaluation results to calculate total reward and aggregate metrics.
 
@@ -256,7 +256,7 @@ def _process_evaluation_results(
         num_samples_init: Initial value for number of samples
 
     Returns:
-        Tuple of (total_reward, num_samples, averaged_model_metrics)
+        tuple of (total_reward, num_samples, averaged_model_metrics)
     """
     import numbers
 

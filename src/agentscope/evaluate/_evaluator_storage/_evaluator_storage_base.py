@@ -2,7 +2,8 @@
 """The evaluator storage base class for storing solution and evaluation
 results."""
 from abc import abstractmethod
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .._metric_base import MetricResult
 from .._solution import SolutionOutput

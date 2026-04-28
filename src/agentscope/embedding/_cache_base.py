@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The embedding cache base class."""
 from abc import abstractmethod
-from typing import List, Any
+from typing import Any
 
 from ..types import (
     JSONSerializableObject,
@@ -16,7 +16,7 @@ class EmbeddingCacheBase:
     @abstractmethod
     async def store(
         self,
-        embeddings: List[Embedding],
+        embeddings: list[Embedding],
         identifier: JSONSerializableObject,
         overwrite: bool = False,
         **kwargs: Any,
@@ -24,7 +24,7 @@ class EmbeddingCacheBase:
         """Store the embeddings with the given identifier.
 
         Args:
-            embeddings (`List[Embedding]`):
+            embeddings (`list[Embedding]`):
                 The embeddings to store.
             identifier (`JSONSerializableObject`):
                 The identifier to distinguish the embeddings.
@@ -37,7 +37,7 @@ class EmbeddingCacheBase:
     async def retrieve(
         self,
         identifier: JSONSerializableObject,
-    ) -> List[Embedding] | None:
+    ) -> list[Embedding] | None:
         """Retrieve the embeddings with the given identifier. If not
         found, return `None`.
 

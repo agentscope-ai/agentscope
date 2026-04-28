@@ -1,21 +1,10 @@
 # -*- coding: utf-8 -*-
 """The JSON related types"""
 
-from typing import Union
+JSONPrimitive = str | int | float | bool | None
 
-JSONPrimitive = Union[
-    str,
-    int,
-    float,
-    bool,
-    None,
-]
-
-JSONSerializableObject = Union[
-    JSONPrimitive,
-    list["JSONSerializableObject"],
-    dict[
-        str,
-        "JSONSerializableObject",
-    ],
-]
+JSONSerializableObject = (
+    JSONPrimitive
+    | list["JSONSerializableObject"]
+    | dict[str, "JSONSerializableObject"]
+)

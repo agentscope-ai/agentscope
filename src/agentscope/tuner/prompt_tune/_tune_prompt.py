@@ -3,8 +3,9 @@
 
 import os
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional, cast
+from typing import Any, cast
 
 from agentscope.tuner import (
     DatasetConfig,
@@ -44,14 +45,14 @@ def _wrap_judge_fn(judge_fn: JudgeType) -> Callable[..., float]:
     return _sync_wrapper
 
 
-def _guess_by_ext(p: str) -> Optional[str]:
+def _guess_by_ext(p: str) -> str | None:
     """Guess the dataset format by file extension.
 
     Args:
         p (`str`): The file path.
 
     Returns:
-        `Optional[str]`: The format string (e.g., 'json', 'csv') or None if
+        `str | None`: The format string (e.g., 'json', 'csv') or None if
             the extension is not recognized.
     """
     pp = Path(p)

@@ -4,7 +4,7 @@ reference to the `ACEBench <https://github.com/ACEBench/ACEBench>`_
 under the MIT license."""
 import json
 import os
-from typing import Generator
+from collections.abc import Generator
 
 import json5
 import requests

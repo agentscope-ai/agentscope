@@ -6,7 +6,7 @@ enabling AgentScope agents to communicate with remote agents using the
 A2A standard protocol.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Type
+from typing import Any, TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel
@@ -263,7 +263,7 @@ class A2AAgent(AgentBase):
     async def handle_interrupt(
         self,
         msg: Msg | list[Msg] | None = None,
-        structured_model: Type[BaseModel] | None = None,
+        structured_model: type[BaseModel] | None = None,
     ) -> Msg:
         """The post-processing logic when the reply is interrupted by the
         user or something else.

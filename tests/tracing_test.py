@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """Unittests for the tracing functionality in AgentScope."""
-from typing import (
-    AsyncGenerator,
-    Generator,
-    Any,
-)
+from collections.abc import AsyncGenerator, Generator
+from typing import Any
 from unittest import IsolatedAsyncioTestCase
 
 from agentscope import _config

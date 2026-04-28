@@ -21,7 +21,8 @@
 import asyncio
 import inspect
 import json
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from pydantic import BaseModel, Field
 
