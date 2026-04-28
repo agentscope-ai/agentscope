@@ -1,13 +1,27 @@
 # -*- coding: utf-8 -*-
 """The chat model base class."""
-
+import json
 from abc import abstractmethod
-from typing import AsyncGenerator, Any, TYPE_CHECKING
+from copy import deepcopy
+from typing import AsyncGenerator, Any, TYPE_CHECKING, Type
 
-from ._model_response import ChatResponse
+from pydantic import BaseModel
+
+from ._model_response import ChatResponse, StructuredResponse
 from .._logging import logger
+from .._utils._common import _json_loads_with_repair
 from ..formatter import FormatterBase
-from ..message import Msg
+from ..message import (
+    Msg,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+    DataBlock,
+    URLSource,
+    Base64Source,
+    UserMsg,
+)
 
 if TYPE_CHECKING:
     from ..tool import ToolChoice
@@ -29,10 +43,14 @@ class ChatModelBase:
     max_retries: int
     """Maximum number of retries on failure"""
 
+    context_length: int
+    """The context length of the model, which will be used in context
+    compression."""
+
     fallback_model_name: str | None
     """Fallback model name to use after all retries fail"""
 
-    formatter: Any | None
+    formatter: FormatterBase
     """The API formatter that format the messages into the required format for
     the underlying API."""
 
@@ -40,9 +58,10 @@ class ChatModelBase:
         self,
         model_name: str,
         stream: bool,
+        context_length: int,
+        formatter: FormatterBase,
         max_retries: int = 0,
         fallback_model_name: str | None = None,
-        formatter: FormatterBase | None = None,
     ) -> None:
         """Initialize the chat model base class.
 
@@ -51,15 +70,19 @@ class ChatModelBase:
                 The name of the model
             stream (`bool`):
                 Whether the model output is streaming or not
+            context_length (`int`):
+                The context length of the model, which will be used
+                in context compression.
+            formatter (`FormatterBase`):
+                Formatter for message preprocessing.
             max_retries (`int`, optional):
                 Maximum number of retries on failure. Defaults to 0.
             fallback_model_name (`str | None`, optional):
                 Fallback model name to use after all retries fail.
-            formatter (`FormatterBase | None`, optional):
-                Formatter for message preprocessing.
         """
         self.model_name = model_name
         self.stream = stream
+        self.context_length = context_length
         self.max_retries = max_retries
         self.fallback_model_name = fallback_model_name
         self.formatter = formatter
@@ -87,8 +110,6 @@ class ChatModelBase:
             **kwargs:
                 Additional keyword arguments passed to the underlying API.
         """
-        if self.formatter is not None:
-            messages = await self.formatter.format(messages)
 
         last_error: Exception | None = None
 
@@ -188,3 +209,241 @@ class ChatModelBase:
                 f"Invalid tool_choice '{tool_choice}'. "
                 f"Available options: {', '.join(sorted(all_options))}",
             )
+
+    async def count_tokens(
+        self,
+        messages: list[Msg],
+        tools: list[dict] | None,
+    ) -> int:
+        """A quick and unified method to estimate the token count of the
+        model input by dividing the total input size in bytes by 4.
+
+        Note a standard way to count the tokens is first formatting the input
+        messages into the API required format, then use the tokenizer of the
+        underlying API to count the tokens.
+
+        Subclasses may override this method to provide a more accurate
+        implementation tailored to their specific tokenizer.
+
+        Args:
+            messages (`list[Msg]`):
+                The messages to send to the model.
+            tools (`list[dict] | None`):
+                The tools available to the model.
+
+        Returns:
+            `int`:
+                The number of tokens in the model.
+        """
+        cnt = 0
+
+        acc_texts = []
+        data_blocks = []
+        for msg in messages:
+            for block in msg.get_content_blocks():
+                if isinstance(block, TextBlock):
+                    acc_texts.append(block.text)
+
+                elif isinstance(block, ThinkingBlock):
+                    acc_texts.append(block.thinking)
+
+                elif isinstance(block, ToolCallBlock):
+                    acc_texts.append(block.input)
+
+                elif isinstance(block, ToolResultBlock):
+                    if isinstance(block.output, str):
+                        acc_texts.append(block.output)
+                    elif isinstance(block.output, list):
+                        for item in block.output:
+                            if isinstance(item, TextBlock):
+                                acc_texts.append(item.text)
+                            elif isinstance(item, DataBlock):
+                                data_blocks.append(item)
+
+                elif isinstance(block, DataBlock):
+                    data_blocks.append(block)
+
+                else:
+                    logger.warning(
+                        "Unknown block type %s in token counting, skipping.",
+                        type(block),
+                    )
+
+        # Count the tokens of the tool JSON schemas
+        if tools:
+            acc_texts.append(json.dumps(tools, ensure_ascii=False))
+
+        # Count the text tokens
+        acc_text = "".join(acc_texts)
+        cnt += int(len(acc_text.encode("utf-8")) / 4 + 0.5)
+
+        # Add the multimodal tokens
+        for block in data_blocks:
+            if isinstance(block.source, URLSource):
+                acc_texts.append(block.source.url)
+            elif isinstance(block.source, Base64Source):
+                cnt += len(block.source.data) // 4
+
+        return cnt
+
+    async def generate_structured_output(
+        self,
+        messages: list[Msg],
+        structured_model: Type[BaseModel] | dict,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """Generate required structured output by the given model.
+
+        Note this function also shares the fallback model and max retries
+        settings with the `__call__` method.
+
+        Args:
+            messages (`list[Msg]`):
+                The context for LLM to generate the structured output.
+            structured_model (`Type[BaseModel] | dict`):
+                A Pydantic model or a dict of JSON schemas.
+
+        Returns:
+            `StructuredResponse`:
+                The structured response generated by the model.
+        """
+
+        if len(messages) == 0:
+            raise ValueError(
+                "The input messages cannot be empty fo the "
+                "`generate_structured_output` method.",
+            )
+
+        last_error: Exception | None = None
+
+        for model_name in self._models_to_try():
+            for attempt in range(self.max_retries + 1):
+                try:
+                    return await self._call_api_with_structured_output(
+                        model_name,
+                        messages=messages,
+                        structured_model=structured_model,
+                        **kwargs,
+                    )
+                except Exception as e:
+                    last_error = e
+                    if attempt < self.max_retries:
+                        logger.warning(
+                            "Attempt %d failed for model %s: %s. Retrying...",
+                            attempt + 1,
+                            model_name,
+                            str(e),
+                        )
+                    else:
+                        logger.warning(
+                            "All %d attempt(s) failed for model %s.",
+                            self.max_retries + 1,
+                            model_name,
+                        )
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No models to try")
+
+    async def _call_api_with_structured_output(
+        self,
+        model_name: str,
+        messages: list[Msg],
+        structured_model: Type[BaseModel] | dict,
+        **kwargs: Any,
+    ) -> StructuredResponse:
+        """This function constructs a 'generate_structured_output' tool to
+        help LLM generate structured output as a compromise for LLM APIs that
+        don't support structured output.
+
+        If your subclasses inherit from `ChatModelBase` and the underlying
+        API supports structured output, you can override this method to
+        provide a more accurate implementation.
+
+        Note this method use the "required" tool choice to force LLM to call
+        the 'generate_structured_output' method, and adds instructions into
+        the input messages. However, LLM APIs that doesn't support
+        "required" tool choice may still fail (e.g. generate text output and
+        ignore the tool call, or fail in validation).
+        """
+
+        if isinstance(structured_model, dict):
+            input_schema = structured_model
+        else:
+            input_schema = structured_model.model_json_schema()
+
+        func_name = "generate_structured_output"
+        instruction = (
+            "<system-reminder>Now you **MUST** call the tool named "
+            f"'{func_name}' to generate the structured output required "
+            "by the user. DON'T do anything else.</system-reminder>"
+        )
+
+        copied_messages = deepcopy(messages)
+        # Insert instruction to ensure llm is correctly guided
+        if copied_messages[-1].role == "user":
+            # Insert a user message to the last
+            copied_messages[-1].content = copied_messages[
+                -1
+            ].get_content_blocks() + [TextBlock(text=instruction)]
+        else:
+            copied_messages.append(
+                UserMsg(name="user", content=[TextBlock(text=instruction)]),
+            )
+
+        res = await self._call_api(
+            model_name=model_name,
+            messages=copied_messages,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "description": "Call this function to generate "
+                        "structured output required by "
+                        "the user.",
+                        "parameters": input_schema,
+                    },
+                },
+            ],
+            tool_choice=func_name,
+            **kwargs,
+        )
+
+        completed_response: ChatResponse | None = None
+        if self.stream:
+            async for chunk in res:
+                if chunk.is_last:
+                    completed_response = chunk
+        else:
+            completed_response = res
+
+        if completed_response is None:
+            raise RuntimeError(
+                f"Failed to get the completed response from model "
+                f"{model_name}.",
+            )
+
+        structured_output: dict[str, Any] | None = None
+        for _ in completed_response.content:
+            if isinstance(_, ToolCallBlock) and _.name == func_name:
+                structured_output = _json_loads_with_repair(
+                    _.input,
+                    input_schema,
+                )
+                break
+
+        if structured_output is None:
+            raise RuntimeError(
+                "Failed to generate structured output for model.",
+            )
+
+        # Validate the output
+        structured_model.model_validate(structured_output)
+
+        return StructuredResponse(
+            id=completed_response.id,
+            created_at=completed_response.created_at,
+            content=structured_output,
+            usage=completed_response.usage,
+        )
