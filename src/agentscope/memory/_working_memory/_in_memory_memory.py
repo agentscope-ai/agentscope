@@ -292,11 +292,15 @@ class InMemoryMemory(MemoryBase):
             if isinstance(item, (tuple, list)) and len(item) == 2:
                 msg_dict, marks = item
                 msg = Msg.from_dict(msg_dict)
+                if msg.role == "assistant" and not msg.content:
+                    continue
                 self.content.append((msg, marks))
 
             elif isinstance(item, dict):
                 # For compatibility with older versions
                 msg = Msg.from_dict(item)
+                if msg.role == "assistant" and not msg.content:
+                    continue
                 self.content.append((msg, []))
 
             else:
