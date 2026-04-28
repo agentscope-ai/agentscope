@@ -276,7 +276,7 @@ class Agent(BaseModel):
             "activating compression.",
             self.name,
             int(estimated_tokens),
-            threshold,
+            int(threshold),
         )
 
         if len(self.state.context) == 0:

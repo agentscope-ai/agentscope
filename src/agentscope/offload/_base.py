@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """The base class for offloading."""
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from typing import Any
 
 from ..message import Msg, ToolResultBlock, DataBlock, TextBlock
 
 
-class OffloadBase:
+class OffloadBase(ABC):
     """The offload base class for agentic retrieval, e.g. offload the
     compressed context into accessible MarkDown files so that the agent
     can read them by file reading tools.

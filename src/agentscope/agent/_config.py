@@ -51,7 +51,6 @@ class SummarySchema(BaseModel):
             "Any promises made to the user"
         ),
     )
-    images: list[str]
 
 
 class CompressionConfig(BaseModel):
@@ -66,7 +65,7 @@ class CompressionConfig(BaseModel):
     the maximum ratio is 0.9."""
 
     reserve_ratio: float = Field(default=0.1, gt=0, lt=0.9)
-    """The raito of the tokens to reserve in context compression, which should
+    """The ratio of the tokens to reserve in context compression, which should
     be smaller than the trigger ratio."""
 
     compression_prompt: str = (

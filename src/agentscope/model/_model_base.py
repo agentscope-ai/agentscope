@@ -5,6 +5,7 @@ from abc import abstractmethod
 from copy import deepcopy
 from typing import AsyncGenerator, Any, TYPE_CHECKING, Type
 
+import jsonschema
 from pydantic import BaseModel
 
 from ._model_response import ChatResponse, StructuredResponse
@@ -273,16 +274,16 @@ class ChatModelBase:
         if tools:
             acc_texts.append(json.dumps(tools, ensure_ascii=False))
 
-        # Count the text tokens
-        acc_text = "".join(acc_texts)
-        cnt += int(len(acc_text.encode("utf-8")) / 4 + 0.5)
-
         # Add the multimodal tokens
         for block in data_blocks:
             if isinstance(block.source, URLSource):
                 acc_texts.append(block.source.url)
             elif isinstance(block.source, Base64Source):
                 cnt += len(block.source.data) // 4
+
+        # Count the text tokens
+        acc_text = "".join(acc_texts)
+        cnt += int(len(acc_text.encode("utf-8")) / 4 + 0.5)
 
         return cnt
 
@@ -310,7 +311,7 @@ class ChatModelBase:
 
         if len(messages) == 0:
             raise ValueError(
-                "The input messages cannot be empty fo the "
+                "The input messages cannot be empty for the "
                 "`generate_structured_output` method.",
             )
 
@@ -439,7 +440,18 @@ class ChatModelBase:
             )
 
         # Validate the output
-        structured_model.model_validate(structured_output)
+        if isinstance(structured_model, dict):
+            jsonschema.validate(structured_output, structured_model)
+
+        elif issubclass(structured_model, BaseModel):
+            structured_model.model_validate(structured_output)
+
+        else:
+            raise ValueError(
+                "The structured_model is expected to be a subclass of "
+                "Pydantic.BaseModel or a dict, "
+                f"but got {type(structured_model)}.",
+            )
 
         return StructuredResponse(
             id=completed_response.id,
