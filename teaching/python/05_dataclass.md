@@ -284,7 +284,7 @@ user_td2 = UserDict(name="Alice", age=25)  # 关键字构造（Python 3.9+）
 | `__init__` | 无 | 无 | 自动生成 |
 | `__eq__` | 无 | 无 | 自动生成 |
 | 性能 | 快 | 快 | 稍慢 |
-| 可继承 | 否 | 否 | 是 |
+| 可继承 | 否 | 是 | 是 |
 
 ## 常见问题
 
@@ -437,8 +437,20 @@ class Config:
     port: int
 
 # 3.
-# 实际输出是 ['a']！因为所有实例共享同一个 list 对象
-# 正确做法：
+# @dataclass 会直接报错！
+# ValueError: mutable default <class 'list'> for field items is not allowed
+# 这是 @dataclass 的保护机制
+
+# 如果不用 @dataclass，确实会共享：
+class BadConfig:
+    items: list = []
+
+c1 = BadConfig()
+c2 = BadConfig()
+c1.items.append("a")
+print(c2.items)  # ['a'] — 所有实例共享同一个 list！
+
+# @dataclass 的正确写法：
 @dataclass
 class Config:
     items: list = field(default_factory=list)
@@ -459,3 +471,23 @@ class Message:
 # TypeError! - 默认 @dataclass 不生成 __hash__，对象不可哈希
 # 如需哈希：使用 @dataclass(frozen=True) 或 @dataclass(unsafe_hash=True)
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `@dataclass` | **data class** | 数据类（自动生成方法） |
+| `field` | **field** | 数据类字段配置 |
+| `default_factory` | **default factory** | 默认值工厂函数 |
+| `__init__` | **init**ialize | 构造器 |
+| `__repr__` | **rep**resentation | 字符串表示 |
+| `__eq__` | **eq**ual | 相等比较 |
+| `__hash__` | **hash** | 哈希值 |
+| `__post_init__` | **post init**ialize | 构造后回调 |
+| `__str__` | **str**ing | 用户字符串 |
+| `__slots__` | **slots** | 内存优化属性槽 |
+| `frozen` | **frozen** | 冻结（不可变） |
+| `TypedDict` | **typed dict**ionary | 有类型提示的字典 |
+| `POJO` | **P**lain **O**ld **J**ava **O**bject | 普通 Java 对象 |
+| `record` | **record** | Java 16+ 不可变数据载体 |
+| `@Data` | Lombok **data** | Lombok 数据类注解 |

@@ -20,7 +20,7 @@ my_function = my_decorator(my_function)
 `★ Insight ─────────────────────────────────────`
 - 装饰器本质是一个**高阶函数**：接收函数，返回新函数
 - `@decorator` 只是语法糖，让代码更简洁
-- 可以叠加多个装饰器，执行顺序从下到上
+- 叠加装饰器时：**装饰**从下到上（`@decorator2` 先包装），**调用**从上到下（`@decorator1` 先执行）
 `─────────────────────────────────────────────────`
 
 ## 基础装饰器
@@ -353,8 +353,6 @@ def timing(func):
 def async_timing(func):
     @wraps(func)
     async def wrapper(*args, **kwargs):
-        import time
-        import asyncio
         start = time.time()
         result = await func(*args, **kwargs)
         elapsed = time.time() - start
@@ -612,3 +610,20 @@ obj.compute(1, 2)
 # Calling compute with args=(1, 2), kwargs={}
 # compute returned 3
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `def` | **def**ine | 定义函数 |
+| `@wraps(func)` | **wraps** | 保留被装饰函数的 `__name__`, `__doc__` 等元信息 |
+| `@staticmethod` | **static method** | 静态方法（无 self/cls） |
+| `@classmethod` | **class method** | 类方法（自动接收 cls） |
+| `@property` | **prop**erty | 属性访问器 |
+| `*args` | **arg**ument**s** | 任意位置参数 |
+| `**kwargs` | **k**ey**w**ord **arg**ument**s** | 任意关键字参数 |
+| `func` | **func**tion | 函数引用 |
+| `@dataclass` | **data class** | 数据类 |
+| `warnings.warn` | **warn**ing | 警告输出 |
+| `@deprecated` | **deprecat**ed | 已弃用标记 |
+| `AOP` | **A**spect-**O**riented **P**rogramming | 面向切面编程 |

@@ -180,7 +180,7 @@ def move(direction: Literal["up", "down", "left", "right"]) -> None:
     pass
 
 move("up")    # OK
-move("north") # Error!
+move("north") # 静态检查报错（mypy/pyright），运行时不报错
 
 # AgentScope 中的用法
 role: Literal["user", "assistant", "system"]
@@ -283,10 +283,9 @@ class File implements Readable {
     }
 }
 
-// Java 鸭子类型更宽松，但无编译时检查
+// Java 没有 Protocol 的结构化类型，只能用 Object + 反射模拟
 public static void process(Object r) {
-    // 运行时才知道是否有 read 方法
-    // 或使用反射
+    // 运行时通过反射调用 read 方法，无编译时检查
 }
 ```
 
@@ -568,3 +567,26 @@ def batch_process(items: list[T], processor: Callable[[T], T]) -> list[T]:
 numbers = [1, 2, 3, 4]
 doubled = batch_process(numbers, lambda x: x * 2)  # [2, 4, 6, 8]
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `str` | **str**ing | 字符串 |
+| `int` | **int**eger | 整数 |
+| `float` | **float**ing point | 浮点数 |
+| `bool` | **bool**ean | 布尔 |
+| `dict` | **dict**ionary | 字典 |
+| `list` | **list** | 列表 |
+| `set` | **set** | 集合 |
+| `tuple` | **tuple** | 元组 |
+| `Any` | **any** type | 任意类型 |
+| `Optional[T]` | **option**al | 等价于 `T \| None` |
+| `Union` | **union** | 联合类型（`T1 \| T2`） |
+| `Callable` | **callable** | 可调用类型（函数） |
+| `Literal` | **literal** | 字面量类型 |
+| `TypeVar` | **type var**iable | 泛型变量（`<T>`） |
+| `Generic` | **generic** | 泛型基类 |
+| `Protocol` | **protocol** | 结构化类型（接口） |
+| `TypeAlias` | **type alias** | 类型别名 |
+| `Sequence` | **sequence** | 序列类型（list/tuple 的抽象） |

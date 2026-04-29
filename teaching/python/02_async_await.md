@@ -59,7 +59,7 @@ async def fetch_all():
 `★ Insight ─────────────────────────────────────`
 - `async def` 定义协程（coroutine），类似懒执行的函数
 - `await` 暂停当前协程，等待另一个协程完成
-- asyncio 是 Python 的事件循环管理器，类似 Java 的 ForkJoinPool
+- asyncio 是 Python 的事件循环管理器，单线程事件驱动，类似 Netty EventLoop
 `─────────────────────────────────────────────────`
 
 ## 基础语法
@@ -198,12 +198,14 @@ async def method3():
 | Python | Java | 说明 |
 |--------|------|------|
 | `async def` | `CompletableFuture.supplyAsync()` | 异步执行单元 |
-| `await` | `future.get()` | 等待结果 |
+| `await` | `future.get()` | 等待结果（注意：`get()` 阻塞线程，`await` 不阻塞） |
 | `asyncio.create_task()` | `CompletableFuture.runAsync()` | 创建异步任务 |
 | `asyncio.gather()` | `CompletableFuture.allOf()` | 等待多个任务 |
-| `asyncio.sleep()` | `CompletableFuture.delayedExecutor()` | 非阻塞睡眠（非 `Thread.sleep`） |
+| `asyncio.sleep()` | 无直接对应 | 非阻塞等待（`Thread.sleep()` 的异步版） |
 
 ## async with（异步上下文管理器）
+
+> **提示**：`with`/`__enter__`/`__exit__` 上下文管理器协议将在 [06 - 上下文管理器](06_context_manager.md) 中系统讲解。此处聚焦异步版本 `async with`/`__aenter__`/`__aexit__`。
 
 ```python
 # 同步上下文管理器（Java try-with-resources）
@@ -384,10 +386,10 @@ asyncio.run(main())
 
 ```java
 // Java Lock（简化版，省略 import 和 class 外壳）
-Lock lock = new ReentrantLock();
-int counter = 0;
+static Lock lock = new ReentrantLock();
+static int counter = 0;
 
-public int increment() throws InterruptedException {
+public static int increment() throws InterruptedException {
     lock.lock();
     try {
         int old = counter;
@@ -582,3 +584,22 @@ async def main():
 # Outside: 0
 # __aexit__ 在块退出时自动调用，count 减回 0
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `async` | **async**hronous | 异步关键字 |
+| `await` | **await** | 等待异步操作完成 |
+| `asyncio` | **async** **i**/**o** | Python 异步 I/O 库 |
+| `__aenter__` | **a**sync **enter** | 异步进入上下文 |
+| `__aexit__` | **a**sync **exit** | 异步退出上下文 |
+| `__aiter__` | **a**sync **iter**ator | 异步迭代器 |
+| `__anext__` | **a**sync **next** | 异步获取下一个元素 |
+| `gather` | **gather** | 收集多个协程结果 |
+| `Semaphore` | **sem**aphore | 信号量（并发控制） |
+| `Lock` | **lock** | 锁（互斥访问） |
+| `aiohttp` | **a**sync **i**/**o** **http** | 异步 HTTP 客户端 |
+| `Task` | **task** | 异步任务 |
+| `Future` | **future** | 未来结果（类似 Java Future） |
+| `CancelledError` | **cancel**led **error** | 取消异常 |

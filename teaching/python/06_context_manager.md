@@ -193,7 +193,7 @@ with managed_resource() as res:
 
 ### AgentScope Session 示例
 
-**文件**: `src/agentscope/memory/_working_memory/_sqlalchemy_memory.py:175`
+**文件**: `src/agentscope/memory/_working_memory/_sqlalchemy_memory.py:176`
 
 ```python
 @asynccontextmanager
@@ -357,7 +357,8 @@ async with http_session("http://example.com") as resp:
 from contextlib import closing
 import urllib.request
 
-# 某些资源没有实现上下文管理器，但有 close() 方法
+# 某些资源没有实现上下文管理器协议，但有 close() 方法
+# 注：urlopen 在新版 Python 已支持 with，此处仅为 closing() 用法演示
 with closing(urllib.request.urlopen("http://example.com")) as page:
     html = page.read()
 # 自动调用 page.close()
@@ -473,3 +474,22 @@ def good_resource():
 # continued
 # 异常被 __exit__ 捕获并阻止传播，程序继续执行
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `__enter__` | **enter** | 进入上下文（`with` 块开始） |
+| `__exit__` | **exit** | 退出上下文（`with` 块结束） |
+| `__aenter__` | **a**sync **enter** | 异步进入上下文 |
+| `__aexit__` | **a**sync **exit** | 异步退出上下文 |
+| `@contextmanager` | **context manager** | 上下文管理器装饰器 |
+| `@asynccontextmanager` | **async context manager** | 异步上下文管理器装饰器 |
+| `yield` | **yield** | 暂停生成器，返回值 |
+| `exc_type` | **exc**eption **type** | 异常类型 |
+| `exc_val` | **exc**eption **val**ue | 异常值 |
+| `exc_tb` | **exc**eption **t**race**b**ack | 异常回溯 |
+| `AutoCloseable` | **auto close**able | Java 自动关闭接口 |
+| `closing()` | **closing** | 为有 close() 的对象包装上下文 |
+| `commit` | **commit** | 提交事务 |
+| `rollback` | **rollback** | 回滚事务 |

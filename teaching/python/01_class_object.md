@@ -42,7 +42,7 @@ class Person:
     # 实例方法（类似 Java 实例方法）
     def __init__(self, name: str, age: int) -> None:
         """构造器 - Java 的 constructor"""
-        self.name = name      # self 类似 this
+        self.name = name      # 触发 @name.setter（见下方）
         self.age = age
 
     # 实例方法
@@ -71,6 +71,8 @@ p.greet()  # "Hello, I'm Alice"
 `─────────────────────────────────────────────────`
 
 ### AgentScope 源码示例
+
+> **提示**：以下示例使用了 `Literal`、`Sequence`、`|` 联合类型等类型注解，将在 [04 - 类型提示](04_type_hints.md) 中详细讲解。
 
 **文件**: `src/agentscope/message/_message_base.py:21-73`
 
@@ -248,6 +250,7 @@ class AgentBase:
 
     def __init__(self) -> None:
         # 实例属性 - 每个实例独立（类似 Java 实例字段）
+        # 注：此处省略了 hook 字典、订阅者等属性，完整版见 04_type_hints.md
         self.id = shortuuid.uuid()
         self._reply_task: Task | None = None
 ```
@@ -293,7 +296,7 @@ public class MyClass {
 
     // 工厂方法（Python @classmethod 对应）
     public static MyClass fromString(String s) {
-        return new MyClass(s);
+        return new MyClass(Integer.parseInt(s));
     }
 }
 ```
@@ -364,6 +367,26 @@ print(msg)
 # Msg(id='xxx', name='Alice', content='Hello', role='user')
 ```
 
+### __repr__ vs __str__
+
+```python
+# __repr__: 开发者调试用（默认 fallback）
+# __str__:  用户显示用（print()、str() 优先调用）
+# Java 没有区分，都对应 toString()
+
+class Msg:
+    def __repr__(self) -> str:
+        return f"Msg(id='{self.id}', name='{self.name}')"
+
+    def __str__(self) -> str:
+        return f"[{self.name}]: {self.content}"
+
+msg = Msg("Alice", "Hello", "user")
+print(repr(msg))  # Msg(id='xxx', name='Alice') — 调试信息
+print(str(msg))   # [Alice]: Hello — 用户显示
+# 如果只定义 __repr__，print() 也会使用它
+```
+
 **常用特殊方法对照**：
 
 | Python | Java | 用途 |
@@ -373,11 +396,13 @@ print(msg)
 | `__str__` | toString() | 用户友好字符串 |
 | `__eq__` | equals() | 相等比较 |
 | `__hash__` | hashCode() | 哈希值 |
-| `__len__` | length() | 长度 |
-| `__getitem__` | get(index) | 索引访问 |
-| `__call__` | invoke() | 可调用对象 |
+| `__len__` | `size()` / `length()` | 长度（`len(obj)`） |
+| `__getitem__` | `list.get()` / `map.get()` | 索引/键访问 |
+| `__call__` | `Callable.call()` | 可调用对象 |
 
 ### __call__ 特殊方法
+
+> **提示**：以下示例使用了 `async`/`await` 语法，将在 [02 - 异步编程](02_async_await.md) 中详细讲解。此处只需关注 `__call__` 使对象可像函数一样调用的概念。
 
 ```python
 class AgentBase:
@@ -400,8 +425,10 @@ class AgentBase:
 
         return reply_msg
 
-# 使用 - 类似 Java 的 invoke 方法
-# agent() 相当于 agent.__call__()
+# 使用 - 类似 Java 的 Callable.call()
+# await agent() 相当于 await agent.__call__()
+# 注意：因为 __call__ 是 async，调用时需要 await
+# async/await 机制详见 02_async_await.md
 ```
 
 **Java 对照**：
@@ -543,3 +570,29 @@ class Point:
 def process_message(msg: Msg, config: dict) -> Msg:
     return msg
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `def` | **def**ine | 定义函数/方法 |
+| `self` | 实例自身 | 类似 Java 的 `this` |
+| `cls` | **cls**s | 类方法中的类引用，类似 `ClassName` |
+| `__init__` | **init**ialize | 初始化方法（非真正构造器） |
+| `__new__` | **new** | 真正的构造器（创建实例） |
+| `__repr__` | **rep**resentation | 开发者友好的字符串表示 |
+| `__str__` | **str**ing | 用户友好的字符串表示 |
+| `__eq__` | **eq**ual | 相等比较 (`==`) |
+| `__hash__` | **hash** | 哈希值（用于 dict/set） |
+| `__len__` | **len**gth | 长度 (`len(obj)`) |
+| `__getitem__` | **get item** | 索引访问 (`obj[key]`) |
+| `__call__` | **call** | 可调用 (`obj()`) |
+| `__name__` | **name** | 函数/类的名称 |
+| `__doc__` | **doc**ument | 文档字符串 |
+| `str` | **str**ing | 字符串类型 |
+| `int` | **int**eger | 整数类型 |
+| `bool` | **bool**ean | 布尔类型 |
+| `dict` | **dict**ionary | 字典类型 |
+| `super()` | 父类引用 | 调用父类方法 |
+| `@property` | **prop**erty | 属性装饰器 |
+| `@dataclass` | **data class** | 数据类装饰器 |

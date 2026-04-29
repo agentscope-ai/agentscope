@@ -55,8 +55,8 @@ class RegistryMeta(type):
 
     def __new__(mcs, name, bases, namespace):
         cls = super().__new__(mcs, name, bases, namespace)
-        # 自动注册
-        if hasattr(cls, 'registry_key'):
+        # 自动注册（跳过基类的 registry_key = None）
+        if hasattr(cls, 'registry_key') and cls.registry_key is not None:
             RegistryMeta._registry[cls.registry_key] = cls
         return cls
 
@@ -111,6 +111,37 @@ class _ReActAgentMeta(_AgentMeta):
                 attrs[func_name] = _wrap_with_hooks(attrs[func_name])
 
         return super().__new__(mcs, name, bases, attrs)
+```
+
+**`_wrap_with_hooks` 的核心逻辑（源码约 100 行，此处概述）：**
+
+```
+调用 reply(x=1, y=2)
+    │
+    ▼
+1. 防重入检查（避免 hook 中递归触发 hook）
+    │
+    ▼
+2. 执行实例级 pre_hooks
+   → hooks 接收 (self, deepcopy(kwargs))
+   → hook 可返回修改后的 kwargs 或 None
+    │
+    ▼
+3. 执行类级 pre_hooks（同上逻辑）
+    │
+    ▼
+4. 调用原始 reply() 方法
+    │
+    ▼
+5. 执行类级 post_hooks
+   → hooks 接收 (self, deepcopy(kwargs), deepcopy(result))
+   → hook 可返回修改后的 result
+    │
+    ▼
+6. 执行实例级 post_hooks
+    │
+    ▼
+返回最终 result
 ```
 
 **文件**: `src/agentscope/agent/_agent_base.py:30`
@@ -368,7 +399,7 @@ class Service(metaclass=ValidatedMeta):
 |--------|------|------|
 | `class A(metaclass=M)` | 不直接支持 | 元类语法 |
 | `type.__new__` | `ClassLoader.defineClass` | 类创建 |
-| `type.__init__` | 注解处理器 | 类初始化 |
+| `type.__init__` | `static { }` 初始化块 | 类初始化 |
 | `type.__call__` | `Class.newInstance()` | 实例创建 |
 | `_AgentMeta` | Spring AOP / AspectJ | AOP 拦截器 |
 
@@ -437,6 +468,8 @@ class MyClass(metaclass=DerivedMeta):
 
 ```python
 # __prepare__ 在 __new__ 之前调用，返回 namespace
+from collections import OrderedDict
+
 class OrderedMeta(type):
     @classmethod
     def __prepare__(mcs, name, bases, **kwargs):
@@ -454,6 +487,9 @@ class MyClass(metaclass=OrderedMeta):
     c = 3
 
 print(MyClass._order)  # ['a', 'b', 'c']
+
+# 注：Python 3.7+ 普通 dict 已保证插入顺序
+# __prepare__ 返回 OrderedDict 主要用于向后兼容或需要 OrderedDict 特有方法
 ```
 
 ## 练习题
@@ -543,3 +579,25 @@ class HookMeta(type):
 # Python 使用 C3 线性化算法计算 MRO
 # 此例中无菱形继承，结果等价于深度优先、从左到右
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `metaclass` | **meta class** | 元类（类的类） |
+| `type` | **type** | 所有类的默认元类 |
+| `mcs` | **m**eta**c**lass **s**elf | 元类 `__new__` 的第一个参数 |
+| `cls` | **cls**s | `__call__` 中的类引用 |
+| `__new__` | **new** | 创建类/实例 |
+| `__init__` | **init**ialize | 初始化类/实例 |
+| `__call__` | **call** | 实例化时调用 |
+| `__prepare__` | **prepare** | 准备命名空间（`__new__` 之前） |
+| `namespace` | **name space** | 类属性字典 |
+| `bases` | **bases** | 基类元组 |
+| `attrs` | **attr**ibute**s** | 类属性字典 |
+| `MRO` | **M**ethod **R**esolution **O**rder | 方法解析顺序 |
+| `C3` | C3 线性化 | MRO 算法 |
+| `AOP` | **A**spect-**O**riented **P**rogramming | 面向切面编程 |
+| `ORM` | **O**bject-**R**elational **M**apping | 对象关系映射 |
+| `_registry` | **reg**istry | 注册表 |
+| `OrderedDict` | **order**ed **dict**ionary | 有序字典 |

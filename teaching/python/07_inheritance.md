@@ -101,17 +101,21 @@ print(d.speak())  # "... Woof!"
 ### super() 的多种写法
 
 ```python
+# 假设 Parent 类已定义，有 __init__(self, name) 方法
 class Child(Parent):
     def __init__(self, name, age):
+        # 以下三种写法选其一即可
+
         # 方式1：显式父类名（Python 2 风格）
         Parent.__init__(self, name)
 
         # 方式2：super() - 推荐
         super().__init__(name)
-        self.age = age
 
         # 方式3：super(Child, self) - 显式指定类
         super(Child, self).__init__(name)
+
+        self.age = age
 ```
 
 ## AgentScope 源码示例
@@ -119,18 +123,36 @@ class Child(Parent):
 **文件**: `src/agentscope/agent/_agent_base.py:30`
 
 ```python
+# 简化版 - 实际 StateModule 是嵌套模块树 + 自定义序列化
 class StateModule:
-    """状态模块基类 - 类似 Java 的 Serializable"""
+    """状态模块基类 - 类似 PyTorch 的 nn.Module 序列化机制"""
     def __init__(self) -> None:
-        self._state: dict[str, Any] = {}
+        # 实际源码有 _module_dict（嵌套子模块）和 _attribute_dict（注册属性）
+        # 自定义 __setattr__ 自动跟踪 StateModule 类型的属性
+        self._module_dict: OrderedDict = OrderedDict()
+        self._attribute_dict: OrderedDict = OrderedDict()
 
     def state_dict(self) -> dict[str, Any]:
-        """序列化状态"""
-        return self._state.copy()
+        """递归序列化所有子模块和注册属性（类似 PyTorch model.state_dict()）"""
+        state = {}
+        for name, module in self._module_dict.items():
+            state[name] = module.state_dict()  # 递归
+        for name, (value, serializer) in self._attribute_dict.items():
+            state[name] = serializer.to_json(value) if serializer else value
+        return state
 
-    def load_state_dict(self, state: dict[str, Any]) -> None:
-        """反序列化状态"""
-        self._state.update(state)
+    def load_state_dict(self, state: dict[str, Any], strict: bool = True) -> None:
+        """递归反序列化（类似 PyTorch model.load_state_dict()）"""
+        for name, module in self._module_dict.items():
+            if name in state:
+                module.load_state_dict(state[name], strict)
+        for name, (value, serializer) in self._attribute_dict.items():
+            if name in state:
+                setattr(self, name, serializer.load_json(state[name]) if serializer else state[name])
+
+    def register_state(self, name: str, serializer: Any = None) -> None:
+        """注册需要序列化的属性（可选自定义 JSON 序列化器）"""
+        self._attribute_dict[name] = (getattr(self, name), serializer)
 
 
 class AgentBase(StateModule, metaclass=_AgentMeta):
@@ -149,7 +171,8 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 
     def __init__(self) -> None:
         super().__init__()  # 调用父类构造器
-        self.id = shortuuid.uuid()
+        self.id: str = shortuuid.uuid()
+        self._reply_task: Task | None = None
 ```
 
 **文件**: `src/agentscope/agent/_react_agent_base.py:12`
@@ -158,29 +181,51 @@ class AgentBase(StateModule, metaclass=_AgentMeta):
 class ReActAgentBase(AgentBase, metaclass=_ReActAgentMeta):
     """ReAct Agent - 继承自 AgentBase"""
     # 两层继承 + 元类
+    # 实际源码还扩展了 supported_hook_types 和定义了抽象方法
+    # _reasoning, _acting
     pass
 ```
 
 **Java 对照理解**：
 
 ```java
-// 大致的 Java 对应
-public class StateModule {
-    protected Map<String, Object> _state = new HashMap<>();
+// Java 大致对应（StateModule 类似 PyTorch 的序列化机制）
+public abstract class StateModule {
+    protected LinkedHashMap<String, StateModule> moduleDict = new LinkedHashMap<>();
+    protected LinkedHashMap<String, Object> attributeDict = new LinkedHashMap<>();
 
     public Map<String, Object> stateDict() {
-        return new HashMap<>(_state);
+        Map<String, Object> state = new LinkedHashMap<>();
+        for (Map.Entry<String, StateModule> e : moduleDict.entrySet()) {
+            state.put(e.getKey(), e.getValue().stateDict()); // 递归
+        }
+        for (Map.Entry<String, Object> e : attributeDict.entrySet()) {
+            state.put(e.getKey(), e.getValue());
+        }
+        return state;
     }
 
-    public void loadStateDict(Map<String, Object> state) {
-        _state.putAll(state);
+    public void loadStateDict(Map<String, Object> state, boolean strict) {
+        for (Map.Entry<String, StateModule> e : moduleDict.entrySet()) {
+            if (state.containsKey(e.getKey())) {
+                e.getValue().loadStateDict((Map) state.get(e.getKey()), strict);
+            }
+        }
+        for (Map.Entry<String, Object> e : attributeDict.entrySet()) {
+            if (state.containsKey(e.getKey())) {
+                e.setValue(state.get(e.getKey()));
+            }
+        }
     }
 }
 
 // Java 只支持单继承，AgentBase 只能 extends 一个类
 public class AgentBase extends StateModule {
+    private String id;
     public static List<String> supportedHookTypes = Arrays.asList(
-        "pre_reply", "post_reply"
+        "pre_reply", "post_reply",
+        "pre_print", "post_print",
+        "pre_observe", "post_observe"
     );
 
     public AgentBase() {
@@ -552,3 +597,22 @@ class FileReader:
 # A
 # super() 按 MRO: D -> B -> C -> A 顺序调用
 ```
+
+## 附录：本文关键字简写对照表
+
+| 简写 | 全称 | 说明 |
+|------|------|------|
+| `super()` | **super**class | 父类引用 |
+| `ABC` | **A**bstract **B**ase **C**lass | 抽象基类 |
+| `@abstractmethod` | **abstract method** | 抽象方法 |
+| `MRO` | **M**ethod **R**esolution **O**rder | 方法解析顺序 |
+| `C3` | C3 线性化 | MRO 使用的算法名 |
+| `isinstance` | **is instance** | 检查是否为某类实例 |
+| `issubclass` | **is subclass** | 检查是否为某类子类 |
+| `Protocol` | **protocol** | 结构化类型（鸭子类型接口） |
+| `Mixin` | **mix in** | 混入类（提供可选功能） |
+| `__mro__` | **M**ethod **R**esolution **O**rder | MRO 属性 |
+| `NotImplementedError` | **not implemented error** | 未实现异常 |
+| `@Override` | **override** | 重写标记（Java） |
+| `sealed` | **sealed** | 密封类（Java 17+） |
+| `permits` | **permits** | 密封类允许的子类（Java） |
