@@ -3,13 +3,12 @@
 from typing import Any, Type
 
 from ._model_base import ChatModelBase
-from ._model_response import ChatResponse
+from ._model_response import ChatResponse, StructuredResponse
 from ._dashscope_model import DashScopeChatModel
 from ._openai_model import OpenAIChatModel
 from ._anthropic_model import AnthropicChatModel
 from ._ollama_model import OllamaChatModel
 from ._gemini_model import GeminiChatModel
-from ._trinity_model import TrinityChatModel
 from ._model_usage import ChatUsage
 
 # Built-in model classes (internal use only)
@@ -66,10 +65,10 @@ __all__ = [
     "ChatUsage",
     "ChatModelBase",
     "ChatResponse",
+    "StructuredResponse",
     "DashScopeChatModel",
     "OpenAIChatModel",
     "AnthropicChatModel",
     "OllamaChatModel",
     "GeminiChatModel",
-    "TrinityChatModel",
 ]

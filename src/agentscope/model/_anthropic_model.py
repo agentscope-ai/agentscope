@@ -41,6 +41,7 @@ class AnthropicChatModel(ChatModelBase):
     def __init__(
         self,
         model_name: str,
+        context_length: int,
         api_key: str | None = None,
         max_tokens: int = 2048,
         stream: bool = True,
@@ -57,6 +58,8 @@ class AnthropicChatModel(ChatModelBase):
         Args:
             model_name (`str`):
                 The model names.
+            context_length (`int`):
+                The context length of the model, used in context compression.
             api_key (`str`):
                 The anthropic API key.
             max_tokens (`int`):
@@ -97,6 +100,7 @@ class AnthropicChatModel(ChatModelBase):
         super().__init__(
             model_name=model_name,
             stream=stream,
+            context_length=context_length,
             max_retries=max_retries,
             fallback_model_name=fallback_model_name,
             formatter=formatter or AnthropicChatFormatter(),

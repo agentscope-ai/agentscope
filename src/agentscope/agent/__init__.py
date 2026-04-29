@@ -2,5 +2,6 @@
 """Initialize the agent module."""
 from ._state import AgentState
 from ._agent import Agent
+from ._config import CompressionConfig
 
-__all__ = ["Agent", "AgentState"]
+__all__ = ["Agent", "AgentState", "CompressionConfig"]

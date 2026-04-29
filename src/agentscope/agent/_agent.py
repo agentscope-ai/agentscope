@@ -10,13 +10,12 @@ import jsonschema
 from pydantic import (
     BaseModel,
     Field,
-    field_validator,
-    ValidationInfo,
     SerializeAsAny,
     PrivateAttr,
     ConfigDict,
 )
 
+from ._config import CompressionConfig
 from ._state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -54,7 +53,6 @@ from ..model import (
     ChatResponse,
     ChatUsage,
     ChatModelBase,
-    _deserialize_model,
 )
 from ..message import (
     Msg,
@@ -80,126 +78,6 @@ from ..tool import (
     PermissionEngine,
     PermissionDecision,
 )
-
-
-class SummarySchema(BaseModel):
-    """The compressed memory model, used to generate summary of old memories"""
-
-    task_overview: str = Field(
-        max_length=300,
-        description=(
-            "The user's core request and success criteria.\n"
-            "Any clarifications or constraints they specified"
-        ),
-    )
-    current_state: str = Field(
-        max_length=300,
-        description=(
-            "What has been completed so far.\n"
-            "File created, modified, or analyzed (with paths if relevant).\n"
-            "Key outputs or artifacts produced."
-        ),
-    )
-    important_discoveries: str = Field(
-        max_length=300,
-        description=(
-            "Technical constraints or requirements uncovered.\n"
-            "Decisions made and their rationale.\n"
-            "Errors encountered and how they were resolved.\n"
-            "What approaches were tried that didn't work (and why)"
-        ),
-    )
-    next_steps: str = Field(
-        max_length=200,
-        description=(
-            "Specific actions needed to complete the task.\n"
-            "Any blockers or open questions to resolve.\n"
-            "Priority order if multiple steps remain"
-        ),
-    )
-    context_to_preserve: str = Field(
-        max_length=300,
-        description=(
-            "User preferences or style requirements.\n"
-            "Domain-specific details that aren't obvious.\n"
-            "Any promises made to the user"
-        ),
-    )
-
-
-class CompressionConfig(BaseModel):
-    """The compression related configuration in AgentScope"""
-
-    model_config = {"arbitrary_types_allowed": True}
-    """Allow arbitrary types in the pydantic model."""
-
-    trigger_threshold: int = 20000
-    """The token threshold to trigger the compression process. When the
-    total token count in the memory exceeds this threshold, the
-    compression will be activated."""
-
-    keep_recent: int = 5
-    """The number of most recent messages to keep uncompressed in the
-    memory to preserve the recent context."""
-
-    compression_prompt: str = (
-        "<system-hint>You have been working on the task described above "
-        "but have not yet completed it. "
-        "Now write a continuation summary that will allow you to resume "
-        "work efficiently in a future context window where the "
-        "conversation history will be replaced with this summary. "
-        "Your summary should be structured, concise, and actionable."
-        "</system-hint>"
-    )
-    """The prompt used to guide the compression model to generate the
-    compressed summary, which will be wrapped into a user message and
-    attach to the end of the current memory."""
-
-    summary_template: str = (
-        "<system-info>Here is a summary of your previous work\n"
-        "# Task Overview\n"
-        "{task_overview}\n\n"
-        "# Current State\n"
-        "{current_state}\n\n"
-        "# Important Discoveries\n"
-        "{important_discoveries}\n\n"
-        "# Next Steps\n"
-        "{next_steps}\n\n"
-        "# Context to Preserve\n"
-        "{context_to_preserve}"
-        "</system-info>"
-    )
-    """The string template to present the compressed summary to the agent,
-    which will be formatted with the fields from the
-    `compression_summary_model`."""
-
-    summary_schema: dict = Field(
-        default_factory=SummarySchema.model_json_schema,
-    )
-    """The structured model used to guide the agent to generate the
-    structured compressed summary."""
-
-    compression_model: SerializeAsAny[ChatModelBase] | None = None
-    """The compression model used to generate the compressed summary. If
-    not provided, the agent's model will be used."""
-
-    @field_validator("compression_model", mode="before")
-    @classmethod
-    def validate_compression_model(cls, v: Any, info: ValidationInfo) -> Any:
-        """Deserialize compression_model from dict using context-injected
-        custom classes."""
-        if not isinstance(v, dict):
-            return v
-        custom_classes = (
-            info.context.get("custom_model_classes", [])
-            if info.context
-            else []
-        )
-        return _deserialize_model(
-            v,
-            custom_classes=custom_classes,
-            context=info.context,
-        )
 
 
 class ReasoningConfig(BaseModel):
@@ -369,10 +247,184 @@ class Agent(BaseModel):
         context."""
         await self._handle_incoming_messages(msgs)
 
-    async def compress_memory(self) -> None:
-        """Compress the agent's memory if the token count exceeds the
-        threshold."""
-        # TODO: Implement when compression_config is available
+    async def compress_context(
+        self,
+        compression_config: CompressionConfig | None = None,
+    ) -> None:
+        """Compress the agent's context if the token count exceeds the
+        threshold.
+
+        Args:
+            compression_config (`CompressionConfig | None`, optional):
+                If provided, compress the context with the given compression
+                config. Otherwise, use the default compression config in the
+                agent.
+        """
+        cfg: CompressionConfig = compression_config or self.compression
+
+        # Count the current tokens
+        kwargs = await self._prepare_model_input()
+        estimated_tokens = await self.model.count_tokens(**kwargs)
+
+        # Skip if no compression is needed
+        threshold = cfg.trigger_ratio * self.model.context_length
+        if estimated_tokens < threshold:
+            return
+
+        logger.info(
+            "[AGENT %s]: Current token count %d exceeds the threshold %d, "
+            "activating compression.",
+            self.name,
+            int(estimated_tokens),
+            int(threshold),
+        )
+
+        if len(self.state.context) == 0:
+            # The system prompt and the summary (if exists) exceeds the
+            # threshold, which cannot be compressed, raise the error to the
+            # developer!
+            suffix = ""
+            if self.state.summary:
+                suffix = "and the compression summary "
+            raise RuntimeError(
+                f"The system prompt {suffix}exceed(s) the compression "
+                f"threshold ({threshold} tokens), cannot be compressed.",
+            )
+
+        # Split the context into the ones to be compressed, and the others to
+        # be reserved
+        tools = kwargs.get("tools", [])
+        (
+            msgs_to_compress,
+            msgs_to_reserve,
+        ) = await self._split_context_for_compression(
+            cfg.reserve_ratio * self.model.context_length,
+            tools,
+        )
+
+        if len(msgs_to_compress) == 0:
+            # The reserve ratio is too large so that although it exceeds the
+            # trigger threshold, the context to be compressed is empty
+            # Fallback by lowering the reserve ratio to compress more context.
+            logger.warning(
+                "The reserve ratio %.2f is too large to compress any context."
+                "Lower the reserve ratio to 0 as a fallback.",
+                cfg.reserve_ratio,
+            )
+            (
+                msgs_to_compress,
+                msgs_to_reserve,
+            ) = await self._split_context_for_compression(
+                0 * self.model.context_length,
+                tools,
+            )
+
+            # The msgs to be compressed cannot be empty here, unless the
+            # system prompt and summary (if any) already exceed the context
+            # length, which we have handled before.
+
+        # Prepare the messages to compress
+        msgs_system = [
+            SystemMsg(
+                name="system",
+                content=await self._get_system_prompt(),
+            ),
+        ]
+        if self.state.summary:
+            msgs_system.append(UserMsg("user", self.state.summary))
+
+        messages = (
+            msgs_system
+            + msgs_to_compress
+            + [
+                UserMsg(name="user", content=cfg.compression_prompt),
+            ]
+        )
+
+        # The compression prompt may exceed the context length, here we mark
+        # the overflow by a bool flag
+        compression_tool_schema = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_structured_output",
+                    "description": "Call this function to generate "
+                    "structured output required by "
+                    "the user.",
+                    "parameters": cfg.summary_schema,
+                },
+            },
+        ]
+        context_overflow = False
+        estimated_compression_tokens = await self.model.count_tokens(
+            messages,
+            compression_tool_schema,
+        )
+        if estimated_compression_tokens > self.model.context_length:
+            logger.warning(
+                "The current context length exceeds the model's context "
+                "length (%d tokens), the compression maybe failed due to "
+                "insufficient reserved context for compression.",
+                self.model.context_length,
+            )
+            context_overflow = True
+
+        # Compress the messages
+        try:
+            res = await self.model.generate_structured_output(
+                messages=messages,
+                structured_model=cfg.summary_schema,
+            )
+
+        except Exception as e:
+            if context_overflow:
+                logger.warning(
+                    "Failed to compress context, which may be caused by "
+                    "insufficient reserved context for compression. "
+                    "Trying to compress by removing the oldest context.",
+                )
+                for i in range(1, len(msgs_to_compress) + 1):
+                    messages = (
+                        msgs_system
+                        + msgs_to_compress[i:]
+                        + [
+                            UserMsg(
+                                name="user",
+                                content=cfg.compression_prompt,
+                            ),
+                        ]
+                    )
+                    estimated_compression_tokens = (
+                        await self.model.count_tokens(
+                            messages,
+                            compression_tool_schema,
+                        )
+                    )
+                    # Considering trigger_ratio <= 0.9, at least reserve 10%
+                    # tokens for compression response
+                    if (
+                        estimated_compression_tokens
+                        < self.model.context_length * cfg.trigger_ratio
+                    ):
+                        break
+
+                res = await self.model.generate_structured_output(
+                    messages=messages,
+                    structured_model=cfg.summary_schema,
+                )
+
+            else:
+                raise e from None
+
+        # Update the summary
+        self.state.summary = cfg.summary_template.format(**res.content)
+        # Update the context
+        self.state.context = msgs_to_reserve
+
+        logger.info(
+            "[AGENT %s]: The context compression finished.",
+            self.name,
+        )
 
     # ======================================================================
     # Agent core methods, including _reply, _reasoning, _acting, etc.
@@ -431,7 +483,7 @@ class Agent(BaseModel):
             # ===============================================================
             if action == "reasoning":
                 # Compressed the memory if needed before reasoning
-                await self.compress_memory()
+                await self.compress_context()
                 # Perform reasoning
                 async for evt in self._reasoning():
                     # Exit the loop when no tool calls generated and the reply
@@ -538,27 +590,14 @@ class Agent(BaseModel):
             model_name=self.model.model_name,
         )
 
-        # The system prompt
-        messages = [
-            SystemMsg(name="system", content=await self._get_system_prompt()),
-        ]
-        # The compressed summary
-        if self.state.summary:
-            messages.append(
-                UserMsg(name="user", content=self.state.summary),
-            )
-        # The conversation context
-        messages.extend(self.state.context)
+        # Get the input arguments for the chat model, including messages and
+        # tools
+        kwargs = await self._prepare_model_input()
 
-        # Get the tools schemas
-        tools = self.toolkit.get_function_schemas(
-            self.state.tool_context.activated_groups,
-        )
-
+        # Call the chat model
         res = await self._call_model(
-            messages=messages,
-            tools=tools,
             tool_choice=tool_choice,
+            **kwargs,
         )
 
         block_ids: dict = {"text": None, "thinking": None, "tools": []}
@@ -1305,11 +1344,108 @@ class Agent(BaseModel):
     # Context management related methods
     # =======================================================================
 
-    def _split_context_for_compression(self) -> tuple[list[Msg], list[Msg]]:
-        """Split context into parts to compress and parts to keep recent."""
-        # TODO: Implement full splitting logic when compression_config is
-        #  available
-        return [], list(self.state.context)
+    async def _split_context_for_compression(
+        self,
+        to_reserved_tokens: float,
+        tools: list[dict],
+    ) -> tuple[list[Msg], list[Msg]]:
+        """Split context into parts to compress and parts to keep recent.
+
+        Args:
+            to_reserved_tokens (`float`):
+                The tokens to be reserved.
+            tools (`list[dict]`):
+                The tools JSON schemas used for token counting.
+
+        Returns:
+            `tuple[list[Msg], list[Msg]]`:
+                The message objects to be compressed and reserved during
+                context compression.
+        """
+
+        # The system prompt
+        system_msg = [
+            SystemMsg(name="system", content=await self._get_system_prompt()),
+        ]
+
+        # Append the current summary if exists
+        if self.state.summary:
+            system_msg.append(
+                UserMsg("user", self.state.summary),
+            )
+
+        msg_index = len(self.state.context) - 1
+        while msg_index >= 0:
+            # Count the tokens when msgs after msg_index are reserved
+            reserved_tokens = await self.model.count_tokens(
+                system_msg + self.state.context[msg_index:],
+                tools,
+            )
+            # If reserved tokens exceed the limit
+            if reserved_tokens >= to_reserved_tokens:
+                break
+            msg_index -= 1
+
+        if msg_index < 0:
+            return [], deepcopy(self.state.context)
+
+        # The msgs that won't exceed the reserved token limit
+        msgs_to_compress = self.state.context[:msg_index]
+        msgs_to_reserve = self.state.context[msg_index + 1 :]
+        boundary_msg = self.state.context[msg_index]
+
+        # Handle the boundary Msg
+        boundary_msg_to_compress = deepcopy(boundary_msg)
+        boundary_msg_to_reserve = deepcopy(boundary_msg)
+
+        attempt_msg = deepcopy(boundary_msg)
+
+        boundary_msg_content = boundary_msg.get_content_blocks()
+        block_index = len(boundary_msg_content) - 1
+        while block_index >= 0:
+            attempt_msg.content = boundary_msg_content[block_index:]
+
+            try_reserved = system_msg + [attempt_msg] + msgs_to_reserve
+            reserved_tokens = await self.model.count_tokens(
+                try_reserved,
+                tools,
+            )
+            if reserved_tokens > to_reserved_tokens:
+                break
+            block_index -= 1
+
+        # Adjust the block_index to avoid splitting tool call and result pairs
+
+        # Check if the reserved part has tool results that don't have the
+        # corresponding tool calls
+        remain_result_ids = {}
+        for i in range(len(boundary_msg_content) - 1, block_index, -1):
+            block = boundary_msg_content[i]
+            if isinstance(block, ToolResultBlock):
+                remain_result_ids[block.id] = i
+            elif isinstance(block, ToolCallBlock):
+                remain_result_ids.pop(block.id, None)
+
+        # Find the largest index of the remaining tool results, which doesn't
+        # have the corresponding tool calls in the reserved parts
+        if remain_result_ids:
+            block_index = max(remain_result_ids.values())
+
+        # Split the boundary msg content
+        boundary_msg_to_compress.content = boundary_msg_content[
+            : block_index + 1
+        ]
+        boundary_msg_to_reserve.content = boundary_msg_content[
+            block_index + 1 :
+        ]
+
+        if len(boundary_msg_to_compress.content) > 0:
+            msgs_to_compress += [boundary_msg_to_compress]
+
+        if len(boundary_msg_to_reserve.content) > 0:
+            msgs_to_reserve = [boundary_msg_to_reserve] + msgs_to_reserve
+
+        return msgs_to_compress, msgs_to_reserve
 
     # ======================================================================
     # Agent internal utility methods
@@ -1325,6 +1461,36 @@ class Agent(BaseModel):
             prompt.append(skill_instructions)
 
         return "\n".join(prompt)
+
+    async def _prepare_model_input(self) -> dict[str, Any]:
+        """A unified method to prepare the chat model input according to
+        the current context.
+
+        Returns:
+            `dict[str, Any]`
+                The keyword arguments passed to the model.
+        """
+        # The system prompt
+        messages = [
+            SystemMsg(name="system", content=await self._get_system_prompt()),
+        ]
+        # The compressed summary
+        if self.state.summary:
+            messages.append(
+                UserMsg(name="user", content=self.state.summary),
+            )
+        # The conversation context
+        messages.extend(self.state.context)
+
+        # Get the tools schemas
+        tools = self.toolkit.get_function_schemas(
+            self.state.tool_context.activated_groups,
+        )
+
+        return {
+            "messages": messages,
+            "tools": tools,
+        }
 
     async def _call_model(
         self,

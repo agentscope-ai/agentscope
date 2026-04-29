@@ -75,6 +75,7 @@ class DashScopeChatModel(ChatModelBase):
         self,
         model_name: str,
         api_key: str,
+        context_length: int,
         stream: bool = True,
         max_retries: int = 0,
         fallback_model_name: str | None = None,
@@ -92,6 +93,8 @@ class DashScopeChatModel(ChatModelBase):
                 The model names.
             api_key (`str`):
                 The dashscope API key.
+            context_length (`int`):
+                The context length of the model.
             stream (`bool`):
                 The streaming output or not
             enable_thinking (`bool | None`, optional):
@@ -141,9 +144,10 @@ class DashScopeChatModel(ChatModelBase):
         super().__init__(
             model_name,
             stream,
+            context_length,
+            formatter or DashScopeChatFormatter(),
             max_retries,
             fallback_model_name,
-            formatter or DashScopeChatFormatter(),
         )
 
         self.api_key = api_key

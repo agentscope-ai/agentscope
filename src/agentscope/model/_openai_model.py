@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from . import ChatResponse
 from ._model_base import ChatModelBase
 from ._model_usage import ChatUsage
-from ..formatter import FormatterBase
+from ..formatter import FormatterBase, OpenAIChatFormatter
 from ..message import (
     TextBlock,
     ThinkingBlock,
@@ -74,6 +74,7 @@ class OpenAIChatModel(ChatModelBase):
     def __init__(
         self,
         model_name: str,
+        context_length: int,
         api_key: str | None = None,
         stream: bool = True,
         max_retries: int = 0,
@@ -90,6 +91,9 @@ class OpenAIChatModel(ChatModelBase):
         Args:
             model_name (`str`, default `None`):
                 The name of the model to use in OpenAI API.
+            context_length (`int`):
+                The context length of the model, which will be used in
+                context compression.
             api_key (`str`, default `None`):
                 The API key for OpenAI API. If not specified, it will
                 be read from the environment variable `OPENAI_API_KEY`.
@@ -124,8 +128,9 @@ class OpenAIChatModel(ChatModelBase):
             model_name=model_name,
             stream=stream,
             max_retries=max_retries,
+            context_length=context_length,
             fallback_model_name=fallback_model_name,
-            formatter=formatter,
+            formatter=formatter or OpenAIChatFormatter(),
         )
 
         import openai
