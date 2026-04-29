@@ -277,7 +277,8 @@ class ChatModelBase:
         # Add the multimodal tokens
         for block in data_blocks:
             if isinstance(block.source, URLSource):
-                acc_texts.append(block.source.url)
+                # We don't download the content here to avoid blocking
+                acc_texts.append(str(block.source.url))
             elif isinstance(block.source, Base64Source):
                 cnt += len(block.source.data) // 4
 

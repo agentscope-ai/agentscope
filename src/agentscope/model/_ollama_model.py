@@ -56,9 +56,9 @@ class OllamaChatModel(ChatModelBase):
         Args:
             model_name (`str`):
                 The name of the model.
-            context_length (`int `):
+            context_length (`int`):
                 The context length of the model, which will be used in
-                context compression
+                context compression.
             stream (`bool`, default `True`):
                 Streaming mode or not.
             max_retries (`int`, optional):

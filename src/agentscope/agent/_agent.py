@@ -309,6 +309,7 @@ class Agent(BaseModel):
             logger.warning(
                 "The reserve ratio %.2f is too large to compress any context."
                 "Lower the reserve ratio to 0 as a fallback.",
+                cfg.reserve_ratio,
             )
             (
                 msgs_to_compress,

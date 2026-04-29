@@ -8,7 +8,7 @@ from ..message import Msg, ToolResultBlock, DataBlock, TextBlock
 
 class OffloadBase(ABC):
     """The offload base class for agentic retrieval, e.g. offload the
-    compressed context into accessible MarkDown files so that the agent
+    compressed context into accessible Markdown files so that the agent
     can read them by file reading tools.
     """
 

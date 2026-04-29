@@ -43,6 +43,7 @@ dependencies = [
     "tree_sitter",
     "tree_sitter_bash",
     "ripgrep",
+    "jsonschema",
 ]
 
 [project.optional-dependencies]
