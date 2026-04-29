@@ -427,6 +427,18 @@ with tempfile.NamedTemporaryFile(suffix=extension, delete=False) as temp_file:
 
 `delete=False` 确保临时文件持久化，便于后续访问。
 
+### 4.5 性能考量与边界情况
+
+**内存风险**：所有文件操作函数将整个文件读入内存（`file.readlines()`）。对于大文件（>100MB），这可能导致内存溢出。生产环境应考虑流式处理或分块读写。
+
+**并发写入不安全**：`write_text_file` 和 `insert_text_file` 没有文件锁机制。多个 Agent 同时写入同一文件时可能导致数据损坏。建议使用 `asyncio.Lock` 或文件系统级别的锁。
+
+**路径遍历未防护**：`_is_accessible_local_file` 仅检查文件是否存在，不验证路径是否在安全目录内。生产环境应在调用前用 `os.path.realpath()` 解析真实路径并验证。
+
+**网络下载无大小限制**：`_get_bytes_from_web_url` 将整个响应体读入内存。恶意或意外的大文件 URL 会耗尽内存。建议在请求头中设置 `Range` 或在代码中添加大小检查。
+
+**插入换行符不一致**：`insert_text_file` 追加时插入 `"\n" + content`，但中间插入时插入 `content + "\n"`——尾部追加的行缺少前导换行符，与中间插入行为不对称。
+
 ---
 
 ## 5. 代码示例
@@ -563,7 +575,7 @@ print(f"文件存在: {exists}")
 ```python
 from agentscope.tool._text_file import view_text_file
 
-content = view_text_file(file_path="/path/to/file.txt", start_line=1, end_line=20)
+content = await view_text_file(file_path="/path/to/file.txt", ranges=[1, 20])
 print(content)
 ```
 
@@ -572,10 +584,9 @@ print(content)
 ```python
 from agentscope.tool._text_file import write_text_file
 
-result = write_text_file(
+result = await write_text_file(
     file_path="/tmp/test.txt",
     content="Hello, AgentScope!",
-    mode="overwrite",
 )
 ```
 
@@ -643,7 +654,7 @@ def create_file_with_line_numbers(file_path: str, content: str) -> None:
 async def batch_view_files(file_paths: list[str], ranges: list[tuple[int,int]]) -> dict:
     results = {}
     for path, (start, end) in zip(file_paths, ranges):
-        results[path] = view_text_file(path, start_line=start, end_line=end)
+        results[path] = await view_text_file(path, ranges=[start, end])
     return results
 ```
 
@@ -653,21 +664,61 @@ async def batch_view_files(file_paths: list[str], ranges: list[tuple[int,int]]) 
 
 | 特性 | 实现方式 |
 |------|----------|
-| 文件检测 | `_is_accessible_local_file()` 安全校验 |
-| Base64 编解码 | `_encode_file_to_base64()` / `_decode_base64_to_file()` |
-| 临时文件 | `_get_temp_file_name()` 自动命名 |
-| 文本查看 | `view_text_file()` 支持行范围 |
-| 文本编辑 | `write_text_file()` 支持插入/替换/删除 |
+| 文件检测 | `_is_accessible_local_file()` 检查本地文件是否存在 |
+| Base64 解码 | `_save_base64_data()` 解码 Base64 并保存为临时文件 |
+| 网络资源 | `_get_bytes_from_web_url()` 下载 URL 内容 |
+| 文本查看 | `view_text_file(file_path, ranges)` 支持行范围查看 |
+| 文本编辑 | `write_text_file(file_path, content, ranges)` 支持创建/覆盖/范围替换 |
+| 文本插入 | `insert_text_file(file_path, content, line_number)` 在指定行插入 |
 
-文件操作模块采用函数式工具设计，为 Agent 的工具调用提供底层文件操作支持。
+## 练习题
+
+### 基础题
+
+**Q1**: `_is_accessible_local_file()` 为什么要检查文件路径？直接使用用户提供的路径有什么安全风险？
+
+**Q2**: `_save_base64_data()` 将 Base64 编码的媒体数据保存为临时文件。在什么场景下需要将 Base64 数据解码为文件？
+
+### 中级题
+
+**Q3**: `write_text_file()` 和 `insert_text_file()` 都需要读取→修改→写入文件。这两种操作在实现上有什么共同点？
+
+**Q4**: `_save_base64_data()` 使用 `tempfile.NamedTemporaryFile` 生成临时文件。为什么不使用固定文件名？
+
+### 挑战题
+
+**Q5**: 设计一个安全的文件操作工具，限制 Agent 只能访问指定目录下的文件。需要考虑哪些边界情况？
+
+---
+
+### 参考答案
+
+**A1**: 直接使用用户提供的路径存在路径遍历攻击（Path Traversal）风险。恶意用户可能提供 `../../../etc/passwd` 这样的路径来访问系统敏感文件。安全检查确保只能访问允许的目录。
+
+**A2**: LLM API（如 OpenAI 的 Vision API）传输图像时不接受原始文件路径，需要将二进制数据编码为文本格式。Base64 是最常用的二进制到文本编码方式，将每 3 字节编码为 4 个 ASCII 字符。
+
+**A3**: 三种操作都基于行号定位目标位置。插入在指定行号前添加内容，替换覆盖指定行范围，删除移除指定行范围。共同点是都需要将行号转换为文件偏移量，然后执行文件 I/O。
+
+**A4**: 递增计数器在并发环境下会产生竞态条件——多个请求同时读取相同计数器值，生成相同文件名导致冲突。UUID4 基于随机数生成，冲突概率极低，无需加锁即可保证唯一性。
+
+**A5**: 关键边界情况：(1) 路径遍历（`../`、符号链接逃逸）；(2) 绝对路径 vs 相对路径；(3) 编码问题（Unicode 文件名）；(4) 文件权限（只读文件）；(5) 并发写入同一文件。建议使用 `os.path.realpath()` 解析真实路径后，检查是否在允许目录的子树内。
+
+## 设计模式总结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **Utility（工具函数）** | 所有函数 | 无状态函数式设计，不依赖实例 |
+| **Template Method** | write_text_file | 统一的插入/替换/删除操作框架 |
+| **Strategy** | Base64 vs URL 源 | 根据来源类型选择不同处理策略 |
+| **Guard（守卫）** | `_is_accessible_local_file()` | 校验 URL 是否指向本地文件（注意：当前实现仅检查文件是否存在，未防范路径遍历，生产环境建议增加 `os.path.realpath()` 校验） |
 
 ## 章节关联
 
 | 关联模块 | 关联点 |
 |----------|--------|
-| [工具模块](module_tool_mcp_deep.md) | 文件工具通过 MCP 协议暴露给 Agent |
-| [Utils 模块](module_utils_deep.md) | Base64 编解码等共享工具函数 |
-| [智能体模块](module_agent_deep.md) | Agent 通过 Toolkit 调用文件操作 |
+| [工具模块](module_tool_mcp_deep.md) 第 3 节 | 文件工具通过 MCP 协议暴露给 Agent |
+| [Utils 模块](module_utils_deep.md) 第 3.4 节 | Base64 编解码、`_get_bytes_from_web_url` 等共享工具函数 |
+| [智能体模块](module_agent_deep.md) 第 4 节 | Agent 通过 Toolkit 调用文件操作工具 |
 
 ## 参考资料
 

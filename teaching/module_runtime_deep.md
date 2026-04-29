@@ -54,6 +54,10 @@
 
 ## 1. 模块概述
 
+> **交叉引用**: 本模块详解 SequentialPipeline 和 FanoutPipeline 的运行时执行逻辑。完整的 Pipeline 基础设施（含 MsgHub、Formatter、Session、Tracing）请参见 [Pipeline 与基础设施深度分析](module_pipeline_infra_deep.md)。消息在管道间的传递和拷贝依赖 Msg 类，参见 [Message 消息系统深度分析](module_message_deep.md)。
+>
+> **与 Pipeline 基础设施模块的关系**: 本模块侧重 Pipeline 的**执行逻辑**（SequentialPipeline/FanoutPipeline 的源码级分析）。[module_pipeline_infra_deep.md](module_pipeline_infra_deep.md) 则从**架构层面**覆盖 Pipeline + MsgHub + Formatter + Session + Tracing 的完整基础设施栈。建议先读本模块理解执行机制，再读 Pipeline 基础设施模块理解整体架构。
+
 Runtime 模块是 AgentScope 的执行运行时系统，负责管理和协调多代理的执行流程。该模块提供了两种核心的执行模式：
 
 1. **顺序执行 (Sequential)**: 多个代理按顺序链式执行，一个代理的输出作为下一个代理的输入
@@ -74,7 +78,9 @@ Runtime 模块是 AgentScope 的执行运行时系统，负责管理和协调多
 src/agentscope/pipeline/
 ├── __init__.py           # Pipeline 模块导出
 ├── _class.py             # SequentialPipeline, FanoutPipeline 类
-└── _functional.py        # 顺序/分发/流式处理函数实现
+├── _functional.py        # 顺序/分发/流式处理函数实现
+├── _msghub.py            # MsgHub 消息广播（详见调度器模块）
+└── _chat_room.py         # ChatRoom 实时代理通信
 ```
 
 ---
@@ -82,16 +88,18 @@ src/agentscope/pipeline/
 ## 3. 核心类继承体系
 
 ```
-AgentBase (agent 模块)
-    │
-    └── SequentialPipeline
-    │       __call__(msg) -> Msg|list[Msg]
-    │
-    └── FanoutPipeline
-            __call__(msg) -> list[Msg]
+SequentialPipeline                    FanoutPipeline
+    │                                     │
+    ├── agents: list[AgentBase]           ├── agents: list[AgentBase]
+    │                                     ├── enable_gather: bool
+    │                                     │
+    └── __call__(msg)                     └── __call__(msg, **kwargs)
+            │                                     │
+            ▼                                     ▼
+    sequential_pipeline()              fanout_pipeline()
 ```
 
-**注意**: SequentialPipeline 和 FanoutPipeline 并不继承 AgentBase，而是组合持有 AgentBase 实例，通过委托模式实现执行。
+**注意**: SequentialPipeline 和 FanoutPipeline 不继承任何基类（`class SequentialPipeline:`），而是组合持有 `list[AgentBase]` 实例，通过委托模式将 `__call__` 转发给对应的函数式实现。
 
 ---
 
@@ -437,13 +445,18 @@ async def stream_printing_messages(
 
 ```python
 import asyncio
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 from agentscope.pipeline import SequentialPipeline
 
-# 定义简单的 Agent
+# 定义简单的 Agent —— 子类应重写 reply()，而非 __call__()
 class EchoAgent(AgentBase):
-    async def __call__(self, msg):
-        return Msg("assistant", f"Echo: {msg.content}", "assistant")
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    async def reply(self, msg):
+        return Msg(self.name, f"Echo: {msg.content}", "assistant")
 
 async def main():
     # 创建 pipeline
@@ -470,20 +483,22 @@ Msg(name='assistant', content='Echo: Echo: Echo: Hello', role='assistant')
 
 ```python
 import asyncio
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 from agentscope.pipeline import FanoutPipeline
 
 class MathAgent(AgentBase):
-    def __init__(self, name, operation, **kwargs):
-        super().__init__(name=name, **kwargs)
+    def __init__(self, name: str, operation: str):
+        super().__init__()
+        self.name = name
         self.operation = operation
 
-    async def __call__(self, msg):
+    async def reply(self, msg):
         # ⚠️ 安全警告: 此示例仅用于教学演示。
         # 生产环境应使用 ast.literal_eval() 或专用数学库，
         # 并对 msg.content 进行严格的输入验证。
         result = eval(f"{msg.content} {self.operation}")
-        return Msg("assistant", str(result), "assistant")
+        return Msg(self.name, str(result), "assistant")
 
 async def main():
     pipeline = FanoutPipeline([
@@ -505,14 +520,19 @@ asyncio.run(main())
 
 ```python
 import asyncio
-from agentscope import AgentBase, Msg
+from agentscope.agent import AgentBase
+from agentscope.message import Msg
 from agentscope.pipeline import stream_printing_messages
 
 class StreamingAgent(AgentBase):
-    async def __call__(self, msg):
+    def __init__(self, name: str):
+        super().__init__()
+        self.name = name
+
+    async def reply(self, msg):
         for i in range(3):
-            await self.print(Msg("assistant", f"chunk {i}", "assistant"))
-        return Msg("assistant", "done", "assistant")
+            await self.print(Msg(self.name, f"chunk {i}", "assistant"))
+        return Msg(self.name, "done", "assistant")
 
 async def main():
     agent = StreamingAgent(name="streamer")
@@ -579,6 +599,7 @@ async def sequential_pipeline_with_transform(
 
 ```python
 import asyncio
+from copy import deepcopy
 from typing import Any
 from agentscope.agent import AgentBase
 from agentscope.message import Msg
@@ -608,7 +629,7 @@ class LimitedFanoutPipeline:
     ) -> Msg:
         """使用信号量限制执行单个 agent。"""
         async with self.semaphore:
-            return await agent(msg, **kwargs)
+            return await agent(deepcopy(msg), **kwargs)
 
     async def __call__(
         self,
@@ -874,9 +895,16 @@ class DAGPipeline:
 
 ---
 
-**提示**: 练习题的参考答案可在 AgentScope 官方文档中找到。
+## 设计模式总结（补充）
 
----
+> 以下是对本模块涉及设计模式的补充分析。核心模式已在第 5 节总结。
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **Chain of Responsibility** | SequentialPipeline | 消息沿链式传递，每个 Agent 的输出是下一个的输入 |
+| **Fork-Join** | FanoutPipeline | 并发分发 `deepcopy(msg)` + `asyncio.gather()` 合并结果 |
+| **Delegation（委托）** | Pipeline 类 → 函数 | 类接口（可复用）委托给函数实现（轻量级） |
+| **Prototype（原型）** | `deepcopy(msg)` | 在 `fanout_pipeline` 中为每个 Agent 创建消息的独立副本 |
 
 ## 小结
 
@@ -888,14 +916,44 @@ class DAGPipeline:
 | 类封装 | SequentialPipeline / FanoutPipeline 委托模式 |
 | 消息隔离 | `deepcopy` 保证每个代理独立副本 |
 
-Runtime 模块提供了灵活的代理执行编排能力，函数式接口适合简单场景，类接口适合需要复用和状态的场景。
+## 练习题
+
+### 基础题
+
+**Q1**: `fanout_pipeline()` 为什么对消息使用 `deepcopy`？`sequential_pipeline()` 为什么不需要？
+
+**Q2**: `fanout_pipeline()` 使用 `asyncio.gather()` 并发执行。如果一个 Agent 抛出异常，其他 Agent 会怎样？
+
+### 中级题
+
+**Q3**: 比较 `sequential_pipeline()` 函数和 `SequentialPipeline` 类的优缺点。什么场景下应该选择哪种？
+
+**Q4**: `stream_printing_messages()` 是异步生成器。如果消费者只取了部分消息就停止，会发生什么？
+
+### 挑战题
+
+**Q5**: 设计一个带超时和重试机制的 Pipeline，当一个 Agent 执行超过指定时间后自动重试。需要考虑幂等性问题。
+
+---
+
+### 参考答案
+
+**A1**: 注意 `sequential_pipeline()` 实际上**不使用** `deepcopy`——消息直接从上一个 Agent 传递给下一个 Agent（因为顺序执行时每个 Agent 的输出就是下一个 Agent 的输入，不需要拷贝）。只有 `fanout_pipeline()` 才使用 `deepcopy`，因为同一消息需要分发给多个 Agent 并发处理，如果共享引用，Agent A 修改消息会影响 Agent B 看到的内容。深拷贝虽然开销更大，但在并发场景下保证了隔离性。
+
+**A2**: 默认情况下 `asyncio.gather()` 会在任一任务抛出异常时传播该异常，其他已启动的任务会继续运行（不会被取消）。如果要取消其他任务，可以使用 `asyncio.gather(..., return_exceptions=True)` 收集所有结果，或使用 `asyncio.TaskGroup`（Python 3.11+）。
+
+**A3**: 函数式接口简单直接，适合一次性使用。类接口支持复用（同一 Pipeline 实例可多次调用）和状态管理（如注入 TokenCounter、保存历史）。如果只是简单串联 2-3 个 Agent，用函数即可；如果需要复杂配置、重用或集成 Session 管理，用类更合适。
+
+**A4**: 异步生成器的消费是惰性的——消费者停止迭代后，生成器会在下一个 `yield` 点挂起。`async for` 循环正常退出不会产生错误，但未消费的消息会丢失。如果生成器中有需要清理的资源，应使用 `try/finally` 确保清理。
+
+**A5**: 关键设计：(1) 使用 `asyncio.wait_for(agent.reply(msg), timeout=seconds)` 设置超时；(2) 超时后重试，最多 N 次；(3) 幂等性要求 Agent 的 `reply()` 对相同输入产生相同效果——如果 Agent 有副作用（如调用外部 API），需要记录已执行的步骤并在重试时跳过；(4) 可以使用 ToolResponse 的 `id` 字段追踪已执行的工具调用。
 
 ## 章节关联
 
 | 关联模块 | 关联点 |
 |----------|--------|
 | [智能体模块](module_agent_deep.md) | Pipeline 持有 AgentBase 实例进行编排 |
-| [调度器模块](module_dispatcher_deep.md) | MsgHub 管理代理间消息路由 |
+| [调度器模块](module_dispatcher_deep.md) | MsgHub 管理代理间消息路由（参见 [Pipeline 基础设施](module_pipeline_infra_deep.md) 了解完整架构） |
 | [管道模块](module_pipeline_infra_deep.md) | 详细的管道基础设施分析 |
 | [消息模块](module_message_deep.md) | Msg 对象在管道中传递和拷贝 |
 

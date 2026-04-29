@@ -33,6 +33,8 @@
 
 ### 深度模块（进阶深入）
 
+**核心层**
+
 | 章节 | 内容 | 预计时间 | 文档 |
 |------|------|----------|------|
 | [A1 - Agent 模块深度分析](module_agent_deep.md) | Agent 基类、Hook 机制、设计模式 | 45 分钟 | ⭐ 核心 |
@@ -40,6 +42,35 @@
 | [A3 - Tool 与 MCP 模块深度分析](module_tool_mcp_deep.md) | 工具系统、MCP 协议、自定义工具 | 35 分钟 | |
 | [A4 - Memory 与 RAG 模块深度分析](module_memory_rag_deep.md) | 记忆系统、RAG 架构、向量存储 | 40 分钟 | |
 | [A5 - Pipeline 与基础设施深度分析](module_pipeline_infra_deep.md) | 工作流编排、实时交互、追踪系统 | 35 分钟 | |
+
+**基础设施层**
+
+| 章节 | 内容 | 预计时间 | 文档 |
+|------|------|----------|------|
+| [A6 - Config 配置系统深度分析](module_config_deep.md) | ContextVar 配置、线程安全、运行时初始化 | 25 分钟 | |
+| [A7 - Dispatcher 调度器深度分析](module_dispatcher_deep.md) | MsgHub 消息中心、发布订阅、消息路由 | 35 分钟 | |
+| [A8 - Message 消息系统深度分析](module_message_deep.md) | Msg 类、ContentBlock 类型体系、序列化 | 30 分钟 | |
+| [A9 - Runtime 运行时深度分析](module_runtime_deep.md) | SequentialPipeline、FanoutPipeline、流式处理 | 35 分钟 | |
+
+**支撑层**
+
+| 章节 | 内容 | 预计时间 | 文档 |
+|------|------|----------|------|
+| [A10 - File 文件操作深度分析](module_file_deep.md) | 文件工具、Base64 编解码、MCP 集成 | 25 分钟 | |
+| [A11 - Utils 工具模块深度分析](module_utils_deep.md) | 日志系统、JSON 修复、DictMixin | 30 分钟 | |
+
+**扩展层**
+
+| 章节 | 内容 | 预计时间 | 文档 |
+|------|------|----------|------|
+| [A12 - StateModule 状态管理深度分析](module_state_deep.md) | 状态序列化、嵌套模块、自定义序列化钩子 | 20 分钟 | ⭐ 基础 |
+| [A13 - Formatter 消息格式化深度分析](module_formatter_deep.md) | 多模型适配、消息截断、工具结果格式化 | 35 分钟 | |
+| [A14 - Embedding 与 Token 计数深度分析](module_embedding_token_deep.md) | 向量嵌入模型、缓存策略、Token 估算 | 30 分钟 | |
+| [A15 - Plan 计划系统深度分析](module_plan_deep.md) | 任务分解、SubTask 状态机、计划提示、历史恢复 | 40 分钟 | |
+| [A16 - Session 会话持久化深度分析](module_session_deep.md) | JSON/Redis/Tablestore 会话管理 | 25 分钟 | |
+| [A17 - Tracing 链路追踪深度分析](module_tracing_deep.md) | OpenTelemetry、Span 装饰器、可观测性 | 35 分钟 | |
+| [A18 - Evaluate 评估框架深度分析](module_evaluate_deep.md) | Benchmark 基准、ACE 评估、评估存储 | 25 分钟 | |
+| [A19 - Tuner 智能体调优深度分析](module_tuner_deep.md) | RL/SFT 训练、Prompt 调优、模型选择 | 30 分钟 | |
 
 ### 参考资料
 

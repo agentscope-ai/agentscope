@@ -101,7 +101,8 @@ src/agentscope/tracing/
 ├── __init__.py
 ├── _trace.py               # 追踪装饰器（OpenTelemetry）
 ├── _attributes.py          # 追踪属性定义
-├── _extractor.py          # 追踪数据提取器
+├── _converter.py           # ContentBlock 到 OTel 格式转换
+├── _extractor.py           # 追踪数据提取器
 ├── _setup.py               # 追踪初始化
 └── _utils.py               # 追踪工具
 
@@ -874,7 +875,7 @@ class FormatterBase:
 **文件**: `_openai_formatter.py`
 
 ```python
-class OpenAIFormatter(FormatterBase):
+class OpenAIChatFormatter(TruncatedFormatterBase):
     """Formatter for OpenAI API messages."""
 
     async def format(
@@ -1223,31 +1224,38 @@ A2A 消息使用 `a2a.types` 中的标准类型，包括:
 
 ### 8.1 Module 状态管理
 
-**文件**: `src/agentscope/module.py`
+**文件**: `src/agentscope/module/_state_module.py`
 
-StateModule 是具有状态管理能力的模块基类:
+> **注意**: 以下为 StateModule 的概念性概述。完整的源码解读请参考 [StateModule 深度分析](module_state_deep.md)。
+
+StateModule 是具有状态管理能力的模块基类，几乎所有核心组件（Agent、Memory、Toolkit、PlanNotebook）都继承自它：
 
 ```python
 class StateModule:
-    """Base class for modules with state management."""
+    """支持嵌套状态序列化和反序列化的基础模块。"""
 
     def __init__(self) -> None:
-        self._state_keys: set = set()
+        self._module_dict = OrderedDict()    # 追踪嵌套的 StateModule 子实例
+        self._attribute_dict = OrderedDict() # 追踪注册的普通属性及其序列化函数
 
-    def register_state(self, key: str) -> None:
-        """Register a state key for serialization."""
-        self._state_keys.add(key)
+    def register_state(self, attr_name, custom_to_json=None, custom_from_json=None):
+        """注册需要自定义序列化的属性"""
+        ...
 
     def state_dict(self) -> dict:
-        """Get the current state as a dictionary."""
-        return {key: getattr(self, key, None) for key in self._state_keys}
+        """递归收集所有嵌套模块和注册属性的状态"""
+        ...
 
-    def load_state_dict(self, state_dict: dict) -> None:
-        """Load state from a dictionary."""
-        for key, value in state_dict.items():
-            if key in self._state_keys:
-                setattr(self, key, value)
+    def load_state_dict(self, state_dict: dict, strict: bool = True) -> None:
+        """递归恢复状态，支持 strict/宽松模式"""
+        ...
 ```
+
+**关键机制**：
+- `__setattr__` 自动追踪子 StateModule 实例到 `_module_dict`
+- `register_state()` 注册需要序列化的普通属性到 `_attribute_dict`
+- `state_dict()` 递归收集嵌套模块状态，形成树状结构
+- `load_state_dict()` 递归恢复，支持 strict（缺键报错）和宽松（缺键跳过）两种模式
 
 ---
 
@@ -1332,11 +1340,11 @@ await room.stop()
 ### 9.5 使用 Formatter
 
 ```python
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 from agentscope.message import Msg
 
-# OpenAI Formatter
-formatter = OpenAIFormatter()
+# OpenAI Formatter（继承自 TruncatedFormatterBase，非直接继承 FormatterBase）
+formatter = OpenAIChatFormatter()
 messages = [
     Msg(name="system", content="You are helpful.", role="system"),
     Msg(name="user", content="Hello!", role="user"),
@@ -1349,20 +1357,20 @@ print(formatted)
 ### 9.6 会话管理
 
 ```python
-from agentscope.session import JSONSessionManager
+from agentscope.session import JSONSession
 
-# 创建会话管理器
-manager = JSONSessionManager("./sessions/")
+# 创建会话（save_dir 参数指定存储目录）
+session = JSONSession(save_dir="./sessions/")
 
 # 保存会话状态
-await manager.save_session_state(
+await session.save_session_state(
     session_id="session123",
     user_id="user456",
     agent=agent,  # 传入 StateModule 实例
 )
 
 # 加载会话状态
-await manager.load_session_state(
+await session.load_session_state(
     session_id="session123",
     user_id="user456",
     agent=agent,
@@ -1372,11 +1380,13 @@ await manager.load_session_state(
 ### 9.7 启用追踪
 
 ```python
-from agentscope import config
+import agentscope
 
-# 启用追踪（需要配置 OTEL endpoint）
-config.trace_enabled = True
-# config.otel_endpoint = "http://localhost:4317"
+# 启用追踪（通过 init 函数配置 tracing endpoint）
+agentscope.init(
+    project="my-project",
+    tracing_url="http://localhost:4317",
+)
 ```
 
 ---
@@ -1468,7 +1478,7 @@ MsgHub 的 `broadcast` 方法遍历所有订阅者，调用每个代理的 `obse
 
 **第4题：stream_printing_messages**
 
-通过拦截代理的 `print` 输出（重定向 `sys.stdout`），在代理执行期间捕获所有打印内容，生成完成后作为辅助信息返回。
+通过为每个代理调用 `agent.set_msg_queue_enabled(True, queue)` 启用消息队列机制，代理在执行期间通过 `await self.print()` 输出的中间消息会进入 `asyncio.Queue`，`stream_printing_messages` 从队列中循环读取并 yield 给调用者，实现流式消息收集。
 
 **第5题：ChatRoom 事件差异**
 
@@ -1542,6 +1552,18 @@ class TimedFanoutPipeline(FanoutPipeline):
 | Tracing | 可观测性 | OpenTelemetry 集成 |
 | A2A | 跨进程通信 | AgentCard + HTTP |
 | Realtime | 实时交互 | WebSocket 双向通信 |
+
+## 设计模式总结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **Chain of Responsibility** | SequentialPipeline | 消息沿链式传递，每个 Agent 处理后传给下一个 |
+| **Fork-Join** | FanoutPipeline | 并发分发 → 收集合并结果 |
+| **Pub-Sub（发布订阅）** | MsgHub | Agent 订阅消息，广播时通知所有订阅者 |
+| **Context Manager** | MsgHub, Session | `async with` 管理生命周期 |
+| **Adapter** | Formatter | 统一 Msg 格式适配不同 API |
+| **Observer** | MsgHub broadcast | 消息变更时自动通知观察者（Agent） |
+| **State（状态）** | StateModule | 状态序列化/反序列化支持持久化 |
 
 ## 章节关联
 

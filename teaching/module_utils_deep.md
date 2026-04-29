@@ -428,6 +428,54 @@ tool_definition = {
 
 ---
 
+## 4.5 边界情况与陷阱
+
+### DictMixin 的 AttributeError 陷阱
+
+```python
+from agentscope._utils._mixin import DictMixin
+
+class Config(DictMixin):
+    pass
+
+cfg = Config()
+# hasattr(cfg, "missing_key") 会抛出 KeyError 而非返回 False
+# 因为 __getattr__ 内部直接 self[key]，触发 dict 的 KeyError
+# 这打破了 Python 的 hasattr() 约定（应返回 False 而非抛异常）
+```
+
+**解决方法**：在使用 DictMixin 的类上调用 `hasattr()` 前，先用 `key in obj` 检查键是否存在。
+
+### _parse_streaming_json_dict 的长度比较
+
+```python
+# 该函数用 len(json.dumps(candidate)) 比较候选 JSON 的大小
+# 但字符串长度不等同于字段完整性：
+# {"a": "x" * 1000}  # 长度 1011，但只有 1 个字段
+# {"a": 1, "b": 2, "c": 3}  # 长度 27，但有 3 个字段
+# 在极端情况下，长值的不完整 JSON 可能"胜过"短但完整的 JSON
+```
+
+### _is_async_func 对生成器的误判
+
+```python
+import asyncio
+import types
+
+def gen_func():
+    yield 1
+
+# _is_async_func 检查 types.GeneratorType 和 asyncio.iscoroutine
+# 一个普通生成器函数不是 async 的，但 functools.partial 包装后的
+# 生成器可能被误判——需注意递归解包时的类型判断
+```
+
+### 音频重采样的精度损失
+
+`_resample_pcm_delta` 使用 `signal.resample`（基于 FFT），会引入 Gibbs 现象（频谱泄漏）。重采样后的音频在高低频交界处可能出现振铃伪影。`np.clip` 会静默截断超出范围的采样值，可能导致失真。
+
+---
+
 ## 5. 代码示例
 
 ### 5.1 使用日志系统
@@ -609,7 +657,6 @@ class ExtendedDictMixin(DictMixin):
 ```python
 import jsonschema
 from agentscope._utils._common import _parse_tool_function
-from agentscope.message import ToolFunction
 
 def validate_tool_call(tool_func: ToolFunction, **kwargs) -> tuple[bool, str]:
     """验证工具函数调用参数是否符合 schema。
@@ -715,6 +762,15 @@ if __name__ == "__main__":
 
 ---
 
+## 设计模式总结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **Mixin** | DictMixin | 为类添加字典接口能力 |
+| **Strategy** | JSON 修复策略 | 委托给 `json_repair` 库的 `repair_json()` 函数处理容错修复，解耦修复逻辑 |
+| **Template Method** | `_create_tool_from_base_model` | 固定字段到 Schema 转换框架 |
+| **Builder** | 日志格式化 | 组合多个日志处理器构建完整日志系统 |
+
 ## 小结
 
 | 组件 | 文件 | 核心功能 |
@@ -731,9 +787,9 @@ if __name__ == "__main__":
 
 | 关联模块 | 关联点 |
 |----------|--------|
-| [工具模块](module_tool_mcp_deep.md) | `_create_tool_from_base_model` 生成工具 Schema |
-| [模型模块](module_model_deep.md) | `_parse_streaming_json_dict` 解析 LLM 流式输出 |
-| [文件模块](module_file_deep.md) | 共享 `_common.py` 中的文件处理函数 |
+| [工具模块](module_tool_mcp_deep.md) 第 3.2 节 | `_parse_tool_function` 生成工具 Schema（位于 `_common.py:339`） |
+| [模型模块](module_model_deep.md) 第 4 节 | `_parse_streaming_json_dict` 解析 LLM 流式 JSON 输出 |
+| [文件模块](module_file_deep.md) 第 3 节 | 共享 `_common.py` 中的 Base64 编解码和文件工具函数 |
 
 ### Java 开发者对照
 
@@ -743,6 +799,38 @@ if __name__ == "__main__":
 | `DictMixin` | `Map` + `AbstractMap` | 属性与 Map 双接口 |
 | `inspect.signature()` | Java Reflection API | 运行时函数签名提取 |
 | `logging` 模块 | SLF4J + Logback | 日志门面 + 实现 |
+
+## 练习题
+
+### 基础题
+
+**Q1**: `DictMixin` 提供了哪两种访问方式？为什么这种双接口设计在 LLM 应用中有用？
+
+**Q2**: `_json_loads_with_repair()` 为什么比标准的 `json.loads()` 更适合处理 LLM 输出？
+
+### 中级题
+
+**Q3**: `_parse_streaming_json_dict()` 在解析流式 JSON 时，为什么需要保留上一次成功解析的结果（`last_input`）？如果不保留会怎样？
+
+**Q4**: `_create_tool_from_base_model()` 如何从 Pydantic BaseModel 的字段信息生成 JSON Schema？简述转换逻辑。
+
+### 挑战题
+
+**Q5**: 设计一个更健壮的流式 JSON 解析器，能够处理嵌套数组、转义字符和 Unicode 编码错误。需要考虑哪些边界情况？
+
+---
+
+### 参考答案
+
+**A1**: `DictMixin` 同时支持 `obj.key` 属性访问和 `obj["key"]` 字典访问。在 LLM 应用中，API 响应通常是 JSON 字典，用字典语法访问很自然；而在业务逻辑中，属性语法更简洁可读。双接口让同一对象在不同上下文中都能方便使用。
+
+**A2**: LLM 生成的 JSON 经常有格式问题：截断（超出 max_tokens）、多余逗号、缺少闭合括号、包含注释等。标准 `json.loads()` 遇到这些问题会直接报错，而 `_json_loads_with_repair()` 会尝试修复常见问题后再解析。
+
+**A3**: `_parse_streaming_json_dict()` 使用 `last_input` 保留上一次成功解析的结果，因为流式传输中中间 chunk 的 JSON 可能不完整（如截断的 tool_use 参数），`_json_loads_with_repair` 修复后可能丢失字段。保留上一次结果可以确保不回退——只有当修复后的结果比上一次更完整时才更新。如果不保留，中间的不完整 chunk 会导致已解析的字段丢失。
+
+**A4**: 转换逻辑：(1) 获取 BaseModel 的 `model_fields` 字典；(2) 遍历每个字段，提取类型注解、描述（来自 `Field(description=...)`）、默认值；(3) 将 Python 类型映射到 JSON Schema 类型（str→string, int→integer, list→array 等）；(4) 组装为符合 OpenAI function calling 格式的 JSON Schema。
+
+**A5**: 关键边界情况：(1) 字符串内的 JSON 结构化字符（花括号、方括号、引号）；(2) Unicode 转义序列（`\uXXXX`）；(3) 多行字符串值；(4) 数字精度问题；(5) 截断发生在键名中间的情况。建议使用状态机解析器，维护字符串/数组/对象三层嵌套状态。
 
 ---
 

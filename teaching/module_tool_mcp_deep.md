@@ -344,8 +344,8 @@ def register_tool_function(
 **注册流程** (第 410-536 行):
 1. 参数检查和类型验证
 2. 解析工具函数类型（普通函数/partial/MCP工具）
-3. 生成或使用提供的 JSON Schema
-4. 从 Schema 中移除 preset_kwargs
+3. 调用 `_parse_tool_function()`（位于 `_utils/_common.py:339`）从函数签名和 docstring 自动生成 JSON Schema，内部使用 `docstring_parser` 解析文档、`inspect.signature` 提取参数、`pydantic.create_model()` 动态构建 Schema
+4. 从 Schema 中移除 preset_kwargs 对应的字段
 5. 创建 `RegisteredToolFunction` 对象
 6. 根据 `namesake_strategy` 处理同名冲突
 

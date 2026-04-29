@@ -197,6 +197,60 @@ def init(
 
 ---
 
+## 3.5 边界情况与陷阱
+
+### ContextVar 隔离的边界
+
+`ContextVar` 的隔离行为因调用方式不同而有显著差异：
+
+```python
+import asyncio
+from agentscope._run_config import _config
+
+# 场景 1：asyncio.create_task() — 隔离生效
+async def task_isolation():
+    token = _config.run_id.set("task-a")
+    await asyncio.create_task(other_coroutine())
+    # other_coroutine 看到 "task-a"（继承了值）
+    # 但 other_coroutine 内的 set() 不影响这里
+    print(_config.run_id.get())  # "task-a"
+    _config.run_id.reset(token)
+
+# 场景 2：直接函数调用 — 隔离不生效
+async def no_isolation():
+    token = _config.run_id.set("task-b")
+    direct_call()  # 直接调用，共享同一个上下文
+    # 如果 direct_call 内部 set() 了新值，这里会看到新值
+    print(_config.run_id.get())  # 可能已被修改！
+    _config.run_id.reset(token)
+```
+
+### 多次 init() 的行为
+
+```python
+import agentscope
+
+agentscope.init(project="first")
+# _config.run_id 已设置，Studio 已注册
+
+agentscope.init(project="second")
+# run_id 被重置为新值
+# 但旧的 Studio 回调不会自动清除——可能导致旧回调仍被触发
+```
+
+### ContextVar 无默认值时的 LookupError
+
+```python
+from agentscope._run_config import _config
+
+# 如果在 init() 之前访问，某些属性会抛出 LookupError
+# _config.run_id.get()  # ❌ LookupError if never set
+# 安全做法：
+run_id = getattr(_config, "run_id", None)  # 通过 property 访问（有默认值）
+```
+
+---
+
 ## 4. 设计模式总结
 
 ### 4.1 单例模式
@@ -387,6 +441,15 @@ def serialize_config(config: _ConfigCls) -> dict:
 
 ---
 
+## 设计模式总结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **Singleton（单例）** | 模块级 `_config` 变量 | 全局唯一配置实例 |
+| **Context Object** | ContextVar | 为每个线程/协程提供独立的上下文数据 |
+| **Facade（外观）** | `_ConfigCls` 类 | Property 装饰器隐藏 ContextVar 实现细节 |
+| **Null Object** | 默认值策略 | 未设置时返回合理默认值而非 None |
+
 ## 小结
 
 | 特性 | 实现方式 |
@@ -397,15 +460,46 @@ def serialize_config(config: _ConfigCls) -> dict:
 | 全局单例 | 模块级 `_config` 变量 |
 | 默认值 | ContextVar default 参数 |
 
-配置系统虽然代码量不大，但是 AgentScope 架构中不可或缺的基础设施，为整个框架提供了统一的运行时上下文管理能力。
+## 练习题
+
+### 基础题
+
+**Q1**: 为什么 AgentScope 使用 `ContextVar` 而不是全局变量来存储配置？在什么场景下全局变量会导致问题？
+
+**Q2**: `ContextVar` 的默认值机制是如何工作的？如果在 `set()` 之前访问变量，会得到什么？
+
+### 中级题
+
+**Q3**: `_ConfigCls` 类使用 `@property` 装饰器暴露配置项。这与直接使用 `_config.run_id`（属性访问）相比有什么优势？
+
+**Q4**: 异步协程中的 `ContextVar` 是如何实现隔离的？父协程的 `set()` 会影响子协程吗？
+
+### 挑战题
+
+**Q5**: 设计一个支持动态配置热更新的扩展方案：运行时修改配置后，所有使用该配置的组件自动生效。需要考虑线程安全和异步安全。
+
+---
+
+### 参考答案
+
+**A1**: 全局变量在多线程/多协程环境下会产生竞态条件——一个线程修改配置会影响所有线程。`ContextVar` 为每个上下文（线程或协程）维护独立的值，互不干扰。在 Web 服务中同时处理多个 Agent 请求时，每个请求可以有自己的 run_id 和 trace_enabled 设置。
+
+**A2**: `ContextVar` 创建时指定默认值（如 `ContextVar("name", default="default_value")`）。在 `set()` 之前访问，`get()` 返回默认值。如果在没有设置默认值的情况下访问未设置的变量，会抛出 `LookupError`。
+
+**A3**: `@property` 将配置访问包装为方法调用，可以在返回值前添加校验、类型转换或日志记录。同时，它隐藏了内部实现（使用 ContextVar），使得未来修改存储方式不影响调用方。
+
+**A4**: Python 的 `ContextVar` 在 `asyncio.create_task()` 时会复制当前上下文。子协程继承了父协程的变量值，但子协程的 `set()` 不会影响父协程——每个协程有自己独立的上下文副本。这实现了"向下传播，向上隔离"。
+
+**A5**: 关键设计：(1) 使用观察者模式——配置变更时通知订阅者；(2) 维护一个 `_subscribers: dict[str, list[Callable]]` 字典；(3) `set()` 方法在更新值后调用所有订阅者回调；(4) 回调必须是异步安全的（不能阻塞事件循环）。注意避免循环更新（回调中又修改同一配置）。
 
 ## 章节关联
 
 | 关联模块 | 关联点 |
 |----------|--------|
-| [智能体模块](module_agent_deep.md) | Agent 初始化时读取 `_config` 获取 run_id |
-| [工具模块](module_tool_mcp_deep.md) | `trace_enabled` 控制 Tracing 开关 |
-| [管道模块](module_pipeline_infra_deep.md) | Tracing 系统依赖配置中的 run_id |
+| [智能体模块](module_agent_deep.md) 第 3.1 节 | Agent 初始化时读取 `_config.run_id` 获取运行标识 |
+| [工具模块](module_tool_mcp_deep.md) 第 2 节 | `_config.trace_enabled` 控制 Tracing 装饰器是否生效 |
+| [管道模块](module_pipeline_infra_deep.md) 第 9.7 节 | `agentscope.init(tracing_url=...)` 启用追踪系统 |
+| [追踪模块](module_tracing_deep.md) 第 3 节 | Tracing 系统依赖配置中的 `run_id` 和 `trace_enabled` |
 
 ---
 

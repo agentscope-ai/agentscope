@@ -27,7 +27,7 @@
 
 在开始学习本模块之前，请确认您已掌握以下知识：
 
-- [ ] Python dataclass 与 `__post_init__` 生命周期
+- [ ] Python 普通类与 `__init__` 构造函数
 - [ ] Python `typing` 模块（`@overload`、`Literal`、联合类型）
 - [ ] OpenAI Chat API 消息格式基础
 - [ ] 多态与类型分发概念
@@ -38,15 +38,17 @@
 
 | Python 概念 | Java 等价物 | 说明 |
 |-------------|------------|------|
-| `@dataclass` | Lombok `@Data` / Record | 自动生成 equals/hashCode/toString |
+| 普通类 `__init__` | Java 构造函数 | 手动初始化字段 |
 | `@overload` | 方法重载 | 类型安全的多种参数签名 |
 | `Union[A, B]` | `sealed interface` | 联合类型 ≈ 密封接口 |
-| `__post_init__` | 构造函数验证 | 初始化后逻辑 |
+| `assert` 字段校验 | 构造函数参数验证 | 在 `__init__` 中验证 role 和 content |
 | `to_dict()` / `from_dict()` | Jackson 序列化 | JSON 互转 |
 
 ---
 
 ## 1. 模块概述
+
+> **交叉引用**: Msg 对象是 Dispatcher 消息路由 ([Dispatcher 调度器深度分析](module_dispatcher_deep.md)) 和 Agent 消息处理 ([Agent 模块深度分析](module_agent_deep.md)) 的核心载体。Formatter 模块将 Msg 转换为各模型 API 所需格式，详见 [Formatter 消息格式化深度分析](module_formatter_deep.md)。ContentBlock 类型直接影响 Model 的 Token 计数逻辑，参见 [Model 模块深度分析](module_model_deep.md)。
 
 Message 模块是 AgentScope 中的核心消息系统，负责在代理(Agent)之间传递信息。该模块实现了类似 OpenAI 的消息格式，支持多种内容类型，包括文本、图像、音频、视频以及工具调用。
 
@@ -172,6 +174,24 @@ def from_dict(cls, json_data: dict) -> "Msg":
 **设计要点**: `to_dict()` 用于将消息序列化为 JSON 格式，`from_dict()` 用于从 JSON 数据恢复消息对象。
 
 #### 3.1.4 内容块操作
+
+**`@overload` 类型签名**: `get_content_blocks()` 使用 `typing.overload` 为静态类型检查器提供精确的返回类型提示：
+
+```python
+@overload
+def get_content_blocks(self, block_type: Literal["text"]) -> Sequence[TextBlock]: ...
+@overload
+def get_content_blocks(self, block_type: Literal["tool_use"]) -> Sequence[ToolUseBlock]: ...
+@overload
+def get_content_blocks(self, block_type: Literal["image"]) -> Sequence[ImageBlock]: ...
+# ... 其他类型类似
+@overload
+def get_content_blocks(self, block_type: None = None) -> Sequence[ContentBlock]: ...
+```
+
+当调用者传入 `block_type="text"` 时，IDE 和 mypy 知道返回值是 `Sequence[TextBlock]` 而非宽泛的 `Sequence[ContentBlock]`，实现**类型分发（type narrowing）**。这些 `@overload` 存根仅供静态分析使用，运行时执行的是最终的实现方法。
+
+**实现方法**:
 
 ```python
 def get_content_blocks(
@@ -382,7 +402,7 @@ assistant_msg = Msg(
 **运行结果**:
 
 ```
-Msg(name='user', content='你好，请帮我查询天气', role='user', id='msg_abc123')
+Msg(id='aBcDeFgHiJkL', name='user', content='你好，请帮我查询天气', role='user', metadata={}, timestamp='2026-04-29 10:30:00.123', invocation_id='None')
 ```
 
 ### 5.2 使用内容块创建消息
@@ -533,14 +553,17 @@ assert msg.content == restored.content
 **第3题：创建多内容块消息并提取文本**
 
 ```python
-from agentscope.message import Msg, TextBlock, ImageBlock
+from agentscope.message import Msg, TextBlock, ImageBlock, URLSource
 
 msg = Msg(
     name="user",
     role="user",
     content=[
-        TextBlock(text="请看这张图片"),
-        ImageBlock(source={"url": "https://example.com/img.png"}),
+        TextBlock(type="text", text="请看这张图片"),
+        ImageBlock(
+            type="image",
+            source=URLSource(type="url", url="https://example.com/img.png"),
+        ),
     ],
 )
 text = msg.get_text_content()  # "请看这张图片"
@@ -579,15 +602,32 @@ def filter_messages_by_role(msgs: list[Msg], role: str) -> list[Msg]:
 
 ```python
 def convert_to_openai_format(messages: list[Msg]) -> list[dict]:
-    return [msg.to_openai_dict() for msg in messages]
+    result = []
+    for msg in messages:
+        entry = {"role": msg.role}
+        blocks = msg.get_content_blocks()
+        if all(b.get("type") == "text" for b in blocks):
+            entry["content"] = msg.get_text_content()
+        else:
+            entry["content"] = [
+                {"type": "text", "text": b.get("text", "")}
+                if b.get("type") == "text" else b
+                for b in blocks
+            ]
+        if msg.name:
+            entry["name"] = msg.name
+        result.append(entry)
+    return result
 ```
+
+> **注意**: AgentScope 的 `Msg` 类提供 `to_dict()` 方法用于序列化，但没有 `to_openai_dict()` 方法。OpenAI 格式转换由 Formatter 模块处理，详见 [Formatter 模块](module_formatter_deep.md)。
 
 **第8题：detect_content_types**
 
 ```python
 def detect_content_types(msg: Msg) -> set[str]:
     blocks = msg.get_content_blocks()
-    return {type(b).__name__ for b in blocks}
+    return {b.get("type") for b in blocks}
 ```
 
 ---
@@ -596,13 +636,23 @@ def detect_content_types(msg: Msg) -> set[str]:
 
 | 特性 | 实现方式 |
 |------|----------|
-| 消息结构 | dataclass + `__post_init__` 初始化 |
+| 消息结构 | 普通类 + 手动 `__init__` 初始化 |
 | 类型体系 | ContentBlock 联合类型（Text/Image/Audio/Video/Tool） |
 | 类型分发 | `@overload` 实现 `get_content_blocks` 多态 |
 | 序列化 | `to_dict()` / `from_dict()` 支持 JSON 互转 |
-| OpenAI 兼容 | `to_openai_dict()` 转换为 OpenAI 消息格式 |
+| OpenAI 兼容 | `to_dict()` 转换为 JSON 格式；OpenAI 格式由 Formatter 处理 |
 
 Message 模块是 AgentScope 的通信基础，所有代理间交互都通过 Msg 对象进行，其设计参考了 OpenAI 的消息格式并扩展了多模态支持。
+
+## 设计模式总结
+
+| 设计模式 | 应用位置 | 说明 |
+|----------|----------|------|
+| **TypedDict** | 所有 ContentBlock | 类型安全的字典，与 JSON 天然兼容 |
+| **Union Type** | ContentBlock 联合类型 | 7 种内容块的统一类型 |
+| **Factory Method** | `Msg.from_dict()` | 从 JSON 反向创建对象 |
+| **Strategy** | `get_content_blocks(block_type)` | 按类型过滤内容块 |
+| **Adapter** | Msg → 各 API 格式 | 由 Formatter 模块适配不同厂商 |
 
 ## 章节关联
 

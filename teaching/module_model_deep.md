@@ -1297,29 +1297,39 @@ Anthropic 的 API 与 OpenAI 有一些关键差异:
 
 ## 6. 其他模型适配器
 
-### 6.1 Gemini 模型
+### 6.1 GeminiChatModel
 
-**文件**: `_gemini_model.py`
+**文件**: `_gemini_model.py` | **导出名**: `GeminiChatModel`
 
 - Google Gemini Pro/Flash 支持
-- 多模态输入支持
+- 多模态输入支持（文本 + 图像）
 - Vertex AI 和 Gemini API 两种模式
+- 构造函数参数：`model_name`, `api_key`, `stream`, `project`, `location` 等
 
-### 6.2 Ollama 模型
+### 6.2 OllamaChatModel
 
-**文件**: `_ollama_model.py`
+**文件**: `_ollama_model.py` | **导出名**: `OllamaChatModel`
 
-- 本地大模型运行
-- 支持 Llama 2、Mistral 等开源模型
-- REST API 通信
+- 本地大模型运行（Llama 3、Mistral、Qwen 等开源模型）
+- REST API 通信（`http://localhost:11434`）
+- 构造函数参数：`model_name`, `stream`, `client_kwargs` 等
+- 无需 API Key，适合本地开发和隐私敏感场景
 
-### 6.3 Trinity 模型
+### 6.3 AnthropicChatModel
 
-**文件**: `_trinity_model.py`
+**文件**: `_anthropic_model.py` | **导出名**: `AnthropicChatModel`
 
-- 多模型统一接口
-- 模型路由和负载均衡
-- 故障转移支持
+- Claude 系列模型支持（Claude 3.5/4 等）
+- 支持 extended thinking（扩展思考）
+- 构造函数参数：`model_name`, `api_key`, `stream`, `thinking_config` 等
+
+### 6.4 TrinityChatModel
+
+**文件**: `_trinity_model.py` | **导出名**: `TrinityChatModel`
+
+- 与 Trinity-RFT 框架集成
+- 用于 RL/SFT 训练场景
+- 构造函数参数：`model_name`, `stream`, `server_url` 等
 
 ---
 
