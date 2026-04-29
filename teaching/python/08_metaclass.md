@@ -27,7 +27,8 @@ print(MyClass)  # <class '__main__.MyClass'>
 `★ Insight ─────────────────────────────────────`
 - 默认情况下，所有类的元类都是 `type`
 - 自定义元类可以控制类的创建过程
-- 类似于 Java 注解处理器或 CGLIB 代理
+- 类似于 Java 注解处理器或 Spring AOP 拦截器
+- 元类 vs 装饰器：元类在类创建时干预，装饰器在类创建后包装
 `─────────────────────────────────────────────────`
 
 ## 为什么需要元类？
@@ -50,6 +51,8 @@ ANIMAL_REGISTRY = {"dog": Dog, "cat": Cat}
 
 # Python 元类方式：自动注册
 class RegistryMeta(type):
+    _registry = {}  # 必须初始化！
+
     def __new__(mcs, name, bases, namespace):
         cls = super().__new__(mcs, name, bases, namespace)
         # 自动注册
@@ -71,24 +74,93 @@ print(RegistryMeta._registry)  # {"dog": Dog, "cat": Cat}
 
 ## AgentScope 源码示例
 
-**文件**: `src/agentscope/agent/_agent_meta.py`
+**文件**: `src/agentscope/agent/_agent_meta.py:159`
 
 ```python
 class _AgentMeta(type):
-    """Agent 的元类 - 控制 Agent 子类的创建"""
+    """The agent metaclass that wraps the agent's reply, observe and print
+    functions with pre- and post-hooks."""
 
-    def __new__(mcs, name, bases, namespace):
-        """创建类时的钩子 - 类似 Java 注解处理器"""
-        cls = super().__new__(mcs, name, bases, namespace)
+    def __new__(mcs, name: Any, bases: Any, attrs: Dict) -> Any:
+        """Wrap the agent's functions with hooks."""
 
-        # 自动注册类级别的 hooks
-        for hook_name, hook_func in namespace.items():
-            if hook_name.startswith("_class_") and callable(hook_func):
-                # 处理类级别钩子
-                ...
+        for func_name in [
+            "reply",
+            "print",
+            "observe",
+        ]:
+            if func_name in attrs:
+                attrs[func_name] = _wrap_with_hooks(attrs[func_name])
 
-        return cls
+        return super().__new__(mcs, name, bases, attrs)
+
+
+class _ReActAgentMeta(_AgentMeta):
+    """The ReAct metaclass that adds pre- and post-hooks for the _reasoning
+    and _acting functions."""
+
+    def __new__(mcs, name: Any, bases: Any, attrs: Dict) -> Any:
+        """Wrap the ReAct agent's _reasoning and _acting functions with
+        hooks."""
+
+        for func_name in [
+            "_reasoning",
+            "_acting",
+        ]:
+            if func_name in attrs:
+                attrs[func_name] = _wrap_with_hooks(attrs[func_name])
+
+        return super().__new__(mcs, name, bases, attrs)
 ```
+
+**文件**: `src/agentscope/agent/_agent_base.py:30`
+
+```python
+class AgentBase(StateModule, metaclass=_AgentMeta):
+    """Base class for asynchronous agents."""
+    # 使用 _AgentMeta 元类自动包装 reply/print/observe 方法
+    pass
+```
+
+**Java 对照理解**：
+
+```java
+// Java 没有语法层面的元类支持，只能用设计模式模拟部分功能
+
+// _AgentMeta 的核心功能是为方法添加 pre/post hooks
+// 这在 Java 中可以用代理模式或装饰器模式近似实现：
+
+// 方式1：使用代理模式（需要接口）
+public interface AgentInterface {
+    Message reply(Message input);
+}
+
+public class AgentBase implements AgentInterface {
+    @Override
+    public Message reply(Message input) {
+        // 手动调用 pre hook
+        preReplyHook(input);
+        Message result = doReply(input);
+        // 手动调用 post hook
+        postReplyHook(result);
+        return result;
+    }
+
+    protected void preReplyHook(Message input) { }
+    protected void postReplyHook(Message result) { }
+    protected Message doReply(Message input) { return input; }
+}
+
+// 方式2：使用 Spring AOP 或 AspectJ（运行时织入）
+// @Aspect
+// @Component
+// public class AgentAspect {
+//     @Around("execution(* AgentBase.reply(..))")
+//     public Object aroundReply(ProceedingJoinPoint pjp) { ... }
+// }
+```
+
+**总结**：`_AgentMeta` 的 AOP 式 hooks 在 Java 中没有直接等价物，需要借助框架支持。
 
 ## 元类语法
 
@@ -114,23 +186,23 @@ class MyClass(metaclass=MyMeta):
     pass
 ```
 
-## 三个特殊方法
+## 三个特殊方法详解
 
 ```python
 class MyMeta(type):
     def __new__(mcs, name, bases, namespace):
         """创建类时调用 - 类似于 Java 类加载时的处理"""
-        print(f"Creating class: {name}")
+        print(f"1. Creating class: {name}")
         return super().__new__(mcs, name, bases, namespace)
 
     def __init__(cls, name, bases, namespace):
         """类创建后的初始化"""
-        print(f"Initializing class: {name}")
+        print(f"2. Initializing class: {name}")
         super().__init__(name, bases, namespace)
 
     def __call__(cls, *args, **kwargs):
         """实例化类时调用 - 类似于 Java 构造函数"""
-        print(f" Instantiating: {cls.__name__}")
+        print(f"3. Instantiating: {cls.__name__}")
         return super().__call__(*args, **kwargs)
 
 
@@ -143,10 +215,31 @@ print("---")
 obj = MyClass(10)  # 触发 __call__
 print("---")
 # 输出:
-# Creating class: MyClass
-# Initializing class: MyClass
+# 1. Creating class: MyClass
+# 2. Initializing class: MyClass
 # ---
-#  Instantiating: MyClass
+# 3. Instantiating: MyClass
+```
+
+### 执行顺序图解
+
+```
+class MyClass(metaclass=MyMeta):
+    │
+    ▼
+1. Python 执行类体（定义属性方法）
+    │
+    ▼
+2. 调用 MyMeta.__new__(mcs, "MyClass", (), {...})
+    │
+    ▼
+3. 调用 MyMeta.__init__(cls, "MyClass", (), {...})
+    │
+    ▼
+MyClass 实例化时
+    │
+    ▼
+4. 调用 MyMeta.__call__(cls, *args, **kwargs)
 ```
 
 ## 实际应用场景
@@ -203,6 +296,10 @@ class ImagePlugin(Plugin):
 
 print(RegistryMeta._registry)
 # {'text': <class 'TextPlugin'>, 'image': <class 'ImagePlugin'>}
+
+# 根据 key 获取类
+def get_plugin(key: str):
+    return RegistryMeta._registry.get(key)
 ```
 
 ### 3. ORM 模型（类似 Hibernate）
@@ -241,6 +338,30 @@ print(User())
 # User(table=user, fields=['name', 'age'])
 ```
 
+### 4. 字段验证
+
+```python
+class ValidatedMeta(type):
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, namespace)
+
+        # 检查所有方法是否有文档字符串
+        for attr_name, attr_val in namespace.items():
+            if callable(attr_val) and not attr_val.__doc__:
+                print(f"Warning: {name}.{attr_name} has no docstring")
+
+        return cls
+
+
+class Service(metaclass=ValidatedMeta):
+    def process(self):
+        """处理业务逻辑"""
+        pass
+
+    def helper(self):  # 没有文档字符串
+        pass
+```
+
 ## 与 Java 对比
 
 | Python | Java | 说明 |
@@ -249,10 +370,9 @@ print(User())
 | `type.__new__` | `ClassLoader.defineClass` | 类创建 |
 | `type.__init__` | 注解处理器 | 类初始化 |
 | `type.__call__` | `Class.newInstance()` | 实例创建 |
+| `_AgentMeta` | Spring AOP / AspectJ | AOP 拦截器 |
 
-## 常见问题
-
-### 元类 vs 装饰器
+## 元类 vs 装饰器
 
 ```python
 # 元类：控制类的创建
@@ -271,6 +391,71 @@ def decorator(cls):
 # - 装饰器：需要包装已创建的类
 ```
 
+### 何时使用元类
+
+```python
+# 使用元类
+class RegistryMeta(type):
+    """自动注册 - 元类最合适"""
+    _registry = {}
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, namespace)
+        if 'registry_key' in namespace:
+            mcs._registry[namespace['registry_key']] = cls
+        return cls
+
+# 使用装饰器
+def add_logging(cls):
+    """为类的方法添加日志 - 装饰器更合适"""
+    for name in dir(cls):
+        if not name.startswith('_'):
+            setattr(cls, name, log_wrapper(getattr(cls, name)))
+    return cls
+```
+
+## 常见问题
+
+### 元类继承
+
+```python
+class BaseMeta(type):
+    def __new__(mcs, name, bases, namespace):
+        print(f"Creating {name}")
+        return super().__new__(mcs, name, bases, namespace)
+
+class DerivedMeta(BaseMeta):
+    """继承自 BaseMeta"""
+    pass
+
+class MyClass(metaclass=DerivedMeta):
+    pass
+# 输出: Creating MyClass
+# DerivedMeta 继承自 BaseMeta，行为一致
+```
+
+### __prepare__ 方法
+
+```python
+# __prepare__ 在 __new__ 之前调用，返回 namespace
+class OrderedMeta(type):
+    @classmethod
+    def __prepare__(mcs, name, bases, **kwargs):
+        return OrderedDict()
+
+    def __new__(mcs, name, bases, namespace):
+        # namespace 是 OrderedDict，保持属性定义顺序
+        cls = super().__new__(mcs, name, bases, dict(namespace))
+        cls._order = list(namespace.keys())
+        return cls
+
+class MyClass(metaclass=OrderedMeta):
+    a = 1
+    b = 2
+    c = 3
+
+print(MyClass._order)  # ['a', 'b', 'c']
+```
+
 ## 练习题
 
 1. **创建单例元类**：使用元类实现单例模式
@@ -287,6 +472,22 @@ def decorator(cls):
    class A(metaclass=Meta):
        print("A class body")
        pass
+   ```
+
+4. **创建 Hook 元类**：创建一个元类，自动为所有方法添加调用日志
+
+5. **理解 MRO 和元类**：
+   ```python
+   class A:
+       pass
+
+   class B:
+       pass
+
+   class C(A, B):
+       pass
+
+   print(C.__mro__)  # 输出什么？
    ```
 
 ---
@@ -318,4 +519,27 @@ class RegistryMeta(type):
 # A class body  # 类体在元类 __new__ 之前执行
 # Creating A
 # 因为 Python 先执行类体（定义属性方法），然后才调用元类创建类
+
+# 4. Hook 元类
+import functools
+
+class HookMeta(type):
+    def __new__(mcs, name, bases, namespace):
+        for attr_name, attr_val in namespace.items():
+            if callable(attr_val) and not attr_name.startswith('_'):
+                namespace[attr_name] = mcs._wrap_method(attr_val)
+        return super().__new__(mcs, name, bases, namespace)
+
+    @staticmethod
+    def _wrap_method(method):
+        @functools.wraps(method)
+        def wrapper(*args, **kwargs):
+            print(f"Calling {method.__name__}")
+            return method(*args, **kwargs)
+        return wrapper
+
+# 5.
+# 输出: (<class 'C'>, <class 'A'>, <class 'B'>, <class 'object'>)
+# Python 使用 C3 线性化算法计算 MRO
+# 此例中无菱形继承，结果等价于深度优先、从左到右
 ```

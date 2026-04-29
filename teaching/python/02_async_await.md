@@ -49,10 +49,10 @@ async def fetch_all():
 ```
 同步模型                          异步模型
 ─────────────────────            ─────────────────────
-                                
+
 执行: ████████████              执行: ▓▓▓ (并发)
 等待: ░░░░░░░░░░░              等待: ░░░░░░░░░░ (IO期间)
-                                
+
 总耗时: N × 单次时间             总耗时: max(各请求时间)
 ```
 
@@ -109,7 +109,7 @@ asyncio.run(main())
 
 ### AgentScope 源码示例
 
-**文件**: `src/agentscope/agent/_agent_base.py`
+**文件**: `src/agentscope/agent/_agent_base.py:185-467`
 
 ```python
 class AgentBase:
@@ -149,9 +149,11 @@ class AgentBase:
 
 ```java
 // 粗略的 Java 对应
-public class AgentBase {
-    public Future<Msg> call(Object... args) {
-        String replyId = UUID.randomUUID().toString();
+public abstract class AgentBase {
+    private String replyId;
+
+    public CompletableFuture<Msg> call(Object... args) {
+        this.replyId = UUID.randomUUID().toString();
         try {
             return CompletableFuture.completedFuture(reply(args));
         } catch (CancellationException e) {
@@ -199,7 +201,7 @@ async def method3():
 | `await` | `future.get()` | 等待结果 |
 | `asyncio.create_task()` | `CompletableFuture.runAsync()` | 创建异步任务 |
 | `asyncio.gather()` | `CompletableFuture.allOf()` | 等待多个任务 |
-| `asyncio.sleep()` | `Thread.sleep()` | 异步睡眠 |
+| `asyncio.sleep()` | `CompletableFuture.delayedExecutor()` | 非阻塞睡眠（非 `Thread.sleep`） |
 
 ## async with（异步上下文管理器）
 
@@ -214,9 +216,9 @@ async with aiohttp.ClientSession() as session:
         content = await response.text()
 ```
 
-**AgentScope 源码示例**
+### AgentScope 源码示例
 
-**文件**: `src/agentscope/pipeline/_msghub.py`
+**文件**: `src/agentscope/pipeline/_msghub.py:73-87`
 
 ```python
 class MsgHub:
@@ -272,6 +274,132 @@ try (MsgHub hub = new MsgHub(agents)) {
 } // 自动调用 close()
 ```
 
+## 异步迭代器与生成器
+
+```python
+# 异步迭代器
+class AsyncCounter:
+    def __init__(self, max: int) -> None:
+        self.max = max
+        self.current = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.current < self.max:
+            await asyncio.sleep(0.1)
+            self.current += 1
+            return self.current
+        raise StopAsyncIteration
+
+# 异步生成器
+async def async_gen(n: int):
+    for i in range(n):
+        await asyncio.sleep(0.1)
+        yield i
+
+# 使用
+async def main():
+    async for i in async_gen(3):
+        print(i)
+```
+
+**Java 对照**：
+
+```java
+// Java 没有直接的异步迭代器对应
+// 但可以使用 Flow (Reactive Streams) 实现类似功能
+public class AsyncCounter implements Publisher<Integer> {
+    private int max;
+    private int current = 0;
+
+    @Override
+    public void subscribe(Subscriber<? super Integer> subscriber) {
+        // 实现订阅逻辑
+    }
+}
+```
+
+## 并发控制
+
+### 信号量（Semaphore）
+
+```python
+import asyncio
+
+# 控制并发数量
+semaphore = asyncio.Semaphore(2)
+
+async def limited_task(n: int):
+    async with semaphore:
+        print(f"Task {n} started")
+        await asyncio.sleep(1)
+        print(f"Task {n} finished")
+        return n
+
+async def main():
+    # 最多同时运行2个任务
+    results = await asyncio.gather(
+        limited_task(1),
+        limited_task(2),
+        limited_task(3),
+        limited_task(4),
+    )
+    # 总耗时: ~2秒（2+2，而不是 4）
+
+asyncio.run(main())
+```
+
+### 锁（Lock）
+
+```python
+import asyncio
+
+# 异步锁 - 保护共享资源
+lock = asyncio.Lock()
+counter = 0
+
+async def increment():
+    global counter
+    async with lock:
+        # 同一时间只有一个协程能进入
+        old = counter
+        await asyncio.sleep(0.1)  # 模拟计算
+        counter = old + 1
+        return counter
+
+async def main():
+    results = await asyncio.gather(
+        increment(),
+        increment(),
+        increment(),
+    )
+    # counter 最终值为 3（无锁则可能为 1 或 2）
+
+asyncio.run(main())
+```
+
+**Java 对照**：
+
+```java
+// Java Lock（简化版，省略 import 和 class 外壳）
+Lock lock = new ReentrantLock();
+int counter = 0;
+
+public int increment() throws InterruptedException {
+    lock.lock();
+    try {
+        int old = counter;
+        Thread.sleep(100); // 同步睡眠
+        counter = old + 1;
+        return counter;
+    } finally {
+        lock.unlock();
+    }
+}
+```
+
 ## 常见错误
 
 ### 1. 忘记 await
@@ -306,6 +434,29 @@ async def async_main():
 asyncio.run(async_main())
 ```
 
+### 3. 异步函数中使用阻塞调用
+
+```python
+# ❌ 错误 - 阻塞调用会阻塞整个事件循环
+async def bad_async():
+    time.sleep(10)  # 阻塞！整个事件循环卡住
+    # requests.get()  # 同样阻塞！
+
+# ✅ 正确 - 使用异步兼容的库
+async def good_async():
+    await asyncio.sleep(10)  # 非阻塞
+    async with aiohttp.ClientSession() as session:
+        await session.get(url)  # 异步 HTTP
+```
+
+**Java 对照**：
+
+```java
+// Java 同样需要注意：阻塞调用会阻塞线程
+// CompletableFuture.runAsync() 使用的线程池可能被阻塞
+// 解决方案：使用非阻塞 IO 或专用线程池
+```
+
 ## 练习题
 
 1. **判断输出**：以下代码输出什么？
@@ -338,19 +489,59 @@ asyncio.run(async_main())
    # 同时执行 task(1), task(2), task(3)
    ```
 
+4. **并发控制**：使用信号量限制最多同时执行2个任务：
+   ```python
+   async def worker(n):
+       await asyncio.sleep(n)
+       return f"Task {n} done"
+
+   # 4个任务，但最多同时2个
+   ```
+
+5. **异步上下文管理器**：写出以下代码的输出：
+   ```python
+   import asyncio
+
+   class Acounter:
+       def __init__(self):
+           self.count = 0
+
+       async def __aenter__(self):
+           self.count += 1
+           return self
+
+       async def __aexit__(self, *args):
+           self.count -= 1
+
+   async def main():
+       counter = Acounter()
+       async with counter:
+           print(f"Inside: {counter.count}")  # 输出?
+       print(f"Outside: {counter.count}")  # 输出?
+
+   asyncio.run(main())
+   ```
+
 ---
 
 **答案**：
 
 ```python
-# 1. 输出: A, B（sleep(0) 让出控制权，但很快恢复）
-# 注意：即使 sleep(0) 也会切换，所以 B 会等 A 完成
+# 1. 输出: A, B
+# asyncio.sleep(0) 让出一次控制权给事件循环，但由于没有其他协程，
+# 立即恢复执行，所以顺序就是 A 然后 B
 
-# 2. 修复 - 需要 await
-result = await fetch_data()
-print(result)
-# 或者使用 asyncio.run
+# 2. 修复 - 需要用 await 或 asyncio.run 获取结果
+# 方式1：在异步上下文中使用 await
+async def main():
+    result = await fetch_data()
+    print(result)
+
+asyncio.run(main())
+
+# 方式2：在同步上下文中使用 asyncio.run
 result = asyncio.run(fetch_data())
+print(result)  # "data"
 
 # 3. 并行执行
 async def main():
@@ -363,4 +554,31 @@ async def main():
 
 asyncio.run(main())
 # 总耗时: ~3秒（最长的那个），而不是 6秒
+
+# 4. 并发控制
+async def main():
+    semaphore = asyncio.Semaphore(2)
+
+    async def limited_task(n):
+        async with semaphore:
+            result = await worker(n)
+            return result
+
+    results = await asyncio.gather(
+        limited_task(1),
+        limited_task(2),
+        limited_task(3),
+        limited_task(4),
+    )
+    # 总耗时: ~6秒
+    # 分析：task(1)和task(2)先开始（semaphore=2）
+    # t=1s: task(1)完成，task(3)开始
+    # t=2s: task(2)完成，task(4)开始
+    # t=4s: task(3)完成（从t=1开始sleep3秒）
+    # t=6s: task(4)完成（从t=2开始sleep4秒）
+
+# 5. 输出:
+# Inside: 1
+# Outside: 0
+# __aexit__ 在块退出时自动调用，count 减回 0
 ```

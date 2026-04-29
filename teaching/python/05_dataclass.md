@@ -3,7 +3,7 @@
 ## Java POJO 对照
 
 ```java
-// Java 传统 POJO
+// Java 传统 POJO - 需要大量模板代码
 public class Person {
     private String name;
     private int age;
@@ -25,19 +25,32 @@ public class Person {
     public void setAge(int age) { this.age = age; }
     public void setEmail(String email) { this.email = email; }
 
-    // equals/hashCode/toString
+    // equals/hashCode/toString - 还要手动实现
     @Override
-    public boolean equals(Object o) { ... }
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Person person = (Person) o;
+        return age == person.age
+            && Objects.equals(name, person.name)
+            && Objects.equals(email, person.email);
+    }
+
     @Override
-    public int hashCode() { ... }
+    public int hashCode() {
+        return Objects.hash(name, age, email);
+    }
+
     @Override
-    public String toString() { return "Person{name=" + name + ..."; }
+    public String toString() {
+        return "Person{name=" + name + ", age=" + age + ", email=" + email + "}";
+    }
 }
 ```
 
-Python `@dataclass` 一行搞定！
+Python `@dataclass` 一行搞定，自动生成所有方法！
 
-## Python @dataclass
+## Python @dataclass 基础
 
 ```python
 from dataclasses import dataclass
@@ -55,76 +68,74 @@ print(p)
 
 p2 = Person("Bob", 30)
 print(p == p2)  # False - 自动生成 __eq__
+
+# 注意：默认 @dataclass 不生成 __hash__（因为可变对象不应可哈希）
+# 要启用哈希，需要 frozen=True:
+# @dataclass(frozen=True)
+# class ImmutablePerson: ...
 ```
 
 `★ Insight ─────────────────────────────────────`
-- `@dataclass` 自动生成 `__init__`, `__repr__`, `__eq__`, `__hash__`
+- `@dataclass` 自动生成 `__init__`, `__repr__`, `__eq__`
+- 默认**不生成** `__hash__`（因为可变对象哈希不安全），需要 `frozen=True` 才会生成
 - 类似 Java 的 Lombok `@Data` 注解
 - 字段可以是必选或可选（带默认值）
+- Python 3.10+ 支持更简洁的字段语法
 `─────────────────────────────────────────────────`
 
 ## AgentScope 源码示例
 
-**文件**: `src/agentscope/rag/_document.py`
+**文件**: `src/agentscope/rag/_document.py:35`
 
 ```python
-from dataclasses import dataclass, field
-from typing import Sequence
-
 @dataclass
 class Document:
     """文档类 - 用于 RAG 系统的文档表示"""
-    content: str                                    # 必选字段
-    metadata: dict[str, Any] = field(default_factory=dict)  # 可选，默认空字典
-    embedding: list[float] | None = None           # 可选，嵌入向量
-    id: str = ""                                   # 可选，默认空字符串
 
-    def to_dict(self) -> dict:
-        return {
-            "content": self.content,
-            "metadata": self.metadata,
-            "id": self.id,
-        }
+    metadata: DocMetadata                    # 必选字段（无默认值）
+    id: str = field(default_factory=shortuuid.uuid)  # 可选，默认生成UUID
+    embedding: Embedding | None = field(default_factory=lambda: None)  # 可选
+    score: float | None = None               # 可选，默认 None
+```
+
+**注意**：实际源码中 `Document` 没有 `content` 字段，内容存储在 `metadata.content` 中。
+
+**文件**: `src/agentscope/module/_state_module.py:13`
+
+```python
+@dataclass
+class _JSONSerializeFunction:
+    """用于状态模块的序列化函数封装"""
+    to_json: Optional[Callable[[Any], Any]] = None
+    load_json: Optional[Callable[[Any], Any]] = None
 ```
 
 **Java 对照**：
 
 ```java
-// 粗略的 Java 等价
-public class Document {
-    private String content;
-    private Map<String, Object> metadata;
-    private List<Double> embedding;
-    private String id;
+// Java 等价实现 - 需要更多代码
+public class JSONSerializeFunction {
+    private Function<Object, Object> toJson;
+    private Function<Object, Object> loadJson;
 
-    public Document(String content) {
-        this(content, new HashMap<>(), null, "");
+    public JSONSerializeFunction() {}
+
+    public JSONSerializeFunction(Function<Object, Object> toJson,
+                                 Function<Object, Object> loadJson) {
+        this.toJson = toJson;
+        this.loadJson = loadJson;
     }
 
-    public Document(String content, Map<String, Object> metadata,
-                    List<Double> embedding, String id) {
-        this.content = content;
-        this.metadata = metadata;
-        this.embedding = embedding;
-        this.id = id;
-    }
-
-    public String toString() {
-        return String.format("Document(content='%s', ...)", content);
-    }
-
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Document that = (Document) o;
-        return Objects.equals(content, that.content);
-    }
+    public Function<Object, Object> getToJson() { return toJson; }
+    public void setToJson(Function<Object, Object> toJson) { this.toJson = toJson; }
+    public Function<Object, Object> getLoadJson() { return loadJson; }
+    public void setLoadJson(Function<Object, Object> loadJson) { this.loadJson = loadJson; }
 }
 ```
 
-## @dataclass 进阶
+## @dataclass 进阶用法
 
-### field(default_factory=...)
+### field(default_factory=...) - 可变默认值
 
 ```python
 from dataclasses import dataclass, field
@@ -132,27 +143,30 @@ from dataclasses import dataclass, field
 @dataclass
 class Config:
     name: str
-    # 默认值：list/dict 必须用 default_factory
+    # list/dict 必须用 default_factory，否则所有实例共享同一对象！
     items: list[str] = field(default_factory=list)
     settings: dict[str, int] = field(default_factory=dict)
 
 # 使用
-c = Config("test")
-print(c.items)       # []
-c.items.append("hello")  # 不会影响其他实例！
+c1 = Config("test")
+c2 = Config("test")
+c1.items.append("hello")
 
-# ❌ 错误做法
+print(c1.items)  # ['hello']
+print(c2.items)  # [] - 正确！每个实例有独立的 list
+
+# ❌ 错误写法 - 共享可变默认值
 @dataclass
 class BadConfig:
     items: list[str] = []  # 所有实例共享同一个 list！
 
-# ✅ 正确做法
+# ✅ 正确写法
 @dataclass
 class GoodConfig:
     items: list[str] = field(default_factory=list)
 ```
 
-### __post_init__（构造后处理）
+### __post_init__ - 构造后处理
 
 ```python
 from dataclasses import dataclass
@@ -168,22 +182,46 @@ class Person:
         if self.email == "":
             self.email = f"{self.name.lower()}@example.com"
 
+        # 数据验证
+        if self.age < 0:
+            raise ValueError("Age cannot be negative")
+
 p = Person("Alice", 25)
-print(p.email)  # "alice@example.com"
+print(p.email)  # "alice@example.com" - 自动生成
 ```
 
-### frozen=True（不可变对象）
+### frozen=True - 不可变对象
 
 ```python
 from dataclasses import dataclass
 
-@dataclass(frozen=True)  # 类似 Java 的 final
+@dataclass(frozen=True)  # 类似 Java 的 final 字段
 class ImmutablePerson:
     name: str
     age: int
 
 p = ImmutablePerson("Alice", 25)
-p.age = 30  # FrozenInstanceError!
+p.age = 30  # FrozenInstanceError! 无法修改
+
+# Java 对照：
+// public final class ImmutablePerson {
+//     private final String name;
+//     private final int age;
+//     // 无 setter
+// }
+```
+
+### slots=True - 内存优化
+
+```python
+from dataclasses import dataclass
+
+@dataclass(slots=True)  # Python 3.10+ 使用 __slots__ 节省内存
+class Person:
+    name: str
+    age: int
+
+# 内存占用减少约 40%，但不能动态添加属性
 ```
 
 ## 与 @property 结合
@@ -198,38 +236,55 @@ class Person:
 
     @property
     def full_name(self) -> str:
-        """计算属性 - Java 可以用方法实现"""
+        """计算属性 - Java 可用方法实现"""
         return f"{self.first_name} {self.last_name}"
 
+    @property
+    def initials(self) -> str:
+        return f"{self.first_name[0]}.{self.last_name[0]}."
+
 p = Person("John", "Doe")
-print(p.full_name)  # "John Doe"
+print(p.full_name)   # "John Doe"
+print(p.initials)    # "J.D."
 ```
 
-## dataclass vs 字典
+## dataclass vs dict vs TypedDict
 
 ```python
-# 使用字典
+# 字典 - 无类型提示，IDE 不友好
 user_dict = {"name": "Alice", "age": 25}
-print(user_dict["name"])  # "Alice"
-print(user_dict)  # {'name': 'Alice', 'age': 25}
+print(user_dict["name"])
 
-# 使用 dataclass
+# @dataclass - 有类型提示，IDE 自动补全
 @dataclass
 class User:
     name: str
     age: int
 
 user = User("Alice", 25)
-print(user.name)  # "Alice" - IDE 自动补全！
-print(user)  # User(name='Alice', age=25)
+print(user.name)  # IDE 自动补全！
+
+# typing.TypedDict - 有类型提示但不生成 __init__
+from typing import TypedDict
+
+class UserDict(TypedDict):
+    name: str
+    age: int
+
+# TypedDict 实例化：直接构造字典或使用关键字参数（Python 3.9+）
+user_td: UserDict = {"name": "Alice", "age": 25}  # 直接赋值
+user_td2 = UserDict(name="Alice", age=25)  # 关键字构造（Python 3.9+）
+# 注意：TypedDict 不做运行时验证，只是静态类型提示
 ```
 
-| 特性 | dict | @dataclass |
-|------|------|------------|
-| 类型提示 | 无 | 有 |
-| IDE 补全 | 无 | 有 |
-| 代码量 | 少 | 中 |
-| 性能 | 快 | 稍慢 |
+| 特性 | dict | TypedDict | @dataclass |
+|------|------|-----------|------------|
+| 类型提示 | 无 | 有 | 有 |
+| IDE 补全 | 无 | 部分 | 完整 |
+| `__init__` | 无 | 无 | 自动生成 |
+| `__eq__` | 无 | 无 | 自动生成 |
+| 性能 | 快 | 快 | 稍慢 |
+| 可继承 | 否 | 否 | 是 |
 
 ## 常见问题
 
@@ -250,7 +305,7 @@ c = Child(1, 2)
 print(c)  # Child(x=1, y=2)
 ```
 
-### 2. 类方法
+### 2. 类方法/工厂方法
 
 ```python
 from dataclasses import dataclass
@@ -262,17 +317,75 @@ class Person:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Person":
-        """工厂方法"""
+        """工厂方法 - 类似 Builder 模式"""
         return cls(data["name"], data["age"])
 
+    @classmethod
+    def teenage(cls, name: str) -> "Person":
+        """特定场景工厂"""
+        return cls(name, 15)
+
 p = Person.from_dict({"name": "Alice", "age": 25})
+p2 = Person.teenage("Bob")
+```
+
+### 3. 字段排序（field 的 compare 参数）
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Config:
+    name: str
+    sensitive_data: str = field(default="", compare=False)  # 比较时忽略
+    items: list = field(default_factory=list, compare=False)  # 列表不可比较
+
+c1 = Config("test", "secret", [1, 2])
+c2 = Config("test", "different", [3, 4])
+print(c1 == c2)  # True - sensitive_data 和 items 被忽略
+```
+
+## AgentScope 更多 dataclass 示例
+
+**文件**: `src/agentscope/evaluate/_task.py:12`
+
+```python
+@dataclass
+class Task:
+    """评估任务定义"""
+    id: str
+    input: JSONSerializableObject
+    ground_truth: JSONSerializableObject
+    metrics: list[MetricBase]
+    tags: dict[str, str] | None = field(default_factory=lambda: None)
+    metadata: dict[str, Any] | None = field(default_factory=lambda: None)
+
+    async def evaluate(self, solution: SolutionOutput) -> list[MetricResult]:
+        """评估给定的解决方案"""
+        ...
+```
+
+**文件**: `src/agentscope/model/_model_response.py:20`
+
+```python
+@dataclass
+class ChatResponse(DictMixin):
+    """模型聊天响应封装"""
+    content: Sequence[TextBlock | ToolUseBlock | ThinkingBlock | AudioBlock]
+    id: str = field(default_factory=lambda: _get_timestamp(True))
+    created_at: str = field(default_factory=_get_timestamp)
+    type: Literal["chat"] = field(default_factory=lambda: "chat")
+    usage: ChatUsage | None = field(default_factory=lambda: None)
+    metadata: dict[str, JSONSerializableObject] | None = field(
+        default_factory=lambda: None,
+    )
 ```
 
 ## 练习题
 
-1. **创建数据类**：用 `@dataclass` 创建一个 `Message` 类，包含 `sender`, `content`, `timestamp`
+1. **创建数据类**：用 `@dataclass` 创建一个 `Message` 类，包含 `sender`, `content`, `timestamp`，其中 `timestamp` 有默认值
 
-2. **添加默认值**：为 `Message` 的 `timestamp` 添加默认值（当前时间）
+2. **实现不可变配置**：创建一个 `Config` dataclass，包含 `host` 和 `port`，要求不可变
 
 3. **修复错误**：
    ```python
@@ -286,23 +399,30 @@ p = Person.from_dict({"name": "Alice", "age": 25})
    print(c2.items)  # 期望 []，实际是？
    ```
 
+4. **添加 post_init**：为 `Message` 类添加 `__post_init__`，验证 `sender` 不能为空
+
+5. **比较两个 dataclass**：
+   ```python
+   @dataclass
+   class Point:
+       x: int
+       y: int
+       label: str = ""
+
+   p1 = Point(1, 2)
+   p2 = Point(1, 2)
+   print(p1 == p2)  # 输出什么？
+   print(hash(p1) == hash(p2))  # 输出什么？
+   ```
+
 ---
 
 **答案**：
 
 ```python
 # 1.
-from dataclasses import dataclass
-from datetime import datetime
-
-@dataclass
-class Message:
-    sender: str
-    content: str
-    timestamp: str
-
-# 2.
 from dataclasses import dataclass, field
+from datetime import datetime
 
 @dataclass
 class Message:
@@ -310,10 +430,32 @@ class Message:
     content: str
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
+# 2.
+@dataclass(frozen=True)
+class Config:
+    host: str
+    port: int
+
 # 3.
-# 实际输出是 ['a']，因为所有实例共享同一个 list 对象！
+# 实际输出是 ['a']！因为所有实例共享同一个 list 对象
 # 正确做法：
 @dataclass
 class Config:
     items: list = field(default_factory=list)
+
+# 4.
+@dataclass
+class Message:
+    sender: str
+    content: str
+    timestamp: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.sender:
+            raise ValueError("sender cannot be empty")
+
+# 5.
+# True - __eq__ 自动生成，比较所有字段
+# TypeError! - 默认 @dataclass 不生成 __hash__，对象不可哈希
+# 如需哈希：使用 @dataclass(frozen=True) 或 @dataclass(unsafe_hash=True)
 ```

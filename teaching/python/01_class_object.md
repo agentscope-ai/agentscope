@@ -72,7 +72,7 @@ p.greet()  # "Hello, I'm Alice"
 
 ### AgentScope 源码示例
 
-**文件**: `src/agentscope/message/_message_base.py`
+**文件**: `src/agentscope/message/_message_base.py:21-73`
 
 ```python
 class Msg:
@@ -128,30 +128,109 @@ public class Msg {
 }
 ```
 
-### 类型注解
+### 继承与多态
 
 ```python
-# Python 类型注解（类似 Java 泛型但更灵活）
-class Msg:
-    def __init__(
-        self,
-        name: str,                              # → String name
-        content: str | Sequence[ContentBlock],   # → String 或 List<ContentBlock>
-        role: Literal["user", "assistant"],     # → 枚举限制
-        metadata: dict[str, JSONSerializableObject] | None = None,  # → Map<String, Object>
-        timestamp: str | None = None,
-    ) -> None:  # → void（Python 用 None 表示无返回值）
-        ...
+# Python 继承（类似 Java extends）
+class Student(Person):
+    def __init__(self, name: str, age: int, grade: int) -> None:
+        super().__init__(name, age)  # 调用父类构造器
+        self.grade = grade
+
+    # 方法重写（类似 Java @Override）
+    def greet(self) -> str:
+        return f"Hi, I'm {self.name} in grade {self.grade}"
+
+# 多态 - Python 天然支持
+def introduce(person: Person) -> None:
+    print(person.greet())
+
+student = Student("Bob", 15, 9)
+introduce(student)  # "Hi, I'm Bob in grade 9"
 ```
 
-| Python | Java |
-|--------|------|
-| `str` | `String` |
-| `int` | `int` / `Integer` |
-| `list[T]` | `List<T>` |
-| `dict[K, V]` | `Map<K, V>` |
-| `T \| None` | `@Nullable T` |
-| `-> None` | `void` |
+**Java 对照**：
+
+```java
+public class Student extends Person {
+    private int grade;
+
+    public Student(String name, int age, int grade) {
+        super(name, age);
+        this.grade = grade;
+    }
+
+    @Override
+    public String greet() {
+        return "Hi, I'm " + name + " in grade " + grade;
+    }
+}
+
+// Java 多态
+public static void introduce(Person p) {
+    System.out.println(p.greet());
+}
+```
+
+### 抽象类与接口
+
+```python
+from abc import ABC, abstractmethod
+
+# Python 抽象类（类似 Java 抽象类）
+class Animal(ABC):
+    @abstractmethod
+    def speak(self) -> str:
+        """抽象方法 - 子类必须实现"""
+        pass
+
+    def common_method(self) -> str:
+        """具体方法 - 子类可选重写"""
+        return "I am an animal"
+
+# Python 没有接口关键字，用抽象类代替（类似 Java 接口）
+class Flyable(ABC):
+    @abstractmethod
+    def fly(self) -> None:
+        pass
+
+class Bird(Animal, Flyable):
+    def speak(self) -> str:
+        return "Tweet"
+
+    def fly(self) -> None:
+        print("Flying...")
+
+# 使用
+bird = Bird()
+print(bird.speak())     # "Tweet"
+print(bird.common_method())  # "I am an animal"
+bird.fly()              # "Flying..."
+```
+
+**Java 对照**：
+
+```java
+// Java 抽象类
+abstract class Animal {
+    abstract String speak();
+    String commonMethod() { return "I am an animal"; }
+}
+
+// Java 接口
+interface Flyable {
+    void fly();
+}
+
+// Java 多实现
+class Bird extends Animal implements Flyable {
+    @Override
+    String speak() { return "Tweet"; }
+
+    @Override
+    public void fly() { System.out.println("Flying..."); }
+}
+```
 
 ## 实例属性 vs 类属性
 
@@ -159,9 +238,12 @@ class Msg:
 class AgentBase:
     # 类属性 - 所有实例共享（类似 Java static）
     supported_hook_types: list[str] = [
-        "pre_reply",
-        "post_reply",
-        "pre_print",
+        "pre_reply",     # 回复前
+        "post_reply",    # 回复后
+        "pre_print",     # 打印前
+        "post_print",    # 打印后
+        "pre_observe",   # 观察前
+        "post_observe",  # 观察后
     ]
 
     def __init__(self) -> None:
@@ -181,6 +263,9 @@ class AgentBase:
 
 ```python
 class MyClass:
+    def __init__(self, value: int = 0) -> None:
+        self.value = value
+
     # 实例方法 - 第一个参数是 self
     def instance_method(self, x: int) -> int:
         return x * 2
@@ -188,7 +273,7 @@ class MyClass:
     # 类方法 - 第一个参数是 cls（类似 Java static 但能访问类）
     @classmethod
     def from_string(cls, s: str) -> "MyClass":
-        return cls(s)
+        return cls(int(s))
 
     # 静态方法 - 没有任何隐式参数（纯函数）
     @staticmethod
@@ -279,6 +364,8 @@ print(msg)
 # Msg(id='xxx', name='Alice', content='Hello', role='user')
 ```
 
+**常用特殊方法对照**：
+
 | Python | Java | 用途 |
 |--------|------|------|
 | `__init__` | constructor | 初始化 |
@@ -286,6 +373,103 @@ print(msg)
 | `__str__` | toString() | 用户友好字符串 |
 | `__eq__` | equals() | 相等比较 |
 | `__hash__` | hashCode() | 哈希值 |
+| `__len__` | length() | 长度 |
+| `__getitem__` | get(index) | 索引访问 |
+| `__call__` | invoke() | 可调用对象 |
+
+### __call__ 特殊方法
+
+```python
+class AgentBase:
+    """AgentBase 的 __call__ 方法使其可像函数一样调用"""
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> Msg:
+        """可调用对象 - 触发 reply 并处理异常"""
+        self._reply_id = shortuuid.uuid()
+
+        reply_msg: Msg | None = None
+        try:
+            self._reply_task = asyncio.current_task()
+            reply_msg = await self.reply(*args, **kwargs)
+        except asyncio.CancelledError:
+            reply_msg = await self.handle_interrupt(*args, **kwargs)
+        finally:
+            if reply_msg:
+                await self._broadcast_to_subscribers(reply_msg)
+            self._reply_task = None
+
+        return reply_msg
+
+# 使用 - 类似 Java 的 invoke 方法
+# agent() 相当于 agent.__call__()
+```
+
+**Java 对照**：
+
+```java
+// Java 没有直接对应的语法，但类似 Functional Interface
+@FunctionalInterface
+public interface Supplier<T> {
+    T get();
+}
+
+// 或使用 Callable
+public class AgentBase implements Callable<Msg> {
+    @Override
+    public Msg call() {
+        return reply();
+    }
+}
+```
+
+## 数据类（dataclass）
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+
+# Python dataclass - 自动生成 __init__, __repr__, __eq__
+@dataclass
+class User:
+    name: str
+    email: str
+    created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    tags: list[str] = field(default_factory=list)
+
+# 自动生成：
+# - __init__(name, email, created_at, tags)
+# - __repr__()
+# - __eq__()
+
+user = User("Alice", "alice@example.com")
+print(user)
+# User(name='Alice', email='alice@example.com', created_at='...', tags=[])
+```
+
+**Java 对照**：
+
+```java
+// Java 16+ record（最接近 Python dataclass）
+public record User(
+    String name,
+    String email,
+    String createdAt,
+    List<String> tags
+) {
+    // 自动生成：构造器、getter、toString、equals、hashCode
+}
+
+// 或使用 Lombok
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class User {
+    private String name;
+    private String email;
+    private String createdAt;
+    private List<String> tags;
+}
+```
 
 ## 练习题
 
@@ -293,16 +477,26 @@ print(msg)
 
 2. **添加方法**：为 `Agent` 类添加 `__repr__` 方法
 
-3. **类型注解**：为以下 Python 代码添加类型注解：
-   ```python
-   def process_message(msg, config):
-       return msg
-   ```
+3. **继承**：创建一个 `ReActAgent` 类继承 `Agent`，添加 `tools` 属性
 
 4. **@property**：将以下 Java 转为 Python：
    ```java
    public String getName() { return name; }
    public void setName(String name) { this.name = name; }
+   ```
+
+5. **dataclass**：用 `@dataclass` 重写以下类：
+   ```python
+   class Point:
+       def __init__(self, x: float, y: float) -> None:
+           self.x = x
+           self.y = y
+   ```
+
+6. **类型注解**：为以下 Python 代码添加类型注解：
+   ```python
+   def process_message(msg, config):
+       return msg
    ```
 
 ---
@@ -322,8 +516,10 @@ class Agent:
         return f"Agent(name='{self.name}', model='{self.model}')"
 
 # 3.
-def process_message(msg: Msg, config: dict) -> Msg:
-    return msg
+class ReActAgent(Agent):
+    def __init__(self, name: str, model: str, tools: list) -> None:
+        super().__init__(name, model)
+        self.tools = tools
 
 # 4.
 class MyClass:
@@ -334,4 +530,16 @@ class MyClass:
     @name.setter
     def name(self, value: str) -> None:
         self._name = value
+
+# 5.
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: float
+    y: float
+
+# 6.
+def process_message(msg: Msg, config: dict) -> Msg:
+    return msg
 ```

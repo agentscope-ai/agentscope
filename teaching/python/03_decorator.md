@@ -89,43 +89,107 @@ def greet(name):
 greet("Alice")  # ["Hello, Alice", "Hello, Alice", "Hello, Alice"]
 ```
 
-## AgentScope 源码示例
-
-**文件**: `src/agentscope/agent/_agent_base.py`
+### 带 self 参数的装饰器（方法装饰）
 
 ```python
+from functools import wraps
+
+def require_auth(func):
+    """验证用户权限的装饰器"""
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        if not getattr(self, 'is_authenticated', False):
+            raise PermissionError("User not authenticated")
+        return func(self, *args, **kwargs)
+    return wrapper
+
+class SecureAgent:
+    def __init__(self) -> None:
+        self.is_authenticated = False
+
+    @require_auth
+    def send_message(self, msg: str) -> str:
+        return f"Sent: {msg}"
+
+# 使用
+agent = SecureAgent()
+# agent.send_message("Hello")  # PermissionError
+agent.is_authenticated = True
+agent.send_message("Hello")  # "Sent: Hello"
+```
+
+**Java 对照**：
+
+```java
+// Java 方法拦截（需要反射或 AOP 框架）
+@Aspect
+@Component
+public class AuthAspect {
+    @Around("execution(* SecureAgent.sendMessage(..))")
+    public Object checkAuth(ProceedingJoinPoint pjp) throws Throwable {
+        SecureAgent agent = (SecureAgent) pjp.getThis();
+        if (!agent.isAuthenticated()) {
+            throw new PermissionException("User not authenticated");
+        }
+        return pjp.proceed();
+    }
+}
+```
+
+## AgentScope 源码示例
+
+**文件**: `src/agentscope/agent/_agent_base.py:591-620`
+
+```python
+@classmethod
 def register_class_hook(
     cls,
     hook_type: AgentHookTypes,
     hook_name: str,
     hook: Callable,
 ) -> None:
-    """注册类级别钩子
+    """注册类级别钩子的类方法（注意：不是装饰器）
 
-    这本质上是一个修改类行为的"装饰器"
+    这个方法用于注册一个钩子函数到类级别，对所有实例生效。
+    类似 Java 中通过类名注册全局拦截器的概念。
+
+    Args:
+        hook_type: 钩子类型，如 "pre_reply"、"post_reply" 等
+        hook_name: 钩子名称（可覆盖已有钩子）
+        hook: 钩子函数
     """
-    assert hook_type in cls.supported_hook_types
+
+    assert (
+        hook_type in cls.supported_hook_types
+    ), f"Invalid hook type: {hook_type}"
 
     hooks = getattr(cls, f"_class_{hook_type}_hooks")
     hooks[hook_name] = hook
 ```
 
-**文件**: `src/agentscope/_logging.py`
+**Java 对照理解**：
 
-```python
-# 装饰器用于日志记录
-def logger(func):
-    """记录函数执行的日志装饰器"""
-    def wrapper(*args, **kwargs):
-        _logging.info(f"Calling {func.__name__}")
-        try:
-            result = func(*args, **kwargs)
-            _logging.info(f"{func.__name__} succeeded")
-            return result
-        except Exception as e:
-            _logging.error(f"{func.__name__} failed: {e}")
-            raise
-    return wrapper
+```java
+// Java 中类似的全局拦截器注册概念
+public class AgentBase {
+    // 类级别拦截器注册表
+    private static Map<String, Function<AgentContext, AgentContext>> preReplyHooks =
+        new HashMap<>();
+
+    // 注册拦截器（类似 Python 的 register_class_hook）
+    public static void registerPreReplyHook(
+        String name,
+        Function<AgentContext, AgentContext> hook
+    ) {
+        preReplyHooks.put(name, hook);
+    }
+}
+
+// 使用
+AgentBase.registerPreReplyHook("myHook", ctx -> {
+    // 前置处理逻辑
+    return ctx;
+});
 ```
 
 ## @staticmethod 和 @classmethod
@@ -285,7 +349,20 @@ def timing(func):
         return result
     return wrapper
 
-@timing
+# 异步版本
+def async_timing(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        import time
+        import asyncio
+        start = time.time()
+        result = await func(*args, **kwargs)
+        elapsed = time.time() - start
+        print(f"{func.__name__} took {elapsed:.3f}s")
+        return result
+    return wrapper
+
+@async_timing
 async def slow_async_function():
     await asyncio.sleep(1)
     return "Done"
@@ -295,23 +372,44 @@ async def slow_async_function():
 
 ```python
 from functools import wraps
+import time
+import asyncio
 
 def retry(max_attempts: int = 3, delay: float = 1.0):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            last_exception = None
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    if attempt == max_attempts - 1:
-                        raise
-                    time.sleep(delay)
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        time.sleep(delay)
+            raise last_exception
         return wrapper
     return decorator
 
-@retry(max_attempts=3, delay=0.5)
-def unstable_operation():
+# 异步版本
+def async_retry(max_attempts: int = 3, delay: float = 1.0):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(delay)
+            raise last_exception
+        return wrapper
+    return decorator
+
+@async_retry(max_attempts=3, delay=0.5)
+async def unstable_operation():
     # 可能失败的操作
     pass
 ```
@@ -335,6 +433,79 @@ def memoize(func):
 def expensive_computation(n):
     # 耗时的计算
     return n * n
+
+# 注意：memoize 不适合有副作用或依赖外部状态的函数
+```
+
+### 4. 单例装饰器
+
+```python
+from functools import wraps
+
+def singleton(cls):
+    """确保类只有一个实例"""
+    instances = {}
+    @wraps(cls)
+    def get_instance(*args, **kwargs):
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return instances[cls]
+    return get_instance
+
+@singleton
+class Config:
+    def __init__(self):
+        self.settings = {}
+
+# 全局只有一个 Config 实例
+config1 = Config()
+config2 = Config()
+assert config1 is config2  # 同一个对象
+
+# 注意：isinstance(config1, Config) 会报错！
+# 因为 Config 被替换为函数，不再是类
+# isinstance(config1, Config.__wrapped__) 可以工作
+```
+
+**Java 对照**：
+
+```java
+// Java 单例模式
+public class Config {
+    private static Config instance;
+
+    private Config() {}
+
+    public static synchronized Config getInstance() {
+        if (instance == null) {
+            instance = new Config();
+        }
+        return instance;
+    }
+}
+```
+
+## 装饰器与类型注解
+
+```python
+from functools import wraps
+from typing import TypeVar, Callable
+
+F = TypeVar('F', bound=Callable)
+
+def debug(func: F) -> F:
+    """带完整类型注解的装饰器"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        print(f"Calling {func.__name__}")
+        result = func(*args, **kwargs)
+        print(f"{func.__name__} returned {result}")
+        return result
+    return wrapper  # type: ignore
+
+@debug
+def add(a: int, b: int) -> int:
+    return a + b
 ```
 
 ## 练习题
@@ -361,6 +532,10 @@ def expensive_computation(n):
    @b
    def c(): print("C")
    ```
+
+4. **带参数装饰器**：创建一个 `@repeat(n)` 装饰器，将函数执行 n 次并返回结果列表
+
+5. **类方法装饰器**：创建一个 `@logged` 装饰器，用于类方法，记录方法被调用时的参数和返回值
 
 ---
 
@@ -392,10 +567,48 @@ def log(func):
     return wrapper
 
 # 3. 输出:
+# A
 # B
 # C
-# A
 # 因为装饰从下到上执行：先 c = b(c)，再 c = a(c)
 # 调用时：先执行 a 的 wrapper（打印 A），然后调用原 c（已变成 b(c) 的结果）
 # 原 c 被 b 包装，所以先执行 b 的 wrapper（打印 B），然后执行原 c（打印 C）
+
+# 4. @repeat(n) 装饰器
+def repeat(n: int):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            results = []
+            for _ in range(n):
+                results.append(func(*args, **kwargs))
+            return results
+        return wrapper
+    return decorator
+
+@repeat(3)
+def greet(name):
+    return f"Hello, {name}"
+
+print(greet("Alice"))  # ["Hello, Alice", "Hello, Alice", "Hello, Alice"]
+
+# 5. @logged 类方法装饰器
+def logged(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        print(f"Calling {func.__name__} with args={args}, kwargs={kwargs}")
+        result = func(self, *args, **kwargs)
+        print(f"{func.__name__} returned {result}")
+        return result
+    return wrapper
+
+class MyClass:
+    @logged
+    def compute(self, x, y):
+        return x + y
+
+obj = MyClass()
+obj.compute(1, 2)
+# Calling compute with args=(1, 2), kwargs={}
+# compute returned 3
 ```
