@@ -16,7 +16,7 @@ from typing import (
 from pydantic import BaseModel
 
 from .._logging import logger
-from ..formatter import FormatterBase
+from ..formatter import FormatterBase, GeminiChatFormatter
 from ..message import ToolCallBlock, TextBlock, ThinkingBlock
 from ._model_usage import ChatUsage
 from ._model_base import ChatModelBase
@@ -123,6 +123,7 @@ class GeminiChatModel(ChatModelBase):
         self,
         model_name: str,
         api_key: str,
+        context_length: int,
         stream: bool = True,
         max_retries: int = 0,
         fallback_model_name: str | None = None,
@@ -138,6 +139,8 @@ class GeminiChatModel(ChatModelBase):
                 The name of the Gemini model to use, e.g. "gemini-2.5-flash".
             api_key (`str`):
                 The API key for Google Gemini.
+            context_length (`int`):
+                The context length of the model, used in context compression.
             stream (`bool`, default `True`):
                 Whether to use streaming output or not.
             max_retries (`int`, optional):
@@ -168,9 +171,10 @@ class GeminiChatModel(ChatModelBase):
         super().__init__(
             model_name=model_name,
             stream=stream,
+            context_length=context_length,
             max_retries=max_retries,
             fallback_model_name=fallback_model_name,
-            formatter=formatter,
+            formatter=formatter or GeminiChatFormatter(),
         )
 
         self.client = genai.Client(
