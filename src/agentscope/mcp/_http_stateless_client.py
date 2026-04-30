@@ -9,7 +9,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from . import MCPToolFunction
-from ._client_base import MCPClientBase
+from ._client_base import MCPClientBase, MCPSkill
 from ..tool import ToolResponse
 
 
@@ -150,3 +150,17 @@ class HttpStatelessClient(MCPClientBase):
                 res = await session.list_tools()
                 self._tools = res.tools
                 return res.tools
+
+    async def list_skills(self) -> List[MCPSkill]:
+        """List all skills available on the MCP server.
+
+        Returns:
+            `List[MCPSkill]`:
+                A list of available MCP skills.
+        """
+        async with self.get_client() as cli:
+            read_stream, write_stream = cli[0], cli[1]
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                res = await session.list_resources()
+                return self._extract_skills_from_resources(res.resources)

@@ -8,7 +8,7 @@ from typing import List
 import mcp
 from mcp import ClientSession
 
-from ._client_base import MCPClientBase
+from ._client_base import MCPClientBase, MCPSkill
 from ._mcp_function import MCPToolFunction
 from .._logging import logger
 
@@ -108,6 +108,18 @@ class StatefulClientBase(MCPClientBase, ABC):
         # Cache the tools for later use
         self._cached_tools = res.tools
         return res.tools
+
+    async def list_skills(self) -> List[MCPSkill]:
+        """List all skills available on the MCP server.
+
+        Returns:
+            `List[MCPSkill]`:
+                A list of available MCP skills.
+        """
+        self._validate_connection()
+
+        res = await self.session.list_resources()
+        return self._extract_skills_from_resources(res.resources)
 
     async def get_callable_function(
         self,
