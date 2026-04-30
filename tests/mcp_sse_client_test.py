@@ -55,7 +55,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             {
                 "type": "function",
                 "function": {
-                    "name": "tool_1",
+                    "name": "mcp__test_sse_client__tool_1",
                     "description": "A test tool function.",
                     "parameters": {
                         "type": "object",
@@ -120,7 +120,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             ToolCallBlock(
                 id="xx",
                 type="tool_call",
-                name="tool_1",
+                name="mcp__test_sse_client__tool_1",
                 input=json.dumps(
                     {
                         "arg1": "789",
@@ -148,7 +148,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.assertDictEqual(self.toolkit.tools, {})
 
         # Try to add the mcp client
-        await self.toolkit.register_mcp_client(stateless_client)
+        await self.toolkit.register_mcp(stateless_client)
         self.assertListEqual(
             self.toolkit.get_function_schemas(),
             self.schemas,
@@ -161,7 +161,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
 
         # Test stateful client
         stateful_client = HttpStatefulClient(
-            name="test_sse_client_stateful",
+            name="test_sse_client",
             transport="sse",
             url=f"http://127.0.0.1:{self.port}/sse",
         )
@@ -203,7 +203,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             ToolCallBlock(
                 id="xx",
                 type="tool_call",
-                name="tool_1",
+                name="mcp__test_sse_client__tool_1",
                 input=json.dumps(
                     {
                         "arg1": "56",
@@ -231,7 +231,7 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         self.toolkit.clear()
         self.assertDictEqual(self.toolkit.tools, {})
 
-        await self.toolkit.register_mcp_client(stateful_client)
+        await self.toolkit.register_mcp(stateful_client)
         self.assertListEqual(
             self.toolkit.get_function_schemas(),
             self.schemas,
