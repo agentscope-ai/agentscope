@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The base class for MCP clients in AgentScope."""
 from abc import abstractmethod
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, List
+
+import mcp
 
 if TYPE_CHECKING:
     from ..tool import MCPTool
@@ -37,3 +39,7 @@ class MCPClientBase:
             `MCPTool`:
                 A tool object that implements ToolProtocol.
         """
+
+    @abstractmethod
+    async def list_tools(self) -> List[mcp.types.Tool]:
+        """List the MCP tools."""

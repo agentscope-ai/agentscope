@@ -112,7 +112,6 @@ class Toolkit:
         tools: list[ToolBase] | None = None,
         skills: list[str | SkillLoaderBase] | None = None,
         meta_tool_response_template: str = DEFAULT_META_TOOL_RESPONSE_TEMPLATE,
-        mcp_tool_name: str = "mcp__{server}__{tool}",
         skill_viewer_enabled: bool = True,
         skill_instruction_template: str = DEFAULT_SKILL_INSTRUCTION,
     ) -> None:
@@ -125,8 +124,6 @@ class Toolkit:
                 The agent skill directories to be registered.
             meta_tool_response_template (`str`, optional):
                 The template for meta tool responses.
-            mcp_tool_name (`str`, optional):
-                The naming pattern for MCP tools.
             skill_viewer_enabled (`bool`, defaults to `True`):
                 Whether enable the built-in skill viewer tool function.
             skill_instruction_template (`str`):
@@ -165,7 +162,6 @@ class Toolkit:
                     )
 
         self.meta_tool_response_template = meta_tool_response_template
-        self.mcp_tool_name = mcp_tool_name
 
         self.skill_instruction_template = skill_instruction_template
         self.skill_viewer_enabled = skill_viewer_enabled
@@ -616,14 +612,18 @@ class Toolkit:
             # Finally, yield the complete tool response
             yield tool_response
 
-    async def register_mcp_client(
+    async def register_mcp(
         self,
         mcp_client: MCPClientBase,
         group_name: str = "basic",
         enable_funcs: list[str] | None = None,
         disable_funcs: list[str] | None = None,
     ) -> None:
-        """Register tool functions from an MCP client.
+        """Register tools from an MCP client.
+
+        .. note:: When registering tools from an MCP client, the tool will
+         be renamed by template `mcp__{server_name}__{tool_name}` to avoid
+         name conflicts.
 
         Args:
             mcp_client (`MCPClientBase`):
@@ -691,6 +691,7 @@ class Toolkit:
             registered = RegisteredTool(
                 tool=tool_obj,
                 group=group_name,
+                original_name=mcp_tool.name,
             )
 
             self.tools[tool_obj.name] = registered
