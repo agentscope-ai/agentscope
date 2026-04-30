@@ -7,7 +7,7 @@ import shutil
 import time
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import LocalSkillLoader
+from agentscope.skill import LocalSkillLoader
 
 
 class SkillLoaderTest(IsolatedAsyncioTestCase):

@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 
 import aiofiles.os
 
+from ._task import Task
 from ..message import TextBlock, DataBlock, Msg
-from ..tool import PermissionContext
+from ..permission import PermissionContext
 
 
 class ReadCacheEntry(BaseModel):
@@ -110,6 +111,13 @@ class ToolContext(BaseModel):
         )
 
 
+class TaskContext(BaseModel):
+    """The task context."""
+
+    tasks: list[Task] = Field(default_factory=lambda: [])
+    """The task context."""
+
+
 class AgentState(BaseModel):
     """The agent state that should be saved and loaded from storage."""
 
@@ -141,3 +149,9 @@ class AgentState(BaseModel):
     # The tool context
     # =================================================================
     tool_context: ToolContext = Field(default_factory=ToolContext)
+
+    # =================================================================
+    # The tasks context
+    # =================================================================
+    tasks_context: TaskContext = Field(default_factory=TaskContext)
+    """The task context that records the agent tasks."""

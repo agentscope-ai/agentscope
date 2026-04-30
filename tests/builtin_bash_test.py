@@ -4,7 +4,12 @@ import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import ToolChunk, PermissionContext, Bash
+from agentscope.tool import ToolChunk, Bash
+from agentscope.permission import (
+    PermissionContext,
+    PermissionBehavior,
+    PermissionRule,
+)
 from agentscope.message import TextBlock
 
 
@@ -30,7 +35,6 @@ class BashToolTest(IsolatedAsyncioTestCase):
 
     async def test_check_permissions(self) -> None:
         """Test bash tool permission checking."""
-        from agentscope.tool import PermissionBehavior
 
         context = PermissionContext()
         tool_input = {"command": "echo hello"}
@@ -94,8 +98,6 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
 
     async def test_command_substitution_blocked(self) -> None:
         """Test that command substitution is blocked."""
-        from agentscope.tool import PermissionBehavior
-
         test_cases = [
             "ls $(pwd)",
             "rm $(find . -name '*.tmp')",
@@ -112,7 +114,6 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
 
     async def test_control_flow_blocked(self) -> None:
         """Test that control flow structures are blocked."""
-        from agentscope.tool import PermissionBehavior
 
         test_cases = [
             "for f in *.txt; do cat $f; done",
@@ -133,7 +134,6 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
 
     async def test_subshell_blocked(self) -> None:
         """Test that subshells are blocked."""
-        from agentscope.tool import PermissionBehavior
 
         cmd = "(cd /tmp && ls)"
         decision = await self.bash_tool.check_permissions(
@@ -145,7 +145,6 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
 
     async def test_injection_check_before_readonly(self) -> None:
         """Test that injection check runs before read-only check."""
-        from agentscope.tool import PermissionBehavior
 
         # ls is read-only, but $(rm -rf /) is dangerous
         cmd = "ls $(rm -rf /)"
@@ -159,7 +158,6 @@ class BashToolInjectionCheckTest(IsolatedAsyncioTestCase):
 
     async def test_safe_commands_pass(self) -> None:
         """Test that safe commands pass injection check."""
-        from agentscope.tool import PermissionBehavior
 
         safe_commands = [
             "ls -la",
@@ -280,7 +278,6 @@ class BashToolMatchRuleTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions(self) -> None:
         """Test generate_suggestions for bash commands."""
-        from agentscope.tool import PermissionRule
 
         # Test two-word command
         suggestions = self.bash_tool.generate_suggestions(
@@ -326,7 +323,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_rm_root_blocked(self) -> None:
         """Test that rm -rf / is blocked."""
-        from agentscope.tool import PermissionBehavior
 
         cmd = "rm -rf /"
         decision = await self.bash_tool.check_permissions(
@@ -343,7 +339,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_rm_root_children_blocked(self) -> None:
         """Test that rm -rf /usr, /etc, etc. are blocked."""
-        from agentscope.tool import PermissionBehavior
 
         test_cases = [
             "rm -rf /usr",
@@ -368,7 +363,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_rm_home_blocked(self) -> None:
         """Test that rm -rf ~ is blocked."""
-        from agentscope.tool import PermissionBehavior
 
         cmd = "rm -rf ~"
         decision = await self.bash_tool.check_permissions(
@@ -385,7 +379,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_rm_wildcard_blocked(self) -> None:
         """Test that rm -rf * and rm -rf /* are blocked."""
-        from agentscope.tool import PermissionBehavior
 
         test_cases = [
             "rm -rf *",
@@ -408,7 +401,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_rmdir_dangerous_paths_blocked(self) -> None:
         """Test that rmdir on dangerous paths is blocked."""
-        from agentscope.tool import PermissionBehavior
 
         test_cases = [
             "rmdir /",
@@ -426,7 +418,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_safe_rm_commands_pass(self) -> None:
         """Test that safe rm commands pass dangerous removal check."""
-        from agentscope.tool import PermissionBehavior
 
         safe_commands = [
             "rm file.txt",
@@ -450,7 +441,6 @@ class BashToolDangerousRemovalTest(IsolatedAsyncioTestCase):
 
     async def test_compound_commands_with_dangerous_removal(self) -> None:
         """Test compound commands containing dangerous removal."""
-        from agentscope.tool import PermissionBehavior
 
         test_cases = [
             "ls && rm -rf /",

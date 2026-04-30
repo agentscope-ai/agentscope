@@ -8,8 +8,8 @@ import aiofiles.ospath
 import frontmatter
 
 from ._base import SkillLoaderBase
-from ..._logging import logger
-from .._types import Skill
+from .._logging import logger
+from ..skill import Skill
 
 
 class LocalSkillLoader(SkillLoaderBase):

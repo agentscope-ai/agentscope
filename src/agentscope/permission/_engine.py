@@ -8,7 +8,7 @@ from ._decision import PermissionDecision, PermissionBehavior
 from ._types import PermissionMode
 
 if TYPE_CHECKING:
-    from .._base import ToolBase
+    from ..tool import ToolBase
 else:
     ToolBase = "ToolBase"
 

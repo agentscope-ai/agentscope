@@ -10,7 +10,7 @@ import mcp
 
 from ._types import Function
 from ._base import ToolBase
-from ._permission import (
+from ..permission import (
     PermissionBehavior,
     PermissionDecision,
 )

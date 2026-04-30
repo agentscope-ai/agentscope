@@ -7,7 +7,7 @@ import asyncio
 
 from ._bash_parser import BashCommandParser
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,

@@ -6,7 +6,7 @@ import re
 from typing import Any, List
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,

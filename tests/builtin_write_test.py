@@ -4,7 +4,12 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import PermissionContext, PermissionBehavior, Write
+from agentscope.tool import Write
+from agentscope.permission import (
+    PermissionContext,
+    PermissionBehavior,
+    PermissionRule,
+)
 
 
 class WriteToolTest(IsolatedAsyncioTestCase):
@@ -163,7 +168,6 @@ class WriteToolTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions(self) -> None:
         """Test generate_suggestions for file operations."""
-        from agentscope.tool import PermissionRule
 
         # Test suggestion for file in subdirectory
         suggestions = self.write_tool.generate_suggestions(

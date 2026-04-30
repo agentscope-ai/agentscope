@@ -4,7 +4,12 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import PermissionContext, PermissionBehavior, Grep
+from agentscope.tool import Grep
+from agentscope.permission import (
+    PermissionContext,
+    PermissionBehavior,
+    PermissionRule,
+)
 
 
 class GrepToolTest(IsolatedAsyncioTestCase):
@@ -217,7 +222,6 @@ class GrepToolTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions_with_path(self) -> None:
         """Test generate_suggestions for grep with explicit path."""
-        from agentscope.tool import PermissionRule
 
         suggestions = self.grep_tool.generate_suggestions(
             {"path": self.temp_dir, "pattern": "hello"},

@@ -2,14 +2,14 @@
 """The builtin skill viewer tool."""
 from typing import Any, Callable, Awaitable
 
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
 )
 from .._response import ToolChunk
 from .._base import ToolBase
-from .._types import Skill
+from ...skill import Skill
 from ...message import TextBlock
 
 

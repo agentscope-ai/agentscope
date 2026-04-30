@@ -6,13 +6,15 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString, MockModel
 
-from agentscope.event._event import ConfirmResult
 from agentscope.agent import Agent
 from agentscope.model import ChatResponse
 from agentscope.tool import (
     ToolBase,
     Toolkit,
     ToolChunk,
+    RegisteredTool,
+)
+from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
     PermissionContext,
@@ -24,10 +26,10 @@ from agentscope.message import (
     UserMsg,
     ToolResultState,
 )
-from agentscope.tool._types import RegisteredTool
 from agentscope.event import (
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
+    ConfirmResult,
 )
 
 
