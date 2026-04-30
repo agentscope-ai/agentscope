@@ -7,7 +7,7 @@ import asyncio
 
 from ._bash_parser import BashCommandParser
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -128,6 +128,7 @@ easier to review tool calls and give permission.
     is_read_only: bool = False
     is_concurrency_safe: bool = False
     is_external_tool: bool = False
+    is_state_injected: bool = False
 
     def __init__(
         self,

@@ -6,11 +6,10 @@ from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString
 
-from agentscope.tool import SkillLoaderBase, LocalSkillLoader
-from agentscope.tool import Toolkit
-from agentscope.tool import Skill, ToolChunk, ToolResponse
+from agentscope.skill import SkillLoaderBase, LocalSkillLoader, Skill
+from agentscope.tool import Toolkit, ToolChunk, ToolResponse
 from agentscope.message import ToolCallBlock
-from agentscope.agent import AgentState
+from agentscope.state import AgentState
 
 
 def _make_skill(

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """The meta tool class."""
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from pydantic import Field, create_model
 from jinja2 import Template
 
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -15,12 +15,7 @@ from .._base import ToolBase
 from .._types import ToolGroup
 from ...exception import DeveloperOrientedException
 from ...message import TextBlock
-
-
-if TYPE_CHECKING:
-    from ...agent import AgentState
-else:
-    AgentState = Any
+from ...state import AgentState
 
 
 class ResetTools(ToolBase):
@@ -48,6 +43,7 @@ class ResetTools(ToolBase):
     is_read_only: bool = False
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
+    is_state_injected: bool = True
 
     def __init__(
         self,

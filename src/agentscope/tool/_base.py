@@ -6,14 +6,30 @@ from abc import abstractmethod, ABC
 from pathlib import Path
 from typing import AsyncGenerator, Any, List
 
+from pydantic import BaseModel
+
 from ._constants import DEFAULT_DANGEROUS_FILES, DEFAULT_DANGEROUS_DIRECTORIES
-from ._permission import (
+from ..permission import (
     PermissionContext,
     PermissionDecision,
     PermissionRule,
     PermissionBehavior,
 )
 from ._response import ToolChunk
+from ._utils import _remove_title_field
+
+
+class _ParamsBase(BaseModel):
+    """A base class for tool parameters that remove the title field from the
+    exported JSON schema.
+    """
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict:
+        """An override implementation to remove the title field from the
+        exported schema.
+        """
+        return _remove_title_field(super().model_json_schema(*args, **kwargs))
 
 
 class ToolBase(ABC):
@@ -30,10 +46,15 @@ class ToolBase(ABC):
     is_read_only: bool
     """If this tool is read-only, which will be used in the permission
     checking."""
-    is_external_tool: bool
+    is_external_tool: bool = False
     """If this tool is an external tool, which doesn't need to implement the
     __call__ method and the agent will yield the external tool call event."""
-    is_mcp: bool
+    is_state_injected: bool = False
+    """If this tool requires agent state to be injected when called. If `True`,
+    the state will be injected by an argument named `_agent_state`. Note your
+    tool should be able to accept such argument.
+    """
+    is_mcp: bool = False
     """If this tool is an MCP tool, which will be used in the permission"""
     mcp_name: str | None = None
     """The name of the MCP server this tool belongs to, which is required if

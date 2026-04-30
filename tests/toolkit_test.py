@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Generator
 from unittest.async_case import IsolatedAsyncioTestCase
 from utils import AnyString
 
-from agentscope.agent import AgentState
+from agentscope.state import AgentState
 from agentscope.message import (
     TextBlock,
     ToolCallBlock,
@@ -17,9 +17,11 @@ from agentscope.tool import (
     Toolkit,
     ToolBase,
     ToolChunk,
+    ToolResponse,
+)
+from agentscope.permission import (
     PermissionDecision,
     PermissionBehavior,
-    ToolResponse,
 )
 
 

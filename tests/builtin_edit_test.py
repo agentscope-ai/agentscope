@@ -4,7 +4,12 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import PermissionContext, PermissionBehavior, Edit
+from agentscope.tool import Edit
+from agentscope.permission import (
+    PermissionContext,
+    PermissionBehavior,
+    PermissionRule,
+)
 
 
 class EditToolTest(IsolatedAsyncioTestCase):
@@ -156,7 +161,6 @@ class EditToolTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions(self) -> None:
         """Test generate_suggestions for file operations."""
-        from agentscope.tool import PermissionRule
 
         # Test suggestion for file in subdirectory
         suggestions = self.edit_tool.generate_suggestions(

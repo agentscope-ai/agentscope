@@ -16,7 +16,7 @@ from pydantic import (
 )
 
 from ._config import CompressionConfig
-from ._state import AgentState
+from ..state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
@@ -73,8 +73,10 @@ from ..tool import (
     Toolkit,
     ToolChunk,
     ToolChoice,
-    PermissionBehavior,
     ToolResponse,
+)
+from ..permission import (
+    PermissionBehavior,
     PermissionEngine,
     PermissionDecision,
 )

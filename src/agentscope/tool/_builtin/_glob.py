@@ -6,7 +6,7 @@ import re
 from typing import Any, List
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -53,6 +53,7 @@ codebase."""  # ignore: E501
     is_read_only: bool = True
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
+    is_state_injected: bool = False
 
     def __init__(self) -> None:
         """Initialize the glob tool."""

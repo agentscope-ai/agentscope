@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..agent import AgentState
+from ..state import AgentState
 
 
 class StorageBase(ABC):

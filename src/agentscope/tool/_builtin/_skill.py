@@ -2,15 +2,15 @@
 """The builtin skill viewer tool."""
 from typing import Any, Callable, Awaitable
 
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
 )
 from .._response import ToolChunk
 from .._base import ToolBase
-from .._types import Skill
-from ...message import TextBlock
+from ...skill import Skill
+from ...message import TextBlock, ToolResultState
 
 
 class SkillViewer(ToolBase):
@@ -44,6 +44,9 @@ class SkillViewer(ToolBase):
 
     is_external_tool: bool = False
     """The skill viewer is not an external tool."""
+
+    is_state_injected: bool = False
+    """The skill viewer doesn't require state injection."""
 
     is_read_only: bool = True
     """The skill viewer is read-only."""
@@ -99,7 +102,7 @@ class SkillViewer(ToolBase):
                         f"not found.",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
             )
 
         return ToolChunk(content=[TextBlock(text=target_skill.markdown)])

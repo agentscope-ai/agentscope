@@ -4,7 +4,12 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import PermissionContext, PermissionBehavior, Glob
+from agentscope.tool import Glob
+from agentscope.permission import (
+    PermissionContext,
+    PermissionBehavior,
+    PermissionRule,
+)
 
 
 class GlobToolTest(IsolatedAsyncioTestCase):
@@ -171,7 +176,6 @@ class GlobToolTest(IsolatedAsyncioTestCase):
 
     async def test_generate_suggestions_with_path(self) -> None:
         """Test generate_suggestions for glob with explicit path."""
-        from agentscope.tool import PermissionRule
 
         suggestions = self.glob_tool.generate_suggestions(
             {"path": self.temp_dir, "pattern": "*.py"},

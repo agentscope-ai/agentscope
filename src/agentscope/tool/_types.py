@@ -169,22 +169,6 @@ class ToolGroup:
     activated."""
 
 
-@dataclass
-class Skill:
-    """The agent skill class"""
-
-    name: str
-    """The name of the skill."""
-    description: str
-    """The description of the skill."""
-    dir: str
-    """The directory of the agent skill."""
-    markdown: str
-    """The markdown content of the agent skill."""
-    updated_at: float
-    """The last updated time of the skill."""
-
-
 # The function types that can be registered as tools in AgentScope.
 Function: TypeAlias = (
     # Sync function
