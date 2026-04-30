@@ -1095,18 +1095,29 @@ class ReActAgent(ReActAgentBase):
             compression_model = (
                 self.compression_config.compression_model or self.model
             )
-            res = await compression_model(
-                compression_prompt,
-                structured_model=(self.compression_config.summary_schema),
-            )
+            try:
+                res = await compression_model(
+                    compression_prompt,
+                    structured_model=(self.compression_config.summary_schema),
+                )
 
-            # Obtain the structured output from the model response
-            last_chunk = None
-            if compression_model.stream:
-                async for chunk in res:
-                    last_chunk = chunk
-            else:
-                last_chunk = res
+                # Obtain the structured output from the model response
+                last_chunk = None
+                if compression_model.stream:
+                    async for chunk in res:
+                        last_chunk = chunk
+                else:
+                    last_chunk = res
+            except Exception as e:
+                logger.warning(
+                    "Memory compression failed in agent %s due to an error: "
+                    "%s. Skipping compression. Consider using a separate "
+                    "compression_model without thinking mode or streaming "
+                    "enabled.",
+                    self.name,
+                    e,
+                )
+                return
 
             # Format the compressed memory summary
             if last_chunk.metadata:
