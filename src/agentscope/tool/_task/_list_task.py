@@ -2,7 +2,7 @@
 """The task list tool class."""
 
 from ._task_tool_base import _TaskToolBase
-from .. import ToolChunk
+from .._response import ToolChunk
 from .._base import _ParamsBase
 from ...state import AgentState
 from ...exception import DeveloperOrientedException
@@ -64,7 +64,7 @@ Use TaskGet with a specific task ID to view full details including description a
                 else ""
             )
             tasks.append(
-                f"#{task.id} [{task.state}] {task.subject}{owner} {blocked}",
+                f"#{task.id} [{task.state}] {task.subject}{owner}{blocked}",
             )
 
         return ToolChunk(

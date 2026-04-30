@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for plan tools."""
+"""Unit tests for task tools."""
 from unittest.async_case import IsolatedAsyncioTestCase
 
 from utils import AnyString

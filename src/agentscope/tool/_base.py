@@ -46,10 +46,15 @@ class ToolBase(ABC):
     is_read_only: bool
     """If this tool is read-only, which will be used in the permission
     checking."""
-    is_external_tool: bool
+    is_external_tool: bool = False
     """If this tool is an external tool, which doesn't need to implement the
     __call__ method and the agent will yield the external tool call event."""
-    is_mcp: bool
+    is_state_injected: bool = False
+    """If this tool requires agent state to be injected when called. If `True`,
+    the state will be injected by an argument named `_agent_state`. Note your
+    tool should be able to accept such argument.
+    """
+    is_mcp: bool = False
     """If this tool is an MCP tool, which will be used in the permission"""
     mcp_name: str | None = None
     """The name of the MCP server this tool belongs to, which is required if

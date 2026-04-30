@@ -38,7 +38,7 @@ class _TaskUpdateParams(BaseModel):
     )
     add_blocked_by: list[str] | None = Field(
         default=None,
-        description="Task IDs that this task blocks",
+        description="Task IDs that block this task",
     )
     owner: str | None = Field(
         default=None,
@@ -90,8 +90,8 @@ class TaskUpdate(_TaskToolBase):
 - **description**: Change the task description
 - **owner**: Change the task owner (agent name)
 - **metadata**: Merge metadata keys into the task (set a key to null to delete it)
-- **addBlocks**: Mark tasks that cannot start until this one completes
-- **addBlockedBy**: Mark tasks that must complete before this one can start
+- **add_blocks**: Mark tasks that cannot start until this one completes
+- **add_blocked_by**: Mark tasks that must complete before this one can start
 
 ## Status Workflow
 
@@ -107,27 +107,27 @@ Make sure to read a task's latest state using `TaskGet` before updating it.
 
 Mark task as in progress when starting work:
 ```json
-{"taskId": "1", "status": "in_progress"}
+{"task_id": "1", "status": "in_progress"}
 ```
 
 Mark task as completed after finishing work:
 ```json
-{"taskId": "1", "status": "completed"}
+{"task_id": "1", "status": "completed"}
 ```
 
 Delete a task:
 ```json
-{"taskId": "1", "status": "deleted"}
+{"task_id": "1", "status": "deleted"}
 ```
 
 Claim a task by setting owner:
 ```json
-{"taskId": "1", "owner": "my-name"}
+{"task_id": "1", "owner": "my-name"}
 ```
 
 Set up task dependencies:
 ```json
-{"taskId": "2", "addBlockedBy": ["1"]}
+{"task_id": "2", "add_blocked_by": ["1"]}
 ```"""  # noqa: E501
 
     input_schema: dict = _TaskUpdateParams.model_json_schema()
@@ -234,7 +234,7 @@ Set up task dependencies:
             updated_fields.append("status")
             _agent_state.tasks_context.tasks[index].state = status
 
-        if owner:
+        if owner is not None:
             updated_fields.append("owner")
             _agent_state.tasks_context.tasks[index].owner = owner
 

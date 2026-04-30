@@ -22,7 +22,7 @@ from pydantic import (
     create_model,
 )
 
-from ._builtin import ResetTools, Edit, Write, Read, SkillViewer
+from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
 from ._adapters import _FunctionTool
 from ._response import ToolResponse, ToolChunk
@@ -527,9 +527,12 @@ class Toolkit:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
 
-            # TODO: we should be build a mechanism to support state injection
-            #  in the future instead of hard coding here.
-            if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
+            # State injection
+            if (
+                tool_func.is_state_injected
+                and not tool_func.is_mcp
+                and not tool_func.is_external_tool
+            ):
                 kwargs["_agent_state"] = state
 
             if inspect.iscoroutinefunction(tool_func.__call__):
