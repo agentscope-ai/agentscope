@@ -22,6 +22,8 @@ class _TaskToolBase(ToolBase):
 
     is_read_only: bool = False
 
+    is_state_injected: bool = True
+
     is_external_tool: bool = False
 
     is_mcp: bool = False

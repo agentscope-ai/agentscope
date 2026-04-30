@@ -267,9 +267,9 @@ class TestTaskList(IsolatedAsyncioTestCase):
         expected_result = {
             "content": [
                 {
-                    "text": f"#{task1_id} [pending] Task 1 \n"
-                    f"#{task2_id} [pending] Task 2 \n"
-                    f"#{task3_id} [pending] Task 3 ",
+                    "text": f"#{task1_id} [pending] Task 1\n"
+                    f"#{task2_id} [pending] Task 2\n"
+                    f"#{task3_id} [pending] Task 3",
                     "type": "text",
                     "id": AnyString(),
                 },
