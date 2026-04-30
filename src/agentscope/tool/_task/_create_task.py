@@ -76,7 +76,7 @@ All tasks are created with status `pending`.
         description: str,
         metadata: dict[str, Any] | None = None,
     ) -> ToolChunk:
-        """Create the subtask and added it into the agent state."""
+        """Create the subtask and add it into the agent state."""
         if not isinstance(_agent_state, AgentState):
             # Expose error to the developer
             raise DeveloperOrientedException(

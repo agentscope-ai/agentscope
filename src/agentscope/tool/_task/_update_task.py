@@ -54,7 +54,7 @@ class _TaskUpdateParams(BaseModel):
 class TaskUpdate(_TaskToolBase):
     """The tool to update the agent task."""
 
-    name: str = "UpdateTask"
+    name: str = "TaskUpdate"
 
     description: str = """Use this tool to update a task in the task list.
 
@@ -88,7 +88,6 @@ class TaskUpdate(_TaskToolBase):
 - **status**: The task status (see Status Workflow below)
 - **subject**: Change the task title (imperative form, e.g., "Run tests")
 - **description**: Change the task description
-- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., "Running tests")
 - **owner**: Change the task owner (agent name)
 - **metadata**: Merge metadata keys into the task (set a key to null to delete it)
 - **addBlocks**: Mark tasks that cannot start until this one completes
@@ -150,7 +149,7 @@ Set up task dependencies:
         if not isinstance(_agent_state, AgentState):
             # Expose error to the developer
             raise DeveloperOrientedException(
-                f"Error: UpdateTask requires AgentState to be provided, got "
+                f"Error: {self.name} requires AgentState to be provided, got "
                 f"{_agent_state} instead.",
             )
 
