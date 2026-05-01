@@ -46,6 +46,14 @@ def setup_server() -> None:
     sse_server.tool(
         description="A test tool function with embedded resource.",
     )(tool_2)
+
+    @sse_server.resource(
+        "skill://test-streamable-skill/SKILL.md",
+        description="A test streamable HTTP skill.",
+    )
+    async def test_skill() -> str:
+        return "# Test Streamable Skill"
+
     sse_server.run(transport="streamable-http")
 
 
@@ -74,6 +82,18 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
             url=f"http://127.0.0.1:{self.port}/mcp",
         )
 
+        skills = await client.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test-streamable-skill")
+        self.assertEqual(
+            skills[0].description,
+            "A test streamable HTTP skill.",
+        )
+        self.assertEqual(
+            skills[0].uri,
+            "skill://test-streamable-skill/SKILL.md",
+        )
+
         my_tool_1 = await client.get_tool("tool_1")
         res_1: ToolChunk = await my_tool_1(arg1="123", arg2=[1, 2, 3])
         self.assertEqual(
@@ -98,6 +118,18 @@ class StreamableHttpMCPClientTest(IsolatedAsyncioTestCase):
         await client.connect()
 
         self.assertTrue(client.is_connected)
+
+        skills = await client.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test-streamable-skill")
+        self.assertEqual(
+            skills[0].description,
+            "A test streamable HTTP skill.",
+        )
+        self.assertEqual(
+            skills[0].uri,
+            "skill://test-streamable-skill/SKILL.md",
+        )
 
         my_tool_1 = await client.get_tool("tool_1")
         res_3: ToolChunk = await my_tool_1(arg1="12", arg2=[1, 2])
