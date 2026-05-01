@@ -1,5 +1,16 @@
 # 记忆与 RAG 模块深度剖析
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 AgentScope 提供的记忆实现类型（InMemory、SQLAlchemy、Redis、Mem0、ReMe）及其核心差异
+> - [L2 理解] 解释记忆标记系统（HINT、COMPRESSED 等）的设计意图和 RAG 检索流程
+> - [L3 应用] 配置 SimpleKnowledge 和向量存储（MilvusLite / Qdrant）构建可运行的 RAG 检索流程
+> - [L4 分析] 分析异步 SQLAlchemy 记忆实现中会话管理、表结构和并发控制的设计决策
+
+**预计时间**：45 分钟
+**先修要求**：已完成 [核心概念](04_core_concepts.md)
+
 ## 目录
 
 1. [模块概述](#1-模块概述)
@@ -2279,3 +2290,15 @@ class MarkdownReader(DocumentReaderBase):
 *文档版本: 1.1*
 *最后更新: 2026-04-28*
 *基于源码版本: agentscope-1.0.19*
+
+## 本章小结
+
+- Memory 模块提供从 InMemoryMemory（零配置测试）到 AsyncSQLAlchemyMemory（持久化并发）的分层实现
+- 记忆标记系统（HINT / COMPRESSED 等）控制记忆的可见性和压缩策略
+- 长期记忆通过 Mem0（pgvector 语义检索 + 三级降级）和 ReMe（反思记忆 + 渐进式反思）两种范式实现
+- RAG 架构以 KnowledgeBase 为核心，整合文档读取器、向量存储和检索流程
+- 向量存储支持 MilvusLite、Qdrant、MongoDB 等多种后端，通过 VDBStoreBase 抽象统一接口
+
+## 下一章
+
+→ [Pipeline 与基础设施](module_pipeline_infra_deep.md)

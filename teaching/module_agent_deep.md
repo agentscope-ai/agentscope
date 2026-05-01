@@ -49,8 +49,6 @@
 
 ---
 
----
-
 ## 1. 模块概述
 
 智能体模块是 AgentScope 框架的核心模块，负责实现智能体的基本行为和交互逻辑。该模块位于 `/Users/nadav/IdeaProjects/agentscope/src/agentscope/agent/` 目录下，主要包含以下组件：
@@ -90,6 +88,8 @@ src/agentscope/hooks/
 ---
 
 ## 2. 核心类继承体系
+
+> **注**: 本文档中的源码行号（如 `_agent_base.py:528-531`）为参考值，不同版本可能有所变动，建议以方法名定位。
 
 ### 2.1 类图
 
@@ -1909,15 +1909,16 @@ agent.register_instance_hook("pre_reply", "log_hook", log_pre_reply_hook)
 `interrupt()` 方法（`_agent_base.py:528-531`）的实现：
 
 ```python
-async def interrupt(self) -> None:
-    if self._reply_task is not None:
-        self._reply_task.cancel()
+async def interrupt(self, msg: Msg | list[Msg] | None = None) -> None:
+    """Interrupt the current reply process."""
+    if self._reply_task and not self._reply_task.done():
+        self._reply_task.cancel(msg)
 ```
 
 **中断机制原理**：
 
 1. **任务跟踪**: `__call__()` 在调用 `reply()` 前，将异步任务存入 `self._reply_task`
-2. **取消信号**: `interrupt()` 调用 `self._reply_task.cancel()`，向事件循环发送取消信号
+2. **取消信号**: `interrupt()` 调用 `self._reply_task.cancel(msg)`，向事件循环发送取消信号，`msg` 参数会携带到 `CancelledError`
 3. **异常捕获**: `reply()` 内部通过 `try/except asyncio.CancelledError` 捕获取消异常
 4. **清理操作**: `finally` 块中执行清理，包括：
    - 将已处理的消息添加到记忆

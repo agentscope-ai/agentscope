@@ -1,5 +1,19 @@
 # AgentScope 最佳实践指南
 
+## 学习目标
+
+完成本章学习后，你将能够：
+
+1. 使用 ReActAgent 构建符合最佳实践的 Agent 应用
+2. 正确配置模型参数（DashScope、OpenAI、Ollama 等），包括速率限制与成本优化
+3. 选择合适的部署模式（本地、Kubernetes、Knative）并实现生产级配置
+4. 运用 MsgHub 和 Pipeline 实现多 Agent 协作模式
+5. 实现 RAG + Agent 结合的检索增强生成架构
+6. 应用 LLM API 成本优化策略（Token 精简、语义缓存、模型分级）
+7. 配置 OpenTelemetry 追踪和生产就绪检查清单
+
+---
+
 本文档汇总了 AgentScope 官方文档中的最佳实践，涵盖开发、部署、性能优化和安全等关键领域。
 **所有最佳实践均附有源码引用，便于深入理解框架设计原理。**
 
@@ -255,7 +269,8 @@ res = await agent(msg_input, structured_model=ToyBenchAnswerFormat)
 ### 2.2 本地开发部署
 
 ```bash
-# 开发测试
+# 开发测试（需要安装 agentscope-runtime 包）
+# 注意：agentscope chat/deploy/studio 等 CLI 命令属于 agentscope-runtime 包
 agentscope chat app_agent.py
 
 # 部署为本地服务
@@ -601,7 +616,7 @@ from agentscope.model import OllamaChatModel
 
 OllamaChatModel(
     model_name="llama2",
-    client_kwargs={"base_url": "http://localhost:11434/v1"}
+    host="http://localhost:11434"
 )
 ```
 
@@ -638,14 +653,14 @@ dependencies:
 将 ACEBench/RayEvaluator 集成到 CI：
 
 ```bash
-# 在合并前运行评估
+# 在合并前运行评估（需要 agentscope-runtime 包）
 agentscope evaluate --benchmark ACEBench --threshold 0.8
 ```
 
 ### 8.3 容器镜像构建
 
 ```bash
-agentscope deploy k8s app_agent.py \
+agentscope deploy k8s app_agent.py \  # 需要 agentscope-runtime 包
   --image-name agent_app \
   --image-tag linux-amd64-$(git rev-parse --short HEAD) \
   --registry-url your-registry.com \
@@ -877,10 +892,9 @@ from agentscope.tool import Toolkit
 
 # 注意: agentscope.rag 是可选模块，需要额外安装
 try:
-    from agentscope.rag import KnowledgeBase, Retriever
+    from agentscope.rag import KnowledgeBase
 except ImportError:
     KnowledgeBase = None  # type: ignore
-    Retriever = None  # type: ignore
     print("Warning: agentscope.rag not installed. RAG features unavailable.")
 
 def make_model():
@@ -1002,26 +1016,20 @@ from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 
 class LLMRateLimiter:
-    def __init__(self, tokens_per_minute: int, requests_per_minute: int):
-        self.tpm = tokens_per_minute
-        self.rpm = requests_per_minute
-        self.tokens_used = []
-        self.requests_made = []
+    def __init__(self, max_tokens_per_minute=100000):
+        self.max_tokens = max_tokens_per_minute
+        self.usage_log = []  # List of (timestamp, token_count) tuples
 
-    async def check_limit(self, tokens: int, user_id: str) -> bool:
+    async def check_limit(self, tokens: int):
         now = time.time()
-        # 清理过期记录
-        self.tokens_used = [t for t in self.tokens_used if now - t < 60]
-        self.requests_made = [r for r in self.requests_made if now - r < 60]
-
-        if len(self.requests_made) >= self.rpm:
-            return False
-        if sum(self.tokens_used) + tokens > self.tpm:
-            return False
-
-        self.tokens_used.append(tokens)
-        self.requests_made.append(now)
-        return True
+        # 清理超过 60 秒的记录
+        self.usage_log = [(ts, cnt) for ts, cnt in self.usage_log if now - ts < 60]
+        # 检查是否超限
+        total = sum(cnt for _, cnt in self.usage_log)
+        if total + tokens > self.max_tokens:
+            wait_time = 60 - (now - self.usage_log[0][0])
+            await asyncio.sleep(wait_time)
+        self.usage_log.append((now, tokens))
 ```
 
 ---
@@ -1031,7 +1039,7 @@ class LLMRateLimiter:
 ### 14.1 Knative 自动扩缩容
 
 ```bash
-agentscope deploy knative app_agent.py \
+agentscope deploy knative app_agent.py \  # 需要 agentscope-runtime 包
   --image-name agent_app \
   --image-tag v1.0 \
   --registry-url your-registry.com \
@@ -1121,3 +1129,19 @@ result = await app.deploy(
 - [Kellton: LLM Cost Optimization](https://www.kellton.com/kellton-tech-blog/llm-cost-optimization-api-burn-rate)
 - [Redis: LLM Token Optimization](https://redis.io/blog/llm-token-optimization-speed-up-apps/)
 - [Portkey: Rate Limiting for LLM](https://portkey.ai/blog/rate-limiting-for-llm-applications)
+
+---
+
+## 本章小结
+
+本章涵盖了 AgentScope 开发到生产的完整最佳实践体系：
+
+1. **开发实践**：使用 ReActAgent + 统一 Formatter + Toolkit 构建标准 Agent；通过 `generate_kwargs` 精细控制模型行为；利用 `stream_printing_messages` 实现流式响应
+2. **部署实践**：根据场景选择 Local/Kubernetes/Knative/ModelStudio 部署模式；生产环境必须使用 Redis 替代 InMemoryMemory
+3. **性能优化**：异步执行避免阻塞、流式模式减少感知延迟、模型分级降低成本
+4. **安全实践**：密钥使用环境变量或 STS 临时凭证、工具执行使用沙箱隔离、网络 VPC 隔离
+5. **多 Agent 协作**：MsgHub 实现透明的消息广播、Pipeline 支持顺序/并行组合、辩论和投票等高级模式
+6. **RAG 集成**：Agentic RAG 架构结合查询代理、检索代理、生成代理三层结构
+7. **成本与速率控制**：Token 级/请求级/成本级三层限流策略、语义缓存减少重复调用
+
+**下一步建议**：结合 `examples/` 目录中的实际案例进行动手实践，将最佳实践应用到具体项目中。

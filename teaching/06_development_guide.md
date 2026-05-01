@@ -2,6 +2,16 @@
 
 > **版本提示**: 本章基于 AgentScope v1.0.19 编写。v2.0 正在开发中，将有 breaking changes。
 
+## 学习目标
+
+- 掌握 AgentScope 项目的开发环境搭建与依赖安装
+- 理解代码规范（black、isort、flake8、mypy）与 pre-commit hooks 的使用
+- 学会使用 pytest 编写和运行单元测试与集成测试
+- 掌握 ReActAgent、DeepResearchAgent 的正确构造方式（sys_prompt、formatter、toolkit）
+- 理解 SequentialPipeline、FanoutPipeline 的正确使用方式（直接实例化，非上下文管理器）
+- 了解 Toolkit.register_tool_function() 注册工具的方法
+- 了解 Voice Agent 开发与调试技巧
+
 ## 6.1 项目开发流程
 
 ```
@@ -146,7 +156,9 @@ tests/
 # tests/agent/test_react_agent.py
 
 import pytest
-from agentscope import agent
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
 from agentscope.model import MockModel  # 测试用 mock
 
 class TestReActAgent:
@@ -169,9 +181,12 @@ class MockModel:
     @pytest.fixture
     def agent(self, mock_model):
         """创建测试 Agent"""
-        return agent.ReActAgent(
+        return ReActAgent(
             name="测试助手",
-            model=mock_model
+            model=mock_model,
+            sys_prompt="你是一个测试助手。",
+            formatter=OpenAIChatFormatter(),
+            toolkit=Toolkit(),
         )
 
     def test_basic_reply(self, agent):
@@ -184,10 +199,13 @@ class MockModel:
         from agentscope.memory import InMemoryMemory
 
         memory = InMemoryMemory()
-        test_agent = agent.ReActAgent(
+        test_agent = ReActAgent(
             name="测试助手",
             model=mock_model,
-            memory=memory
+            memory=memory,
+            sys_prompt="你是一个测试助手。",
+            formatter=OpenAIChatFormatter(),
+            toolkit=Toolkit(),
         )
 
         test_agent("我叫张三")
@@ -207,7 +225,8 @@ class TestDeepResearchAgent:
     @pytest.fixture
     def research_agent(self, mock_model):
         """创建深度研究 Agent"""
-        return agent.DeepResearchAgent(
+        from agentscope.agent import DeepResearchAgent
+        return DeepResearchAgent(
             name="研究助手",
             model=mock_model,
             max_depth=2
@@ -277,9 +296,16 @@ import logging
 logging.getLogger("agentscope").setLevel(logging.DEBUG)
 
 # 打印模型输入输出
-agent = agent.ReActAgent(
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+agent = ReActAgent(
     name="助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
+    sys_prompt="你是一个有帮助的助手。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=Toolkit(),
 )
 
 # 添加回调查看调用
@@ -313,7 +339,7 @@ Studio 提供：
 
 | 问题 | 排查方法 |
 |------|----------|
-| Agent 不调用工具 | 检查 tools 参数是否正确传递，工具是否有 `@function` 装饰器 |
+| Agent 不调用工具 | 检查 toolkit 是否正确传递，工具是否通过 `Toolkit.register_tool_function()` 注册 |
 | 记忆不生效 | 检查 memory 参数是否设置 |
 | API 调用失败 | 检查 api_key 环境变量和网络 |
 | 响应格式错误 | 检查 model 的 formatter 配置 |
@@ -329,9 +355,9 @@ Studio 提供：
 ```python
 from agentscope.pipeline import SequentialPipeline
 
-with SequentialPipeline(agents=[researcher, writer]) as seq:
-    research = researcher("研究 AI 趋势")
-    article = writer(f"基于研究写文章: {research}")
+seq = SequentialPipeline(agents=[researcher, writer])
+research = researcher("研究 AI 趋势")
+article = writer(f"基于研究写文章: {research}")
 ```
 
 ### FanoutPipeline（广播模式）
@@ -341,8 +367,8 @@ with SequentialPipeline(agents=[researcher, writer]) as seq:
 ```python
 from agentscope.pipeline import FanoutPipeline
 
-with FanoutPipeline(agents=[agent1, agent2, agent3]) as fanout:
-    results = fanout("并行执行这个任务")
+fanout = FanoutPipeline(agents=[agent1, agent2, agent3])
+results = fanout("并行执行这个任务")
 ```
 
 ### ChatRoom（聊天室模式）
@@ -382,10 +408,16 @@ async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
 ### 创建带语音输出的 Agent
 
 ```python
-agent = agent.ReActAgent(
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.tool import Toolkit
+
+agent = ReActAgent(
     name="语音助手",
     model=DashScopeChatModel(model_name="qwen-audio"),
-    tools=[...],
+    sys_prompt="你是一个语音助手。",
+    formatter=DashScopeChatFormatter(),
+    toolkit=Toolkit(),
     speech={
         "tts_api": "dashscope",  # 或 "openai", "german_tts"
         "voice": "female_2",
@@ -398,11 +430,22 @@ agent = agent.ReActAgent(
 
 ```python
 from agentscope.agent import DeepResearchAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+# 注意：DeepResearchAgent 是一个高级模式示例，非核心库类
+# 它展示了 ReActAgent 的深度研究扩展
+toolkit = Toolkit()
+toolkit.register_tool_function(tavily_search)
+toolkit.register_tool_function(tavily_extract)
+toolkit.register_tool_function(text_file)
 
 research_agent = DeepResearchAgent(
     name="深度研究助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[tavily_search, tavily_extract, text_file],
+    sys_prompt="你是一个深度研究助手，负责进行全面的信息收集和分析。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
     max_depth=3,
     max_tokens=100000
 )
@@ -455,3 +498,16 @@ git commit -m "test(memory): add unit tests for RedisMemory"
 ## 6.9 下一步
 
 - [第七章：Java 开发者视角](07_java_comparison.md) - 对比学习，加深理解
+
+---
+
+## 本章总结
+
+- **环境配置**: 通过 `pip install -e ".[dev]"` 安装开发依赖，使用 `pre-commit install` 设置自动检查
+- **代码规范**: 使用 black（格式化）、isort（import 排序）、flake8（风格检查）、mypy（类型检查）
+- **测试**: 基于 pytest + pytest-asyncio，通过 `pytest tests/` 运行测试，支持覆盖率报告
+- **ReActAgent 构造**: 必须提供 `sys_prompt`、`formatter`、`toolkit`（非 `tools`）三个核心参数
+- **工具注册**: 使用 `Toolkit.register_tool_function()` 注册工具函数，而非 `@function` 装饰器
+- **Pipeline 使用**: SequentialPipeline 和 FanoutPipeline 通过直接实例化使用，不支持上下文管理器
+- **调试**: 通过 `agentscope.init(debug=True)` 启用调试模式，AgentScope Studio 提供可视化调试
+- **Voice Agent**: ReActAgent 通过 `speech` 参数支持 TTS 语音输出

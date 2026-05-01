@@ -1,5 +1,15 @@
 # 第四章：核心概念
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L2 理解] 解释 Agent、Model、Tool、Memory 四大核心概念及其关系
+> - [L3 应用] 使用正确的参数创建 ReActAgent 并注册工具
+> - [L4 分析] 比较 Pipeline 编排模式的适用场景
+
+**预计时间**：30 分钟
+**先修要求**：已完成 [第三章：快速入门](03_quickstart.md)
+
 ## 4.1 概念总览
 
 AgentScope 有四个核心概念，理解它们就掌握了框架的精髓：
@@ -62,13 +72,20 @@ ReAct = **Re**asoning + **Act**ing
 ```python
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
+from agentscope.tool import Toolkit
+from agentscope.formatter import OpenAIFormatter
+
+# 创建 Toolkit 并注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(tool_func=my_tool_func, group_name="basic")
 
 my_agent = ReActAgent(
     name="助手",           # Agent 名称 (类似 Bean name)
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[...],           # 可用工具列表
+    toolkit=toolkit,       # 工具箱（通过 Toolkit 注册）
     memory=...,            # 记忆模块
-    sys_prompt="你是一个有帮助的助手"  # 系统提示词
+    sys_prompt="你是一个有帮助的助手",  # 系统提示词（必填）
+    formatter=OpenAIFormatter(),  # 消息格式化器（必填）
 )
 ```
 
@@ -827,12 +844,24 @@ class RegisteredToolFunction:
 
 ```python
 from agentscope.tool import (
+    Toolkit,
     execute_python_code, execute_shell_command,
     view_text_file, write_text_file, insert_text_file,
     dashscope_text_to_image, dashscope_image_to_text,
 )
 
-my_agent = ReActAgent(tools=[execute_python_code, execute_shell_command])
+# 创建 Toolkit 并注册内置工具
+toolkit = Toolkit()
+toolkit.register_tool_function(tool_func=execute_python_code, group_name="basic")
+toolkit.register_tool_function(tool_func=execute_shell_command, group_name="basic")
+
+my_agent = ReActAgent(
+    name="代码助手",
+    model=OpenAIChatModel(model_name="gpt-4o"),
+    toolkit=toolkit,
+    sys_prompt="你是一个代码执行助手",
+    formatter=OpenAIFormatter(),
+)
 ```
 
 ### 4.4.5 自定义工具开发
@@ -1587,22 +1616,30 @@ MsgHub 用于多个 Agent 之间的消息传递和协调。
 ```python
 from agentscope.pipeline import MsgHub
 from agentscope.agent import ReActAgent
+from agentscope.tool import Toolkit
+from agentscope.formatter import OpenAIFormatter
 
-# 创建多个 Agent
-agent_a = ReActAgent(name="A", model=..., tools=...)
-agent_b = ReActAgent(name="B", model=..., tools=...)
-agent_c = ReActAgent(name="C", model=..., tools=...)
+# 创建 Toolkit
+toolkit = Toolkit()
+
+# 创建多个 Agent（必须传入 sys_prompt 和 formatter）
+agent_a = ReActAgent(name="A", model=..., toolkit=toolkit,
+                     sys_prompt="你是 Agent A", formatter=OpenAIFormatter())
+agent_b = ReActAgent(name="B", model=..., toolkit=toolkit,
+                     sys_prompt="你是 Agent B", formatter=OpenAIFormatter())
+agent_c = ReActAgent(name="C", model=..., toolkit=toolkit,
+                     sys_prompt="你是 Agent C", formatter=OpenAIFormatter())
 
 # 广播消息模式 (默认)
 async with MsgHub(participants=[agent_a, agent_b, agent_c]):
-    agent_a("大家好！")  # B 和 C 都能收到
-    agent_b("收到！")
-    agent_c("我也收到！")
+    await agent_a("大家好！")  # B 和 C 都能收到
+    await agent_b("收到！")
+    await agent_c("我也收到！")
 
 # 关闭自动广播
 async with MsgHub(participants=[agent_a, agent_b], enable_auto_broadcast=False):
-    result_a = agent_a("分析一下销售数据")
-    result_b = agent_b(f"基于这个分析写报告: {result_a}")
+    result_a = await agent_a("分析一下销售数据")
+    result_b = await agent_b(f"基于这个分析写报告: {result_a}")
 ```
 
 ### Java 对比
@@ -1662,12 +1699,20 @@ public class OrderEventListener {
 #### ReActAgent - 通用推理任务
 ```python
 # 最佳场景：需要工具调用、多轮对话、复杂推理的任务
+from agentscope.tool import Toolkit
+from agentscope.formatter import OpenAIFormatter
+
+toolkit = Toolkit()
+toolkit.register_tool_function(tool_func=search_tool, group_name="basic")
+toolkit.register_tool_function(tool_func=code_executor, group_name="basic")
+
 agent = ReActAgent(
     name="研究助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[search_tool, code_executor],
+    toolkit=toolkit,
     memory=InMemoryMemory(),
-    sys_prompt="你是一个研究助手"
+    sys_prompt="你是一个研究助手",
+    formatter=OpenAIFormatter(),
 )
 
 # 支持的高级功能
@@ -1731,10 +1776,10 @@ while True:
 #### 1. 合理配置 max_iters
 ```python
 # 简单任务：减少迭代次数提高响应速度
-agent = ReActAgent(..., max_iters=3)
+agent = ReActAgent(..., max_iters=3, sys_prompt="...", formatter=OpenAIFormatter())
 
 # 复杂任务：增加迭代次数确保完成
-agent = ReActAgent(..., max_iters=15)
+agent = ReActAgent(..., max_iters=15, sys_prompt="...", formatter=OpenAIFormatter())
 ```
 
 #### 2. 使用记忆压缩处理长对话
@@ -1745,7 +1790,8 @@ compression_config = CompressionConfig(
     trigger_threshold=4000,
     keep_recent=5,  # 保留最近5条消息对
 )
-agent = ReActAgent(..., compression_config=compression_config)
+agent = ReActAgent(..., compression_config=compression_config,
+                   sys_prompt="...", formatter=OpenAIFormatter())
 ```
 
 #### 3. 并行工具调用加速
@@ -1753,7 +1799,9 @@ agent = ReActAgent(..., compression_config=compression_config)
 # 多个独立工具调用时启用并行
 agent = ReActAgent(
     ...,
-    parallel_tool_calls=True  # 加速独立工具执行
+    parallel_tool_calls=True,  # 加速独立工具执行
+    sys_prompt="...",
+    formatter=OpenAIFormatter(),
 )
 ```
 
@@ -1775,15 +1823,21 @@ data = result.metadata  # dict 格式的 TaskResult
 
 #### 陷阱1: 忘记工具函数返回格式
 ```python
-# 错误示例
-@function
-def bad_tool() -> dict:  # 应该返回 str
+# 错误示例：工具函数返回普通 dict（应该返回 ToolResponse 或 str）
+def bad_tool() -> dict:
     return {"result": "value"}
 
-# 正确示例
-@function
-def good_tool() -> str:
-    return json.dumps({"result": "value"})
+# 正确示例：返回 ToolResponse
+from agentscope.tool import ToolResponse
+from agentscope.message import TextBlock
+import json
+
+def good_tool() -> ToolResponse:
+    return ToolResponse(content=[TextBlock(type="text", text=json.dumps({"result": "value"}))])
+
+# 注册到 Toolkit
+toolkit = Toolkit()
+toolkit.register_tool_function(tool_func=good_tool, group_name="basic")
 ```
 
 #### 陷阱2: 阻塞事件循环
@@ -1810,7 +1864,9 @@ agent = ReActAgent(
         enable=True,
         agent_token_counter=token_counter,
         trigger_threshold=3000,
-    )
+    ),
+    sys_prompt="...",
+    formatter=OpenAIFormatter(),
 )
 ```
 
@@ -1827,7 +1883,26 @@ result = await agent.reply(
 # Agent 会自动注册该工具
 ```
 
-## 4.10 下一步
+## 4.10 本章小结
+
+本章介绍了 AgentScope 的四大核心概念：
+
+| 概念 | 核心要点 |
+|------|---------|
+| **Agent** | ReActAgent 通过 ReAct 循环实现推理-行动-观察，创建时必须传入 `sys_prompt`、`formatter` 和 `toolkit` |
+| **Model** | 统一的 `ChatModelBase` 抽象层，支持 OpenAI / Anthropic / DashScope / Gemini / Ollama 等多种模型 |
+| **Tool** | 通过 `Toolkit` 注册和管理工具函数，自动从函数签名生成 JSON Schema |
+| **Memory** | 分为短期记忆（InMemory / Redis / SQLAlchemy）和长期记忆（Mem0 / ReMe），支持 Marks 标签和压缩机制 |
+
+**关键记忆点：**
+- ReActAgent 构造函数的必填参数：`name`、`model`、`sys_prompt`、`formatter`
+- 工具通过 `Toolkit.register_tool_function()` 注册，不是通过 `tools=[...]` 列表
+- Agent 调用必须使用 `await`（异步）
+- 记忆压缩通过 `CompressionConfig` 配置
+
+---
+
+## 4.11 下一步
 
 - [第五章：架构设计](05_architecture.md) - 深入理解模块设计
 - [第六章：开发指南](06_development_guide.md) - 掌握调试和测试

@@ -1,5 +1,12 @@
 # 第二章：环境搭建
 
+## 学习目标
+
+- 能够正确安装和配置 Python 开发环境（conda 或 venv）
+- 掌握 AgentScope 的多种安装方式及其可选依赖组
+- 完成 IDE 配置，能够运行验证脚本确认安装成功
+- 正确配置 LLM API Keys，理解环境变量和代码配置两种方式
+
 ## 2.1 Python 环境准备
 
 作为 Java 开发者，如果你熟悉 Maven/Gradle，Python 的包管理会让你想起 Node.js 的 npm。
@@ -52,13 +59,16 @@ pip install agentscope[full]
 # 仅核心功能
 pip install agentscope
 
-# 带 OpenAI (你需要这个来使用 GPT 模型)
+# 带扩展模型支持 (Ollama + Gemini)
 pip install agentscope[models]
+
+# 带记忆后端 (Redis / Mem0 / Reme)
+pip install agentscope[memory]
 
 # 带 Redis 记忆
 pip install agentscope[redis_memory]
 
-# 带 RAG 功能
+# 带 RAG 功能 (文档读取器 + 向量数据库)
 pip install agentscope[rag]
 
 # 带实时语音
@@ -66,6 +76,12 @@ pip install agentscope[realtime]
 
 # 带调优功能
 pip install agentscope[tuner]
+
+# 带 A2A 协议支持
+pip install agentscope[a2a]
+
+# 带评估功能
+pip install agentscope[evaluate]
 ```
 
 ## 2.3 IDE 设置
@@ -198,6 +214,16 @@ my_agent_project/
 | `Maven pom.xml` | `pyproject.toml` / `requirements.txt` | - |
 | `mvn test` | `pytest` / `python -m unittest` | `pytest tests/` |
 
-## 2.8 下一步
+## 2.8 总结
+
+本章完成了 AgentScope 开发环境的搭建：
+
+1. **Python 环境**：推荐使用 conda 管理 Python 3.10+ 环境，类似 Java 的 jenv
+2. **安装方式**：`pip install agentscope` 生产安装，`pip install -e ".[dev]"` 开发模式安装
+3. **可选依赖**：`[full]` 完整安装，`[models]` 扩展模型，`[rag]` RAG 功能，`[realtime]` 实时语音等
+4. **IDE 配置**：IntelliJ IDEA 和 VS Code 均可，需配置 Python SDK
+5. **API Keys**：通过环境变量配置（推荐）或在代码中设置
+
+## 2.9 下一步
 
 - [第三章：快速入门](03_quickstart.md) - 构建你的第一个 Agent

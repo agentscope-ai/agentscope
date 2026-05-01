@@ -1,5 +1,19 @@
 # 第五章：架构设计
 
+## 学习目标
+
+完成本章学习后，你将能够：
+
+1. 理解 AgentScope 的分层模块化架构（应用层、服务层、基础设施层）
+2. 掌握 Agent 继承体系（AgentBase → ReActAgentBase → ReActAgent）及其元类 Hook 机制
+3. 解释 ReActAgent 的完整调用链（reply → _reasoning → _acting 循环）
+4. 理解 Model、Tool、Memory、Pipeline、Formatter 各模块的职责与交互方式
+5. 使用 MsgHub 和 Pipeline（sequential/fanout）实现多 Agent 协作
+6. 了解各 Agent 类型（ReActAgent、UserAgent、RealtimeAgent、A2AAgent）的适用场景
+7. 阅读 AgentScope 源码时知道从哪些文件入手
+
+---
+
 ## 5.1 整体架构
 
 AgentScope 采用**分层模块化架构**，设计原则类似 Java 的 Spring Framework：
@@ -654,23 +668,24 @@ class RealtimeAgent(StateModule):
 
 ### 注册自定义组件
 
-AgentScope 使用**注册表模式**扩展组件：
+AgentScope 支持通过直接继承和实例化扩展组件：
 
 ```python
-# 注册自定义 Model
-from agentscope.model import model_register
+# 创建自定义 Model
+from agentscope.model import ChatModelBase
 
-@model_register("my_custom_model")
-class MyCustomModel(ModelWrapperBase):
-    def __init__(self, config):
-        super().__init__(config)
+class MyCustomModel(ChatModelBase):
+    def __init__(self, model_name: str, api_key: str, **kwargs):
+        super().__init__(**kwargs)
+        self.model_name = model_name
+        self.api_key = api_key
 
-    def __call__(self, messages):
-        # 实现
+    async def __call__(self, messages, **kwargs):
+        # 实现具体 API 调用
         pass
 
-# 使用
-model = agentscope.model.get_model("my_custom_model", config={...})
+# 使用 - 直接实例化
+model = MyCustomModel(model_name="my-model", api_key="sk-xxx")
 ```
 
 ### Java 对比
@@ -1732,23 +1747,22 @@ AgentScope 支持语音交互，是 2.0 时代的核心方向：
 ### 语音输出配置
 
 ```python
-from agentscope import agent
+from agentscope.agent import ReActAgent
 from agentscope.model import DashScopeChatModel
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.tool import Toolkit
 
 # 创建带语音输出的 Agent
-voice_agent = agent.ReActAgent(
+voice_agent = ReActAgent(
     name="语音助手",
-    model=DashScopeChatModel(model_name="qwen-audio"),
-    tools=[...],
-    speech={  # 语音配置
-        "tts_api": "dashscope",  # 或 "openai", "german_tts"
-        "voice": "female_2",
-        "stream": True  # 流式输出
-    }
+    model=DashScopeChatModel(model_name="qwen-audio", api_key="your-api-key"),
+    sys_prompt="你是一个语音助手，用简洁自然的方式回答问题。",
+    formatter=DashScopeChatFormatter(),
+    toolkit=Toolkit(),
 )
 
 # 对话时自动生成语音
-response = voice_agent("请介绍一下你自己")
+response = await voice_agent(Msg("user", "请介绍一下你自己", "user"))
 ```
 
 ### TTS 支持
@@ -1777,11 +1791,9 @@ Phase 3: Real-time Multimodal Models
 | Agent 类型 | 说明 | 引入版本 |
 |-----------|------|----------|
 | `ReActAgent` | 核心推理 Agent | v1.0 |
-| `DialogAgent` | 简单对话 Agent | v1.0 |
-| `DictDialogAgent` | 字典式对话 Agent | v1.0 |
+| `UserAgent` | 用户交互 Agent | v1.0 |
 | `DeepResearchAgent` | 深度研究 Agent | v1.0.19 |
 | `RealtimeAgent` | 实时语音 Agent | v2.0 (规划中) |
-| `UserAgent` | 用户交互 Agent | v1.0 |
 | `A2AAgent` | Agent-to-Agent 通信 | v1.0 |
 
 ## 5.13 下一步
@@ -1814,7 +1826,21 @@ Phase 3: Real-time Multimodal Models
 │     MsgHub (订阅者广播) + Pipeline (顺序/并行)                │
 │                                                              │
 │  4. 扩展性设计                                              │
-│     注册表模式支持自定义 Model, Agent, Tool                  │
+│     继承 ChatModelBase 实现自定义 Model, Agent, Tool         │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 本章小结
+
+本章深入剖析了 AgentScope 的架构设计，核心要点包括：
+
+1. **分层架构**：应用层（examples/）→ 服务层（src/ 各模块）→ 基础设施层（HTTP/asyncio/Redis），层次清晰、职责分明
+2. **Agent 继承体系**：AgentBase（Hook + 广播）→ ReActAgentBase（推理 + 行动抽象）→ ReActAgent（完整实现），通过元类 `_AgentMeta` 和 `_ReActAgentMeta` 实现 AOP 风格的 Hook 拦截
+3. **核心调用链**：`__call__` → `reply` → `_reasoning`（格式化 + 模型调用）→ `_acting`（工具执行）循环，直至无工具调用时返回
+4. **多 Agent 协作**：MsgHub 管理订阅者广播，Pipeline 支持 sequential（顺序）和 fanout（并行）两种模式，两者可灵活组合
+5. **Agent 类型**：ReActAgent（通用推理）、UserAgent（用户输入）、RealtimeAgent（实时语音）、A2AAgent（Agent 间通信），覆盖不同交互场景
+
+**下一步建议**：结合 `src/agentscope/` 源码，按 5.14.9 的阅读建议顺序深入理解各模块实现细节。

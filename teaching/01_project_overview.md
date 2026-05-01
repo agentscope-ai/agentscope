@@ -1,5 +1,15 @@
 # 第一章：AgentScope 项目概述
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 AgentScope 的核心特性和 Agent 类型
+> - [L2 理解] 解释 AgentScope 与 Java/Spring 生态的对应关系
+> - [L3 应用] 使用正确的参数创建 ReActAgent
+
+**预计时间**：10 分钟
+**先修要求**：了解 Java 面向对象编程
+
 ## 1.1 什么是 AgentScope
 
 AgentScope 是一个**生产级的多智能体框架（Multi-Agent Framework）**，用于构建基于大语言模型（LLM）的应用程序。当前版本 **v1.0.19**，2.0 版本正在开发中。
@@ -37,20 +47,17 @@ AgentScope 是一个**生产级的多智能体框架（Multi-Agent Framework）*
 | **RAG** | PDF/Word/Excel 文档解析，向量存储（Qdrant/Milvus） |
 | **实时语音** | TTS 集成（DashScope/OpenAI/德国 TTS），WebSocket 实时对话 |
 | **可观测性** | OpenTelemetry 链路追踪，AgentScope Studio 可视化调试 |
-| **深度研究** | DeepResearchAgent 支持 thinking/non-thinking 模型 |
+| **深度研究** | ReActAgent 配合搜索工具实现研究模式（DeepResearchAgent 见 examples/） |
 | **A2A 通信** | Agent-to-Agent 协议支持多智能体间通信 |
 
 ### Agent 类型扩展
 
 ```
 Agent 类型
-├── ReActAgent         # 核心推理 Agent（支持 skip_reasoning）
-├── DialogAgent        # 对话 Agent
-├── DictDialogAgent    # 字典式对话
-├── DeepResearchAgent  # 深度研究 Agent [v1.0.19 新增]
-├── RealtimeAgent      # 实时语音 Agent [2.0 方向]
-├── UserAgent          # 用户代理
-└── A2AAgent           # Agent-to-Agent 通信 [新增]
+├── ReActAgent         # 核心推理 Agent（不配 toolkit 时为纯对话模式）
+├── UserAgent          # 用户代理（终端/Studio 交互）
+├── A2AAgent           # Agent-to-Agent 协议通信
+└── RealtimeAgent      # 实时语音/视频 Agent
 ```
 
 ## 1.2 应用场景
@@ -83,8 +90,8 @@ Agent 类型
 - 记忆系统保持对话上下文
 
 **2. 深度研究助手**
-- DeepResearchAgent 自动搜索、提取、整合信息
-- 支持 Tavily 等工具进行网络研究
+- ReActAgent 配合搜索工具（如 Tavily）自动搜索、提取、整合信息
+- DeepResearchAgent 是 examples/ 中的示例模式，基于 ReActAgent + 搜索工具实现
 - 生成结构化研究报告
 
 **3. 实时语音交互**
@@ -175,41 +182,52 @@ agentscope.init(project="my-agent")  # 注意: 参数名是 project, 不是 proj
 
 # Step 2: 创建 Agent (类似 new Service())
 from agentscope.agent import ReActAgent
-from agentscope.model import OpenAIChatModel  # 注意: 类名是 OpenAIChatModel
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+toolkit = Toolkit()
+# toolkit.register_tool_function(my_tool)  # 按需注册工具
 
 agent = ReActAgent(
     name="助手",
+    sys_prompt="你是一个有帮助的助手。",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[...]  # 工具列表
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
 )
 
 # Step 3: 运行 (类似调用 Service 方法)
-response = agent("你好，请帮我写一段 Python 代码")
+response = await agent("你好，请帮我写一段 Python 代码")
 print(response)
 ```
 
 ### 多智能体协作示例
 
 ```python
-from agentscope import agent
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
 from agentscope.pipeline import SequentialPipeline
 
-# 创建专家 Agent
-researcher = agent.ReActAgent(
+researcher = ReActAgent(
     name="研究员",
+    sys_prompt="你是一个研究助手。",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[tavily_search]
+    formatter=OpenAIChatFormatter(),
 )
 
-writer = agent.ReActAgent(
+writer = ReActAgent(
     name="作家",
-    model=OpenAIChatModel(model_name="gpt-4o-mini")
+    sys_prompt="你是一个技术写作助手。",
+    model=OpenAIChatModel(model_name="gpt-4o-mini"),
+    formatter=OpenAIChatFormatter(),
 )
 
 # 使用 SequentialPipeline 顺序执行
-with SequentialPipeline(agents=[researcher, writer]) as seq:
-    result = await researcher("研究 Transformer 架构")
-    result = await writer("基于研究写文章")
+seq = SequentialPipeline(agents=[researcher, writer])
+result = await seq("研究 Transformer 架构")
 ```
 
 ## 1.7 版本说明与路线图
@@ -245,4 +263,15 @@ Phase 3: Real-time Multimodal Models
 
 - [第二章：环境搭建](02_installation.md) - 安装 Python 和 AgentScope
 - [第三章：快速入门](03_quickstart.md) - 构建你的第一个 Agent
-- [第五章：核心概念](04_core_concepts.md) - 深入理解 Agent、Model、Memory
+- [第四章：核心概念](04_core_concepts.md) - 深入理解 Agent、Model、Memory
+
+## 总结
+
+- AgentScope 是生产级多智能体框架，支持顺序/并行/广播等多种协作模式
+- 核心 Agent 类型：ReActAgent（通用）、UserAgent（用户交互）、A2AAgent（跨服务）、RealtimeAgent（语音）
+- ReActAgent 构造需要四个必填参数：name, sys_prompt, model, formatter
+- 工具通过 Toolkit 注册，不是通过 tools 列表
+
+## 下一章
+
+→ [第二章：环境搭建](02_installation.md) - 安装 Python 和 AgentScope

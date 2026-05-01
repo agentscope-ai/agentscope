@@ -1,5 +1,16 @@
 # Tracing 追踪模块深度剖析
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 6 个追踪装饰器（trace_llm / trace_reply / trace_toolkit / trace_embedding / trace_format / trace）及其装饰目标
+> - [L2 理解] 解释 OpenTelemetry Span 属性体系与 GenAI 语义约定的设计原理
+> - [L3 应用] 使用 setup_tracing 配置追踪并接入 OTLP 后端
+> - [L4 分析] 分析同步/异步生成器追踪的包装机制和 Span 生命周期管理
+
+**预计时间**：25 分钟
+**先修要求**：已完成 [Pipeline 与基础设施](module_pipeline_infra_deep.md)
+
 ## 目录
 
 1. [模块概述](#1-模块概述)
@@ -441,3 +452,15 @@ async def analyze_data(data: dict) -> dict:
 | [Config 模块](module_config_deep.md) | trace_enabled 配置项控制追踪开关 |
 
 **版本参考**: AgentScope >= 1.0.0 | 源码 `tracing/`
+
+## 本章小结
+
+- setup_tracing 基于 OpenTelemetry 配置 OTLP HTTP 导出器和 BatchSpanProcessor
+- 6 个专用追踪装饰器覆盖全链路：LLM 调用、Agent 回复、工具执行、嵌入调用、格式化和通用函数
+- 生成器追踪机制通过包装同步/异步生成器，在最后一个 chunk 后正确结束 Span
+- Span 属性遵循 GenAI 语义约定（标准属性）+ AgentScope 扩展属性（`agentscope.` 前缀）
+- 追踪系统与 Config 模块的 `trace_enabled` 配置项集成，支持动态开关
+
+## 下一章
+
+→ [Evaluate 评估模块](module_evaluate_deep.md)

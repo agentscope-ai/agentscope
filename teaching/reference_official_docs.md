@@ -2,6 +2,13 @@
 
 > 本文档收集 AgentScope 官方文档的核心内容、API 参考要点、竞品对比分析以及推荐阅读清单。所有内容均来自实际访问的官方资料，并标注了原始来源链接。
 
+## 学习目标
+
+- 理解 AgentScope 框架的核心概念：状态、消息、工具、智能体、提示词格式化
+- 掌握 AgentScope 的 API 体系：模型 API、记忆 API、工具 API、消息 API
+- 了解 AgentScope 与 LangChain/CrewAI/AutoGen/MetaGPT 等框架的对比优势
+- 建立对多智能体系统、ReAct 范式等学术背景的基本认知
+
 ---
 
 ## 一、AgentScope 官方文档精华摘要
@@ -207,12 +214,16 @@ memory = LongTermMemory(control_mode="static_control")
 #### 2.3.1 定义工具
 
 ```python
-from agentscope.tool import tool
+from agentscope.tool import Toolkit
 
-@tool
+toolkit = Toolkit()
+
 def get_weather(location: str) -> str:
     """获取天气信息"""
     return f"{location}今日天气：晴"
+
+# 使用 Toolkit.register_tool_function() 注册工具
+toolkit.register_tool_function(get_weather)
 ```
 
 #### 2.3.2 工具包
@@ -502,5 +513,18 @@ AgentScope 在学术论文中提出了以下创新：
 
 ---
 
+## 七、总结
+
+本文档涵盖了 AgentScope 官方文档的核心内容，包括：
+
+1. **核心概念**：状态管理、消息驱动、工具系统、智能体抽象、提示词格式化、长期记忆
+2. **API 参考**：统一的模型接口（OpenAI/DashScope/Anthropic/Gemini/Ollama）、记忆 API、工具 API、消息 API
+3. **竞品对比**：AgentScope 在多智能体优先、状态管理、实时介入、分布式部署方面具有优势
+4. **学术背景**：多智能体系统基础、ReAct 范式、Plan-and-Execute 范式
+
+建议结合 [reference_best_practices.md](reference_best_practices.md) 阅读设计模式和生产实践部分。
+
+---
+
 *文档版本：2026年4月*
-*最后更新：2026年4月27日*
+*最后更新：2026年4月30日*

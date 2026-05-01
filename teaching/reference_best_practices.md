@@ -2,6 +2,14 @@
 
 > 本文档收集 AgentScope 智能体开发的设计模式、Prompt Engineering 最佳实践、生产部署经验、RAG 优化策略、安全性最佳实践和测试策略。所有内容均来自实际访问的资料，并标注了原始来源链接。
 
+## 学习目标
+
+- 掌握 ReAct、Plan-and-Execute 等核心智能体设计模式及其在 AgentScope 中的实现
+- 学会编写高质量的 Prompt：结构化输出、Few-Shot、思维链、角色扮演
+- 理解工具调用优化策略：单一职责、并行调用、错误处理
+- 了解 RAG 优化要点：分块策略、嵌入模型选择、混合检索
+- 建立生产部署意识：性能优化、监控、安全防护、测试金字塔
+
 ---
 
 ## 一、Agent 设计模式
@@ -316,7 +324,11 @@ class CustomFormatter(FormatterBase):
 #### 3.1.2 清晰的参数描述
 
 ```python
-@tool
+from pydantic import Field
+from agentscope.tool import Toolkit
+
+toolkit = Toolkit()
+
 def search_flights(
     origin: str = Field(description="出发城市，格式：城市名（机场代码）"),
     destination: str = Field(description="目的城市，格式：城市名（机场代码）"),
@@ -325,6 +337,8 @@ def search_flights(
 ) -> str:
     """搜索航班信息"""
     ...
+
+toolkit.register_tool_function(search_flights)
 ```
 
 ### 3.2 工具调用策略
@@ -364,7 +378,10 @@ tool_choice = "none"
 ### 3.3 工具错误处理
 
 ```python
-@tool
+from agentscope.tool import Toolkit
+
+toolkit = Toolkit()
+
 def unreliable_tool(query: str) -> str:
     """可能失败的工具"""
     try:
@@ -375,6 +392,8 @@ def unreliable_tool(query: str) -> str:
         return f"服务暂时不可用，请稍后重试。错误：{e}"
     except RateLimitError:
         return "请求过于频繁，请等待后重试"
+
+toolkit.register_tool_function(unreliable_tool)
 ```
 
 ---
@@ -395,14 +414,11 @@ def unreliable_tool(query: str) -> str:
 #### 4.1.2 嵌入模型选择
 
 ```python
-from agentscope.model import EmbeddingModel
+from agentscope.embedding import OpenAITextEmbedding
 
 # 选择合适的嵌入模型
-embedding_model = EmbeddingModel(
-    model_name="text-embedding-3-small",  # OpenAI
-    # 或使用本地模型
-    # model_name="bge-large-zh",
-    dimensions=1536
+embedding_model = OpenAITextEmbedding(
+    model_name="text-embedding-3-small",
 )
 ```
 
@@ -472,7 +488,8 @@ def compress_context(context: list, max_tokens: int) -> list:
 # 安装 AgentScope
 pip install agentscope[full]
 
-# 启动本地服务
+# 启动本地服务（注意：agentscope studio 命令属于 agentscope-runtime 包）
+# 需要额外安装：pip install agentscope-runtime
 agentscope studio
 # 访问 http://localhost:8000 进入控制台
 ```
@@ -495,6 +512,7 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# 注意：agentscope.runtime 属于 agentscope-runtime 包，需额外安装
 CMD ["python", "-m", "agentscope.runtime"]
 ```
 
@@ -570,7 +588,7 @@ async def async_agent_workflow():
 #### 5.3.1 OpenTelemetry 集成
 
 ```python
-from agentscope.observability import setup_tracing
+from agentscope.tracing import setup_tracing
 
 # 配置追踪
 setup_tracing(
@@ -725,9 +743,8 @@ def filter_output(response: str) -> str:
 
 ```python
 import pytest
-from agentscope.tool import tool
+from agentscope.tool import Toolkit
 
-@tool
 def add_numbers(a: int, b: int) -> int:
     """加法工具"""
     return a + b
@@ -834,11 +851,10 @@ async def test_end_to_end_customer_service():
 #### 7.4.2 LLM-as-Judge 评估
 
 ```python
-from agentscope.evaluate import LLMEvaluator
+from agentscope.evaluate import GeneralEvaluator
 
-evaluator = LLMEvaluator(
-    judge_model=gpt4,
-    criteria=["准确性", "完整性", "帮助性"]
+evaluator = GeneralEvaluator(
+    # 评估配置
 )
 
 async def test_response_quality():
@@ -906,5 +922,21 @@ def test_no_regression():
 
 ---
 
+## 九、总结
+
+本文档涵盖了 AgentScope 智能体开发的最佳实践，包括：
+
+1. **设计模式**：ReAct 模式适合简单直接任务，Plan-and-Execute 适合复杂多步骤任务，多智能体协作适合分工场景
+2. **Prompt Engineering**：清晰明确、结构化输出、约束条件、Few-Shot、思维链、角色扮演
+3. **工具优化**：单一职责、清晰参数描述、并行调用、错误处理
+4. **RAG 优化**：分块策略选择、嵌入模型选型、混合检索、上下文压缩、引用标注
+5. **生产部署**：本地/Docker/K8s 部署、缓存策略、异步优化、OTel 监控
+6. **安全性**：OWASP LLM Top 10 防护、输入验证、工具权限控制、输出过滤
+7. **测试策略**：70% 单元 / 25% 集成 / 5% E2E 的测试金字塔、Mock LLM 调用、黄金数据集回归测试
+
+建议结合 [reference_official_docs.md](reference_official_docs.md) 了解框架核心概念和 API 参考。
+
+---
+
 *文档版本：2026年4月*
-*最后更新：2026年4月27日*
+*最后更新：2026年4月30日*

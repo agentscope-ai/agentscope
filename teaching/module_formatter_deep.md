@@ -1,5 +1,16 @@
 # Formatter 格式化器深度剖析
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 FormatterBase → TruncatedFormatterBase → 各厂商格式化器的继承链
+> - [L2 理解] 解释 format-count-truncate 循环的工作原理和消息分组机制
+> - [L3 应用] 使用合适的格式化器将 Msg 消息转换为目标 API 格式
+> - [L4 分析] 分析各厂商格式化器对多模态内容块的不同处理策略
+
+**预计时间**：35 分钟
+**先修要求**：已完成 [Message 消息模块](module_message_deep.md)
+
 ## 目录
 
 1. [模块概述](#1-模块概述)
@@ -563,3 +574,15 @@ The content between <history></history> tags contains your conversation history
 | [Pipeline 与基础设施](module_pipeline_infra_deep.md) | Pipeline 负责消息在 Agent 间的流转 |
 
 **版本参考**: AgentScope >= 1.0.0 | 源码 `formatter/`
+
+## 本章小结
+
+- FormatterBase 定义格式化器抽象接口，TruncatedFormatterBase 实现 format-count-truncate 循环
+- `_group_messages` 按内容将消息分为 tool_sequence 和 agent_message 两大类
+- 各厂商格式化器（OpenAI / Anthropic / DashScope）针对不同 API 消息格式做适配，处理多模态内容块差异
+- MultiAgent 格式化器使用 `<history>` 标签包装对话历史，合并为一条 user 消息
+- TokenCounterBase 集成使格式化器能按 Token 预算截断消息，保持工具调用配对完整性
+
+## 下一章
+
+→ [State 状态模块](module_state_deep.md)

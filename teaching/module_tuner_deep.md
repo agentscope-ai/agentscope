@@ -1,5 +1,16 @@
 # Tuner 调优模块深度剖析
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 Tuner 模块的核心配置类（WorkflowType、JudgeType、AlgorithmConfig、DatasetConfig、TunerModelConfig）和 tune() 参数
+> - [L2 理解] 解释 Workflow-Judge 双输出设计的工作原理——直接奖励与 LLM-as-Judge 评估的差异
+> - [L3 应用] 使用 tune() 函数配置 PromptTune 并启动 Agent 调优任务
+> - [L4 分析] 分析 GRPO 算法与 SFT 算法的调优策略差异及适用场景
+
+**预计时间**：25 分钟
+**先修要求**：已完成 [Model 模型](module_model_deep.md)
+
 ## 目录
 
 1. [模块概述](#1-模块概述)
@@ -458,3 +469,15 @@ model_config = TunerModelConfig(
 | [Config 模块](module_config_deep.md) | 模型和训练配置管理 |
 
 **版本参考**: AgentScope >= 1.0.0 | 源码 `tuner/`
+
+## 本章小结
+
+- tune() 是统一训练入口，将调优任务委托给 Trinity-RFT 框架执行
+- WorkflowType 采用双输出设计：直接奖励信号或通过 LLM-as-Judge 评估
+- JudgeType 返回标量奖励值和可选的多维度评估指标
+- AlgorithmConfig 支持 GRPO（强化学习）和 SFT（监督微调）两种调优策略
+- TunerModelConfig 和 TinkerConfig（LoRA 低秩适应）提供完整的模型和训练配置管理
+
+## 下一章
+
+→ [学习路径完成](README.md)

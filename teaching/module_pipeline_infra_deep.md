@@ -1,5 +1,16 @@
 # 管道与基础设施模块深度剖析
 
+## 学习目标
+
+> 学完本节，你将能够：
+> - [L1 记忆] 列举 Pipeline 编排层的核心组件（MsgHub、Formatter、Session、Tracing、A2A、Realtime）
+> - [L2 理解] 解释 MsgHub 的发布-订阅机制与 AgentBase `_broadcast_to_subscribers` 的协作关系
+> - [L3 应用] 使用 Pipeline 函数式接口和 MsgHub 组装一个多智能体协作工作流
+> - [L4 分析] 分析 Formatter 如何针对不同模型 API 的消息格式要求进行适配和转换
+
+**预计时间**：40 分钟
+**先修要求**：已完成 [核心概念](04_core_concepts.md)
+
 ## 目录
 
 1. [模块概述](#1-模块概述)
@@ -1599,3 +1610,15 @@ class TimedFanoutPipeline(FanoutPipeline):
 - *添加更多实现细节和关键设计模式分析*
 - *修正练习题第5题行号（ChatRoom 59-77→60-77）*
 - *统一术语：将"智能体"改为"Agent"，保持术语一致性*
+
+## 本章小结
+
+- MsgHub 是消息中心，通过发布-订阅机制驱动多 Agent 间的消息广播和协作
+- Pipeline 提供函数式接口（`_functional.py`）和类封装接口（`_class.py`）两种编排方式
+- Formatter 模块针对不同模型 API 的消息格式要求进行适配转换
+- Realtime 模块基于 RealtimeModelBase 实现实时交互，Session 模块管理会话状态持久化
+- Tracing 系统基于 OpenTelemetry 实现全链路追踪，A2A 协议支持跨框架 Agent 通信
+
+## 下一章
+
+→ [Config 配置模块](module_config_deep.md)

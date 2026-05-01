@@ -93,28 +93,48 @@
 - 了解 Java 面向对象编程
 - 熟悉设计模式（工厂、策略、模板方法）
 - 最好有 REST API 或微服务开发经验
-- Python 基础（若不熟悉，请先学习 Python 基础）
+- Python 基础（若不熟悉，请先学习 Python 基础模块 P1-P8）
 
 ## 你能学到什么
 
 1. **多智能体系统基础** - 如何编排多个 AI 智能体协同工作
 2. **LLM 应用开发** - 集成 OpenAI、Anthropic 等大模型
-3. **工具调用** - 让 AI 智能体调用外部工具
+3. **工具调用** - 通过 Toolkit 注册和调用外部工具
 4. **记忆管理** - 实现短期/长期记忆
 5. **RAG 检索增强** - 知识库问答
 6. **实时语音交互** - 构建语音对话应用
 7. **生产级部署** - 从开发到生产的完整流程
 
+## 核心概念速览
+
+创建 Agent 时请记住四个必填参数：
+
+```python
+from agentscope.agent import ReActAgent
+from agentscope.model import OpenAIChatModel
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+agent = ReActAgent(
+    name="助手",                              # 必填
+    sys_prompt="你是一个有帮助的助手。",         # 必填
+    model=OpenAIChatModel(model_name="gpt-4o"), # 必填
+    formatter=OpenAIChatFormatter(),            # 必填（匹配 Model 提供商）
+    toolkit=Toolkit(),                          # 可选（不配则为纯对话模式）
+)
+```
+
 ## 学习建议
 
 ### 新手路线（2-3天）
-1. 快速入门 → 核心概念 → 架构设计
-2. 完成 quickstart 示例
-3. 阅读 Agent 模块深度分析
+1. Python 基础（P1-P8，如已熟悉可跳过）
+2. 快速入门（03） → 核心概念（04） → 架构设计（05）
+3. 运行 quickstart 示例，确保能跑通
+4. 阅读 Agent 模块深度分析（A1）
 
 ### 进阶路线（1周）
 1. 完成新手路线
-2. 深入阅读所有深度模块
+2. 深入阅读所有深度模块（A1-A19）
 3. 学习最佳实践资料
 4. 尝试自定义 Agent 开发
 

@@ -105,6 +105,8 @@ src/agentscope/embedding/
 
 ## 2. ChatModelBase 基类分析
 
+> **注**: 本文档中的源码行号为参考值，不同版本可能有所变动，建议以方法名定位。
+
 ### 2.1 完整源码
 
 **文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/model/_model_base.py`
@@ -1907,7 +1909,7 @@ model = OpenAIChatModel(
 
 ```python
 from agentscope.model import OpenAIChatModel
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 # 创建模型实例
 # API key 可以通过以下方式提供:
@@ -1920,7 +1922,7 @@ model = OpenAIChatModel(
 )
 
 # 创建格式化器
-formatter = OpenAIFormatter()
+formatter = OpenAIChatFormatter()
 
 # 准备消息
 messages = [
@@ -2221,10 +2223,10 @@ def _create_tool_from_base_model(model: Type[BaseModel]) -> dict:
 **5. 设计一个模型适配器，支持同时调用多个模型并合并结果。**
 
 ```python
-from agentscope.model import ChatModelBase, model_register
+from agentscope.model import ChatModelBase
 from agentscope.message import ChatResponse
 
-@model_register("ensemble")
+# 注意：AgentScope 没有 model_register 注册机制，直接实例化即可
 class EnsembleChatModel(ChatModelBase):
     """多模型集成适配器，同时调用多个模型并投票选择最佳结果。"""
 
@@ -2271,7 +2273,7 @@ ensemble = EnsembleChatModel(
 
 **6. 分析 DashScope 适配器如何自动选择 Generation 和 MultimodalConversation API。**
 
-DashScope 适配器在 `__call__()` 中通过模型名称自动选择 API（第 962-977 行）：
+DashScope 适配器在 `__call__()` 中通过模型名称自动选择 API（`_dashscope_model.py` 的 `__call__` 方法内）：
 
 ```python
 if self.multimodality or (

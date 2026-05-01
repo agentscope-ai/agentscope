@@ -2,6 +2,13 @@
 
 本文档汇总了 AgentScope 官方文档和社区讨论中的常见问题与解决方案。
 
+**学习目标**：
+1. 能够独立解决 AgentScope 安装与配置过程中的常见问题
+2. 掌握 Agent 开发中的调试方法（超时、内存管理、消息格式）
+3. 理解模型相关的错误（工具调用、流式输出、vLLM 兼容性）及排查思路
+4. 了解 Runtime CLI 和部署流程中的常见故障与解决方案
+5. 熟悉错误代码的含义和调试技巧，能快速定位问题
+
 ---
 
 ## 1. 安装与配置问题
@@ -58,6 +65,8 @@ model = DashScopeChatModel(
 
 ### 2.1 AgentApp 未找到
 
+> **注意**：`AgentApp` 和 `create_app()` 属于 `agentscope-runtime` 包（`pip install agentscope-runtime`），不在核心 `agentscope` 框架中。
+
 **错误**: `No AgentApp found in agent.py`
 
 **解决方案**:
@@ -94,11 +103,13 @@ app = create_app()
 # 设置超时
 agent = ReActAgent(
     name="Friday",
+    sys_prompt="You are a helpful assistant.",
     model=DashScopeChatModel(
         model_name="qwen-turbo",
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         generate_kwargs={"timeout": 30}
     ),
+    formatter=DashScopeChatFormatter(),
     ...
 )
 ```
@@ -112,6 +123,8 @@ agent = ReActAgent(
 # 使用 InMemoryMemory 保存对话历史
 agent = ReActAgent(
     ...
+    sys_prompt="You are a helpful assistant.",
+    formatter=DashScopeChatFormatter(),
     memory=InMemoryMemory(),
 )
 
@@ -236,6 +249,7 @@ from agentscope.formatter import OpenAIMultiAgentFormatter
 # 使用正确的 Formatter
 agent = ReActAgent(
     ...
+    sys_prompt="You are a helpful assistant.",
     formatter=OpenAIMultiAgentFormatter(),  # 用于多Agent通信
 )
 ```
@@ -350,6 +364,8 @@ agentscope deploy k8s app_agent.py \
 ---
 
 ## 5. Runtime CLI 问题
+
+> **注意**：以下 CLI 命令属于 `agentscope-runtime` 包（需单独安装：`pip install agentscope-runtime`），与核心 `agentscope` 框架不同。
 
 ### 5.1 命令未找到
 
@@ -517,6 +533,8 @@ pip install 'agentscope-runtime[ext]>=1.0.0'
 ---
 
 ## 10. 常见错误代码
+
+> **注意**：以下错误代码为概念性示例，并非 `agentscope` 库中定义的实际常量。实际运行时的错误来自模型提供商（如 `openai.BadRequestError`、`openai.AuthenticationError`）或 Python 标准异常。请根据实际错误信息排查。
 
 | 错误代码 | 含义 | 解决方案 |
 |---------|-----|---------|

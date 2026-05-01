@@ -30,10 +30,21 @@ v1.0.19 对 DeepResearchAgent 进行了多项修复，使其更稳定：
 ```python
 # DeepResearchAgent 现在支持 thinking 和 non-thinking 模型
 # 修复了 thinking blocks 的处理逻辑
+# 注意：DeepResearchAgent 是一个高级模式示例（examples/），非核心库类
+from agentscope.agent import DeepResearchAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+toolkit = Toolkit()
+toolkit.register_tool_function(tavily_search)
+toolkit.register_tool_function(tavily_extract)
+
 agent = DeepResearchAgent(
     name="研究助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[tavily_search, tavily_extract]  # Tavily 工具函数命名已修复
+    sys_prompt="你是一个研究助手。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,  # 使用 toolkit 替代 tools
 )
 ```
 
@@ -43,9 +54,9 @@ agent = DeepResearchAgent(
 
 ```python
 # Anthropic formatter 支持本地图片
-from agentscope.formatter import AnthropicFormatter
+from agentscope.formatter import AnthropicChatFormatter
 
-formatter = AnthropicFormatter()
+formatter = AnthropicChatFormatter()
 # 现在支持 file://path/to/image.jpg 格式
 ```
 
@@ -99,16 +110,16 @@ Phase 3: Real-time Multimodal Models
 官方新增多种多智能体协作模式：
 
 ```python
-from agentscope import agent
+from agentscope.agent import ReActAgent
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline, MsgHub
 
 # 1. SequentialPipeline - 顺序执行
-with SequentialPipeline(agents=[researcher, writer]) as seq:
-    result = seq("写一篇研究报告")
+seq = SequentialPipeline(agents=[researcher, writer])
+result = seq("写一篇研究报告")
 
 # 2. FanoutPipeline - 并行广播
-with FanoutPipeline(agents=[agent_a, agent_b, agent_c]) as fanout:
-    results = fanout("广播这个消息")
+fanout = FanoutPipeline(agents=[agent_a, agent_b, agent_c])
+results = fanout("广播这个消息")
 
 # 3. MsgHub - 消息中心
 async with MsgHub(participants=[agent_a, agent_b, agent_c]) as hub:
@@ -121,12 +132,10 @@ async with MsgHub(participants=[agent_a, agent_b, agent_c]) as hub:
 ```
 Agent 类型 (更新后)
 ├── ReActAgent (核心推理 Agent)
-├── DialogAgent (对话 Agent)
-├── DictDialogAgent (字典式对话)
-├── DeepResearchAgent (深度研究 Agent) [新增]
-├── RealtimeAgent (实时语音 Agent) [新增]
 ├── UserAgent (用户代理)
-└── A2AAgent (Agent-to-Agent 通信) [新增]
+├── A2AAgent (Agent-to-Agent 通信) [新增]
+├── RealtimeAgent (实时语音 Agent) [新增]
+└── DeepResearchAgent (深度研究 Agent，示例模式) [新增]
 ```
 
 ---
@@ -204,13 +213,13 @@ Features
 
 ```python
 # 模式一：FanoutPipeline - 并行广播 (适用于需要多角度分析)
-with FanoutPipeline(agents=[pro_agent, con_agent]) as fanout:
-    analysis = fanout("分析这个商业决策的利弊")
+fanout = FanoutPipeline(agents=[pro_agent, con_agent])
+analysis = fanout("分析这个商业决策的利弊")
 
 # 模式二：SequentialPipeline - 顺序执行 (适用于需要前置任务结果)
-with SequentialPipeline(agents=[researcher, writer]) as seq:
-    research = researcher("研究 AI 趋势")
-    article = writer(f"基于研究写文章: {research}")
+seq = SequentialPipeline(agents=[researcher, writer])
+research = researcher("研究 AI 趋势")
+article = writer(f"基于研究写文章: {research}")
 
 # 模式三：MsgHub - 消息中心 (适用于多 Agent 自由对话)
 async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
@@ -221,10 +230,9 @@ async with MsgHub(participants=[agent1, agent2, agent3]) as hub:
 ### 5.2 工具调用最佳实践
 
 ```python
-from agentscope.tool import function
+from agentscope.tool import Toolkit
 
-# 推荐：为每个工具提供清晰的文档字符串
-@function
+# 推荐：为每个工具提供清晰的文档字符串，然后注册到 Toolkit
 def search_knowledge_base(query: str, top_k: int = 5) -> str:
     """在知识库中搜索相关内容
 
@@ -238,7 +246,6 @@ def search_knowledge_base(query: str, top_k: int = 5) -> str:
     ...
 
 # 推荐：使用类型提示
-@function
 def calculate_metrics(data: list[float], metric: str) -> dict[str, float]:
     """计算数据指标
 
@@ -250,6 +257,11 @@ def calculate_metrics(data: list[float], metric: str) -> dict[str, float]:
         计算结果的字典
     """
     ...
+
+# 使用 Toolkit.register_tool_function() 注册工具
+toolkit = Toolkit()
+toolkit.register_tool_function(search_knowledge_base)
+toolkit.register_tool_function(calculate_metrics)
 ```
 
 ### 5.3 记忆系统最佳实践
@@ -283,10 +295,16 @@ memory = HybridMemory(
 
 ```python
 # 创建带语音输出的 Agent
-agent = agentscope.agent.ReActAgent(
+from agentscope.agent import ReActAgent
+from agentscope.formatter import DashScopeChatFormatter
+from agentscope.tool import Toolkit
+
+agent = ReActAgent(
     name="语音助手",
-    model=DashScopeModel(model_name="qwen-audio"),
-    tools=[...],
+    model=DashScopeChatModel(model_name="qwen-audio"),
+    sys_prompt="你是一个语音助手。",
+    formatter=DashScopeChatFormatter(),
+    toolkit=Toolkit(),
     speech={  # 新增语音配置
         "tts_api": "dashscope",  # 或 "openai", "german_tts"
         "voice": "female_2",
@@ -317,16 +335,22 @@ my_agent = agent.ReActAgent(
 
 # 新版
 import agentscope
-from agentscope import agent
+from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
-from agentscope.tool import python_executor
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit, python_executor
 
 agentscope.init(project="my-first-agent")
 
-my_agent = agent.ReActAgent(
+toolkit = Toolkit()
+toolkit.register_tool_function(python_executor)
+
+my_agent = ReActAgent(
     name="助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[python_executor]  # 新 API
+    sys_prompt="你是一个有帮助的助手。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,  # 使用 toolkit 替代 tools
 )
 ```
 
@@ -334,45 +358,61 @@ my_agent = agent.ReActAgent(
 
 ```python
 # 新增多智能体协作示例
-from agentscope import agent
+from agentscope.agent import ReActAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
 from agentscope.pipeline import SequentialPipeline, FanoutPipeline
 
 # 创建专家 Agent
-researcher = agent.ReActAgent(
+toolkit = Toolkit()
+toolkit.register_tool_function(tavily_search)
+
+researcher = ReActAgent(
     name="研究员",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[tavily_search]
+    sys_prompt="你是一个研究员。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
 )
 
-writer = agent.ReActAgent(
+writer = ReActAgent(
     name="作家",
-    model=OpenAIChatModel(model_name="gpt-4o-mini")
+    model=OpenAIChatModel(model_name="gpt-4o-mini"),
+    sys_prompt="你是一个作家。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=Toolkit(),
 )
 
 # 方式一：SequentialPipeline 顺序执行
-with SequentialPipeline(agents=[researcher, writer]) as seq:
-    research_result = researcher("研究 AI Agent 的最新发展趋势")
-    article = writer(f"根据以下研究写一篇文章: {research_result}")
+seq = SequentialPipeline(agents=[researcher, writer])
+research_result = researcher("研究 AI Agent 的最新发展趋势")
+article = writer(f"根据以下研究写一篇文章: {research_result}")
 
 # 方式二：FanoutPipeline 并行执行
-with FanoutPipeline(agents=[researcher, writer, coder]) as fanout:
-    results = fanout("并行处理这个任务")
+fanout = FanoutPipeline(agents=[researcher, writer, coder])
+results = fanout("并行处理这个任务")
 ```
 
 ### 6.3 DeepResearchAgent 使用
 
 ```python
 # 新增：深度研究 Agent
+# 注意：DeepResearchAgent 是一个高级模式示例（位于 examples/），非核心库类
 from agentscope.agent import DeepResearchAgent
+from agentscope.formatter import OpenAIChatFormatter
+from agentscope.tool import Toolkit
+
+toolkit = Toolkit()
+toolkit.register_tool_function(tavily_search)   # Web 搜索
+toolkit.register_tool_function(tavily_extract)  # 内容提取
+toolkit.register_tool_function(text_file)       # 文件读取
 
 research_agent = DeepResearchAgent(
     name="深度研究助手",
     model=OpenAIChatModel(model_name="gpt-4o"),
-    tools=[
-        tavily_search,   # Web 搜索
-        tavily_extract,  # 内容提取
-        text_file        # 文件读取
-    ],
+    sys_prompt="你是一个深度研究助手。",
+    formatter=OpenAIChatFormatter(),
+    toolkit=toolkit,
     max_depth=3,  # 研究深度
     max_tokens=100000  # 研究报告最大长度
 )

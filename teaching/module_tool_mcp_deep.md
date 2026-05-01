@@ -22,7 +22,7 @@
 |----------|----------|-----------|
 | 记忆 | 列举 AgentScope 内置工具的类型和注册方式 | 列举、识别 |
 | 理解 | 解释 Toolkit 的工具注册流程、JSON Schema 自动生成机制和中间件洋葱模型 | 解释、描述 |
-| 应用 | 使用 `@function` 装饰器开发自定义工具并集成到智能体的工具链中 | 实现、开发 |
+| 应用 | 使用 `Toolkit.register_tool_function()` 注册工具函数并集成到智能体的工具链中 | 实现、开发 |
 | 分析 | 分析 MCP 三种客户端类型（StdIO/HttpStateless/HttpStateful）的适用场景与状态管理差异 | 分析、对比 |
 | 评价 | 评价中间件机制与后处理函数 (`postprocess_func`) 在工具调用链路中的执行顺序与适用边界 | 评价、判断 |
 | 创造 | 设计一个支持超时控制、错误降级和日志追踪的自定义工具中间件 | 设计、构建 |
@@ -79,10 +79,10 @@ src/agentscope/mcp/                    # MCP 模块根目录
 
 | 组件 | 文件位置 | 说明 |
 |------|----------|------|
-| `Toolkit` | `_toolkit.py:54` | 工具注册、管理和调用的核心类 |
-| `ToolResponse` | `_response.py:17` | 工具响应数据结构 |
-| `RegisteredToolFunction` | `_types.py:17` | 已注册工具的内部表示 |
-| `ToolGroup` | `_types.py:108` | 工具组定义 |
+| `Toolkit` | `_toolkit.py:117` | 工具注册、管理和调用的核心类 |
+| `ToolResponse` | `_response.py:12` | 工具响应数据结构 |
+| `RegisteredToolFunction` | `_types.py:16` | 已注册工具的内部表示 |
+| `ToolGroup` | `_types.py:136` | 工具组定义 |
 | `MCPToolFunction` | `_mcp_function.py:18` | MCP 工具函数包装类 |
 | `MCPClientBase` | `_client_base.py:17` | MCP 客户端基类 |
 | `StatefulClientBase` | `_stateful_client_base.py:18` | 有状态 MCP 客户端基类 |
@@ -91,9 +91,11 @@ src/agentscope/mcp/                    # MCP 模块根目录
 
 ## 2. 工具基类设计
 
+> 注：行号为 v1.0.19 版本参考值，不同版本可能有所变动，建议以类名/方法名定位。
+
 ### 2.1 ToolResponse 响应类
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_response.py:17-32`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_response.py:12`
 
 ```python
 @dataclass
@@ -129,7 +131,7 @@ class ToolResponse:
 
 ### 2.2 RegisteredToolFunction 注册工具函数类
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_types.py:17-98`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_types.py:16`
 
 ```python
 @dataclass
@@ -251,7 +253,7 @@ async def _async_generator_wrapper(
 
 ### 3.1 类定义
 
-**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_toolkit.py:54-131`
+**文件**: `/Users/nadav/IdeaProjects/agentscope/src/agentscope/tool/_toolkit.py:117`
 
 ```python
 class Toolkit(StateModule):
@@ -1347,7 +1349,7 @@ toolkit.register_middleware(caching_middleware)
 
 ### 9.1 基础题
 
-1. **分析 RegisteredToolFunction 类的设计，参考 `_types.py:17-98`。**
+1. **分析 RegisteredToolFunction 类的设计，参考 `_types.py:16`。**
    - 理解 `extended_json_schema` 属性的合并逻辑
    - 理解 `preset_kwargs` 如何隐藏敏感参数
 
@@ -1356,7 +1358,7 @@ toolkit.register_middleware(caching_middleware)
    - 使用 `create_tool_group()` 创建新组
    - 使用 `update_tool_groups()` 激活/停用组
 
-3. **解释 ToolResponse 的主要字段及其作用，参考 `_response.py:17-32`。**
+3. **解释 ToolResponse 的主要字段及其作用，参考 `_response.py:12`。**
    - `content`: 支持多种内容类型（文本、图像、音频、视频）
    - `stream` + `is_last`: 流式响应机制
    - `is_interrupted`: 处理用户中断
@@ -1535,10 +1537,10 @@ def cached_postprocess(tool_call, response):
 
 | 文件 | 说明 | 关键行号 |
 |------|------|----------|
-| `_response.py` | ToolResponse 响应类定义 | 17-32 |
-| `_types.py` | RegisteredToolFunction 和 ToolGroup 数据类 | 17-98, 108-130 |
+| `_response.py` | ToolResponse 响应类定义 | 12 |
+| `_types.py` | RegisteredToolFunction 和 ToolGroup 数据类 | 16-98, 136-130 |
 | `_async_wrapper.py` | 异步包装器 | 46-104 |
-| `_toolkit.py` | Toolkit 核心类 | 54-131（类定义）, 152-186（初始化）, 273-534（注册）, 851-1033（调用） |
+| `_toolkit.py` | Toolkit 核心类 | 117（类定义）, 152-186（初始化）, 273-534（注册）, 851-1033（调用） |
 | `_coding/` | 编码相关工具 | Shell/Python 执行 |
 | `_text_file/` | 文本文件操作工具 | view/write/insert |
 | `_multi_modality/` | 多模态工具 | DashScope/OpenAI |
@@ -1571,6 +1573,7 @@ def cached_postprocess(tool_call, response):
 | 1.2 | 2026-04-28 | 新增 MCP 协议与 Java JDBC/ODBC 对比说明（采纳初审建议） |
 | 1.3 | 2026-04-28 | 统一术语："Tool 模块"→"工具模块"，"Tool 基类设计"→"工具基类设计" |
 | 1.4 | 2026-04-28 | 进一步统一术语：docstring 和表格中的 "Tool" 改为"工具" |
+| 1.5 | 2026-04-30 | 修正行号引用（ToolResponse: 12, RegisteredToolFunction: 16, Toolkit: 117, ToolGroup: 136）；修正学习目标：`@function` → `Toolkit.register_tool_function()`；添加行号版本免责声明 |
 
-*文档版本: 1.4*
-*最后更新: 2026-04-28*
+*文档版本: 1.5*
+*最后更新: 2026-04-30*
