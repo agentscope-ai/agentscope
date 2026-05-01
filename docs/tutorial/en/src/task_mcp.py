@@ -82,6 +82,8 @@ stateless_client = HttpStatelessClient(
 #      - Description
 #    * - ``list_tools``
 #      - List all tools available in the MCP server.
+#    * - ``list_skills``
+#      - List all skills available in the MCP server.
 #    * - ``get_callable_function``
 #      - Get a callable function object from the MCP server by its name.
 #

@@ -29,6 +29,14 @@ def setup_server() -> None:
     """Set up the streamable HTTP MCP server."""
     sse_server = FastMCP("SSE", port=8003)
     sse_server.tool(description="A test tool function.")(tool_1)
+
+    @sse_server.resource(
+        "skill://test-sse-skill/SKILL.md",
+        description="A test SSE skill.",
+    )
+    async def test_skill() -> str:
+        return "# Test SSE Skill"
+
     sse_server.run(transport="sse")
 
 
@@ -86,6 +94,12 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
             transport="sse",
             url=f"http://127.0.0.1:{self.port}/sse",
         )
+
+        skills = await stateless_client.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test-sse-skill")
+        self.assertEqual(skills[0].description, "A test SSE skill.")
+        self.assertEqual(skills[0].uri, "skill://test-sse-skill/SKILL.md")
 
         mcp_tool_1 = await stateless_client.get_tool("tool_1")
         # Repeat to ensure idempotency
@@ -170,6 +184,12 @@ class SseMCPClientTest(IsolatedAsyncioTestCase):
         await stateful_client.connect()
 
         self.assertTrue(stateful_client.is_connected)
+
+        skills = await stateful_client.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].name, "test-sse-skill")
+        self.assertEqual(skills[0].description, "A test SSE skill.")
+        self.assertEqual(skills[0].uri, "skill://test-sse-skill/SKILL.md")
 
         mcp_tool_1 = await stateful_client.get_tool("tool_1")
         # Repeat to ensure idempotency
