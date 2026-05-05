@@ -79,11 +79,13 @@ src/agentscope/
 │   └── __init__.py
 │
 ├── tool/                    # ════════════════════════════════
-│   ├── _tool_base.py        # 工具基类
-│   ├── _coding.py           # 代码执行工具 (Python, Shell)
-│   ├── _text_file.py        # 文件操作工具
-│   ├── _multi_modality.py   # 多模态工具
-│   ├── _mcp.py              # MCP 协议工具
+│   ├── _toolkit.py          # 核心管理类 Toolkit
+│   ├── _types.py            # 类型定义
+│   ├── _response.py         # ToolResponse 结果类
+│   ├── _async_wrapper.py    # 流式响应包装器
+│   ├── _coding/             # 代码执行工具 (Python, Shell)
+│   ├── _text_file/          # 文件操作工具
+│   ├── _multi_modality/     # 多模态工具
 │   └── __init__.py
 │
 ├── memory/                  # ════════════════════════════════
@@ -349,19 +351,18 @@ public class ReActAgent extends AgentBase {
 
 ```python
 def init(
-    project: str,           # 项目名称 (必填)
-    project_dir: str = "./workspace",  # 工作目录
-    name: str | None = None,     # 实例名称
-    
-    debug: bool = False,         # 调试模式
-    tracing: bool = False,       # 链路追踪
-    tracing_endpoint: str | None = None,
-    **kwargs
+    project: str | None = None,         # 项目名称（可选，默认自动生成）
+    name: str | None = None,            # 运行实例名称
+    run_id: str | None = None,          # 运行实例 ID
+    logging_path: str | None = None,    # 日志保存路径
+    logging_level: str = "INFO",        # 日志级别
+    studio_url: str | None = None,      # AgentScope Studio 地址
+    tracing_url: str | None = None,     # OpenTelemetry 追踪地址
 ) -> None:
-    # 1. 设置项目配置
+    # 1. 设置项目配置（ContextVar 实现）
     # 2. 初始化日志
-    # 3. 设置 OpenTelemetry
-    # 4. 连接 AgentScope Studio (可选)
+    # 3. 连接 AgentScope Studio（可选）
+    # 4. 设置 OpenTelemetry 链路追踪（可选）
 ```
 
 ### Java 对比
@@ -993,7 +994,7 @@ async def _broadcast_to_subscribers(
 ### 5.14.4 ReActAgent 核心调用链分析
 
 ```python
-# _react_agent.py 第 223-256 行
+# _react_agent.py 第 98 行
 class ReActAgent(ReActAgentBase):
     """ReAct 推理 Agent 的完整实现"""
 
@@ -1016,7 +1017,7 @@ class ReActAgent(ReActAgentBase):
 #### reply() 方法完整调用序列
 
 ```python
-# _react_agent.py 第 376-537 行
+# _react_agent.py 第 376 行
 async def reply(
     self,
     msg: Msg | list[Msg] | None = None,
@@ -1062,7 +1063,7 @@ async def reply(
 #### _reasoning() 详细流程
 
 ```python
-# _react_agent.py 第 540-655 行
+# _react_agent.py 第 540 行
 async def _reasoning(self, inner_memory: MemoryBase, ...) -> Msg:
     # 1. 获取记忆上下文 (第 520-540 行)
     memory_prompt = inner_memory.get_memory()
@@ -1301,6 +1302,8 @@ class MsgHub:
 
 ### 5.14.8 源码行号索引
 
+> **注意**: 以下行号基于 v1.0.19 版本，仅供参考。不同版本可能有所变动。
+
 | 模块 | 文件 | 核心类和函数 | 行号 |
 |------|------|-------------|------|
 | **入口** | `__init__.py` | `init()` | 72-157 |
@@ -1308,9 +1311,9 @@ class MsgHub:
 | **Agent** | `agent/_agent_base.py` | `AgentBase` 类 | 30-184 |
 | | | `__call__()` | 448-467 |
 | | | `_broadcast_to_subscribers()` | 469-485 |
-| | `agent/_react_agent.py` | `ReActAgent` 类 | 223-256 |
-| | | `reply()` | 284-478 |
-| | | `_reasoning()` | 504-600 |
+| | `agent/_react_agent.py` | `ReActAgent` 类 | 98 |
+| | | `reply()` | 376 |
+| | | `_reasoning()` | 540 |
 | | `agent/_agent_meta.py` | `_AgentMeta` 元类 | - |
 | **Pipeline** | `pipeline/_msghub.py` | `MsgHub` 类 | 14-157 |
 | | | `broadcast()` | 130-138 |
@@ -1792,7 +1795,7 @@ Phase 3: Real-time Multimodal Models
 |-----------|------|----------|
 | `ReActAgent` | 核心推理 Agent | v1.0 |
 | `UserAgent` | 用户交互 Agent | v1.0 |
-| `DeepResearchAgent` | 深度研究 Agent | v1.0.19 |
+| `DeepResearchAgent` | 深度研究 Agent（examples/ 中的示例，非核心 API） | v1.0.19 |
 | `RealtimeAgent` | 实时语音 Agent | v2.0 (规划中) |
 | `A2AAgent` | Agent-to-Agent 通信 | v1.0 |
 

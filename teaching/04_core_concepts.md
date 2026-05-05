@@ -73,7 +73,7 @@ ReAct = **Re**asoning + **Act**ing
 from agentscope.agent import ReActAgent
 from agentscope.model import OpenAIChatModel
 from agentscope.tool import Toolkit
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 # 创建 Toolkit 并注册工具
 toolkit = Toolkit()
@@ -85,7 +85,7 @@ my_agent = ReActAgent(
     toolkit=toolkit,       # 工具箱（通过 Toolkit 注册）
     memory=...,            # 记忆模块
     sys_prompt="你是一个有帮助的助手",  # 系统提示词（必填）
-    formatter=OpenAIFormatter(),  # 消息格式化器（必填）
+    formatter=OpenAIChatFormatter(),  # 消息格式化器（必填）
 )
 ```
 
@@ -860,7 +860,7 @@ my_agent = ReActAgent(
     model=OpenAIChatModel(model_name="gpt-4o"),
     toolkit=toolkit,
     sys_prompt="你是一个代码执行助手",
-    formatter=OpenAIFormatter(),
+    formatter=OpenAIChatFormatter(),
 )
 ```
 
@@ -1380,11 +1380,10 @@ state = memory.state_dict()
 # 恢复记忆状态
 memory.load_state_dict(state)
 
-# 配合 CheckpointManager 使用
-from agentscope.service import CheckpointManager
-
-checkpoint = CheckpointManager(checkpoint_dir="./checkpoints")
-await checkpoint.save(memory.state_dict())
+# 实际项目中可保存到文件或数据库
+import json
+with open("checkpoint.json", "w") as f:
+    json.dump(state, f)
 ```
 
 ### 4.5.6 性能对比
@@ -1568,18 +1567,12 @@ class HybridKnowledgeBase(KnowledgeBase):
 
 #### 3. 检索结果重排序
 
+可通过增加初始检索数量，再用 LLM 对结果打分排序：
+
 ```python
-from agentscope.rag import CohereRerank
-
-# 添加重排序层
-kb_with_rerank = RerankKnowledgeBase(
-    base_kb=kb,
-    rerank_model=CohereRerank(api_key="..."),
-    top_n=20,  # 初始检索数量
-    bottom_n=5, # 重排后返回数量
-)
-
-results = await kb_with_rerank.retrieve("我的问题", limit=5)
+# 简单重排序策略：多检索，取 Top-N
+results = await kb.retrieve("我的问题", limit=20)
+# 可结合 LLM 对结果进行二次排序
 ```
 
 #### 4. 增量更新策略
@@ -1617,18 +1610,18 @@ MsgHub 用于多个 Agent 之间的消息传递和协调。
 from agentscope.pipeline import MsgHub
 from agentscope.agent import ReActAgent
 from agentscope.tool import Toolkit
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 # 创建 Toolkit
 toolkit = Toolkit()
 
 # 创建多个 Agent（必须传入 sys_prompt 和 formatter）
 agent_a = ReActAgent(name="A", model=..., toolkit=toolkit,
-                     sys_prompt="你是 Agent A", formatter=OpenAIFormatter())
+                     sys_prompt="你是 Agent A", formatter=OpenAIChatFormatter())
 agent_b = ReActAgent(name="B", model=..., toolkit=toolkit,
-                     sys_prompt="你是 Agent B", formatter=OpenAIFormatter())
+                     sys_prompt="你是 Agent B", formatter=OpenAIChatFormatter())
 agent_c = ReActAgent(name="C", model=..., toolkit=toolkit,
-                     sys_prompt="你是 Agent C", formatter=OpenAIFormatter())
+                     sys_prompt="你是 Agent C", formatter=OpenAIChatFormatter())
 
 # 广播消息模式 (默认)
 async with MsgHub(participants=[agent_a, agent_b, agent_c]):
@@ -1700,7 +1693,7 @@ public class OrderEventListener {
 ```python
 # 最佳场景：需要工具调用、多轮对话、复杂推理的任务
 from agentscope.tool import Toolkit
-from agentscope.formatter import OpenAIFormatter
+from agentscope.formatter import OpenAIChatFormatter
 
 toolkit = Toolkit()
 toolkit.register_tool_function(tool_func=search_tool, group_name="basic")
@@ -1712,7 +1705,7 @@ agent = ReActAgent(
     toolkit=toolkit,
     memory=InMemoryMemory(),
     sys_prompt="你是一个研究助手",
-    formatter=OpenAIFormatter(),
+    formatter=OpenAIChatFormatter(),
 )
 
 # 支持的高级功能
@@ -1776,10 +1769,10 @@ while True:
 #### 1. 合理配置 max_iters
 ```python
 # 简单任务：减少迭代次数提高响应速度
-agent = ReActAgent(..., max_iters=3, sys_prompt="...", formatter=OpenAIFormatter())
+agent = ReActAgent(..., max_iters=3, sys_prompt="...", formatter=OpenAIChatFormatter())
 
 # 复杂任务：增加迭代次数确保完成
-agent = ReActAgent(..., max_iters=15, sys_prompt="...", formatter=OpenAIFormatter())
+agent = ReActAgent(..., max_iters=15, sys_prompt="...", formatter=OpenAIChatFormatter())
 ```
 
 #### 2. 使用记忆压缩处理长对话
@@ -1791,7 +1784,7 @@ compression_config = CompressionConfig(
     keep_recent=5,  # 保留最近5条消息对
 )
 agent = ReActAgent(..., compression_config=compression_config,
-                   sys_prompt="...", formatter=OpenAIFormatter())
+                   sys_prompt="...", formatter=OpenAIChatFormatter())
 ```
 
 #### 3. 并行工具调用加速
@@ -1801,7 +1794,7 @@ agent = ReActAgent(
     ...,
     parallel_tool_calls=True,  # 加速独立工具执行
     sys_prompt="...",
-    formatter=OpenAIFormatter(),
+    formatter=OpenAIChatFormatter(),
 )
 ```
 
@@ -1866,7 +1859,7 @@ agent = ReActAgent(
         trigger_threshold=3000,
     ),
     sys_prompt="...",
-    formatter=OpenAIFormatter(),
+    formatter=OpenAIChatFormatter(),
 )
 ```
 

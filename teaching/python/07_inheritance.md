@@ -150,9 +150,14 @@ class StateModule:
             if name in state:
                 setattr(self, name, serializer.load_json(state[name]) if serializer else state[name])
 
-    def register_state(self, name: str, serializer: Any = None) -> None:
+    def register_state(
+        self,
+        attr_name: str,
+        custom_to_json: Callable | None = None,
+        custom_from_json: Callable | None = None,
+    ) -> None:
         """注册需要序列化的属性（可选自定义 JSON 序列化器）"""
-        self._attribute_dict[name] = (getattr(self, name), serializer)
+        self._attribute_dict[attr_name] = (custom_to_json, custom_from_json)
 
 
 class AgentBase(StateModule, metaclass=_AgentMeta):

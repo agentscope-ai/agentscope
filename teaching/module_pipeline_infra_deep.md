@@ -1,13 +1,5 @@
 # 管道与基础设施模块深度剖析
 
-## 学习目标
-
-> 学完本节，你将能够：
-> - [L1 记忆] 列举 Pipeline 编排层的核心组件（MsgHub、Formatter、Session、Tracing、A2A、Realtime）
-> - [L2 理解] 解释 MsgHub 的发布-订阅机制与 AgentBase `_broadcast_to_subscribers` 的协作关系
-> - [L3 应用] 使用 Pipeline 函数式接口和 MsgHub 组装一个多智能体协作工作流
-> - [L4 分析] 分析 Formatter 如何针对不同模型 API 的消息格式要求进行适配和转换
-
 **预计时间**：40 分钟
 **先修要求**：已完成 [核心概念](04_core_concepts.md)
 

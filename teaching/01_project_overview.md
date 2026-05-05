@@ -233,9 +233,10 @@ result = await seq("研究 Transformer 架构")
 ## 1.7 版本说明与路线图
 
 ### 当前版本 v1.0.19
-- DeepResearchAgent 稳定性和 thinking blocks 支持
+- thinking blocks 支持
 - Formatter 本地文件 base64 编码
 - 多智能体模式完善（SequentialPipeline/FanoutPipeline/MsgHub）
+- DeepResearchAgent 示例（位于 examples/，非核心 API）
 
 ### 2.0 路线图（正在开发）
 

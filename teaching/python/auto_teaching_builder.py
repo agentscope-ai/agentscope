@@ -1,115 +1,258 @@
 #!/usr/bin/env python3
 """
 AgentScope 智能教案生成器
-从源码自动生成教案，带 Java 对照
+使用 AST 解析源码，生成带 Java 对照的文档
 """
 
-import os
-import re
+from __future__ import annotations
+
+import ast
+import textwrap
 from pathlib import Path
 from typing import Optional
 
-class SourceDocGenerator:
-    """从源码自动生成文档"""
 
-    def __init__(self, source_root: str):
-        self.source_root = Path(source_root)
+def _resolve_project_root() -> Path:
+    """从脚本位置推断项目根目录"""
+    script = Path(__file__).resolve()
+    return script.parent.parent.parent
 
-    def parse_class(self, file_path: Path, class_name: str) -> Optional[dict]:
-        """解析类定义"""
-        content = file_path.read_text()
-        if f"class {class_name}" not in content:
-            return None
 
-        # 提取 docstring
-        docstring = self._extract_docstring(content, class_name)
+PROJECT_ROOT = _resolve_project_root()
 
-        # 提取方法
-        methods = self._extract_methods(content, class_name)
 
-        # 提取属性
-        attrs = self._extract_attributes(content, class_name)
+class ClassInfo:
+    """解析后的类信息"""
 
-        return {
-            "name": class_name,
-            "docstring": docstring,
-            "methods": methods,
-            "attributes": attrs,
-            "source_file": str(file_path.relative_to(self.source_root))
-        }
+    def __init__(self, name: str, file_path: str) -> None:
+        self.name = name
+        self.file_path = file_path
+        self.bases: list[str] = []
+        self.docstring: str = ""
+        self.methods: list[dict] = []
+        self.attributes: list[dict] = []
 
-    def _extract_docstring(self, content: str, class_name: str) -> str:
-        """提取类的文档字符串"""
-        pattern = rf'class {class_name}.*?"""(.*?)"""'
-        match = re.search(pattern, content, re.DOTALL)
-        return match.group(1).strip() if match else ""
 
-    def _extract_methods(self, content: str, class_name: str) -> list[dict]:
-        """提取类的方法"""
-        methods = []
-        # 简单实现：查找 def xxx(self
-        for line in content.split('\n'):
-            if 'def ' in line and 'self' in line:
-                method_name = line.split('def ')[1].split('(')[0].strip()
-                methods.append({"name": method_name})
-        return methods
+def parse_file(file_path: Path) -> list[ClassInfo]:
+    """用 AST 解析 Python 文件，提取所有类定义"""
+    try:
+        source = file_path.read_text(encoding="utf-8", errors="ignore")
+        tree = ast.parse(source)
+    except (SyntaxError, UnicodeDecodeError):
+        return []
 
-    def generate_markdown(self, class_info: dict) -> str:
-        """生成 Markdown 文档"""
-        md = f"""# {class_info['name']}
+    classes = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
 
-## 源码位置
-`{class_info['source_file']}`
+        info = ClassInfo(node.name, str(file_path))
+        info.bases = [
+            _ast_name(base) for base in node.bases
+        ]
 
-## 说明
-{class_info['docstring'] or '无文档说明'}
+        # docstring
+        doc = ast.get_docstring(node)
+        if doc:
+            info.docstring = textwrap.dedent(doc).strip()
 
-## 方法列表
-"""
-        for method in class_info['methods']:
-            md += f"- `{method['name']}()`\n"
+        # 方法和属性
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                method = _parse_method(item)
+                info.methods.append(method)
+            elif isinstance(item, ast.AnnAssign) and item.target:
+                attr_name = (
+                    item.target.id if isinstance(item.target, ast.Name) else "?"
+                )
+                attr_type = (
+                    ast.unparse(item.annotation) if item.annotation else "Any"
+                )
+                info.attributes.append({"name": attr_name, "type": attr_type})
 
-        # Java 对照
-        md += f"""
-## Java 对照
+        classes.append(info)
 
-```java
-// 相当于 Java 的:
-public class {class_info['name']} {{
-"""
-        for method in class_info['methods']:
-            md += f"    public void {method['name']}() {{}}\n"
-        md += "}\n```\n"
+    return classes
 
-        return md
 
-    def run(self):
-        """运行生成器"""
-        # 扫描关键模块
-        modules = {
-            "message": ["Msg", "TextBlock", "ToolUseBlock"],
-            "agent": ["AgentBase", "ReActAgent", "UserAgent"],
-            "pipeline": ["MsgHub", "SequentialPipeline", "FanoutPipeline"],
-            "model": ["ModelBase", "ChatModel"],
-        }
+def _ast_name(node: ast.expr) -> str:
+    """提取 AST 名称节点的字符串"""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_ast_name(node.value)}.{node.attr}"
+    if isinstance(node, ast.Subscript):
+        return ast.unparse(node)
+    return ast.unparse(node)
 
-        for module, classes in modules.items():
-            module_path = self.source_root / module
-            if not module_path.exists():
+
+def _parse_method(node: ast.FunctionDef | ast.AsyncFunctionDef) -> dict:
+    """解析方法定义"""
+    args = []
+    for arg in node.args.args:
+        if arg.arg == "self":
+            continue
+        type_str = ast.unparse(arg.annotation) if arg.annotation else "Any"
+        args.append({"name": arg.arg, "type": type_str})
+
+    returns = ast.unparse(node.returns) if node.returns else "None"
+    doc = ast.get_docstring(node) or ""
+    is_async = isinstance(node, ast.AsyncFunctionDef)
+
+    return {
+        "name": node.name,
+        "args": args,
+        "returns": returns,
+        "docstring": doc.strip(),
+        "is_async": is_async,
+    }
+
+
+def _java_type(py_type: str) -> str:
+    """将 Python 类型映射为 Java 类型"""
+    mapping = {
+        "str": "String",
+        "int": "int",
+        "float": "double",
+        "bool": "boolean",
+        "list": "List",
+        "dict": "Map<String, Object>",
+        "None": "void",
+        "Any": "Object",
+        "Msg": "Msg",
+    }
+    return mapping.get(py_type, py_type)
+
+
+def generate_class_doc(info: ClassInfo) -> str:
+    """生成单个类的 Markdown 文档"""
+    lines = [f"## {info.name}", ""]
+
+    # 继承关系
+    if info.bases:
+        lines.append(f"**继承**: `{' -> '.join(info.bases)}`")
+        lines.append("")
+
+    # 源码位置
+    rel = Path(info.file_path)
+    try:
+        rel = rel.relative_to(PROJECT_ROOT)
+    except ValueError:
+        pass
+    lines.append(f"**源码**: `{rel}`")
+    lines.append("")
+
+    # 文档字符串
+    if info.docstring:
+        lines.append("### 概述")
+        lines.append("")
+        lines.append(info.docstring[:500])
+        lines.append("")
+
+    # 属性
+    if info.attributes:
+        lines.append("### 属性")
+        lines.append("")
+        lines.append("| 属性 | 类型 |")
+        lines.append("|------|------|")
+        for attr in info.attributes[:20]:
+            lines.append(f"| `{attr['name']}` | `{attr['type']}` |")
+        lines.append("")
+
+    # 方法
+    if info.methods:
+        lines.append("### 方法")
+        lines.append("")
+        for method in info.methods:
+            prefix = "async " if method["is_async"] else ""
+            args_str = ", ".join(
+                f"{a['name']}: {a['type']}" for a in method["args"]
+            )
+            lines.append(
+                f"- `{prefix}{method['name']}({args_str}) -> {method['returns']}`"
+            )
+            if method["docstring"]:
+                first_line = method["docstring"].split("\n")[0]
+                lines.append(f"  - {first_line}")
+        lines.append("")
+
+    # Java 对照
+    lines.append("### Java 对照")
+    lines.append("")
+    lines.append("```java")
+    base = info.bases[0] if info.bases else "Object"
+    lines.append(f"public class {info.name} extends {base} {{")
+    for method in info.methods:
+        if method["name"].startswith("_"):
+            continue
+        ret = _java_type(method["returns"])
+        params = ", ".join(
+            f"{_java_type(a['type'])} {a['name']}" for a in method["args"]
+        )
+        prefix = "async " if method["is_async"] else ""
+        lines.append(
+            f"    // {prefix}{method['name']}\n"
+            f"    public {ret} {method['name']}({params}) {{ /* ... */ }}"
+        )
+    lines.append("}")
+    lines.append("```")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def run(
+    source_root: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
+) -> None:
+    """运行生成器"""
+    if source_root is None:
+        source_root = PROJECT_ROOT / "src" / "agentscope"
+    if output_dir is None:
+        output_dir = PROJECT_ROOT / "teaching" / "python" / "_generated"
+
+    if not source_root.exists():
+        print(f"错误: 源码目录不存在: {source_root}")
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # 要解析的模块
+    target_modules = {
+        "agent": ["_agent_base.py", "_react_agent.py"],
+        "model": ["_model_base.py"],
+        "pipeline": ["_msghub.py"],
+        "message": ["_message_base.py"],
+    }
+
+    total_classes = 0
+    for module_dir, files in target_modules.items():
+        module_path = source_root / module_dir
+        if not module_path.exists():
+            continue
+
+        for filename in files:
+            file_path = module_path / filename
+            if not file_path.exists():
+                print(f"  跳过（不存在）: {module_dir}/{filename}")
                 continue
 
-            for class_name in classes:
-                # 查找类文件
-                for py_file in module_path.rglob("*.py"):
-                    if class_name in py_file.stem or class_name in py_file.read_text():
-                        class_info = self.parse_class(py_file, class_name)
-                        if class_info:
-                            print(f"生成: {class_name}")
-                            # 可以输出到文件或打印
-                            print(self.generate_markdown(class_info))
-                        break
+            classes = parse_file(file_path)
+            if not classes:
+                continue
+
+            print(f"解析 {module_dir}/{filename}: {len(classes)} 个类")
+            total_classes += len(classes)
+
+            # 为每个类生成文档
+            for info in classes:
+                doc = generate_class_doc(info)
+                out_file = output_dir / f"{info.name}.md"
+                out_file.write_text(doc, encoding="utf-8")
+                print(f"  -> 生成: {info.name}.md")
+
+    print(f"\n完成: 共解析 {total_classes} 个类，输出到 {output_dir}")
 
 
 if __name__ == "__main__":
-    generator = SourceDocGenerator("/Users/nadav/IdeaProjects/agentscope/src/agentscope")
-    generator.run()
+    run()

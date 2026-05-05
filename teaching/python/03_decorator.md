@@ -138,6 +138,40 @@ public class AuthAspect {
 
 ## AgentScope 源码示例
 
+### 示例 1: `@wraps` 装饰器在 Hook 包装中的使用
+
+**文件**: `src/agentscope/agent/_agent_meta.py`
+
+```python
+from functools import wraps
+
+def _wrap_with_hooks(func: Callable) -> Callable:
+    """用装饰器包装 Agent 方法，在前后插入 Hook 调用"""
+    @wraps(func)  # 保留原函数的 __name__、__doc__ 等元信息
+    async def wrapper(self, *args, **kwargs):
+        # 1. 防重入检查
+        hook_guard_attr = f"_{func.__name__}_hook_running"
+        if getattr(self, hook_guard_attr, False):
+            return await func(self, *args, **kwargs)
+
+        # 2. 执行 pre_hooks
+        # ... 调用所有已注册的前置钩子
+
+        # 3. 执行原方法
+        result = await func(self, *args, **kwargs)
+
+        # 4. 执行 post_hooks
+        # ... 调用所有已注册的后置钩子
+
+        return result
+    return wrapper
+```
+
+> 这就是 `@wraps(func)` 的真实应用场景——如果不加 `@wraps`，所有被包装的方法
+> 名都会变成 `"wrapper"`，导致 Hook 机制无法按方法名区分。
+
+### 示例 2: 类方法与注册机制（非装饰器）
+
 **文件**: `src/agentscope/agent/_agent_base.py:591-620`
 
 ```python

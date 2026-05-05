@@ -434,17 +434,11 @@ class AgentBase:
 **Java 对照**：
 
 ```java
-// Java 没有直接对应的语法，但类似 Functional Interface
-@FunctionalInterface
-public interface Supplier<T> {
-    T get();
-}
-
-// 或使用 Callable
+// Java 中类似 Callable 接口
 public class AgentBase implements Callable<Msg> {
     @Override
-    public Msg call() {
-        return reply();
+    public Msg call() throws Exception {
+        return reply();  // 对应 Python 的 __call__ -> self.reply()
     }
 }
 ```
