@@ -5,6 +5,8 @@ from typing import Any
 from fnmatch import fnmatch
 from abc import ABC
 
+from pydantic import Field
+
 from . import FormatterBase
 from .._logging import logger
 from ..message import (
@@ -248,29 +250,14 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
 
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        description="The conversation history prompt.",
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the DashScope multi-agent formatter.
-
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ["image/*", "audio/*", "video/*"].
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*", "video/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict]:
         """Format input messages into the structure required by the DashScope
