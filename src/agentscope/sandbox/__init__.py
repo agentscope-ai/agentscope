@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Sandbox layer for AgentScope.
 
 Three layers in one package:

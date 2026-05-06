@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Sandbox — the single agent-facing proxy class.
 
 Lifecycle: ``start()`` → use → ``close()``.  Use as async context manager.
@@ -15,9 +16,10 @@ from typing import Any
 
 import frontmatter
 import mcp.types as mtypes
+from mcp.types import Tool as McpToolSchema
+
 from agentscope.skill import Skill
 from agentscope.tool import MCPTool
-from mcp.types import Tool as McpToolSchema
 
 from .config import SandboxConfig, ToolDef
 from .connection import SandboxConnection, create_connection
@@ -31,22 +33,27 @@ logger = logging.getLogger(__name__)
 # File accessor facade — sandbox.file.read / sandbox.file.write
 # ---------------------------------------------------------------------------
 
+
 class FileAccessor:
     """Thin facade so callers can write ``sandbox.file.read(path)``."""
 
     def __init__(self, conn: SandboxConnection) -> None:
+        """Wrap a connection for path-oriented read/write."""
         self._conn = conn
 
     async def read(self, path: str) -> bytes:
+        """Read bytes from a sandbox-relative path."""
         return await self._conn.read(path)
 
     async def write(self, path: str, data: bytes) -> None:
+        """Write bytes to a sandbox-relative path."""
         return await self._conn.write(path, data)
 
 
 # ---------------------------------------------------------------------------
 # Tool / Skill / MCP internal registries
 # ---------------------------------------------------------------------------
+
 
 @dataclass(slots=True)
 class _ToolEntry:
@@ -71,6 +78,7 @@ class _SkillEntry:
 # ---------------------------------------------------------------------------
 # Sandbox — the single agent-facing class
 # ---------------------------------------------------------------------------
+
 
 class Sandbox:
     """Agent-side proxy to one running sandbox.
@@ -98,22 +106,35 @@ class Sandbox:
 
     @property
     def sandbox_id(self) -> str:
+        """Stable id for this sandbox instance."""
         return self._id
 
     @property
+    def backend_type(self) -> str:
+        """Backend id string from config (``local_temp``, ``docker``, …)."""
+        return self._config.backend.type
+
+    @property
+    def started(self) -> bool:
+        """Whether ``start()`` has completed successfully."""
+        return self._started
+
+    @property
     def connection(self) -> SandboxConnection:
+        """Low-level backend connection (must call ``start()`` first)."""
         if self._conn is None:
             raise RuntimeError("Sandbox not started — call start() first")
         return self._conn
 
     @property
     def gateway(self) -> MCPGateway | None:
+        """MCP gateway instance when gateway mode is enabled."""
         return self._gateway
 
     # ─── lifecycle ─────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Create backend connection → register tools / skills → start MCP servers."""
+        """Provision backend, tools/skills scan, and MCP servers."""
         if self._started:
             return
 
@@ -131,7 +152,10 @@ class Sandbox:
         else:
             for mcp_cfg in self._config.mcp_servers:
                 await self._start_mcp_server(
-                    mcp_cfg.name, mcp_cfg.command, mcp_cfg.args, mcp_cfg.env,
+                    mcp_cfg.name,
+                    mcp_cfg.command,
+                    mcp_cfg.args,
+                    mcp_cfg.env,
                 )
 
         self._started = True
@@ -148,10 +172,12 @@ class Sandbox:
         self._started = False
 
     async def __aenter__(self) -> Sandbox:
+        """Enter async context: ``await start()``."""
         await self.start()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        """Exit async context: ``await close()``."""
         await self.close()
 
     # ─── tool surface ─────────────────────────────────────────
@@ -176,20 +202,30 @@ class Sandbox:
                 description=td.description or "",
                 inputSchema=schema,
             )
-            tools.append(MCPTool(mcp_name=mcp_name, tool=mcp_tool, session=session))
+            tools.append(
+                MCPTool(mcp_name=mcp_name, tool=mcp_tool, session=session),
+            )
 
         if self._gateway:
             seen = {t.name for t in tools}
             for gw_tool in await self._gateway.list_tools():
                 if gw_tool.name not in seen:
                     tools.append(
-                        MCPTool(mcp_name=mcp_name, tool=gw_tool, session=session),
+                        MCPTool(
+                            mcp_name=mcp_name,
+                            tool=gw_tool,
+                            session=session,
+                        ),
                     )
                     seen.add(gw_tool.name)
 
         return tools
 
-    async def call_tool(self, name: str, args: dict[str, Any] | None = None) -> Any:
+    async def call_tool(
+        self,
+        name: str,
+        args: dict[str, Any] | None = None,
+    ) -> Any:
         """Dispatch a tool call.
 
         Resolution order:
@@ -203,7 +239,9 @@ class Sandbox:
 
         entry = self._tools.get(name)
         if entry is None:
-            raise KeyError(f"Tool {name!r} not found. Available: {list(self._tools)}")
+            raise KeyError(
+                f"Tool {name!r} not found. Available: {list(self._tools)}",
+            )
         return await self._run_tool_handler(entry, args)
 
     # ─── skill surface ────────────────────────────────────────
@@ -215,10 +253,12 @@ class Sandbox:
         ``python-frontmatter`` (same as :class:`LocalSkillLoader`). Otherwise
         a minimal ``Skill`` is built from scan / import metadata.
         """
-        return [await self._skill_entry_to_skill(s) for s in self._skills.values()]
+        return [
+            await self._skill_entry_to_skill(s) for s in self._skills.values()
+        ]
 
     def _skill_dir_resolved(self, entry: _SkillEntry) -> str:
-        """Absolute host path to the skill root when the backend exposes a workspace root."""
+        """Host path to the skill dir when ``workspace_root`` is available."""
         root = getattr(self._conn, "workspace_root", None)
         if root is not None:
             return str((Path(root) / entry.path).resolve())
@@ -257,7 +297,12 @@ class Sandbox:
         else:
             desc_str = fallback_desc
         body = doc.content
-        markdown = body if isinstance(body, str) else (str(body) if body is not None else "")
+        if isinstance(body, str):
+            markdown = body
+        elif body is not None:
+            markdown = str(body)
+        else:
+            markdown = ""
 
         updated_at = 0.0
         try:
@@ -276,16 +321,25 @@ class Sandbox:
         )
 
     async def import_skills(self, spec: str | list[str]) -> None:
+        """Copy skill trees into the configured skills directory."""
         if isinstance(spec, str):
             spec = [spec]
-        skills_dir = self._config.skills.skills_dir if self._config.skills else "/root/skills"
+        skills_dir = (
+            self._config.skills.skills_dir
+            if self._config.skills
+            else "/root/skills"
+        )
         for s in spec:
-            await self.connection.exec(
-                f"cp -r {s} {skills_dir}/ 2>/dev/null || echo '__import_placeholder:{s}'",
-                timeout=60,
+            cmd = (
+                f"cp -r {s} {skills_dir}/ 2>/dev/null || "
+                f"echo '__import_placeholder:{s}'"
             )
+            await self.connection.exec(cmd, timeout=60)
             name = s.rsplit("/", 1)[-1]
-            self._skills[name] = _SkillEntry(name=name, path=f"{skills_dir}/{name}")
+            self._skills[name] = _SkillEntry(
+                name=name,
+                path=f"{skills_dir}/{name}",
+            )
             logger.info("Imported skill %r into sandbox %s", name, self._id)
 
     # ─── MCP surface ──────────────────────────────────────────
@@ -307,24 +361,28 @@ class Sandbox:
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
+        """Start an MCP server via exec (disabled when gateway mode is on)."""
         if self._gateway:
             raise RuntimeError(
-                "Dynamic add_mcp is not supported when MCPGateway is enabled "
-                "(one-period limitation)"
+                "Dynamic add_mcp is not supported when MCPGateway "
+                "is enabled (one-period limitation)",
             )
         await self._start_mcp_server(name, command, args or [], env or {})
 
     async def remove_mcp(self, name: str) -> None:
+        """Stop a dynamically added MCP server (non-gateway mode only)."""
         if self._gateway:
             raise RuntimeError(
-                "Dynamic remove_mcp is not supported when MCPGateway is enabled "
-                "(one-period limitation)"
+                "Dynamic remove_mcp is not supported when MCPGateway "
+                "is enabled (one-period limitation)",
             )
         handle = self._mcp_servers.pop(name, None)
         if handle and handle.pid:
-            await self.connection.exec(f"kill {handle.pid} 2>/dev/null || true", timeout=5)
+            kill_cmd = f"kill {handle.pid} 2>/dev/null || true"
+            await self.connection.exec(kill_cmd, timeout=5)
         self._tools = {
-            k: v for k, v in self._tools.items()
+            k: v
+            for k, v in self._tools.items()
             if not (v.source == "mcp" and v.definition.handler == name)
         }
 
@@ -341,7 +399,8 @@ class Sandbox:
             tool = request.get("tool")
             if tool:
                 return await self.call_tool(tool, request.get("args", {}))
-        raise ValueError(f"Cannot interpret request: {request!r}")
+        msg = f"Cannot interpret request: {request!r}"
+        raise ValueError(msg)
 
     # ─── internal helpers ─────────────────────────────────────
 
@@ -350,7 +409,7 @@ class Sandbox:
         return await create_connection(opts)
 
     def _merge_infra_requirements(self) -> SandboxCreateOptions:
-        """Build ``SandboxCreateOptions`` by merging implied ports/volumes/env."""
+        """Merge implied ports, volumes, and env into create options."""
         cfg = self._config
         ports = list(cfg.exposed_ports)
         volumes = dict(cfg.volumes)
@@ -367,9 +426,11 @@ class Sandbox:
         if hasattr(cfg.backend, "image"):
             extra["image"] = cfg.backend.image  # type: ignore[attr-defined]
         if hasattr(cfg.backend, "template"):
-            extra["template"] = cfg.backend.template  # type: ignore[attr-defined]
+            t = cfg.backend.template  # type: ignore[attr-defined]
+            extra["template"] = t
         if hasattr(cfg.backend, "base_dir"):
-            extra["base_dir"] = cfg.backend.base_dir  # type: ignore[attr-defined]
+            b = cfg.backend.base_dir  # type: ignore[attr-defined]
+            extra["base_dir"] = b
         if cfg.endpoint:
             extra["endpoint"] = cfg.endpoint
 
@@ -403,30 +464,48 @@ class Sandbox:
         r = await self.connection.exec(full_cmd, timeout=30)
         handle = _McpServerHandle(name=name, command=command)
         if r.ok():
-            pid_line = r.stdout.decode(errors="replace").strip().split("\n")[-1]
+            pid_line = (
+                r.stdout.decode(errors="replace").strip().split("\n")[-1]
+            )
             try:
                 handle.pid = int(pid_line)
             except ValueError:
                 pass
         self._mcp_servers[name] = handle
-        logger.info("Started MCP server %r in sandbox %s (pid=%s)", name, self._id, handle.pid)
+        logger.info(
+            "Started MCP server %r in sandbox %s (pid=%s)",
+            name,
+            self._id,
+            handle.pid,
+        )
 
     async def _scan_and_register_skills(self) -> None:
+        """Fill ``_skills`` by listing the configured skills directory."""
         if not self._config.skills:
             return
         skills_dir = self._config.skills.skills_dir
-        r = await self.connection.exec(f"ls {skills_dir} 2>/dev/null || true", timeout=10)
+        ls_cmd = f"ls {skills_dir} 2>/dev/null || true"
+        r = await self.connection.exec(ls_cmd, timeout=10)
         if not r.ok():
             return
         for name in r.stdout.decode(errors="replace").strip().split("\n"):
             name = name.strip()
             if name:
-                self._skills[name] = _SkillEntry(name=name, path=f"{skills_dir}/{name}")
+                self._skills[name] = _SkillEntry(
+                    name=name,
+                    path=f"{skills_dir}/{name}",
+                )
 
-    async def _run_tool_handler(self, entry: _ToolEntry, args: dict[str, Any]) -> Any:
+    async def _run_tool_handler(
+        self,
+        entry: _ToolEntry,
+        args: dict[str, Any],
+    ) -> Any:
         handler = entry.definition.handler
         if handler is None:
-            raise RuntimeError(f"Tool {entry.definition.name!r} has no handler configured")
+            raise RuntimeError(
+                f"Tool {entry.definition.name!r} has no handler configured",
+            )
         args_json = json.dumps(args)
         r = await self.connection.exec(f"{handler} '{args_json}'", timeout=120)
         return {
@@ -440,16 +519,12 @@ class Sandbox:
 # Duck-typed session for MCPTool
 # ---------------------------------------------------------------------------
 
-class _SandboxSession:
-    """Duck-typed ``session`` for ``MCPTool``.
 
-    ``MCPTool.__call__`` invokes ``session.call_tool(name, arguments=..., ...)``
-    and expects an ``mcp.types.CallToolResult`` back. This class bridges that
-    protocol to ``Sandbox.call_tool``, which in turn routes to the gateway
-    or to a local handler.
-    """
+class _SandboxSession:
+    """Bridge ``MCPTool`` to :meth:`Sandbox.call_tool` for MCP-shaped calls."""
 
     def __init__(self, sandbox: Sandbox) -> None:
+        """Hold the parent sandbox for delegated tool calls."""
         self._sandbox = sandbox
 
     async def call_tool(
@@ -459,10 +534,15 @@ class _SandboxSession:
         arguments: dict[str, Any] | None = None,
         read_timeout_seconds: Any = None,
     ) -> Any:
+        """Bridge ``MCPTool`` to :meth:`Sandbox.call_tool`."""
+        del read_timeout_seconds  # MCPTool protocol (reserved)
         raw = await self._sandbox.call_tool(name, arguments or {})
         if isinstance(raw, mtypes.CallToolResult):
             return raw
-        text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, default=str)
+        if isinstance(raw, str):
+            text = raw
+        else:
+            text = json.dumps(raw, ensure_ascii=False, default=str)
         return mtypes.CallToolResult(
             content=[mtypes.TextContent(type="text", text=text)],
             isError=False,
