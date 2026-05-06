@@ -4,18 +4,17 @@ import asyncio
 import uuid
 from asyncio import Queue
 from copy import deepcopy
-from typing import Any, AsyncGenerator, Sequence, Literal, List
-
-import jsonschema
-from pydantic import (
-    BaseModel,
-    Field,
-    SerializeAsAny,
-    PrivateAttr,
-    ConfigDict,
+from typing import (
+    Any,
+    AsyncGenerator,
+    Sequence,
+    Literal,
+    List,
 )
 
-from ._config import CompressionConfig
+import jsonschema
+
+from ._config import CompressionConfig, ReActConfig, ModelConfig
 from ._state import AgentState
 from ._utils import _ToolCallBatch
 from .._logging import logger
@@ -49,6 +48,7 @@ from ..event import (
     ExceedMaxItersEvent,
 )
 from ..exception import AgentOrientedException
+from ..middleware import MiddlewareBase
 from ..model import (
     ChatResponse,
     ChatUsage,
@@ -80,103 +80,53 @@ from ..tool import (
 )
 
 
-class ReasoningConfig(BaseModel):
-    """The reasoning related configuration"""
-
-    max_iters: int = 20
-    """The maximum number of iterations for the reasoning-acting loop."""
-
-
-class ActingConfig(BaseModel):
-    """The acting related configuration in AgentScope"""
-
-    parallel: bool = True
-    """Whether to execute tool calls in parallel when there are multiple tool
-    calls awaiting execution."""
-
-
-class Agent(BaseModel):
+class Agent:
     """The agent class."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        model: ChatModelBase,
+        toolkit: Toolkit,
+        middlewares: list[MiddlewareBase] | None = None,
+        state: AgentState | None = None,
+        model_config: ModelConfig = ModelConfig(),
+        compression_config: CompressionConfig = CompressionConfig(),
+        react_config: ReActConfig = ReActConfig(),
+    ) -> None:
+        self.name = name
+        self._system_prompt = system_prompt
+        self.model = model
+        self.toolkit = toolkit
+        self.state = state or AgentState()
 
-    name: str = Field(description="The identifier of the agent.")
-    """The name of the agent."""
+        self.model_config = model_config
+        self.compression_config = compression_config
+        self.react_config = react_config
 
-    system_prompt: str = Field(default="You're a helpful assistant.")
-    """The base system prompt of the agent, extra hints will be attached to
-    this prompt during agent's reply."""
-
-    model: SerializeAsAny[ChatModelBase] = Field(
-        description="The language model used by the agent.",
-    )
-    """The language model used by the agent."""
-
-    max_retries: int = Field(
-        default=10,
-        gt=0,
-        description="Maximum number of retries when the model call fails.",
-    )
-    """The maximum number of retries when the model call fails. Must be
-    greater than 0."""
-
-    fallback_model: SerializeAsAny[ChatModelBase] | None = Field(
-        default=None,
-        description="The fallback model used when the main model fails.",
-    )
-    """The fallback model used when the main model fails. Also supports the
-    max_retries logic."""
-
-    compression: CompressionConfig = Field(
-        default_factory=CompressionConfig,
-        description="The compression related configuration for the agent.",
-    )
-    """The agent compression related configuration."""
-
-    reasoning: ReasoningConfig = Field(
-        default_factory=ReasoningConfig,
-        description="The reasoning related configuration for the agent.",
-    )
-    """The reasoning related configuration for the agent."""
-
-    acting: ActingConfig = Field(
-        default_factory=ActingConfig,
-        description="The acting related configuration for the agent.",
-    )
-    """The acting, i.e. tool execution, related configuration for the agent."""
-
-    state: AgentState = Field(default_factory=AgentState)
-    """The agent state, including the conversation context, permission context,
-    tool context, etc."""
-
-    toolkit: Toolkit = Field(exclude=True)
-    """The toolkit used by the agent."""
-
-    _engine: PermissionEngine = PrivateAttr()
-    """The permission engine used to manage the tool usage permissions for the
-    agent."""
-
-    # @field_validator("model", "fallback_model", mode="before")
-    # @classmethod
-    # def validate_model(cls, v: Any, info: ValidationInfo) -> Any:
-    #     """Deserialize model from dict using context-injected custom
-    #     classes."""
-    #     if not isinstance(v, dict):
-    #         return v
-    #     custom_classes = (
-    #         info.context.get("custom_model_classes", [])
-    #         if info.context
-    #         else []
-    #     )
-    #     return _deserialize_model(
-    #         v,
-    #         custom_classes=custom_classes,
-    #         context=info.context,
-    #     )
-
-    def model_post_init(self, __context: Any) -> None:
-        """Initialize the permission engine after the model is initialized."""
         self._engine = PermissionEngine(self.state.permission_context)
+
+        # ====================================================================
+        # The Middleware-related attributes
+        # ====================================================================
+        # Filter middlewares by implemented hooks (only once)
+        middlewares = middlewares or []
+        self._reply_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_reply")
+        ]
+        self._reasoning_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_reasoning")
+        ]
+        self._acting_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_acting")
+        ]
+        self._model_call_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_model_call")
+        ]
+        self._system_prompt_middlewares = [
+            _ for _ in middlewares if _.is_implemented("on_system_prompt")
+        ]
 
     # =======================================================================
     # Agent public methods
@@ -260,7 +210,7 @@ class Agent(BaseModel):
                 config. Otherwise, use the default compression config in the
                 agent.
         """
-        cfg: CompressionConfig = compression_config or self.compression
+        cfg: CompressionConfig = compression_config or self.compression_config
 
         # Count the current tokens
         kwargs = await self._prepare_model_input()
@@ -437,6 +387,46 @@ class Agent(BaseModel):
         | ExternalExecutionResultEvent
         | None = None,
     ) -> AsyncGenerator[AgentEvent | Msg, None]:
+        """Reply entry point (may be wrapped by middleware)."""
+        if not self._reply_middlewares:
+            async for item in self._reply_impl(msgs=msgs, event=event):
+                yield item
+        else:
+
+            async def execute_chain(
+                index: int = 0,
+            ) -> AsyncGenerator[AgentEvent | Msg, None]:
+                if index >= len(self._reply_middlewares):
+                    async for item in self._reply_impl(msgs=msgs, event=event):
+                        yield item
+                else:
+                    mw = self._reply_middlewares[index]
+                    input_kwargs = {"msgs": msgs, "event": event}
+
+                    async def next_handler() -> AsyncGenerator[
+                        AgentEvent | Msg,
+                        None,
+                    ]:
+                        async for item in execute_chain(index + 1):
+                            yield item
+
+                    async for item in mw.on_reply(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _reply_impl(
+        self,
+        msgs: Msg | list[Msg] | None = None,
+        event: UserConfirmResultEvent
+        | ExternalExecutionResultEvent
+        | None = None,
+    ) -> AsyncGenerator[AgentEvent | Msg, None]:
         """Core reply logic."""
         # ===================================================================
         # Step 1: Checking agent input:
@@ -562,6 +552,57 @@ class Agent(BaseModel):
         )
 
     async def _reasoning(
+        self,
+        tool_choice: ToolChoice = "auto",
+    ) -> AsyncGenerator[
+        ModelCallStartEvent
+        | TextBlockStartEvent
+        | TextBlockDeltaEvent
+        | TextBlockEndEvent
+        | ToolCallBlock
+        | ToolCallDeltaEvent
+        | ToolCallEndEvent
+        | ThinkingBlockStartEvent
+        | ThinkingBlockDeltaEvent
+        | ThinkingBlockEndEvent
+        | DataBlockStartEvent
+        | DataBlockDeltaEvent
+        | DataBlockEndEvent
+        | ModelCallEndEvent
+        | Msg,
+        None,
+    ]:
+        """Reasoning entry point (may be wrapped by middleware)."""
+        if not self._reasoning_middlewares:
+            async for item in self._reasoning_impl(tool_choice=tool_choice):
+                yield item
+        else:
+
+            async def execute_chain(index: int = 0) -> AsyncGenerator:
+                if index >= len(self._reasoning_middlewares):
+                    async for item in self._reasoning_impl(
+                        tool_choice=tool_choice,
+                    ):
+                        yield item
+                else:
+                    mw = self._reasoning_middlewares[index]
+                    input_kwargs = {"tool_choice": tool_choice}
+
+                    async def next_handler() -> AsyncGenerator:
+                        async for item in execute_chain(index + 1):
+                            yield item
+
+                    async for item in mw.on_reasoning(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _reasoning_impl(
         self,
         tool_choice: ToolChoice = "auto",
     ) -> AsyncGenerator[
@@ -1094,6 +1135,46 @@ class Agent(BaseModel):
         | ToolResultEndEvent,
         None,
     ]:
+        """Execute tool call entry point (may be wrapped by middleware)."""
+        if not self._acting_middlewares:
+            async for item in self._execute_tool_call_impl(tool_call):
+                yield item
+        else:
+
+            async def execute_chain(index: int = 0) -> AsyncGenerator:
+                if index >= len(self._acting_middlewares):
+                    async for item in self._execute_tool_call_impl(tool_call):
+                        yield item
+                else:
+                    mw = self._acting_middlewares[index]
+                    input_kwargs = {"tool_call": tool_call}
+
+                    async def next_handler() -> AsyncGenerator:
+                        async for item in execute_chain(index + 1):
+                            yield item
+
+                    async for item in mw.on_acting(
+                        agent=self,
+                        input_kwargs=input_kwargs,
+                        next_handler=next_handler,
+                    ):
+                        yield item
+
+            async for item in execute_chain():
+                yield item
+
+    async def _execute_tool_call_impl(
+        self,
+        tool_call: ToolCallBlock,
+    ) -> AsyncGenerator[
+        RequireUserConfirmEvent
+        | RequireExternalExecutionEvent
+        | ToolResultStartEvent
+        | ToolResultTextDeltaEvent
+        | ToolResultDataDeltaEvent
+        | ToolResultEndEvent,
+        None,
+    ]:
         """Execute a single tool call with permission checking.
 
         Args:
@@ -1460,7 +1541,13 @@ class Agent(BaseModel):
         if skill_instructions:
             prompt.append(skill_instructions)
 
-        return "\n".join(prompt)
+        result = "\n".join(prompt)
+
+        # Apply system_prompt middlewares sequentially (transformer pattern)
+        for mw in self._system_prompt_middlewares:
+            result = await mw.on_system_prompt(self, result)
+
+        return result
 
     async def _prepare_model_input(self) -> dict[str, Any]:
         """A unified method to prepare the chat model input according to
@@ -1498,7 +1585,7 @@ class Agent(BaseModel):
         tools: list[dict],
         tool_choice: ToolChoice,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
-        """Perform model inference and return the response.
+        """Perform model inference with retry logic and middleware support.
 
         Args:
             messages (`list[Msg]`):
@@ -1525,11 +1612,51 @@ class Agent(BaseModel):
         for model in models:
             for _ in range(self.max_retries):
                 try:
-                    return await model(
-                        messages=messages,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                    )
+                    # Apply middleware to wrap the actual model() call
+                    if not self._model_call_middlewares:
+                        return await model(
+                            messages=messages,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                        )
+                    else:
+                        # pylint: disable=cell-var-from-loop
+                        async def execute_chain(
+                            index: int = 0,
+                            current_model: ChatModelBase = model,
+                        ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+                            """Execute the model chain."""
+                            if index >= len(self._model_call_middlewares):
+                                return await current_model(
+                                    messages=messages,
+                                    tools=tools,
+                                    tool_choice=tool_choice,
+                                )
+                            else:
+                                mw = self._model_call_middlewares[index]
+                                input_kwargs = {
+                                    "messages": messages,
+                                    "tools": tools,
+                                    "tool_choice": tool_choice,
+                                }
+
+                                async def next_handler() -> (
+                                    ChatResponse
+                                    | AsyncGenerator[ChatResponse, None]
+                                ):
+                                    # pylint: disable=cell-var-from-loop
+                                    return await execute_chain(
+                                        index + 1,
+                                        current_model,
+                                    )
+
+                                return await mw.on_model_call(
+                                    agent=self,
+                                    input_kwargs=input_kwargs,
+                                    next_handler=next_handler,
+                                )
+
+                        return await execute_chain()
                 except Exception as e:
                     logger.warning(
                         "Model %s call failed for agent %s. "

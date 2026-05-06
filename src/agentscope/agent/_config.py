@@ -3,6 +3,8 @@
 
 from pydantic import BaseModel, Field
 
+from ..model import ChatModelBase
+
 
 class SummarySchema(BaseModel):
     """The compressed memory model, used to generate summary of old memories"""
@@ -100,3 +102,34 @@ class CompressionConfig(BaseModel):
     )
     """The structured model used to guide the agent to generate the
     structured compressed summary."""
+
+
+class ReActConfig(BaseModel):
+    """The reasoning related configuration"""
+
+    max_iters: int = 20
+    """The maximum number of iterations for the reasoning-acting loop."""
+
+    stop_on_reject: bool = False
+    """If stop reasoning when tool call(s) are rejected. If `True`, the agent
+    won't continue reasoning and wait for outside interaction from the user.
+    """
+
+
+class ModelConfig(BaseModel):
+    """The model related configuration."""
+
+    max_retries: int = Field(
+        default=3,
+        gt=0,
+        description="Maximum number of retries when the model call fails.",
+    )
+    """The maximum number of retries when the model call fails. Must be
+    greater than 0."""
+
+    fallback_model: ChatModelBase | None = Field(
+        default=None,
+        description="The fallback model used when the main model fails.",
+    )
+    """The fallback model used when the main model fails. Also supports the
+    max_retries logic."""
