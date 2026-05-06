@@ -238,8 +238,8 @@
 - [ ] 面向对象编程 (类、继承、抽象方法)
 
 如果对上述概念不熟悉，建议先阅读：
-- [Python async 教程](链接)
-- [装饰器详解](链接)
+- [Python async 教程](./python/02_async_await.md)
+- [装饰器详解](./python/03_decorator.md)
 ```
 
 ---

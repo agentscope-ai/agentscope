@@ -10,14 +10,14 @@
 
 | 章节 | 内容 | Java 对照 |
 |------|------|-----------|
-| [P1 - 类与对象](../python/01_class_object.md) | 定义、构造器、属性、@property | class vs Java class |
-| [P2 - 异步编程](../python/02_async_await.md) | async/await、协程、EventLoop | CompletableFuture |
-| [P3 - 装饰器](../python/03_decorator.md) | @装饰器、闭包、@wraps | AOP/拦截器 |
-| [P4 - 类型提示](../python/04_type_hints.md) | 类型注解、泛型、Protocol | Java Generics |
-| [P5 - 数据类](../python/05_dataclass.md) | @dataclass、field、defaults | Lombok @Data |
-| [P6 - 上下文管理器](../python/06_context_manager.md) | with、__enter__、async with | try-with-resources |
-| [P7 - 继承与多态](../python/07_inheritance.md) | 继承、方法覆盖、super() | extends/implements |
-| [P8 - 元类](../python/08_metaclass.md) | type()、__new__、metaclass | 注解处理器 |
+| [P1 - 类与对象](./python/01_class_object.md) | 定义、构造器、属性、@property | class vs Java class |
+| [P2 - 异步编程](./python/02_async_await.md) | async/await、协程、EventLoop | CompletableFuture |
+| [P3 - 装饰器](./python/03_decorator.md) | @装饰器、闭包、@wraps | AOP/拦截器 |
+| [P4 - 类型提示](./python/04_type_hints.md) | 类型注解、泛型、Protocol | Java Generics |
+| [P5 - 数据类](./python/05_dataclass.md) | @dataclass、field、defaults | Lombok @Data |
+| [P6 - 上下文管理器](./python/06_context_manager.md) | with、__enter__、async with | try-with-resources |
+| [P7 - 继承与多态](./python/07_inheritance.md) | 继承、方法覆盖、super() | extends/implements |
+| [P8 - 元类](./python/08_metaclass.md) | type()、__new__、metaclass | 注解处理器 |
 
 ### 基础模块（入门必读）
 

@@ -4,7 +4,7 @@
 
 **日期**：YYYY/MM/DD
 **学习阶段**：阶段一 - Python 基础 / 阶段二 - AgentScope 基础 / 阶段三 - 深度模块
-**关联教程**：[章节名称](../python/XX_章节.md)
+**关联教程**：[章节名称](../python/01_class_object.md)
 **关联源码**：`src/agentscope/模块/文件.py`
 
 ---
