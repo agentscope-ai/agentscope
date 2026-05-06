@@ -9,7 +9,7 @@ from typing import Type, Any, AsyncGenerator
 import jsonschema
 from pydantic import BaseModel, Field
 
-from . import StructuredResponse, ChatResponse
+from ._model_response import StructuredResponse, ChatResponse
 from ._model_card import ModelCard
 from .._logging import logger
 from .._utils._common import _json_loads_with_repair
