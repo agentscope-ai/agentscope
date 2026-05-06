@@ -34,6 +34,7 @@ def _make_model() -> Any:
         return OpenAIChatModel(
             model_name="gpt-4o",
             api_key="test",
+            context_length=128000,
             stream=False,
             formatter=OpenAIChatFormatter(),
         )

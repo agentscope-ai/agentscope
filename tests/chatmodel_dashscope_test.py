@@ -35,6 +35,7 @@ def _make_model() -> Any:
         return DashScopeChatModel(
             model_name="qwen-max",
             api_key="test",
+            context_length=32000,
             stream=False,
             formatter=DashScopeChatFormatter(),
         )

@@ -51,6 +51,7 @@ def _make_model() -> Any:
     return GeminiChatModel(
         model_name="gemini-1.5-pro",
         api_key="test",
+        context_length=1000000,
         stream=False,
         formatter=GeminiChatFormatter(),
     )

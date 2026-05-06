@@ -32,6 +32,7 @@ def _make_model() -> Any:
 
     return OllamaChatModel(
         model_name="llama3",
+        context_length=8192,
         stream=False,
         formatter=OllamaChatFormatter(),
     )

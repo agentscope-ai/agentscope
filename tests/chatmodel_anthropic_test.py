@@ -48,6 +48,7 @@ def _make_model() -> Any:
         return AnthropicChatModel(
             model_name="claude-3-5-sonnet-20241022",
             api_key="test",
+            context_length=200000,
             stream=False,
             formatter=AnthropicChatFormatter(),
         )
