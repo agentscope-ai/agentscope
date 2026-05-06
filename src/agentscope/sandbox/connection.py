@@ -1,0 +1,185 @@
+"""SandboxConnection — the backend abstraction class.
+
+Each backend (E2B, Docker, local_temp, ...) subclasses this **once**.
+The subclass provides:
+  - ``@classmethod create(options) -> Self``  (factory)
+  - instance methods: exec / read / write / destroy / close / running
+  - optional: resume / PTY / ports / snapshot
+
+Module-level ``create_connection(options)`` dispatches by ``options.backend``
+through a global registry (``register_connection_class`` / ``get_connection_class``).
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from .exceptions import CapabilityError, UnsupportedOperation
+from .types import (
+    ExecResult,
+    ExposedPortEndpoint,
+    SandboxConnectionCapabilities,
+    SandboxCreateOptions,
+    SerializedSandboxState,
+)
+
+
+class SandboxConnection(ABC):
+    """Handle to one running sandbox instance.
+
+    Required: exec + read/write + destroy + close + running.
+    Optional: PTY, ports, snapshot, resume (gate on ``capabilities()``).
+    """
+
+    @property
+    @abstractmethod
+    def backend_id(self) -> str:
+        """Identifier for this backend (e.g. ``'local_temp'``, ``'e2b'``)."""
+
+    # ─── factory ──────────────────────────────────────────────
+
+    @classmethod
+    @abstractmethod
+    async def create(cls, options: SandboxCreateOptions) -> SandboxConnection:
+        """Provision a new sandbox and return a connected instance."""
+
+    @classmethod
+    async def resume(cls, state: SerializedSandboxState) -> SandboxConnection:
+        """Reattach to an existing sandbox from serialized state (optional)."""
+        raise UnsupportedOperation("resume not implemented for this backend")
+
+    # ─── execution ────────────────────────────────────────────
+
+    @abstractmethod
+    async def exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ExecResult:
+        """Run a shell command string inside the sandbox."""
+
+    # ─── filesystem ───────────────────────────────────────────
+
+    @abstractmethod
+    async def read(self, path: str) -> bytes:
+        """Read a sandbox-relative file path as bytes."""
+
+    @abstractmethod
+    async def write(self, path: str, data: bytes) -> None:
+        """Write bytes to a sandbox-relative path."""
+
+    # ─── lifecycle ────────────────────────────────────────────
+
+    @abstractmethod
+    async def destroy(self) -> None:
+        """Hard cleanup: release **all** backend resources.
+
+        Idempotent. After ``destroy()`` the connection is unusable.
+        """
+
+    async def close(self) -> None:
+        """Soft cleanup: release local handles only.
+
+        Default delegates to ``destroy()``; override if you want a lighter
+        teardown that keeps the remote sandbox alive (e.g. for pool reuse).
+        """
+        await self.destroy()
+
+    @abstractmethod
+    async def running(self) -> bool:
+        """Best-effort liveness check."""
+
+    async def __aenter__(self) -> SandboxConnection:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.destroy()
+
+    # ─── capabilities ─────────────────────────────────────────
+
+    def capabilities(self) -> SandboxConnectionCapabilities:
+        return SandboxConnectionCapabilities(
+            pty=self.supports_pty(),
+            exposed_ports=self.supports_exposed_ports(),
+            snapshot=self.supports_snapshot(),
+        )
+
+    def supports_pty(self) -> bool:
+        return False
+
+    def supports_exposed_ports(self) -> bool:
+        return False
+
+    def supports_snapshot(self) -> bool:
+        return False
+
+    # ─── optional: PTY ────────────────────────────────────────
+
+    async def pty_start(self, command: str, **kwargs: object) -> int:
+        raise CapabilityError("pty", backend=self.backend_id)
+
+    async def pty_write(self, session_id: int, data: str) -> str:
+        raise CapabilityError("pty", backend=self.backend_id)
+
+    # ─── optional: networking ─────────────────────────────────
+
+    async def resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        raise CapabilityError("exposed_ports", backend=self.backend_id)
+
+    # ─── optional: persistence ────────────────────────────────
+
+    async def export_state(self) -> SerializedSandboxState:
+        raise CapabilityError("export_state", backend=self.backend_id)
+
+    async def snapshot_workspace(self) -> bytes:
+        raise CapabilityError("snapshot", backend=self.backend_id)
+
+    async def restore_workspace(self, data: bytes) -> None:
+        raise CapabilityError("snapshot", backend=self.backend_id)
+
+
+# ---------------------------------------------------------------------------
+# Global registry: backend_id → Connection class
+# ---------------------------------------------------------------------------
+
+_registry: dict[str, type[SandboxConnection]] = {}
+
+
+def register_connection_class(cls: type[SandboxConnection]) -> None:
+    """Register a ``SandboxConnection`` subclass by its ``backend_id``."""
+    # Read backend_id from the class's property (unbound descriptor).
+    bid = cls.backend_id.fget(cls)  # type: ignore[attr-defined]
+    if isinstance(bid, property):
+        raise TypeError(
+            f"Cannot read backend_id from {cls.__name__}; "
+            "ensure backend_id is a concrete @property on the class."
+        )
+    if bid in _registry:
+        raise ValueError(f"SandboxConnection already registered for {bid!r}")
+    _registry[bid] = cls
+
+
+def get_connection_class(backend_id: str) -> type[SandboxConnection]:
+    """Look up a registered ``SandboxConnection`` class by backend id."""
+    try:
+        return _registry[backend_id]
+    except KeyError as e:
+        available = list(_registry.keys())
+        raise KeyError(
+            f"No SandboxConnection registered for {backend_id!r}. "
+            f"Available backends: {available}"
+        ) from e
+
+
+async def create_connection(options: SandboxCreateOptions) -> SandboxConnection:
+    """Unified entry point: resolve ``options.backend`` → registered class → ``create``.
+
+    This is the top-level factory that dispatches to the correct backend
+    based on ``options.backend``.
+    """
+    cls = get_connection_class(options.backend)
+    return await cls.create(options)

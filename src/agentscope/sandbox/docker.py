@@ -1,0 +1,400 @@
+"""Docker backend: runs commands inside a Docker container.
+
+Provides real process isolation via Docker. Requires the Docker daemon to
+be running and the ``docker`` package (docker-py) to be installed.
+
+All blocking docker-py calls are dispatched to a shared
+:class:`~concurrent.futures.ThreadPoolExecutor` so they never block the
+event loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import posixpath
+import tarfile
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+import docker as docker_sdk
+import docker.errors
+from docker.models.containers import Container
+
+from .connection import SandboxConnection, register_connection_class
+from .exceptions import UnsupportedOperation
+from .types import (
+    ExecResult,
+    ExposedPortEndpoint,
+    SandboxCreateOptions,
+    SerializedSandboxState,
+)
+
+_DEFAULT_IMAGE = "ubuntu:22.04"
+_DEFAULT_WORKSPACE = "/workspace"
+
+_DOCKER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=8,
+    thread_name_prefix="agentscope-docker-sandbox",
+)
+
+
+class DockerSandboxConnection(SandboxConnection):
+    """Sandbox backed by a Docker container + ``docker-py``."""
+
+    def __init__(
+        self,
+        client: docker_sdk.DockerClient,
+        container: Container,
+        *,
+        instance_id: str,
+        workspace: str = _DEFAULT_WORKSPACE,
+        exposed_ports: dict[int, int] | None = None,
+    ) -> None:
+        self._client = client
+        self._container = container
+        self._instance_id = instance_id
+        self._workspace = workspace
+        self._exposed_ports = exposed_ports or {}
+        self._destroyed = False
+
+    @property
+    def backend_id(self) -> str:
+        return "docker"
+
+    @property
+    def workspace_root(self) -> Path:
+        return Path(self._workspace)
+
+    # ─── factory ──────────────────────────────────────────────
+
+    @classmethod
+    async def create(cls, options: SandboxCreateOptions) -> DockerSandboxConnection:
+        if options.backend != "docker":
+            raise ValueError(f"expected backend 'docker', got {options.backend!r}")
+
+        image: str = options.extra.get("image", _DEFAULT_IMAGE)
+        workspace: str = options.extra.get("workspace", _DEFAULT_WORKSPACE)
+        instance_id = uuid.uuid4().hex
+        loop = asyncio.get_running_loop()
+
+        client = docker_sdk.from_env()
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _ensure_image, client, image)
+
+        create_kwargs: dict[str, Any] = {
+            "image": image,
+            "command": ["sleep", "infinity"],
+            "detach": True,
+            "working_dir": workspace,
+            "name": f"as_sandbox_{instance_id[:12]}",
+            "labels": {
+                "agentscope.sandbox": "true",
+                "agentscope.sandbox.id": instance_id,
+            },
+        }
+
+        if options.env:
+            create_kwargs["environment"] = options.env
+
+        if options.volumes:
+            create_kwargs["volumes"] = {
+                src: {"bind": dst, "mode": "rw"}
+                for src, dst in options.volumes.items()
+            }
+
+        if options.exposed_ports:
+            create_kwargs["ports"] = {
+                f"{port}/tcp": ("127.0.0.1", None)
+                for port in options.exposed_ports
+            }
+
+        container: Container = await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            lambda: client.containers.create(**create_kwargs),
+        )
+        await loop.run_in_executor(_DOCKER_EXECUTOR, container.start)
+
+        host_port_map: dict[int, int] = {}
+        if options.exposed_ports:
+            await loop.run_in_executor(_DOCKER_EXECUTOR, container.reload)
+            attrs = getattr(container, "attrs", {}) or {}
+            ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
+            for port in options.exposed_ports:
+                bindings = ports_info.get(f"{port}/tcp", [])
+                if bindings:
+                    host_port_map[port] = int(bindings[0]["HostPort"])
+
+        await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            lambda: container.exec_run(["mkdir", "-p", workspace]),
+        )
+
+        conn = cls(
+            client,
+            container,
+            instance_id=instance_id,
+            workspace=workspace,
+            exposed_ports=host_port_map,
+        )
+
+        for cmd in options.startup_commands:
+            await conn.exec(cmd, env=options.env)
+
+        return conn
+
+    @classmethod
+    async def resume(cls, state: SerializedSandboxState) -> DockerSandboxConnection:
+        if state.backend != "docker":
+            raise ValueError("backend mismatch for resume")
+
+        container_id = state.payload.get("container_id")
+        if not isinstance(container_id, str):
+            raise ValueError("invalid resume payload: missing container_id")
+
+        instance_id = state.payload.get("instance_id")
+        if not isinstance(instance_id, str):
+            instance_id = uuid.uuid4().hex
+
+        workspace = state.payload.get("workspace", _DEFAULT_WORKSPACE)
+        loop = asyncio.get_running_loop()
+
+        client = docker_sdk.from_env()
+        try:
+            container: Container = await loop.run_in_executor(
+                _DOCKER_EXECUTOR,
+                lambda: client.containers.get(container_id),
+            )
+        except docker.errors.NotFound as e:
+            client.close()
+            raise UnsupportedOperation(
+                f"container {container_id} no longer exists"
+            ) from e
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, container.reload)
+        if container.status != "running":
+            await loop.run_in_executor(_DOCKER_EXECUTOR, container.start)
+
+        return cls(
+            client,
+            container,
+            instance_id=instance_id,
+            workspace=workspace,
+        )
+
+    # ─── path resolution ─────────────────────────────────────
+
+    def _resolve(self, path: str) -> str:
+        """Resolve a sandbox-relative path inside the container workspace."""
+        p = PurePosixPath(path)
+        if p.is_absolute():
+            resolved = posixpath.normpath(p.as_posix())
+        else:
+            resolved = posixpath.normpath(
+                (PurePosixPath(self._workspace) / p).as_posix(),
+            )
+        ws = posixpath.normpath(self._workspace)
+        if resolved != ws and not resolved.startswith(ws + "/"):
+            raise ValueError(f"path escapes sandbox workspace: {path!r}")
+        return resolved
+
+    # ─── exec ─────────────────────────────────────────────────
+
+    async def exec(
+        self,
+        command: str,
+        *,
+        timeout: float | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> ExecResult:
+        workdir = self._workspace if cwd is None else self._resolve(cwd)
+        loop = asyncio.get_running_loop()
+
+        def _run() -> ExecResult:
+            result = self._container.exec_run(
+                ["sh", "-c", command],
+                demux=True,
+                workdir=workdir,
+                environment=env,
+            )
+            stdout, stderr = result.output
+            code = result.exit_code if result.exit_code is not None else -1
+            return ExecResult(
+                exit_code=code,
+                stdout=stdout or b"",
+                stderr=stderr or b"",
+            )
+
+        if timeout is None:
+            return await loop.run_in_executor(_DOCKER_EXECUTOR, _run)
+
+        return await asyncio.wait_for(
+            loop.run_in_executor(_DOCKER_EXECUTOR, _run),
+            timeout=timeout,
+        )
+
+    # ─── filesystem ───────────────────────────────────────────
+
+    async def read(self, path: str) -> bytes:
+        container_path = self._resolve(path)
+        loop = asyncio.get_running_loop()
+
+        def _read() -> bytes:
+            bits, _stat = self._container.get_archive(container_path)
+            raw = b"".join(bits)
+            with tarfile.open(fileobj=io.BytesIO(raw), mode="r") as tf:
+                for member in tf.getmembers():
+                    if member.isfile():
+                        f = tf.extractfile(member)
+                        if f:
+                            return f.read()
+            raise FileNotFoundError(f"file not found in container: {path}")
+
+        return await loop.run_in_executor(_DOCKER_EXECUTOR, _read)
+
+    async def write(self, path: str, data: bytes) -> None:
+        container_path = self._resolve(path)
+        p = PurePosixPath(container_path)
+        loop = asyncio.get_running_loop()
+
+        await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            lambda: self._container.exec_run(
+                ["mkdir", "-p", str(p.parent)],
+            ),
+        )
+
+        def _write() -> None:
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tf:
+                info = tarfile.TarInfo(name=p.name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+            buf.seek(0)
+            self._container.put_archive(str(p.parent), buf.getvalue())
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _write)
+
+    # ─── lifecycle ────────────────────────────────────────────
+
+    async def destroy(self) -> None:
+        if self._destroyed:
+            return
+        self._destroyed = True
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.kill)
+        except docker.errors.APIError:
+            pass
+        try:
+            await loop.run_in_executor(
+                _DOCKER_EXECUTOR,
+                lambda: self._container.remove(force=True),
+            )
+        except docker.errors.APIError:
+            pass
+        self._client.close()
+
+    async def close(self) -> None:
+        """Soft close: stop container but don't remove it (for pool reuse)."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.stop)
+        except docker.errors.APIError:
+            pass
+        self._client.close()
+
+    async def running(self) -> bool:
+        if self._destroyed:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.reload)
+            return self._container.status == "running"
+        except docker.errors.APIError:
+            return False
+
+    # ─── capabilities ─────────────────────────────────────────
+
+    def supports_exposed_ports(self) -> bool:
+        return True
+
+    def supports_snapshot(self) -> bool:
+        return True
+
+    async def snapshot_workspace(self) -> bytes:
+        """Export the workspace directory as a tar archive."""
+        loop = asyncio.get_running_loop()
+
+        def _snapshot() -> bytes:
+            bits, _stat = self._container.get_archive(self._workspace)
+            return b"".join(bits)
+
+        return await loop.run_in_executor(_DOCKER_EXECUTOR, _snapshot)
+
+    async def restore_workspace(self, data: bytes) -> None:
+        """Restore the workspace directory from a tar archive."""
+        loop = asyncio.get_running_loop()
+
+        await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            lambda: self._container.exec_run(
+                ["sh", "-c", f"rm -rf {self._workspace}/* {self._workspace}/.[!.]* 2>/dev/null; true"],
+            ),
+        )
+
+        def _restore() -> None:
+            self._container.put_archive("/", data)
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _restore)
+
+    async def resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        host_port = self._exposed_ports.get(port)
+        if host_port is None:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.reload)
+            attrs = getattr(self._container, "attrs", {}) or {}
+            ports_info = attrs.get("NetworkSettings", {}).get("Ports", {})
+            bindings = ports_info.get(f"{port}/tcp", [])
+            if bindings:
+                host_port = int(bindings[0]["HostPort"])
+
+        if host_port is None:
+            raise ValueError(f"port {port} is not exposed")
+        return ExposedPortEndpoint(host="127.0.0.1", port=host_port)
+
+    # ─── optional: export_state ───────────────────────────────
+
+    async def export_state(self) -> SerializedSandboxState:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_DOCKER_EXECUTOR, self._container.reload)
+        return SerializedSandboxState(
+            backend=self.backend_id,
+            payload={
+                "container_id": self._container.id,
+                "instance_id": self._instance_id,
+                "workspace": self._workspace,
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_image(client: docker_sdk.DockerClient, image: str) -> None:
+    """Pull the image if not present locally."""
+    try:
+        client.images.get(image)
+    except docker.errors.ImageNotFound:
+        repo, _, tag = image.partition(":")
+        client.images.pull(repo, tag=tag or None)
+
+
+register_connection_class(DockerSandboxConnection)
