@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Shared value types for sandbox connection + factory layers."""
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ class ExecResult:
     stderr: bytes
 
     def ok(self) -> bool:
+        """Return ``True`` if ``exit_code == 0``."""
         return self.exit_code == 0
 
 
@@ -63,7 +65,7 @@ class SandboxConnectionCapabilities:
 
 @dataclass(frozen=True, slots=True)
 class ExposedPortEndpoint:
-    """When exposed_ports is supported, maps logical port to reachable host:port."""
+    """Host endpoint for a logical container port when port mapping exists."""
 
     host: str
     port: int

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Single-source-of-truth configuration for one Sandbox instance.
 
 Users write *one* ``SandboxConfig``; the Sandbox layer internally merges
@@ -9,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Backend parameter sets
 # ---------------------------------------------------------------------------
+
 
 @dataclass(slots=True)
 class BackendParams:
@@ -24,12 +25,16 @@ class BackendParams:
 
 @dataclass(slots=True)
 class DockerBackendParams(BackendParams):
+    """Parameters for the Docker ``SandboxConnection`` backend."""
+
     type: str = "docker"
     image: str = "ubuntu:22.04"
 
 
 @dataclass(slots=True)
 class E2BBackendParams(BackendParams):
+    """Placeholder backend params for future E2B integration."""
+
     type: str = "e2b"
     template: str = "base"
     api_key: str = ""
@@ -37,6 +42,8 @@ class E2BBackendParams(BackendParams):
 
 @dataclass(slots=True)
 class LocalBackendParams(BackendParams):
+    """Parameters for the local temp-dir ``SandboxConnection`` backend."""
+
     type: str = "local_temp"
     base_dir: str = "/tmp"
 
@@ -44,6 +51,7 @@ class LocalBackendParams(BackendParams):
 # ---------------------------------------------------------------------------
 # MCP / Skills / Tools
 # ---------------------------------------------------------------------------
+
 
 @dataclass(slots=True)
 class McpServerConfig:
@@ -57,7 +65,7 @@ class McpServerConfig:
 
 @dataclass(slots=True)
 class McpGatewayConfig:
-    """Aggregate MCP servers behind one port; auto-merged into exposed_ports."""
+    """Gateway settings (listen port merged into ``exposed_ports``)."""
 
     enabled: bool = False
     port: int = 5600
@@ -66,6 +74,8 @@ class McpGatewayConfig:
 
 @dataclass(slots=True)
 class SkillConfig:
+    """Where skills live in the sandbox and optional host bind-mount."""
+
     skills_dir: str = "/root/skills"
     persist: bool = False
     host_dir: str | None = None
@@ -84,6 +94,7 @@ class ToolDef:
 # ---------------------------------------------------------------------------
 # Top-level config
 # ---------------------------------------------------------------------------
+
 
 @dataclass(slots=True)
 class SandboxConfig:

@@ -1,4 +1,5 @@
-"""MCPGateway — aggregates multiple MCP servers behind a unified tool interface.
+# -*- coding: utf-8 -*-
+"""MCPGateway — aggregates MCP servers behind one unified tool interface.
 
 One Sandbox holds one MCPGateway. The gateway:
   1. Starts each configured MCP server as a ``StdIOStatefulClient``.
@@ -57,6 +58,7 @@ class MCPGateway:
 
     @property
     def started(self) -> bool:
+        """True after :meth:`start` finishes successfully."""
         return self._started
 
     # ─── lifecycle ────────────────────────────────────────────
@@ -67,7 +69,7 @@ class MCPGateway:
         *,
         cwd: str | None = None,
     ) -> None:
-        """Connect to all configured MCP servers and build the routing table."""
+        """Connect MCP servers and build the routing table."""
         if self._started:
             return
 
@@ -99,13 +101,17 @@ class MCPGateway:
         )
 
     async def close(self) -> None:
-        """Close all MCP server connections (LIFO order per MCP SDK guidance)."""
+        """Close MCP clients (LIFO)."""
         while self._clients:
             client = self._clients.pop()
             try:
                 await client.close()
             except Exception as e:
-                logger.warning("MCPGateway: error closing %r: %s", client.name, e)
+                logger.warning(
+                    "MCPGateway: error closing %r: %s",
+                    client.name,
+                    e,
+                )
         self._routes.clear()
         self._started = False
 
@@ -116,11 +122,13 @@ class MCPGateway:
         *,
         mcp_names: list[str] | None = None,
     ) -> list[mtypes.Tool]:
-        """Return aggregated tools, optionally filtered by server name(s)."""
+        """Return tools; filter by ``mcp_names`` when given."""
         if mcp_names is None:
             return [r.tool for r in self._routes.values()]
         name_set = set(mcp_names)
-        return [r.tool for r in self._routes.values() if r.mcp_name in name_set]
+        return [
+            r.tool for r in self._routes.values() if r.mcp_name in name_set
+        ]
 
     async def call_tool(
         self,
@@ -132,7 +140,7 @@ class MCPGateway:
         if route is None:
             available = list(self._routes.keys())
             raise KeyError(
-                f"Tool {name!r} not found in gateway. Available: {available}"
+                f"Tool {name!r} not found in gateway. Available: {available}",
             )
         return await route.client.session.call_tool(
             route.original_name,
@@ -140,12 +148,13 @@ class MCPGateway:
         )
 
     def has_tool(self, name: str) -> bool:
+        """Return whether ``name`` is a routed (possibly prefixed) tool."""
         return name in self._routes
 
     # ─── info ─────────────────────────────────────────────────
 
     def list_servers(self) -> list[dict[str, Any]]:
-        """Return info about managed MCP servers (for ``Sandbox.list_mcps``)."""
+        """Metadata rows for :meth:`Sandbox.list_mcps`."""
         return [
             {"name": c.name, "command": "stdio", "connected": c.is_connected}
             for c in self._clients
@@ -160,6 +169,7 @@ class MCPGateway:
 # ---------------------------------------------------------------------------
 # Route builder (module-level for testability)
 # ---------------------------------------------------------------------------
+
 
 def _build_routes(
     raw: list[tuple[str, StdIOStatefulClient, list[mtypes.Tool]]],

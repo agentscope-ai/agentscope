@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """SandboxManager — creates, tracks, and destroys Sandbox instances.
 
 Optional pool support for RL rollout scenarios: keep warm sandbox instances
@@ -39,7 +40,12 @@ class SandboxManager:
         self._instances: dict[str, Sandbox] = {}
         self._pool: SandboxPool | None = None
 
-    async def create(self, config: SandboxConfig, *, endpoint: str | None = None) -> str:
+    async def create(
+        self,
+        config: SandboxConfig,
+        *,
+        endpoint: str | None = None,
+    ) -> str:
         """Create & start a sandbox, return its sandbox_id."""
         if endpoint is not None:
             config = replace(config, endpoint=endpoint)
@@ -60,14 +66,17 @@ class SandboxManager:
         except KeyError as e:
             raise KeyError(
                 f"Sandbox {sandbox_id!r} not found. "
-                f"Active sandbox_ids: {list(self._instances)}"
+                f"Active sandbox_ids: {list(self._instances)}",
             ) from e
 
     async def destroy(self, sandbox_id: str) -> None:
         """Destroy a sandbox and remove it from the registry."""
         sandbox = self._instances.pop(sandbox_id, None)
         if sandbox is None:
-            logger.warning("SandboxManager: destroy called for unknown id %s", sandbox_id)
+            logger.warning(
+                "SandboxManager: destroy called for unknown id %s",
+                sandbox_id,
+            )
             return
         await sandbox.close()
         logger.info("SandboxManager: destroyed sandbox %s", sandbox_id)
@@ -83,8 +92,8 @@ class SandboxManager:
         return [
             {
                 "sandbox_id": sid,
-                "backend": s._config.backend.type,
-                "started": s._started,
+                "backend": s.backend_type,
+                "started": s.started,
             }
             for sid, s in self._instances.items()
         ]
@@ -92,7 +101,10 @@ class SandboxManager:
     async def close_all(self) -> None:
         """Destroy all tracked sandboxes."""
         ids = list(self._instances.keys())
-        await asyncio.gather(*(self.destroy(sid) for sid in ids), return_exceptions=True)
+        await asyncio.gather(
+            *(self.destroy(sid) for sid in ids),
+            return_exceptions=True,
+        )
 
     # ─── Pool support ─────────────────────────────────────────
 
@@ -103,17 +115,18 @@ class SandboxManager:
 
     @property
     def pool(self) -> SandboxPool | None:
+        """Attached warm pool, if :meth:`enable_pool` was used."""
         return self._pool
 
 
 class SandboxPool:
-    """Pre-warmed sandbox pool for latency-sensitive workloads (e.g. RL rollout).
+    """Pool of warm sandboxes for low-latency acquire/release.
 
-    All mutating methods are protected by an ``asyncio.Lock`` to prevent
-    race conditions when multiple coroutines acquire/release concurrently.
+    Mutations use an ``asyncio.Lock`` for concurrent acquire/release safety.
     """
 
     def __init__(self, manager: SandboxManager, *, warm_size: int = 4) -> None:
+        """Attach to ``manager`` and configure desired warm pool size."""
         self._manager = manager
         self._warm_size = warm_size
         self._free: asyncio.Queue[str] = asyncio.Queue()
@@ -138,7 +151,9 @@ class SandboxPool:
         try:
             sid = await asyncio.wait_for(self._free.get(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise RuntimeError("SandboxPool.acquire timed out — no free sandbox") from None
+            raise RuntimeError(
+                "SandboxPool.acquire timed out — no free sandbox",
+            ) from None
         async with self._lock:
             self._in_use.add(sid)
         return self._manager.get(sid)
@@ -174,6 +189,7 @@ class SandboxPool:
 
     @property
     def stats(self) -> dict[str, int]:
+        """Counts for warm size, free queue, and in-use sandboxes."""
         return {
             "warm_size": self._warm_size,
             "free": self._free.qsize(),
