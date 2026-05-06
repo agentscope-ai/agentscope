@@ -67,8 +67,61 @@ p.greet()  # "Hello, I'm Alice"
 `★ Insight ─────────────────────────────────────`
 - `__init__` 不是构造器，真正的构造器是 `__new__`（很少用）
 - `self` 必须显式声明，类似 Java 的 `this`
-- 不需要声明public/private，约定用 `_` 前缀表示"私有"
+- Python 用下划线约定代替 Java 的访问修饰符
 `─────────────────────────────────────────────────`
+
+### Python 下划线命名约定详解
+
+Python 没有真正的 `private` 关键字，靠约定来区分可见性：
+
+| 形式 | 示例 | 含义 | 警告程度 |
+|------|------|------|----------|
+| `_name` | `self._name` | **约定私有**，外部不应访问 | ⚠️ 外部代码可以访问，但不应这么做 |
+| `__name` | `self.__name` | **名称修饰**，子类不会覆盖 | ⚠️⚠️ 编译器会自动变成 `_类名__name`，防止命名冲突 |
+| `__name__` | `self.__doc__` | **特殊方法/属性** | 🔴 不要自行创建以 `__` 开头和结尾的名称 |
+
+```python
+class Person:
+    def __init__(self, name: str) -> None:
+        self.name = name          # 公开属性 - 任何地方都能访问
+        self._age = 25            # 约定私有 - 外部代码不应访问
+        self.__ssn = "123-45-6789" # 名称修饰 - 变成 _Person__ssn
+
+    def _private_method(self) -> None:  # 约定私有方法
+        """内部使用的辅助方法"""
+        pass
+
+    def __double_underscore(self) -> None:  # 会被修饰为 _Person__double_underscore
+        """避免子类覆盖的内部方法"""
+        pass
+
+# 使用
+p = Person("Alice")
+
+print(p.name)          # ✅ OK - 公开属性
+print(p._age)          # ⚠️ 可以访问，但不推荐
+# print(p.__ssn)       # ❌ 报错！属性名已被修饰为 _Person__ssn
+print(p._Person__ssn)  # ✅ 可以这样访问（但不应当这么做）
+
+# 名称修饰的本质
+print(p.__dict__)      # {'name': 'Alice', '_age': 25, '_Person__ssn': '123-45-6789'}
+```
+
+**`__name__` 特殊属性举例**（这些是 Python 内置的，不要自定义同名属性）：
+
+| 属性 | 含义 |
+|------|------|
+| `__init__` | 构造器（不是真正的构造器） |
+| `__str__` | `str(obj)` 的输出 |
+| `__repr__` | `repr(obj)` 的输出 |
+| `__class__` | 对象的类型 |
+| `__doc__` | 类的文档字符串 |
+| `__name__` | 函数/类的名称 |
+
+**额外约定**：
+
+- 末尾 `_`：`class_` 当变量名与 Python 关键字冲突时使用
+- 前置 `_` 导入：`from module import _private_func` 会触发 `from module import *` 时被排除
 
 ### AgentScope 源码示例
 
@@ -389,16 +442,16 @@ print(str(msg))   # [Alice]: Hello — 用户显示
 
 **常用特殊方法对照**：
 
-| Python | Java | 用途 |
-|--------|------|------|
-| `__init__` | constructor | 初始化 |
-| `__repr__` | toString() | 字符串表示 |
-| `__str__` | toString() | 用户友好字符串 |
-| `__eq__` | equals() | 相等比较 |
-| `__hash__` | hashCode() | 哈希值 |
-| `__len__` | `size()` / `length()` | 长度（`len(obj)`） |
+| Python | Java                       | 用途 |
+|--------|----------------------------|------|
+| `__init__` | constructor                | 初始化 |
+| `__repr__` | toString() representation  | 字符串表示 |
+| `__str__` | toString()                 | 用户友好字符串 |
+| `__eq__` | equals()                   | 相等比较 |
+| `__hash__` | hashCode()                 | 哈希值 |
+| `__len__` | `size()` / `length()`      | 长度（`len(obj)`） |
 | `__getitem__` | `list.get()` / `map.get()` | 索引/键访问 |
-| `__call__` | `Callable.call()` | 可调用对象 |
+| `__call__` | `Callable.call()`          | 可调用对象 |
 
 ### __call__ 特殊方法
 
