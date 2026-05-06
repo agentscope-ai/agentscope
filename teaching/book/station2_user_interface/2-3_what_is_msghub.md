@@ -16,16 +16,17 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
+from agentscope import Msg
 from agentscope.pipeline import MsgHub
-from agentscope import Agent
+from agentscope import ReActAgent
 
 # 创建消息中心
 hub = MsgHub()
 
 # Agent订阅消息
-analyst = Agent(name="Analyst", ...)
-reporter = Agent(name="Reporter", ...)
-critic = Agent(name="Critic", ...)
+analyst = ReActAgent(name="Analyst", model=..., sys_prompt="...")
+reporter = ReActAgent(name="Reporter", model=..., sys_prompt="...")
+critic = ReActAgent(name="Critic", model=..., sys_prompt="...")
 
 # Agent订阅
 hub.subscribe(analyst)

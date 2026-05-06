@@ -16,6 +16,7 @@
 ## 🚀 先跑起来
 
 ```python showLineNumbers
+from agentscope import Msg
 from agentscope.formatter import FormatterBase, JsonFormatter
 
 # 使用内置Formatter
@@ -61,14 +62,17 @@ Msg (统一格式)
 ## 🔍 Formatter的结构
 
 ```python showLineNumbers
+from abc import ABC, abstractmethod
+from agentscope import Msg
+
 class FormatterBase(ABC):
     """Formatter基类"""
-    
+
     @abstractmethod
     def format(self, messages: list[Msg]) -> dict:
         """将Msg列表转换为API格式"""
         pass
-    
+
     @abstractmethod
     def parse(self, response: dict) -> Msg:
         """将API响应转换为Msg"""
@@ -84,7 +88,7 @@ class OpenAIFormatter(FormatterBase):
                 for msg in messages
             ]
         }
-    
+
     def parse(self, response):
         return Msg(
             name="assistant",
