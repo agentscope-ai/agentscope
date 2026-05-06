@@ -1,5 +1,5 @@
-name: qwen3.6-plus
-label: Qwen3.6-Plus
+name: qwen3.5-omni-plus
+label: Qwen3.5-Omni-Plus
 status: active
 
 input_types:
@@ -11,15 +11,19 @@ input_types:
   - image/tiff
   - image/webp
   - image/heic
+  - audio/mp3
+  - audio/wav
+  - audio/flac
   - video/mp4
 
 output_types:
   - text/plain
   - application/x-thinking
+  - audio/wav
 
-context_size: 1000000
+context_size: 262144
 output_size: 65536
 
 parameter_overrides:
   max_tokens: {"maximum": 65536}
-  context_size: {"maximum": 1000000}
+  context_size: {"maximum": 262144}

@@ -1,25 +1,25 @@
-name: qwen3.6-plus
-label: Qwen3.6-Plus
+name: gemini-2.5-pro
+label: Gemini 2.5 Pro
 status: active
 
 input_types:
   - text/plain
   - application/x-thinking
-  - image/bmp
   - image/jpeg
   - image/png
-  - image/tiff
+  - image/gif
   - image/webp
-  - image/heic
+  - audio/mp3
+  - audio/wav
   - video/mp4
 
 output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 1000000
+context_size: 1048576
 output_size: 65536
 
 parameter_overrides:
-  max_tokens: {"maximum": 65536}
-  context_size: {"maximum": 1000000}
+  max_tokens:
+    maximum: 65536

@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import requests
+from pydantic import Field
 
 from . import FormatterBase
 from .._logging import logger
@@ -19,6 +20,7 @@ from ..message import (
     ToolCallBlock,
     ToolResultBlock,
     HintBlock,
+    ThinkingBlock,
     UserMsg,
 )
 
@@ -197,22 +199,14 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
     identify different entities in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the OpenAI chat formatter.
-
-        Args:
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types, using glob-style
-                patterns (e.g. ``"image/*"``, ``"audio/mp3"``). Defaults to
-                ``["image/*", "audio/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*"],
-        )
+    supported_input_media_types: list[str] = Field(
+        default_factory=lambda: ["image/*", "audio/*"],
+        description=(
+            "The supported input media types, using glob-style patterns "
+            '(e.g. ``"image/*"``, ``"audio/mp3"``). '
+            'Defaults to ``["image/*", "audio/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -302,6 +296,11 @@ class OpenAIChatFormatter(_OpenAIFormatterBase):
                             ),
                         )
 
+                elif isinstance(block, ThinkingBlock):
+                    # OpenAI API does not accept reasoning/thinking content
+                    # in conversation history — skip thinking blocks silently.
+                    pass
+
                 else:
                     logger.warning(
                         "Unsupported block type %s in the message, skipped.",
@@ -336,30 +335,23 @@ class OpenAIMultiAgentFormatter(_OpenAIFormatterBase):
         OpenAI-compatible services like vLLM, Azure OpenAI, and others.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the OpenAI multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types, using glob-style
-                patterns (e.g. ``"image/*"``, ``"audio/mp3"``). Defaults to
-                ``["image/*", "audio/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*", "audio/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    supported_input_media_types: list[str] = Field(
+        default_factory=lambda: ["image/*", "audio/*"],
+        description=(
+            "The supported input media types, using glob-style patterns "
+            '(e.g. ``"image/*"``, ``"audio/mp3"``). '
+            'Defaults to ``["image/*", "audio/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the OpenAI API

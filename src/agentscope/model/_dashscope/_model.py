@@ -9,7 +9,7 @@ from typing import Literal, Any, AsyncGenerator, TYPE_CHECKING, Generator, List
 from pydantic import BaseModel, Field, SecretStr
 from aioitertools import iter as giter
 
-from .. import ChatUsage
+from .. import ChatUsage, ChatModelBase
 from ...formatter import FormatterBase, DashScopeChatFormatter
 from ...message import Msg, TextBlock, ThinkingBlock, ToolCallBlock
 from ...model import ChatResponse
@@ -45,7 +45,7 @@ class DashScopeCredential(BaseModel):
     )
 
 
-class DashScopeChatModel(BaseModel):
+class DashScopeChatModel(ChatModelBase):
     """The DashScope chat model."""
 
     class Parameters(BaseModel):
@@ -117,6 +117,17 @@ class DashScopeChatModel(BaseModel):
         default=True,
         title="Enable Streaming Output.",
         description="The enable stream output for the LLM output.",
+    )
+
+    multimodality: bool | None = Field(
+        default=None,
+        title="Multimodality",
+        description=(
+            "Whether to call the MultiModalConversation API. "
+            "``True`` forces multimodal mode, ``False`` forces text-only "
+            "mode, and ``None`` (default) auto-detects from the model name "
+            "(e.g. 'qvq' or '-vl' suffix)."
+        ),
     )
 
     max_retries: int = Field(
@@ -191,7 +202,6 @@ class DashScopeChatModel(BaseModel):
             # In agentscope, the `incremental_output` must be `True` when
             # `self.stream` is True
             "incremental_output": self.stream,
-            **self.generate_kwargs,
             **kwargs,
         }
 
@@ -206,25 +216,32 @@ class DashScopeChatModel(BaseModel):
                 tools,
             )
 
-        # thinking related options
-        kwargs = {**kwargs, **self.thinking_config.model_dump()}
+        # thinking related options — map to DashScope API parameter names
+        kwargs["enable_thinking"] = self.parameters.thinking_enable
+        if self.parameters.thinking_budget is not None:
+            kwargs["thinking_budget"] = self.parameters.thinking_budget
 
         # 3. Call the API and parse the response
         start_datetime = datetime.now()
         # Use MultiModalConversation API if multimodality is True, or if the
         # model is multimodal based on the model name.
+        api_key = self.credential.api_key.get_secret_value()
         if self.multimodality or (
             self.multimodality is None
-            and ("qvq" in self.model_name or "-vl" in self.model_name)
+            and (
+                "qvq" in model_name
+                or "-vl" in model_name
+                or "-omni" in model_name
+            )
         ):
             response = await dashscope.AioMultiModalConversation.call(
-                api_key=self.api_key,
+                api_key=api_key,
                 **kwargs,
             )
 
         else:
             response = await dashscope.aigc.generation.AioGeneration.call(
-                api_key=self.api_key,
+                api_key=api_key,
                 **kwargs,
             )
 

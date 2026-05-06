@@ -1,0 +1,28 @@
+name: gemini-2.0-flash
+label: Gemini 2.0 Flash
+status: sunset
+deprecated_at: "2026-06-01T00:00:00"
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+  - audio/mp3
+  - audio/wav
+  - video/mp4
+
+output_types:
+  - text/plain
+
+context_size: 1048576
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192
+  thinking_enable:
+    hidden: true
+  thinking_budget:
+    hidden: true

@@ -1,0 +1,22 @@
+name: gpt-5.4
+label: GPT-5.4
+status: active
+
+input_types:
+  - text/plain
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+
+context_size: 1050000
+output_size: 128000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 128000
+  thinking_enable:
+    hidden: true

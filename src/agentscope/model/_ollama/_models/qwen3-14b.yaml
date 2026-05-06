@@ -1,0 +1,18 @@
+name: qwen3:14b
+label: Qwen3 14B
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 40960
+output_size: 8192
+
+parameter_overrides:
+  max_tokens:
+    maximum: 8192

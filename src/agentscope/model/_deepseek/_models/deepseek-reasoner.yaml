@@ -1,0 +1,10 @@
+name: deepseek-reasoner
+label: DeepSeek Reasoner
+status: sunset
+deprecated_at: "2026-07-24T00:00:00"
+context_size: 1000000
+output_size: 384000
+parameters:
+  temperature: 1.0
+  top_p: 1.0
+  max_tokens: 8192

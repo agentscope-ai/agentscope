@@ -1,25 +1,27 @@
-name: qwen3.6-plus
-label: Qwen3.6-Plus
+name: kimi-k2.6
+label: Kimi K2.6
 status: active
 
 input_types:
   - text/plain
   - application/x-thinking
-  - image/bmp
   - image/jpeg
   - image/png
-  - image/tiff
+  - image/gif
   - image/webp
-  - image/heic
   - video/mp4
+  - video/mpeg
+  - video/quicktime
+  - video/avi
+  - video/webm
 
 output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 1000000
-output_size: 65536
+context_size: 262144
+output_size: 32768
 
 parameter_overrides:
-  max_tokens: {"maximum": 65536}
-  context_size: {"maximum": 1000000}
+  max_tokens:
+    maximum: 32768

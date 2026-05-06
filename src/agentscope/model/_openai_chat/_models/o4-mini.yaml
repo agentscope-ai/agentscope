@@ -1,0 +1,22 @@
+name: o4-mini
+label: o4-mini
+status: active
+
+input_types:
+  - text/plain
+  - application/x-thinking
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+
+output_types:
+  - text/plain
+  - application/x-thinking
+
+context_size: 200000
+output_size: 100000
+
+parameter_overrides:
+  max_tokens:
+    maximum: 100000

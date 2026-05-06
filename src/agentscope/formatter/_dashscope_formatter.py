@@ -12,6 +12,7 @@ from .._logging import logger
 from ..message import (
     Msg,
     TextBlock,
+    ThinkingBlock,
     ToolResultBlock,
     URLSource,
     DataBlock,
@@ -92,21 +93,13 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
         list ``[]`` for messages without valid content blocks.
     """
 
-    def __init__(
-        self,
-        supported_input_media_type: list[str] | None = None,
-    ) -> None:
-        """Initialize the DashScope chat formatter.
-
-        Args:
-            supported_input_media_type (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ["image/*", "audio/*", "video/*"].
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_type
-            or ["image/*", "audio/*", "video/*"],
-        )
+    supported_input_media_types: list[str] = Field(
+        default_factory=lambda: ["image/*", "audio/*", "video/*"],
+        description=(
+            "The supported input media types. "
+            'Defaults to ``["image/*", "audio/*", "video/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -171,6 +164,11 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                         },
                     )
 
+                elif isinstance(block, ThinkingBlock):
+                    # DashScope does not need reasoning_content passed back
+                    # in the conversation context — skip thinking blocks.
+                    pass
+
                 elif isinstance(block, ToolResultBlock):
                     (
                         textual_output,
@@ -198,6 +196,12 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                             ),
                         )
 
+                else:
+                    logger.warning(
+                        "Unsupported block type %s in the message, skipped.",
+                        type(block),
+                    )
+
             msg_dashscope = {
                 "role": msg.role,
                 "content": content_blocks,
@@ -212,11 +216,16 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
             # Move to next message
             i += 1
 
-        # Merge adjacent text block into one block to avoid API issues
+        # Merge adjacent text blocks into one to avoid API issues.
+        # Tool-result messages have content as a plain string (not a list),
+        # so skip merging for those.
         cleaned_msgs: list = []
-        for msg in formatted_msgs:
+        for formatted_msg in formatted_msgs:
+            if not isinstance(formatted_msg.get("content"), list):
+                cleaned_msgs.append(formatted_msg)
+                continue
             new_content = []
-            for block in msg["content"]:
+            for block in formatted_msg["content"]:
                 if (
                     block.get("text")
                     and new_content
@@ -225,8 +234,8 @@ class DashScopeChatFormatter(_DashScopeFormatterBase):
                     new_content[-1]["text"] += "\n" + block["text"]
                 else:
                     new_content.append(block)
-            msg["content"] = new_content
-            cleaned_msgs.append(msg)
+            formatted_msg["content"] = new_content
+            cleaned_msgs.append(formatted_msg)
 
         return cleaned_msgs
 
@@ -320,7 +329,7 @@ class DashScopeMultiAgentFormatter(_DashScopeFormatterBase):
                 A list of dictionaries formatted for the DashScope API.
         """
         return await DashScopeChatFormatter(
-            supported_input_media_type=self.supported_input_media_types,
+            supported_input_media_types=self.supported_input_media_types,
         ).format(msgs)
 
     async def _format_agent_message(

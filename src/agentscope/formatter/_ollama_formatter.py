@@ -6,6 +6,7 @@ from abc import ABC
 from typing import Any
 
 import requests
+from pydantic import Field
 
 from ._formatter_base import FormatterBase
 from .._logging import logger
@@ -104,14 +105,12 @@ class OllamaChatFormatter(_OllamaFormatterBase):
     participants in the conversation.
     """
 
-    def __init__(
-        self,
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
+    supported_input_media_types: list[str] = Field(
+        default_factory=lambda: ["image/*"],
+        description=(
+            'The supported input media types. Defaults to ``["image/*"]``.'
+        ),
+    )
 
     async def format(
         self,
@@ -228,29 +227,21 @@ class OllamaMultiAgentFormatter(_OllamaFormatterBase):
     a user and an agent are involved.
     """
 
-    def __init__(
-        self,
-        conversation_history_prompt: str = (
+    conversation_history_prompt: str = Field(
+        default=(
             "# Conversation History\n"
             "The content between <history></history> tags contains "
             "your conversation history\n"
         ),
-        supported_input_media_types: list[str] | None = None,
-    ) -> None:
-        """Initialize the Ollama multi-agent formatter.
+        description="The prompt to use for the conversation history section.",
+    )
 
-        Args:
-            conversation_history_prompt (`str`):
-                The prompt to use for the conversation history section.
-            supported_input_media_types (`list[str] | None`, optional):
-                The list of supported input media types. Defaults to
-                ``["image/*"]``.
-        """
-        super().__init__(
-            supported_input_media_types=supported_input_media_types
-            or ["image/*"],
-        )
-        self.conversation_history_prompt = conversation_history_prompt
+    supported_input_media_types: list[str] = Field(
+        default_factory=lambda: ["image/*"],
+        description=(
+            'The supported input media types. Defaults to ``["image/*"]``.'
+        ),
+    )
 
     async def format(self, msgs: list[Msg]) -> list[dict[str, Any]]:
         """Format input messages into the structure required by the Ollama

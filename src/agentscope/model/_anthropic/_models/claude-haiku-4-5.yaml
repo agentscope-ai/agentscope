@@ -1,25 +1,22 @@
-name: qwen3.6-plus
-label: Qwen3.6-Plus
+name: claude-haiku-4-5
+label: Claude Haiku 4.5
 status: active
 
 input_types:
   - text/plain
   - application/x-thinking
-  - image/bmp
   - image/jpeg
   - image/png
-  - image/tiff
+  - image/gif
   - image/webp
-  - image/heic
-  - video/mp4
 
 output_types:
   - text/plain
   - application/x-thinking
 
-context_size: 1000000
+context_size: 200000
 output_size: 65536
 
 parameter_overrides:
   max_tokens: {"maximum": 65536}
-  context_size: {"maximum": 1000000}
+  context_size: {"maximum": 200000}

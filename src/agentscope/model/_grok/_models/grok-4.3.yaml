@@ -1,25 +1,20 @@
-name: qwen3.6-plus
-label: Qwen3.6-Plus
+name: grok-4.3
+label: Grok 4.3
 status: active
 
 input_types:
   - text/plain
   - application/x-thinking
-  - image/bmp
   - image/jpeg
   - image/png
-  - image/tiff
-  - image/webp
-  - image/heic
-  - video/mp4
 
 output_types:
   - text/plain
   - application/x-thinking
 
 context_size: 1000000
-output_size: 65536
+output_size: 30000
 
 parameter_overrides:
-  max_tokens: {"maximum": 65536}
-  context_size: {"maximum": 1000000}
+  max_tokens:
+    maximum: 30000
