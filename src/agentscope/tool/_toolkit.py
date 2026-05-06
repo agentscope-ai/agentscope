@@ -646,8 +646,8 @@ class Toolkit:
                 "`connect()` method first.",
             )
 
-        # Check arguments for enable_funcs and disabled_funcs
-        if enable_funcs is not None and disable_funcs is not None:
+        # Check arguments for enable_funcs and disable_funcs
+        if enable_funcs is not None:
             assert isinstance(enable_funcs, list) and all(
                 isinstance(_, str) for _ in enable_funcs
             ), (
@@ -655,12 +655,15 @@ class Toolkit:
                 f"{enable_funcs}."
             )
 
+        if disable_funcs is not None:
             assert isinstance(disable_funcs, list) and all(
                 isinstance(_, str) for _ in disable_funcs
             ), (
                 "Disable functions should be a list of strings, but got "
                 f"{disable_funcs}."
             )
+
+        if enable_funcs is not None and disable_funcs is not None:
             intersection = set(enable_funcs).intersection(
                 set(disable_funcs),
             )
