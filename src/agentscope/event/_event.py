@@ -8,7 +8,7 @@ from typing import Literal, List, TypeAlias
 from pydantic import BaseModel, Field, ConfigDict
 
 from ..message import ToolCallBlock, ToolResultBlock, ToolResultState
-from ..tool import PermissionRule
+from ..permission import PermissionRule
 
 
 class EventType(StrEnum):

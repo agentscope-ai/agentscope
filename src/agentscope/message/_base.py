@@ -213,6 +213,7 @@ def UserMsg(
     content: str | list[TextBlock | DataBlock],
     metadata: dict | None = None,
     created_at: str | None = None,
+    id: str | None = None,  # pylint: disable=redefined-builtin
 ) -> Msg:
     """Create a user message with role "user".
 
@@ -226,7 +227,8 @@ def UserMsg(
             The metadata of the message. Defaults to `None`.
         created_at (`str | None`, optional):
             The creation time of the message in ISO format. Defaults to `None`.
-
+        id (`str | None`, optional):
+            The id of the message. Defaults to `None`.
     Returns:
         `Msg`:
             The created user message.
@@ -238,6 +240,7 @@ def UserMsg(
         role="user",
         metadata=metadata or {},
         created_at=created_at or datetime.now().isoformat(),
+        id=id or uuid.uuid4().hex,
     )
 
 

@@ -4,7 +4,7 @@ import os
 import tempfile
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.agent import AgentState
+from agentscope.state import AgentState
 from agentscope.tool import Read, Write, Edit
 
 

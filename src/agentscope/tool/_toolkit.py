@@ -5,7 +5,6 @@ import inspect
 import warnings
 from collections import OrderedDict
 from copy import deepcopy
-from functools import wraps
 from typing import (
     AsyncGenerator,
     Any,
@@ -13,7 +12,6 @@ from typing import (
     Generator,
     Callable,
     Coroutine,
-    TYPE_CHECKING,
 )
 
 import mcp
@@ -24,12 +22,12 @@ from pydantic import (
     create_model,
 )
 
-from ._builtin import ResetTools, Edit, Write, Read, SkillViewer
+from ._builtin import ResetTools, SkillViewer
 from ._base import ToolBase
 from ._adapters import _FunctionTool
 from ._response import ToolResponse, ToolChunk
-from ._skill import SkillLoaderBase, LocalSkillLoader
-from ._types import ToolGroup, Skill, RegisteredTool
+from ..skill import SkillLoaderBase, LocalSkillLoader, Skill
+from ._types import ToolGroup, RegisteredTool
 from .._utils._common import _json_loads_with_repair
 from ..exception import (
     DeveloperOrientedException,
@@ -46,71 +44,7 @@ from ..message import (
     ToolResultState,
 )
 from .._logging import logger
-
-if TYPE_CHECKING:
-    from ..agent import AgentState
-else:
-    AgentState = "AgentState"
-
-
-def _apply_middlewares(
-    func: Callable[
-        ...,
-        Coroutine[Any, Any, AsyncGenerator[ToolResponse, None]],
-    ],
-) -> Callable[..., AsyncGenerator[ToolResponse, None]]:
-    """Decorator that applies registered middlewares at runtime.
-
-    This decorator reads the middleware list from the instance and constructs
-    the middleware chain dynamically during each invocation.
-
-    .. note:: Middlewares must be async generator functions that yield
-     `ToolResponse` objects.
-    """
-
-    @wraps(func)
-    async def wrapper(
-        self: "Toolkit",
-        tool_call: ToolCallBlock,
-    ) -> AsyncGenerator[ToolResponse, None]:
-        """Wrapper that applies middleware chain."""
-        middlewares = getattr(self, "_middlewares", [])
-
-        if not middlewares:
-            # No middlewares, call the original function directly
-            async for chunk in await func(self, tool_call):
-                yield chunk
-            return
-
-        # Build the middleware chain from innermost to outermost
-        async def base_handler(
-            **kwargs: Any,
-        ) -> AsyncGenerator[ToolResponse, None]:
-            """Base handler that calls the original function."""
-            return await func(self, **kwargs)
-
-        # Wrap with each middleware in reverse order
-        current_handler = base_handler
-        for middleware in reversed(middlewares):
-
-            def make_handler(mw: Callable, handler: Callable) -> Callable:
-                """Create wrapped handler for middleware."""
-
-                async def wrapped(
-                    **kwargs: Any,
-                ) -> AsyncGenerator[ToolResponse, None]:
-                    """Handler that applies middleware."""
-                    return mw(kwargs, handler)
-
-                return wrapped
-
-            current_handler = make_handler(middleware, current_handler)
-
-        # Execute the middleware chain
-        async for chunk in await current_handler(tool_call=tool_call):
-            yield chunk
-
-    return wrapper
+from ..state import AgentState
 
 
 # pylint: disable=line-too-long
@@ -520,7 +454,6 @@ class Toolkit:
         )
 
     # @trace_toolkit
-    # @_apply_middlewares
     async def call_tool(
         self,
         tool_call: ToolCallBlock,
@@ -535,7 +468,7 @@ class Toolkit:
         Args:
             tool_call (`ToolCallBlock`):
                 A tool call block.
-            state: AgentState:
+            state (`AgentState`):
                 The current agent state, used to state injection.
 
         Yields:
@@ -566,7 +499,7 @@ class Toolkit:
                             ),
                         ),
                     ],
-                    state="error",
+                    state=ToolResultState.ERROR,
                 )
                 yield chunk
                 yield tool_response.append_chunk(chunk)
@@ -580,7 +513,7 @@ class Toolkit:
                         f"'{tool_call.name}' doesn't exist.",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
             )
             yield chunk
             yield tool_response.append_chunk(chunk)
@@ -594,9 +527,12 @@ class Toolkit:
             # Prepare keyword arguments
             kwargs = _json_loads_with_repair(tool_call.input)
 
-            # TODO: we should be build a mechanism to support state injection
-            #  in the future instead of hard coding here.
-            if isinstance(tool_func, (ResetTools, Read, Write, Edit)):
+            # State injection
+            if (
+                tool_func.is_state_injected
+                and not tool_func.is_mcp
+                and not tool_func.is_external_tool
+            ):
                 kwargs["_agent_state"] = state
 
             if inspect.iscoroutinefunction(tool_func.__call__):

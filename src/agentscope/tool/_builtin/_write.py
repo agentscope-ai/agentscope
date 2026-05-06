@@ -3,12 +3,12 @@
 import fnmatch
 import os
 from pathlib import Path
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List
 
 import aiofiles
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
@@ -16,12 +16,8 @@ from .._permission import (
     PermissionRule,
 )
 from .._response import ToolChunk
-from ...message import TextBlock
-
-if TYPE_CHECKING:
-    from ...agent import AgentState
-else:
-    AgentState = Any
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
 
 
 class Write(ToolBase):
@@ -61,6 +57,7 @@ Usage:
     is_read_only: bool = False
     is_concurrency_safe: bool = False
     is_external_tool: bool = False
+    is_state_injected: bool = False
 
     def __init__(
         self,
@@ -271,7 +268,7 @@ Usage:
                         f"got: {file_path}",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -287,7 +284,7 @@ Usage:
                             f"before writing to it.",
                         ),
                     ],
-                    state="error",
+                    state=ToolResultState.ERROR,
                     is_last=True,
                 )
 
@@ -310,6 +307,6 @@ Usage:
                     f"({line_count} lines).",
                 ),
             ],
-            state="running",
+            state=ToolResultState.RUNNING,
             is_last=True,
         )

@@ -4,13 +4,15 @@ import sys
 import unittest
 from unittest.async_case import IsolatedAsyncioTestCase
 
-from agentscope.tool import (
+from agentscope.permission import (
     PermissionEngine,
     PermissionMode,
     PermissionContext,
     PermissionRule,
     PermissionBehavior,
     AdditionalWorkingDirectory,
+)
+from agentscope.tool import (
     Bash,
     Write,
     Read,

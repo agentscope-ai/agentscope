@@ -30,6 +30,7 @@ from ._event import (
     UserConfirmResultEvent,
     ExternalExecutionResultEvent,
     AgentEvent,
+    ConfirmResult,
 )
 
 
@@ -62,4 +63,5 @@ __all__ = [
     "UserConfirmResultEvent",
     "ExternalExecutionResultEvent",
     "AgentEvent",
+    "ConfirmResult",
 ]

@@ -2,24 +2,20 @@
 """The read tool in agentscope."""
 import fnmatch
 import os
-from typing import Any, List, TYPE_CHECKING
+from typing import Any, List
 
 import aiofiles
 
 from .._base import ToolBase
-from .._permission import (
+from ...permission import (
     PermissionContext,
     PermissionDecision,
     PermissionBehavior,
     PermissionRule,
 )
 from .._response import ToolChunk
-from ...message import TextBlock
-
-if TYPE_CHECKING:
-    from ...agent import AgentState
-else:
-    AgentState = Any
+from ...message import TextBlock, ToolResultState
+from ...state import AgentState
 
 
 class Read(ToolBase):
@@ -71,6 +67,7 @@ Usage:
     is_read_only: bool = True
     is_concurrency_safe: bool = True
     is_external_tool: bool = False
+    is_state_injected: bool = False
 
     def __init__(
         self,
@@ -188,7 +185,7 @@ Usage:
                         f"got: {file_path}",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -198,7 +195,7 @@ Usage:
                 content=[
                     TextBlock(text=f"Error: File does not exist: {file_path}"),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -211,7 +208,7 @@ Usage:
                         f"{file_path}",
                     ),
                 ],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )
 
@@ -266,13 +263,13 @@ Usage:
 
             return ToolChunk(
                 content=[TextBlock(text=result)],
-                state="running",
+                state=ToolResultState.RUNNING,
                 is_last=True,
             )
 
         except Exception as e:
             return ToolChunk(
                 content=[TextBlock(text=f"Error reading file: {str(e)}")],
-                state="error",
+                state=ToolResultState.ERROR,
                 is_last=True,
             )

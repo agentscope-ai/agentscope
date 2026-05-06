@@ -10,7 +10,7 @@ from mcp.server import FastMCP
 from agentscope.mcp import HttpStatelessClient, HttpStatefulClient
 from agentscope.message import ToolCallBlock
 from agentscope.tool import ToolResponse, ToolChunk, Toolkit
-from agentscope.agent import AgentState
+from agentscope.state import AgentState
 
 
 async def tool_1(arg1: str, arg2: list[int]) -> str:
